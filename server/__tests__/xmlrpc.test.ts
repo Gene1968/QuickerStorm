@@ -41,4 +41,26 @@ describe('xmlrpc', () => {
 		expect(result.login).toBe(false)
 		expect(result.message).toBe('Bad credentials')
 	})
+
+	it('buildLoginXml escapes special XML characters in user-supplied fields', () => {
+		const xml = buildLoginXml({ first: 'John & Jane', last: "O'Brien", hashedPass: '$1$abc', start: 'last' })
+		expect(xml).toContain('&amp;')
+		expect(xml).toContain('&#39;')
+		expect(xml).not.toContain('John & Jane')
+		expect(xml).not.toMatch(/O'Brien/)
+	})
+
+	it('parseLoginResponse returns sim_port 0 for malformed integer value', () => {
+		const xml = `<?xml version="1.0"?><methodResponse><params><param><value><struct>
+      <member><name>login</name><value><string>true</string></value></member>
+      <member><name>session_id</name><value><string>aaaabbbb-0000-1111-2222-ccccddddeeee</string></value></member>
+      <member><name>agent_id</name><value><string>11112222-3333-4444-5555-666677778888</string></value></member>
+      <member><name>sim_ip</name><value><string>127.0.0.1</string></value></member>
+      <member><name>sim_port</name><value><i4>notanumber</i4></value></member>
+    </struct></value></param></params></methodResponse>`
+		const result = parseLoginResponse(xml)
+		expect(result.login).toBe(true)
+		expect(result.sim_port).toBe(0)
+		expect(Number.isNaN(result.sim_port)).toBe(false)
+	})
 })

@@ -27,6 +27,16 @@ export function hashPassword(plaintext: string): string {
 	return `$1$${md5}`
 }
 
+/** Escape special XML characters in user-supplied strings */
+function escXml(s: string): string {
+	return s
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;')
+}
+
 /** Build the XML-RPC login_to_simulator request body */
 export function buildLoginXml(p: LoginParams): string {
 	const str = (name: string, val: string) =>
@@ -38,10 +48,10 @@ export function buildLoginXml(p: LoginParams): string {
 <methodCall>
   <methodName>login_to_simulator</methodName>
   <params><param><value><struct>
-    ${str('first', p.first)}
-    ${str('last', p.last)}
-    ${str('passwd', p.hashedPass)}
-    ${str('start', p.start)}
+    ${str('first', escXml(p.first))}
+    ${str('last', escXml(p.last))}
+    ${str('passwd', escXml(p.hashedPass))}
+    ${str('start', escXml(p.start))}
     ${str('channel', 'quickerSTORM')}
     ${str('version', '0.1.0')}
     ${str('platform', 'web')}
@@ -64,6 +74,12 @@ export function parseLoginResponse(xml: string): LoginResult {
 		members[name.trim()] = value.trim()
 	}
 
+	// WHY: parseInt returns NaN for malformed values; guard to keep numeric fields typed as number
+	const parseIntSafe = (s: string | undefined, radix = 10): number => {
+		const n = parseInt(s ?? '0', radix)
+		return Number.isNaN(n) ? 0 : n
+	}
+
 	const login = members['login'] === 'true' || members['login'] === '1'
 	if (!login) {
 		return { login: false, message: members['message'] || 'Login failed' }
@@ -74,21 +90,33 @@ export function parseLoginResponse(xml: string): LoginResult {
 		session_id:      members['session_id'],
 		agent_id:        members['agent_id'],
 		sim_ip:          members['sim_ip'],
-		sim_port:        parseInt(members['sim_port'] ?? '0', 10),
-		circuit_code:    parseInt(members['circuit_code'] ?? '0', 10),
+		sim_port:        parseIntSafe(members['sim_port']),
+		circuit_code:    parseIntSafe(members['circuit_code']),
 		seed_capability: members['seed_capability'],
-		region_x:        parseInt(members['region_x'] ?? '0', 10),
-		region_y:        parseInt(members['region_y'] ?? '0', 10),
+		region_x:        parseIntSafe(members['region_x']),
+		region_y:        parseIntSafe(members['region_y']),
 	}
 }
 
 /** POST an XML-RPC request; returns parsed body string */
 export async function xmlRpcPost(uri: string, body: string): Promise<string> {
-	const res = await fetch(uri, {
-		method: 'POST',
-		headers: { 'Content-Type': 'text/xml', 'Accept': 'text/xml' },
-		body,
-	})
-	if (!res.ok) throw new Error(`XML-RPC HTTP error ${res.status}`)
-	return res.text()
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(), 15_000)
+	try {
+		const res = await fetch(uri, {
+			method: 'POST',
+			headers: { 'Content-Type': 'text/xml', 'Accept': 'text/xml' },
+			body,
+			signal: controller.signal,
+		})
+		if (!res.ok) throw new Error(`XML-RPC HTTP error ${res.status}`)
+		return res.text()
+	} catch (err) {
+		if (err instanceof Error && err.name === 'AbortError') {
+			throw new Error('XML-RPC request timed out')
+		}
+		throw err
+	} finally {
+		clearTimeout(timeout)
+	}
 }
