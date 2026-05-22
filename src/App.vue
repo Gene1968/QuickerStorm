@@ -15,9 +15,9 @@ import { onMounted, provide, ref, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/userStore'
 import { useAvatarStore } from '@/stores/avatarStore.js'
-import { loadGoogleTokenFromSession } from '@/api/GoogleApi.js'
+// import { loadGoogleTokenFromSession } from '@/api/GoogleApi.js'
 import { AuthRepo } from '@/api/backend.js'
-import { session as supabaseSession } from '@/api/supabase/AuthRepo.js'
+// import { session as supabaseSession } from '@/api/supabase/AuthRepo.js'
 import ConsolePanel from '@/components/ConsolePanel.vue'
 
 const userStore   = useUserStore()
@@ -69,7 +69,7 @@ onMounted(async () => {
 
 	// Restore cached Google provider token (sessionStorage → silent refresh)
 	// so calendar/gmail work without waiting for a fresh OAuth round-trip.
-	await loadGoogleTokenFromSession()
+	// await loadGoogleTokenFromSession()
 
 	// Load saved avatar config from IDB FIRST so isSetupDone is correct
 	// before we do anything else with the store.

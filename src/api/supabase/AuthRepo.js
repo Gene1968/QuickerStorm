@@ -15,7 +15,7 @@
  */
 import { ref } from 'vue'
 import { supabase } from './client.js'
-import { setGoogleToken, clearGoogleAuth, storeRefreshToken } from '@/api/GoogleApi.js'
+// import { setGoogleToken, clearGoogleAuth, storeRefreshToken } from '@/api/GoogleApi.js'
 
 const SCOPES = [
 	'https://www.googleapis.com/auth/calendar.readonly',
