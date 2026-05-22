@@ -1,0 +1,37 @@
+{
+	"agni": {
+		"name": "Second Life",
+		"nick": "agni",
+		"loginURI": "https://login.agni.lindenlab.com/cgi-bin/login.cgi",
+		"slurl_base": "secondlife://",
+		"system": true
+	},
+	"aditi": {
+		"name": "Second Life Beta",
+		"nick": "aditi",
+		"loginURI": "https://login.aditi.lindenlab.com/cgi-bin/login.cgi",
+		"slurl_base": "secondlife://",
+		"system": true
+	},
+	"osgrid": {
+		"name": "OSGrid",
+		"nick": "osgrid",
+		"loginURI": "https://login.osgrid.org/",
+		"slurl_base": "hop://login.osgrid.org/",
+		"system": false
+	},
+	"kitely": {
+		"name": "Kitely",
+		"nick": "kitely",
+		"loginURI": "https://grid.kitely.com:8002/",
+		"slurl_base": "kitely://",
+		"system": false
+	},
+	"neverworld": {
+		"name": "Neverworld Grid",
+		"nick": "neverworld",
+		"loginURI": "https://neverworld.net:8002/",
+		"slurl_base": "hop://neverworld.net/",
+		"system": false
+	}
+}
