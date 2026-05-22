@@ -67,9 +67,14 @@ Browser → [username + password] → Bun /api/login
 | `src/composables/useCollabDoc.js`, `useWhiteboard.js`, `useTaskBoard.js` | Office collab N/A |
 | `src/composables/useYjsProvider.js`, `usePolls.js` | Office collab N/A |
 | `src/composables/useDeliveryBots.js`, `centipede/` | AVA-specific |
+| `src/composables/useKudos.js`, `useArrivalChime.js`, `usePoseSync.js` | AVA-specific office behaviour |
 | `src/components/collab/` | Office collab N/A |
 | `src/components/office/` (office room geometry) | Replace with world engine |
 | `src/stores/AuthStore.js`, `docsStore.js` | Replace with grid auth stores |
+| `server/supabase.ts` | No Supabase |
+| `server/handlers/collab.ts`, `collab-permissions.ts`, `connect4.ts` | Office features N/A |
+| `server/state/docs.ts` | Collab state N/A |
+| `src/office3d/` | Office prefabs; replace with world engine geometry |
 | Giphy, Google, Slack refs in remaining files | N/A |
 | AVA branding, logos | Replace with QuickerStorm |
 
