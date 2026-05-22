@@ -3,7 +3,7 @@ description: Prefer Tailwind, then Bootstrap, minimal Vue scoped CSS
 alwaysApply: true
 ---
 
-# Styling preference (QuickerStorm)
+# Styling preference (quickerSTORM)
 
 When adding or changing UI styling:
 

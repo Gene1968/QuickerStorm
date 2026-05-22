@@ -1,5 +1,5 @@
 /**
- * usePresence — syncs the QuickerStorm users / presence dataset for all peers and
+ * usePresence — syncs the quickerSTORM users / presence dataset for all peers and
  * the current user via PresenceRepo (Supabase).
  *
  * Data path:
@@ -41,7 +41,7 @@ const LS_KEY = 'ava_presence_item_id_sb'
 // ── Multi-device session arbitration ────────────────────────────────────────
 // Each browser tab gets a unique session ID (sessionStorage persists across
 // page refreshes in the same tab but is fresh for every new tab/window).
-// When a user opens QuickerStorm on a second device, that device writes its session
+// When a user opens quickerSTORM on a second device, that device writes its session
 // ID into the presence row. The previous device detects the mismatch and pauses.
 const MY_SESSION_ID = (() => {
 	const key = 'ava_session_id'

@@ -62,7 +62,7 @@ const toggleManageAccess = () => {
 	<nav class="header-container mb-0 py-0 pe-8 flex justify-between items-center font-montserrat">
 		<button @click="navTo('/')" class="hover:bg-neutral-80 h-full inline-flex items-center gap-3 py-1 px-8">
 			<ChatBubbleLeftRightIcon class="w-[3rem] text-primary-60" />
-			<h1 class="text-2xl text-[#B8D6EA] text-nowrap font-bold"> QuickerStorm <span class="text-[#FBC230] font-medium italic"> &#8212; your virtual Worlds on Web! </span><!----><!----></h1>
+			<h1 class="text-2xl text-[#B8D6EA] text-nowrap font-bold"> quickerSTORM <span class="text-[#FBC230] font-medium italic"> &#8212; your virtual Worlds on the Web! </span><!----><!----></h1>
 		</button>
 		<div class="flex items-center gap-4">
 			<!-- <div v-if="role === 'APDP Manager' || role === 'Career Field Manager'"> -->

@@ -11,7 +11,7 @@
  *   The first param is kept for call-site compatibility but is ignored; every
  *   call now goes to PostgREST regardless of what string you pass.
  *
- * Supported $filter grammar (the subset QuickerStorm actually uses):
+ * Supported $filter grammar (the subset quickerSTORM actually uses):
  *   FieldName eq 'value'             → .eq('field_name', 'value')
  *   FieldName eq true                → .eq('field_name', true)
  *   FieldName eq <number>            → .eq('field_name', n)

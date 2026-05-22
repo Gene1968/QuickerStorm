@@ -1,5 +1,5 @@
 /**
- * Backend entry — QuickerStorm is a Supabase-only app.
+ * Backend entry — quickerSTORM is a Supabase-only app.
  *
  * All presence / auth / announcements traffic goes through `src/api/supabase/`.
  * This file exists solely so consumers can keep importing from

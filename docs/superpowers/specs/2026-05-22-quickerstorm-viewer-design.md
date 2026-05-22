@@ -1,4 +1,4 @@
-# QuickerStorm Viewer — Phase 1 Design Spec
+# quickerSTORM Viewer — Phase 1 Design Spec
 
 **Date:** 2026-05-22  
 **Phase:** 1 — Foundation + Login + Basic 3D  
@@ -8,9 +8,9 @@
 
 ## Purpose
 
-QuickerStorm is a web-based viewer for OpenSimulator and Second Life. Users access their virtual world from any browser — no install required. Inspired by Firestorm Viewer and SpeedLight. Built with Vue 3, Three.js, Bun, and WebRTC.
+quickerSTORM is a web-based viewer for OpenSimulator and Second Life. Users access their virtual world from any browser — no install required. Inspired by Firestorm Viewer and SpeedLight. Built with Vue 3, Three.js, Bun, and WebRTC.
 
-> ⚠ QuickerStorm is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Linden Research, Inc. Second Life® is a registered trademark of Linden Research, Inc.
+> ⚠ quickerSTORM is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Linden Research, Inc. Second Life® is a registered trademark of Linden Research, Inc.
 
 ---
 
@@ -76,7 +76,7 @@ Browser → [username + password] → Bun /api/login
 | `server/state/docs.ts` | Collab state N/A |
 | `src/office3d/` | Office prefabs; replace with world engine geometry |
 | Giphy, Google, Slack refs in remaining files | N/A |
-| AVA branding, logos | Replace with QuickerStorm |
+| AVA branding, logos | Replace with quickerSTORM |
 
 ### Keep and Extend
 
@@ -333,7 +333,7 @@ No public ports exposed on the Synology or home router.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  QuickerStorm                                    [☀ / 🌙]  │
+│  quickerSTORM                                    [☀ / 🌙]  │
 │  A web-based viewer for OpenSimulator and Second Life        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │

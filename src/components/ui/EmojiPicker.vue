@@ -30,7 +30,7 @@ const CATEGORIES = [
 	{ name: 'Symbols', items: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🕉️','☸️','✡️','🔯','🕎','☯️','☦️','💯','✔️','✅','❌','⭕','❗','❓','❕','❔','‼️','⁉️','🔥','✨','🎉','🎊','💫','⚡','💥','🔔','🚀','👀','💭','💬'] },
 ]
 
-const RECENT_KEY = 'QuickerStorm:emoji:recent'
+const RECENT_KEY = 'quickerSTORM:emoji:recent'
 const recents = ref([])
 
 function loadRecents () {

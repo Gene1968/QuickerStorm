@@ -117,7 +117,7 @@ function connectSlack() {
 					<div class="sp-row">
 						<div class="sp-row-info">
 							<span class="sp-row-label">Send DMs as yourself</span>
-							<span class="sp-row-hint">Connect your Slack account so that your messages come from you rather than from &#8220;QuickerStorm&#8221;. For now you'll also need to keep Slack open; in the future we may duplicate the majority of Slack functionality here.</span>
+							<span class="sp-row-hint">Connect your Slack account so that your messages come from you rather than from &#8220;quickerSTORM&#8221;. For now you'll also need to keep Slack open; in the future we may duplicate the majority of Slack functionality here.</span>
 						</div>
 						<div class="slack-auth">
 							<div v-if="slackLinked" class="slack-linked">

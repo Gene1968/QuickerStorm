@@ -222,7 +222,7 @@ async function save () {
 								</p>
 								<label class="field-check">
 									<input type="checkbox" v-model="capEnabled" />
-									<span>Wear cap in QuickerStorm</span>
+									<span>Wear cap in quickerSTORM</span>
 								</label>
 							</div>
 							<div class="section" :class="{ 'section-dim': !capEnabled }">
@@ -236,7 +236,7 @@ async function save () {
 								<div class="section-title">Drinkware</div>
 								<label class="field-check">
 									<input type="checkbox" v-model="yetiMug" />
-									<span>Use a QuickerStorm Yeti mug for your drinks</span>
+									<span>Use a quickerSTORM Yeti mug for your drinks</span>
 								</label>
 							</div>
 						</template>

@@ -46,7 +46,7 @@ async function send() {
 			</div>
 
 			<div class="ann-modal-body">
-				<p class="ann-modal-hint mb-n2 text-xs">Sends to all users currently online in QuickerStorm.</p>
+				<p class="ann-modal-hint mb-n2 text-xs">Sends to all users currently online in quickerSTORM.</p>
 				<p class="ann-modal-hint m-0 text-xs text-muted">To do: add option to Slack #general or offline invitees.</p>
 				<textarea
 					v-model="message"

@@ -1,6 +1,6 @@
 <script setup>
 /**
- * App.vue — root shell for QuickerStorm.
+ * App.vue — root shell for quickerSTORM.
  *
  * Bootstraps Supabase auth, then resolves the current user and loads their
  * saved avatar config before rendering OfficeView via <RouterView>.
@@ -109,15 +109,15 @@ async function bootstrapIdentity() {
 <template>
 	<!-- Global loading screen -->
 	<div v-if="loading" class="global-loader">
-		<div class="gl-logo lh-sm">Quicker<span>storm</span></div>
-		<div class="mb-2 h3 fw-normal lh-sm text-accent2"><span>your virtual Worlds on Web</span></div>
+		<div class="gl-logo lh-sm"><span>quicker</span>STORM</div>
+		<div class="mb-2 h3 fw-normal lh-sm text-accent2"><span>your virtual Worlds on the Web!</span></div>
 		<div class="gl-spinner"></div>
 	</div>
 
 	<!-- Supabase mode: show Google sign-in if no session -->
 	<div v-else-if="needsSupabaseSignIn" class="global-loader">
-		<div class="gl-logo lh-sm">Quicker<span>storm</span></div>
-		<div class="mb-3 h3 fw-normal lh-sm text-accent2"><span>your virtual Worlds on Web</span></div>
+		<div class="gl-logo lh-sm"><span>quicker</span>STORM</div>
+		<div class="mb-3 h3 fw-normal lh-sm text-accent2"><span>your virtual Worlds on the Web!</span></div>
 		<button class="ava-btn flex items-center justify-center gap-1 rounded-lg text-xs font-semibold p-3" @click="signInSupabase">Sign in with Google</button>
 	</div>
 
@@ -138,7 +138,7 @@ async function bootstrapIdentity() {
 }
 
 .gl-logo {
-	font-size: clamp(2rem, 3.5vw, 3rem); font-weight: 900;
+	font-size: clamp(1.667rem, 3.333vw, 3.333rem); font-weight: 900;
 	color: var(--color-accent3);
 	letter-spacing: -0.04em;
 	font-family: 'EurostileExtended', 'RobotoFlex', sans-serif;

@@ -2,7 +2,7 @@
 /**
  * SuggestionBoxModal — Ideas & feature board backed by SharePoint.
  *
- * SharePoint list: "QuickerStorm Ideas"  (create manually, columns below)
+ * SharePoint list: "quickerSTORM Ideas"  (create manually, columns below)
  *   Title        Single line of text  (required — idea name)
  *   Description  Multiple lines of text / plain
  *   Category     Single line of text
@@ -27,7 +27,7 @@ defineEmits(['close'])
 
 const avatarStore = useAvatarStore()
 const { isDark } = useTheme()
-const listApi = ListApi(config.siteUrl, 'QuickerStorm Ideas')
+const listApi = ListApi(config.siteUrl, 'quickerSTORM Ideas')
 
 // ── ag-grid theme — reactive to dark/light ───────────────────────
 const gridTheme = computed(() =>

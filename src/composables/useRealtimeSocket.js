@@ -1,5 +1,5 @@
 /**
- * useRealtimeSocket — Singleton WebSocket connection to the QuickerStorm server.
+ * useRealtimeSocket — Singleton WebSocket connection to the quickerSTORM server.
  *
  * Replaces the per-composable WebSocket connections (signal-server for voice,
  * Supabase Realtime for presence/pose/chat) with a single multiplexed socket.

@@ -562,7 +562,7 @@ watch(() => officeStore.currentSeatId, (seatId) => {
 	else sessionStorage.removeItem('ava_last_seat')
 })
 
-// Sync presence users to offices — only QuickerStorm users get a door label
+// Sync presence users to offices — only quickerSTORM users get a door label
 function assignOfficesToUsers () {
 	const engine = officeStore.engineRef
 
@@ -841,7 +841,7 @@ const roomLabel = computed(() => {
 		<!-- Update banner -->
 		<Transition name="toast">
 			<div v-if="updateAvailable" class="update-banner">
-				<span>QuickerStorm has been updated.</span>
+				<span>quickerSTORM has been updated.</span>
 				<button class="update-reload" @click="reloadPage">Please reload</button>
 			</div>
 		</Transition>
@@ -892,7 +892,7 @@ const roomLabel = computed(() => {
 			<MagazineModal v-if="showMagazine" :url="magazineUrl" @close="showMagazine = false" />
 		</Transition>
 
-		<!-- QuickerStorm metrics modal — root is <Teleport>, which <Transition> can't animate. -->
+		<!-- quickerSTORM metrics modal — root is <Teleport>, which <Transition> can't animate. -->
 		<MetricsView v-if="showMetrics" @close="showMetrics = false" />
 
 		<!-- Suggestion box modal — root is <Teleport>, which <Transition> can't animate. -->

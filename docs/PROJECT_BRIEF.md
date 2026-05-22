@@ -1,10 +1,10 @@
-# Project Brief — QuickerStorm
+# Project Brief — quickerSTORM
 
 > **Living context document** for goals, constraints, and technical anchors. Update as the product evolves. Include in AI prompts alongside `CONVENTIONS.md` and relevant ADRs.
 
 ## Purpose
 
-QuickerStorm is a web-based 3D viewer for Open Simulator and Second Life.  It provides real-time presence awareness, proximity-based voice chat, user messaging, groups, inventory, movement, teleporting, SLURLs, landmarks, etc.
+quickerSTORM is a web-based 3D viewer for Open Simulator and Second Life.  It provides real-time presence awareness, proximity-based voice chat, user messaging, groups, inventory, movement, teleporting, SLURLs, landmarks, etc.
 
 ## Target Users
 

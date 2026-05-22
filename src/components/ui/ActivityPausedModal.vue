@@ -14,7 +14,7 @@ useModalAudio()
 					and activity has been paused. You can rejoin if you like.
 				</p>
 				<button class="ap-return" @click="resumeSession">
-					Return to QuickerStorm
+					Return to quickerSTORM
 				</button>
 			</div>
 		</div>

@@ -2,7 +2,7 @@
  * SP-style list name → Postgres table name.
  *
  * Used by src/api/ListApi.js so call sites that still say things like
- * `ListApi(_, 'apps').getAll(...)` or `ListApi(_, 'QuickerStorm Arcade Scores').getAll(...)`
+ * `ListApi(_, 'apps').getAll(...)` or `ListApi(_, 'quickerSTORM Arcade Scores').getAll(...)`
  * land on the right table without being rewritten.
  *
  * Anything not listed falls through to `listName.toLowerCase().replace(/\s+/g, '_')`
@@ -11,11 +11,11 @@
  */
 
 const LIST_TO_TABLE = {
-	users:                    'users',
-	announcements:            'announcements',
-	apps:                     'apps',
-	'QuickerStorm Arcade Scores': 'arcade_scores',
-	'QuickerStorm Ideas':         'ideas',
+	users: 'users',
+	announcements: 'announcements',
+	apps: 'apps',
+	'quickerSTORM Arcade Scores': 'arcade_scores',
+	'quickerSTORM Ideas': 'ideas',
 }
 
 // Tables with jsonb columns whose callers historically treat them as strings.

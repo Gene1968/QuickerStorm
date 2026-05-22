@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-QuickerStorm — web-based 3D viewer for OpenSimulator and Second Life. Users see their avatar in a Three.js scene, move around, chat, use proximity voice, interact with objects, teleport, and cross regions — without installing a thick client.
+quickerSTORM — web-based 3D viewer for OpenSimulator and Second Life. Users see their avatar in a Three.js scene, move around, chat, use proximity voice, interact with objects, teleport, and cross regions — without installing a thick client.
 
 ## Commands
 

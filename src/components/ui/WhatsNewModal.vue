@@ -29,7 +29,7 @@ onUnmounted(() => document.removeEventListener('keydown', onEscCapture, true))
 				<dl class="wn-changelog">
 					<!-- Newest first -->
 					<dt>2026-05-22</dt>
-					<dd>Initial shell for QuickerStorm</dd>
+					<dd>Initial shell for quickerSTORM</dd>
 				</dl>
 			</div>
 		</div>

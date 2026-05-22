@@ -1,5 +1,5 @@
 /**
- * shared/protocol.js — Message type constants for the QuickerStorm WebSocket protocol.
+ * shared/protocol.js — Message type constants for the quickerSTORM WebSocket protocol.
  *
  * Imported by both the Bun server and the Vue client.
  * Phase 1 (signaling) keeps the existing { type: '...' } format for backward compat.

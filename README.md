@@ -1,4 +1,4 @@
-# QuickerStorm
+# quickerSTORM
 
 ## A web-based 3D viewer for Open Simulator and Second Life
 
@@ -18,7 +18,7 @@
 ```sh
 npm install
 ```
-# QuickerStorm
+# quickerSTORM
 Web OSSL
 ## Documentation
 

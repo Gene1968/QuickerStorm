@@ -127,7 +127,7 @@ const tabs = ['Navigation', 'Connections', 'TBD']
 								<div class="help-card-icon">💬</div>
 								<div>
 									<div class="help-card-label">Connect Slack</div>
-									<div class="help-card-desc">Go to <strong>Settings → Slack</strong> and click <em>Connect Slack</em> to link your account. Once connected, DMs you send from QuickerStorm come from you rather than from the generic QuickerStorm bot, and you'll get full DM history inline. Without it, messages still work but appear as bot posts.</div>
+									<div class="help-card-desc">Go to <strong>Settings → Slack</strong> and click <em>Connect Slack</em> to link your account. Once connected, DMs you send from quickerSTORM come from you rather than from the generic quickerSTORM bot, and you'll get full DM history inline. Without it, messages still work but appear as bot posts.</div>
 								</div>
 							</div>
 
@@ -143,7 +143,7 @@ const tabs = ['Navigation', 'Connections', 'TBD']
 								<div class="help-card-icon">🔢</div>
 								<div>
 									<div class="help-card-label">Google account index</div>
-									<div class="help-card-desc">If you have multiple Google accounts signed in, use the <strong>+/-</strong> control in Settings to tell QuickerStorm which slot is your work account. <strong>0</strong> is usually your first/personal account, <strong>1</strong> is your second (work), and so on. This ensures calendar links and Drive previews open in the right account.</div>
+									<div class="help-card-desc">If you have multiple Google accounts signed in, use the <strong>+/-</strong> control in Settings to tell quickerSTORM which slot is your work account. <strong>0</strong> is usually your first/personal account, <strong>1</strong> is your second (work), and so on. This ensures calendar links and Drive previews open in the right account.</div>
 								</div>
 							</div>
 							<div class="py-24"></div>

@@ -14,7 +14,7 @@ function choose(wantSound) {
 		<div class="consent-modal" role="dialog" aria-modal="true" aria-label="Sound settings">
 			<div class="consent-icon">🔊</div>
 			<h2 class="consent-title">This could get slightly noisy</h2>
-			<p class="consent-body">QuickerStorm plays sounds and supports proximity voice chat with your coworkers. You can mute or unmute at any time from the bottom voice/sound bar.</p>
+			<p class="consent-body">quickerSTORM plays sounds and supports proximity voice chat with your coworkers. You can mute or unmute at any time from the bottom voice/sound bar.</p>
 			<div class="consent-actions">
 				<button class="consent-btn consent-btn--primary" @click="choose(true)">
 					📢 Bring on the noise

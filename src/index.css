@@ -123,7 +123,7 @@ html.light .shelf-tile:hover  { background: rgba(255,255,255,0.18); border-color
 html.light .shelf-grid-icon   { color: rgba(255,255,255,0.75); }
 html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 
-/* ── QuickerStorm component helpers ─────────────────────────────────── */
+/* ── quickerSTORM component helpers ─────────────────────────────────── */
 /*
  * Use these @layer components classes to avoid repeating verbose property
  * chains in every component.  They reference CSS vars so they respond to

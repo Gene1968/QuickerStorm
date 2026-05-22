@@ -1,4 +1,4 @@
-# Conventions — QuickerStorm
+# Conventions — quickerSTORM
 
 > Include this file (with `PROJECT_BRIEF.md`) in AI prompt context for consistent output. This file is the single place for style rules in this repo (aligned with the company **AI-Assisted Development** guide: `../ai-assisted-workflow/docs/main-guide.md`).
 
@@ -37,7 +37,7 @@ Use this priority order; only go further down the list when the one above can't 
 
 ### Theme-aware colors
 
-The QuickerStorm palette in `tailwind.config.js` (`bg`, `card`, `t1`, `accent`, etc.) uses `var(--color-*)` so `bg-card`, `text-t1`, `border-brd` etc. correctly switch between dark (`:root`) and light (`html.light`) themes.
+The quickerSTORM palette in `tailwind.config.js` (`bg`, `card`, `t1`, `accent`, etc.) uses `var(--color-*)` so `bg-card`, `text-t1`, `border-brd` etc. correctly switch between dark (`:root`) and light (`html.light`) themes.
 
 ⚠️ Opacity modifiers (`bg-card/50`) do **not** work with CSS-var colors. Use `rgba()` inline style or a `bg-[rgba(...)]` arbitrary class when you need translucency.
 

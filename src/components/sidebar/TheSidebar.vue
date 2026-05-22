@@ -365,13 +365,13 @@ const dmError = ref("");
 const inviteSending = ref(new Set()); // member IDs currently sending
 const inviteSent = ref(new Set()); // member IDs that were sent successfully
 
-// Slack IDs that already have an QuickerStorm presence row (matched via slackId field)
+// Slack IDs that already have an quickerSTORM presence row (matched via slackId field)
 const QuickerStormSlackIds = computed(
 	() => new Set(presenceStore.users.map((u) => u.slackId).filter(Boolean)),
 );
 
-// Slack members who are either not in QuickerStorm at all, or currently offline.
-// Online/away/busy QuickerStorm users are already in the main sidebar list.
+// Slack members who are either not in quickerSTORM at all, or currently offline.
+// Online/away/busy quickerSTORM users are already in the main sidebar list.
 const slackOnlyUsers = computed(() => {
 	if (!slack.isLoaded.value) return [];
 	const presenceByEmail = new Map(
@@ -386,7 +386,7 @@ const slackOnlyUsers = computed(() => {
 			const email = m.profile.email.toLowerCase();
 			// if (email === myEmail) return false;
 			const avaUser = presenceByEmail.get(email);
-			// Include if never joined QuickerStorm, or currently offline
+			// Include if never joined quickerSTORM, or currently offline
 			return !avaUser || avaUser.status === 'offline';
 		})
 		.sort((a, b) => {
@@ -486,9 +486,9 @@ async function inviteUser(member) {
 				name: member.profile?.real_name,
 				email: member.profile?.email,
 			},
-			// `Hey ${name}! Come hang out with us in QuickerStorm 👋 ${window.location.href}`,
-			`Hey ${name}! Come hang out with us in QuickerStorm 👋 https://app.QuickerStorm.net/`,
-			// `Hey ${name}! Come hang out with us in QuickerStorm 👋 https://inclusivemedium.sharepoint.com/QuickerStorm/SiteAssets/index.aspx`,
+			// `Hey ${name}! Come hang out with us in quickerSTORM 👋 ${window.location.href}`,
+			`Hey ${name}! Come hang out with us in quickerSTORM 👋 https://app.quickerSTORM.net/`,
+			// `Hey ${name}! Come hang out with us in quickerSTORM 👋 https://inclusivemedium.sharepoint.com/QuickerStorm/SiteAssets/index.aspx`,
 			{ forceBot: true },
 		);
 		inviteSent.value = new Set([...inviteSent.value, member.id]);
@@ -898,7 +898,7 @@ function isUserTalking(user) {
 						aria-hidden="true"
 					/>
 					<span class="sidebar-section-label truncate"
-						>QuickerStorm rooms</span
+						>quickerSTORM rooms</span
 					>
 					<span class="sidebar-section-chevron">{{
 						showRooms ? "▾" : "▸"
@@ -978,7 +978,7 @@ function isUserTalking(user) {
 						aria-hidden="true"
 					/>
 					<span class="sidebar-section-label truncate"
-						>QuickerStorm users</span
+						>quickerSTORM users</span
 					>
 					<span
 						@click.stop="showOffline = !showOffline; playSound('pop.mp3')"
@@ -1304,7 +1304,7 @@ function isUserTalking(user) {
 				</Transition>
 			</div>
 
-			<!-- ── On Slack (not yet in QuickerStorm) ───────────── -->
+			<!-- ── On Slack (not yet in quickerSTORM) ───────────── -->
 			<!-- ── Slack Everyone (hidden — native messaging replaces Slack) ── -->
 			<div class="slack-away" v-if="false && !collapsed && slack.isLoaded.value">
 				<button
@@ -1403,8 +1403,8 @@ function isUserTalking(user) {
 										inviteSent.has(member.id)
 											? 'Invite sent!'
 											: QuickerStormSlackIds.has(member.id)
-												? 'Reinvite to QuickerStorm'
-												: 'Invite to QuickerStorm'
+												? 'Reinvite to quickerSTORM'
+												: 'Invite to quickerSTORM'
 									"
 									@click.stop="inviteUser(member)"
 								>
@@ -2127,7 +2127,7 @@ function isUserTalking(user) {
 .user-row-dm:hover {
 	background: rgba(255, 255, 255, 0.1);
 }
-/* DM unread badge in QuickerStorm user rows */
+/* DM unread badge in quickerSTORM user rows */
 .user-dm-badge {
 	margin-left: auto;
 	flex-shrink: 0;

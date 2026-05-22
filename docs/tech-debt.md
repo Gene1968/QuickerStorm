@@ -1,4 +1,4 @@
-# Tech Debt Log — QuickerStorm
+# Tech Debt Log — quickerSTORM
 
 > Shortcuts and known issues to revisit. Add rows as they appear; review during planning.
 

@@ -1028,11 +1028,11 @@ export function useOfficeEngine () {
 		isLowEnd = tier === 'low'
 		isMidRange = tier === 'mid'
 		console.log(
-			`[QuickerStorm] perf tier: ${tier}` +
-			` — cores: ${clientStats.cores ?? '?'}` +
-			` — RAM: ${clientStats.ramGb != null ? clientStats.ramGb + ' GB' : '?'}` +
-			` — GPU: ${clientStats.gpuRenderer ?? '?'}` +
-			` — mobile: ${clientStats.mobile}`
+			`[quickerSTORM] perf tier: ${tier}` +
+				` — cores: ${clientStats.cores ?? '?'}` +
+				` — RAM: ${clientStats.ramGb != null ? clientStats.ramGb + ' GB' : '?'}` +
+				` — GPU: ${clientStats.gpuRenderer ?? '?'}` +
+				` — mobile: ${clientStats.mobile}`,
 		)
 	}
 
@@ -2852,7 +2852,7 @@ export function useOfficeEngine () {
 				backPanel.position.set(-plinthDepth / 2 - 0.015, 2.35, 0)
 				g.add(backPanel)
 
-				// "QuickerStorm" sign above the lamps (painted on the back panel)
+				// "quickerSTORM" sign above the lamps (painted on the back panel)
 				const signCanvas = document.createElement('canvas')
 				signCanvas.width = 1024; signCanvas.height = 192
 				const sctx = signCanvas.getContext('2d')
@@ -2866,11 +2866,11 @@ export function useOfficeEngine () {
 				sctx.shadowColor = '#00b4d8'
 				sctx.shadowBlur = 32
 				sctx.fillStyle = '#d8f0ff'
-				sctx.fillText('QuickerStorm', 512, 100)
+				sctx.fillText('quickerSTORM', 512, 100)
 				// Inner bright core
 				sctx.shadowBlur = 10
 				sctx.fillStyle = '#ffffff'
-				sctx.fillText('QuickerStorm', 512, 100)
+				sctx.fillText('quickerSTORM', 512, 100)
 				// Thin underline accent
 				sctx.shadowBlur = 14
 				sctx.strokeStyle = '#00b4d8'

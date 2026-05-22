@@ -181,7 +181,7 @@ function relativeTime(dateStr) {
 		<div class="ava-modal-overlay metrics-overlay" @click.self="emit('close')">
 			<div class="ava-modal metrics-panel">
 				<div class="ava-modal-header flex items-center justify-between py-4 px-5 shrink-0">
-					<span class="mp-title">QuickerStorm Metrics <span class="text-xs font-normal opacity-55 tracking-normal">({{ envLabel }})</span></span>
+					<span class="mp-title">quickerSTORM Metrics <span class="text-xs font-normal opacity-55 tracking-normal">({{ envLabel }})</span></span>
 					<label v-if="!isProduction" class="flex items-center gap-1.5 text-[0.75rem] text-tm cursor-pointer select-none ml-auto mr-4">
 						<input type="checkbox" v-model="includeBots" class="accent-[var(--color-accent)] cursor-pointer" />
 						Include localhost/IP devs

@@ -1,6 +1,6 @@
-# QuickerStorm — documentation for humans and AI
+# quickerSTORM — documentation for humans and AI
 
-This folder holds **product context, conventions, planning artifacts, prompts, ADRs, and session logs** for QuickerStorm. It follows the same layout as the company **AI-Assisted Development** guide ([`../ai-assisted-workflow/docs/main-guide.md`](../ai-assisted-workflow/docs/main-guide.md) §2.4), but everything lives **in this repository** under `docs/`.
+This folder holds **product context, conventions, planning artifacts, prompts, ADRs, and session logs** for quickerSTORM. It follows the same layout as the company **AI-Assisted Development** guide ([`../ai-assisted-workflow/docs/main-guide.md`](../ai-assisted-workflow/docs/main-guide.md) §2.4), but everything lives **in this repository** under `docs/`.
 
 | Path (under `docs/`) | Purpose |
 | --- | --- |

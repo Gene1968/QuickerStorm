@@ -9,7 +9,11 @@ import App from './App.vue'
 import router from './router/index.js'
 
 if (typeof __BUILD_TIME__ !== 'undefined') {// on local, I think this is more like when the dev server was started:
-	console.log(`%cQuickerStorm %cbuild ${__BUILD_TIME__}`, 'color:#00b4d8;font-weight:700', 'color:#7ab8d0')
+	console.log(
+		`%cquickerSTORM %cbuild ${__BUILD_TIME__}`,
+		'color:#00b4d8;font-weight:700',
+		'color:#7ab8d0',
+	)
 }
 
 const app = createApp(App)

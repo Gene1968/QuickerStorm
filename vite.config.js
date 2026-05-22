@@ -73,7 +73,7 @@ export default ({ mode }) => {
 			},
 		},
 		plugins: plugins,
-		assetsInclude: ["**/*.mp4", "**/*.pdf"],
+		assetsInclude: ['**/*.mp4', '**/*.pdf'],
 		// css: {
 		// 	preprocessorOptions: {
 		// 		scss: {
@@ -83,8 +83,8 @@ export default ({ mode }) => {
 		// },
 		resolve: {
 			alias: {
-				"@": fileURLToPath(new URL("./src", import.meta.url)),
-				"@shared": fileURLToPath(new URL("./shared", import.meta.url)),
+				'@': fileURLToPath(new URL('./src', import.meta.url)),
+				'@shared': fileURLToPath(new URL('./shared', import.meta.url)),
 			},
 		},
 		define: {
@@ -97,9 +97,9 @@ export default ({ mode }) => {
 		// esbuild: {
 		//   drop: ['console', 'debugger']
 		// },
-		// SP hosting needs the asset path prefix (/QuickerStorm/SiteAssets/);
+		// SP hosting needs the asset path prefix (/quickerSTORM/SiteAssets/);
 		// standalone hosting (Railway) serves from root.
 		// eslint-disable-next-line no-undef
-		base: isSharePointHost ? process.env.VITE_PATH : "/",
+		base: isSharePointHost ? process.env.VITE_PATH : '/',
 	})
 }

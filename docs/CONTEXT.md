@@ -1,14 +1,14 @@
-# QuickerStorm – Context for AI / Chat Sessions
+# quickerSTORM – Context for AI / Chat Sessions
 
-**Purpose:** Stores context so that AI assistants and future chat sessions retain important information even when chat history is unavailable. Read this file when working on QuickerStorm.
+**Purpose:** Stores context so that AI assistants and future chat sessions retain important information even when chat history is unavailable. Read this file when working on quickerSTORM.
 
 ---
 
-## What QuickerStorm Is
+## What quickerSTORM Is
 
 A **web-based 3D virtual world viewer for open simulator and Second Life**
 
-- **Production** (`genebiondo.com/main/games/QuickerStorm`) — Vite SPA + ???
+- **Production** (`genebiondo.com/main/games/quickerSTORM`) — Vite SPA + ???
 
 Backend is ???
 

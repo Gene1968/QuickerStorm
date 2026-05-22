@@ -4,7 +4,7 @@
  */
 import { openDB } from 'idb'
 
-const DB_NAME = 'QuickerStorm'
+const DB_NAME = 'quickerSTORM'
 const DB_VERSION = 1
 const STORE_NAME = 'kv'
 

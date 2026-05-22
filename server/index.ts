@@ -1,5 +1,5 @@
 /**
- * server/index.ts — QuickerStorm WebSocket + HTTP server (Bun runtime).
+ * server/index.ts — quickerSTORM WebSocket + HTTP server (Bun runtime).
  *
  * Replaces signal-server.js with Bun's native WebSocket and HTTP handling.
  * Phase 1: WebRTC signaling, room privacy, Jitsi/Google token endpoints, static SPA.
@@ -164,7 +164,7 @@ const server = Bun.serve<WSData>({
 			if (staticRes) return staticRes
 		}
 
-		return new Response('QuickerStorm server OK\n', {
+		return new Response('quickerSTORM server OK\n', {
 			headers: { 'Content-Type': 'text/plain', ...CORS_HEADERS },
 		})
 	},
@@ -271,4 +271,4 @@ if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
 	console.log('[flush] SUPABASE_SERVICE_ROLE_KEY not set — flush disabled (signaling-only mode)')
 }
 
-console.log(`QuickerStorm server listening on http://localhost:${server.port}`)
+console.log(`quickerSTORM server listening on http://localhost:${server.port}`)
