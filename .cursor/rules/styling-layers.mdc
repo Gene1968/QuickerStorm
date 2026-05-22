@@ -1,0 +1,14 @@
+---
+description: Prefer Tailwind, then Bootstrap, minimal Vue scoped CSS
+alwaysApply: true
+---
+
+# Styling preference (QuickerStorm)
+
+When adding or changing UI styling:
+
+1. **Tailwind** utilities in the template first (`tailwind.config.js` theme tokens: `bg-card`, `text-t1`, etc.).
+2. **Bootstrap** classes second, only where they clearly help.
+3. **`<style scoped>`** last — mostly unique values, animations, transitions, `@apply` bundles, or things TW cannot express.
+
+Details and exceptions: **`docs/CONVENTIONS.md`** (CSS units / theme / opacity modifiers).

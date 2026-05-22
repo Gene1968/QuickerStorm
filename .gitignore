@@ -1,0 +1,77 @@
+# Environment
+.env
+.env.local
+.env.*.local
+*.local
+
+
+dist
+dist-ssr
+coverage
+
+
+# Nuxt
+app/.nuxt/
+app/.output/
+app/dist/
+app/.data/
+
+
+# Node
+node_modules/
+app/node_modules/
+
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+# Editor directories and files
+.vscode/*
+.vscode/settings.json
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+
+# Docker
+db/data/
+
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+
+/cypress/videos/
+/cypress/screenshots/
+
+
+#Bootstrap Override
+/compiled-bootstrap
+/compiled-bootstrap/
+compiled-bootstrap/
+override-bootstrap.css
+/compiled-bootstrap/override-bootstrap.css
+compiled-bootstrap/override-bootstrap.css
+/compiled-bootstrap/override-bootstrap.css.map
+compiled-bootstrap/override-bootstrap.css
+compiled-bootstrap/override-bootstrap.css.map
+
+#supabase
+supabase/.temp/**
+supabase/.temp/*
+/supabase/.temp/**
+/supabase/.temp/*
+supabase/.temp
+/supabase/.temp

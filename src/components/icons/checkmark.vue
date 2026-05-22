@@ -1,0 +1,53 @@
+<script setup>
+const props = defineProps({
+    width: {
+        type: String,
+        default: '50px'
+    },
+    height: {
+        type: String,
+        default: '50px'
+    },
+    stroke: {
+        type: String,
+        default: '#0F172A'
+    },
+    fill: {
+        type: String,
+        default: 'none'
+    },
+    strokeWidth: {
+        type: String,
+        default: '1.5'
+    },
+    strokeLinecap: {
+        type: String,
+        default: 'round'
+    },
+    strokeLinejoin: {
+        type: String,
+        default: 'round'
+    },
+    viewBox: {
+        type: String,
+        default: '0 0 14 12'
+    }
+
+})
+</script>
+
+<template>
+    <svg 
+        :width="props.width" 
+        :height="props.height" 
+        :viewBox="props.viewBox" 
+        :fill="props.fill" 
+        xmlns="http://www.w3.org/2000/svg">
+            <path 
+                fill-rule="evenodd" 
+                clip-rule="evenodd" 
+                d="M13.7045 0.153466C14.034 0.404497 14.0976 0.875094 13.8466 1.20457L5.84657 11.7046C5.71541 11.8767 5.51627 11.9838 5.30033 11.9983C5.08439 12.0129 4.87271 11.9334 4.71967 11.7804L0.21967 7.28037C-0.0732233 6.98748 -0.0732233 6.5126 0.21967 6.21971C0.512563 5.92682 0.987437 5.92682 1.28033 6.21971L5.17351 10.1129L12.6534 0.295507C12.9045 -0.0339712 13.3751 -0.0975653 13.7045 0.153466Z" 
+                fill="currentColor"/>
+    </svg>
+
+</template>

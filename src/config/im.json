@@ -1,0 +1,45 @@
+{
+  "allowedGroups": "Developers",
+  "siteUrl": "https://inclusivemedium.sharepoint.com/QuickerStorm/",
+  "permissionSiteUrl": "https://inclusivemedium.sharepoint.com/avadev/",
+  "lists": {
+    "users": {
+      "listUrl": "https://inclusivemedium.sharepoint.com/QuickerStorm/",
+      "listName": "users"
+    },
+    "requests": {
+      "listUrl": "https://inclusivemedium.sharepoint.com/avadev/",
+      "listName": "APDPRequests"
+    },
+    "docs": {
+      "listUrl": "https://inclusivemedium.sharepoint.com/avadev/",
+      "listName": "APDPDocs"
+    },
+    "auth": {
+      "listUrl": "https://inclusivemedium.sharepoint.com/avadev/",
+      "listName": "APDPAuth"
+    },
+    "announcements": {
+      "listUrl": "https://inclusivemedium.sharepoint.com/QuickerStorm/",
+      "listName": "announcements"
+    }
+  },
+  "apps": [],
+  "fileUpload": "/",
+  "supportEmails": [
+    "chris.finster@inclusivemedium.onmicrosoft.com"
+  ],
+  "permissionGroupName": "APDP_Temp",
+  "groupID": 204,
+  "hideLists": [
+    "APDPRequests",
+    "APDPAuth"
+  ],
+  "hideLibraries": [
+    "APDPDocs",
+    "APDPRequestManager"
+  ],
+  "permissionGroupLink": "https://inclusivemedium.sharepoint.com/avadev/_layouts/15/people.aspx?MembershipGroupId=204",
+  "feedbackFormLink": "https://inclusivemedium.sharepoint.com/avadev/Onboarding%20Internal/index.aspx#/form-builder/APDP-Request Manager Feedback",
+  "formsAndGuidesUrl": "https://inclusivemedium.sharepoint.com/avadev/"
+}

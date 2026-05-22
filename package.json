@@ -1,0 +1,56 @@
+{
+	"name": "QuickerStorm",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite --mode development",
+		"dev:server": "bun run --watch server/index.ts",
+		"serve": "vite --mode development",
+		"build": "npm run build:staging && npm run build:prod",
+		"build:staging": "vite build --mode staging",
+		"build:prod": "vite build",
+		"start": "bun run server/index.ts",
+		"preview": "vite preview",
+		"lint": "eslint . --fix",
+		"format": "prettier --write src/"
+	},
+	"dependencies": {
+		"@heroicons/vue": "^2.2.0",
+		"@lucide/vue": "^1.16.0",
+		"@supabase/supabase-js": "^2.103.2",
+		"ag-grid-community": "^35.2.1",
+		"ag-grid-vue3": "^35.2.1",
+		"bootstrap": "^5.3.8",
+		"chart.js": "^4.4.8",
+		"gsap": "^3.14.2",
+		"howler": "^2.2.4",
+		"idb": "^8.0.3",
+		"node-emoji": "^2.2.0",
+		"patternomaly": "^1.3.2",
+		"pinia": "^3.0.3",
+		"three": "^0.183.2",
+		"vue": "^3.5.31",
+		"vue-chartjs": "^5.3.2",
+		"vue-router": "^4.5.0",
+		"xlsx": "^0.18.5",
+		"y-protocols": "^1.0.7",
+		"yjs": "^13.6.30"
+	},
+	"optionalDependencies": {
+		"ws": "^8.18.0"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@vitejs/plugin-vue": "^5.2.1",
+		"autoprefixer": "^10.4.20",
+		"concurrently": "^9.2.1",
+		"eslint": "^9.13.0",
+		"eslint-plugin-vue": "^9.29.0",
+		"postcss": "^8.4.47",
+		"postcss-nesting": "^13.0.1",
+		"sass-embedded": "^1.99.0",
+		"tailwindcss": "^3.4.18",
+		"vite": "^6.1.0"
+	}
+}
