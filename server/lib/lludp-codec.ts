@@ -287,6 +287,7 @@ export function decodeObjectUpdate(
   buf: Buffer,
   dataOffset: number,
   onError?: (msg: string) => void,
+  onDiag?: (msg: string) => void,
 ): ObjectData[] {
   const objects: ObjectData[] = []
   let off = dataOffset
@@ -306,6 +307,11 @@ export function decodeObjectUpdate(
     let _diag = ''   // WHY: declared before try so catch block can read it
     try {
       localId = buf.readUInt32LE(off); off += 4
+      // WHY: OpenSim inserts 25-byte null/tombstone entries between real objects in
+      // multi-object packets. Format: localId(0,4)+state(1)+fullId(16)+CRC(4)=25 bytes.
+      // These are NOT full ObjectData records. localId=0 is reserved/invalid in SL/OS.
+      // Skip the remaining 21 bytes and continue so we land on the next real object.
+      if (localId === 0) { off += 21; continue }
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const _state   = buf[off++]
       const fullId   = bytesToUuid(buf, off); off += 16
@@ -386,6 +392,13 @@ export function decodeObjectUpdate(
       off += 12   // JointPivot LLVector3
       off += 12   // JointAxisOrAnchor LLVector3
       objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos, nameValue })
+      // WHY: log each successful decode + 40 bytes AFTER endOff so we can see whether
+      // the bytes immediately following are the next real object header or zero-padding.
+      // This lets us diagnose the 25-zero gap that appears between objects in multi-object packets.
+      if (count > 1) {
+        const _nextHex = buf.slice(off, Math.min(buf.length, off + 40)).toString('hex')
+        onDiag?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} startOff=${objStartOff} endOff=${off} [${_diag}] NEXT40=${_nextHex}`)
+      }
     } catch (e) {
       // Hex dump first 80 bytes from startOff to reveal actual binary structure
       // WHY: 200 bytes covers fixed header (41) + od (≤76) + fixed tail (31) + enough variable fields

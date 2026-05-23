@@ -140,9 +140,13 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (type === `high:${HIGH_OBJECT_UPDATE}`) {
 		// WHY: onError callback lets decoder return partial results (objects decoded before
 		// the bad one) instead of throwing and losing the whole packet.
-		const objects = decodeObjectUpdate(buf, dataOffset, (errMsg) => {
-			slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`)
-		})
+		// onDiag logs each successful obj in multi-object packets to verify byte counts.
+		// zeroCoded logged to diagnose whether zero-expand output is correct length.
+		slog.info(session.ws, `[ObjUpd] zeroCoded=${hdr.zeroCoded} bufLen=${buf.length} dataOffset=${dataOffset}`)
+		const objects = decodeObjectUpdate(buf, dataOffset,
+			(errMsg)  => slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`),
+			(diagMsg) => slog.info(session.ws, `[ObjUpd:diag] ${diagMsg}`),
+		)
 		if (objects.length > 0) {
 			slog.info(session.ws, `ObjectUpdate: ${objects.length} objects (pcodes: ${objects.map(o=>o.pcode).join(',')})`)
 			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
