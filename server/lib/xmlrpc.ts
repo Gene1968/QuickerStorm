@@ -101,7 +101,7 @@ export function parseLoginResponse(xml: string): LoginResult {
 /** POST an XML-RPC request; returns parsed body string */
 export async function xmlRpcPost(uri: string, body: string): Promise<string> {
 	const controller = new AbortController()
-	const timeout = setTimeout(() => controller.abort(), 15_000)
+	const timeout = setTimeout(() => controller.abort(), 30_000)  // 30s — slow OpenSim grids need it
 	try {
 		const res = await fetch(uri, {
 			method: 'POST',
@@ -109,13 +109,18 @@ export async function xmlRpcPost(uri: string, body: string): Promise<string> {
 			body,
 			signal: controller.signal,
 		})
-		if (!res.ok) throw new Error(`XML-RPC HTTP error ${res.status}`)
+		if (!res.ok) throw new Error(`XML-RPC HTTP ${res.status} from ${uri}`)
 		return res.text()
 	} catch (err) {
 		if (err instanceof Error && err.name === 'AbortError') {
-			throw new Error('XML-RPC request timed out')
+			// WHY: port 8002 (common OpenSim) may be blocked by firewall/ISP;
+			// browser can reach it (whitelisted exe) but bun.exe may not.
+			throw new Error(
+				`Login server unreachable — timed out after 30s (${uri}). ` +
+				`Check: is the grid up? Is port ${new URL(uri).port || '443'} blocked by your firewall?`
+			)
 		}
-		throw err
+		throw new Error(`XML-RPC connect error: ${(err as Error).message} (${uri})`)
 	} finally {
 		clearTimeout(timeout)
 	}
