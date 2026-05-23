@@ -7,7 +7,7 @@ import SimpleWorldView    from '@/components/SimpleWorldView.vue'
 import LocationBar        from '@/components/LocationBar.vue'
 import AvatarList         from '@/components/AvatarList.vue'
 import MinimapOverlay     from '@/components/MinimapOverlay.vue'
-import ChatBar            from '@/components/ChatBar.vue'
+import ConversationsFloater from '@/components/ConversationsFloater.vue'
 import BottomToolbar      from '@/components/BottomToolbar.vue'
 import MapFloater         from '@/components/MapFloater.vue'
 import InventoryFloater   from '@/components/InventoryFloater.vue'
@@ -47,11 +47,9 @@ const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
         <MapFloater       v-if="ui.showMap" />
         <InventoryFloater v-if="ui.showInventory" />
         <SettingsFloater  v-if="ui.showSettings" />
-        <DebugPanel       v-if="ui.showDebug" />
+        <DebugPanel             v-if="ui.showDebug" />
+        <ConversationsFloater   v-if="ui.showChat" />
       </div>
-
-      <!-- Chat panel -->
-      <ChatBar v-if="ui.showChat" />
 
       <!-- Bottom toolbar -->
       <BottomToolbar />
