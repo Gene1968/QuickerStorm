@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: quickerstorm-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=8787
+      - STATIC_DIR=/app/dist/usaf
+    # No published ports — Cloudflare Tunnel reaches container directly
+    networks:
+      - quickerstorm
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: quickerstorm-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    depends_on:
+      - app
+    networks:
+      - quickerstorm
+
+networks:
+  quickerstorm:
+    driver: bridge

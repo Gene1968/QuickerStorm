@@ -21,9 +21,9 @@ export function useLLUDP() {
 		emit(C.MOVE, p)
 	}
 
-	// WHY: protocol.js C.CHAT envelope uses `type` (not `chatType`) per server contract
-	function sendChat(message, type = 1, channel = 0) {
-		emit(C.CHAT, { message, type, channel })
+	// WHY: server lludp.ts destructures chatType from msg.d — must match
+	function sendChat(message, chatType = 1, channel = 0) {
+		emit(C.CHAT, { message, chatType, channel })
 	}
 
 	function sendLogout() {

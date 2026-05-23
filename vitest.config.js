@@ -19,7 +19,9 @@ export default mergeConfig(
 		},
 		test: {
 			environment: 'jsdom',
-			exclude: [...configDefaults.exclude, 'e2e/*'],
+			// WHY: server/__tests__ use bun:test — run with `bun test` instead
+			include: ['src/**/*.{test,spec}.{js,ts}'],
+			exclude: [...configDefaults.exclude, 'e2e/*', 'server/**'],
 			root: fileURLToPath(new URL('./', import.meta.url)),
 		},
 	})

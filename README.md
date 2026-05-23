@@ -18,6 +18,18 @@
 ```sh
 npm install
 ```
+
+
+`npm run dev`
+
+
+Bun server — open a second terminal and run `npm run dev:server`
+
+
+
+
+
+
 # quickerSTORM
 Web OSSL
 ## Documentation

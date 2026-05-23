@@ -5,7 +5,7 @@
  */
 import { ref } from 'vue'
 
-const LS_KEY = 'ava_theme'
+const LS_KEY = 'darkmode'
 
 // Module-level so state is shared across all callers
 const isDark = ref(localStorage.getItem(LS_KEY) === 'dark')

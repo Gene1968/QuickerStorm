@@ -116,8 +116,8 @@ function initStats() {
 	const everLowEnd  = isLowEnd  || (stored?.everLowEnd  === true)
 	const everMidRange = isMidRange || (stored?.everMidRange === true)
 
-	// Read theme from localStorage (ava_theme written by useTheme)
-	const savedTheme = localStorage.getItem('ava_theme')
+	// Read theme from localStorage (darkmode written by useTheme)
+	const savedTheme = localStorage.getItem('darkmode')
 	const prefersDark = savedTheme
 		? savedTheme === 'dark'
 		: window.matchMedia?.('(prefers-color-scheme: dark)').matches
