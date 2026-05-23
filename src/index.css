@@ -4,7 +4,8 @@
 
 /* ── Dark theme variables — earth / rust ─────────────────────────── */
 :root {
-	--color-bg:     #1A0905;
+	color-scheme: dark;
+	--color-bg:     #A0361BFF;
 	--color-bg2:    #241108;
 	--color-card:   #32180D;
 	--color-card2:  #3D1E11;
@@ -40,7 +41,8 @@
 
 /* ── Light theme — warm earth / cream ────────────────────────────── */
 html.light {
-	--color-bg:     #FDF6EF;
+	color-scheme: light;
+	--color-bg:     #E9972D66;
 	--color-bg2:    #F5E8D8;
 	--color-card:   #FDF9F5;
 	--color-card2:  #F3E8DC;
@@ -239,6 +241,40 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 		letter-spacing: 0.05em;
 		font-weight: 600;
 	}
+
+	/*
+	 * Themed text fields — pair with TW layout/focus classes (rounded, px-*, py-*, focus:ring-*).
+	 * WHY: TW bg-card2 on <input> is ignored by the native appearance layer; <select> is fine.
+	 */
+	.reset-input {
+		-webkit-appearance: none;
+		appearance: none;
+		background-color: var(--color-card2);
+		border: 1px solid var(--color-brd);
+		color: var(--color-t1);
+	}
+	.reset-input::placeholder {
+		color: var(--color-t2);
+	}
+}
+
+/* Autofill uses its own !important inset shadow — must stay unlayered to override it */
+input.reset-input:-webkit-autofill,
+input.reset-input:-webkit-autofill:hover,
+input.reset-input:-webkit-autofill:focus,
+input.bg-card2:-webkit-autofill,
+input.bg-card2:-webkit-autofill:hover,
+input.bg-card2:-webkit-autofill:focus {
+	-webkit-box-shadow: 0 0 0 1000px var(--color-card2) inset !important;
+	-webkit-text-fill-color: var(--color-t1) !important;
+	caret-color: var(--color-t1);
+}
+
+/* Same appearance reset when using bg-card2 utility directly on inputs */
+input.bg-card2,
+textarea.bg-card2 {
+	-webkit-appearance: none;
+	appearance: none;
 }
 
 /* ── Base ────────────────────────────────────────────────────────── */
