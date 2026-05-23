@@ -3,11 +3,25 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 
 export interface Grid {
-	name: string
-	nick: string
-	loginURI: string
-	slurl_base: string
-	system: boolean
+	nick:                 string
+	name:                 string
+	loginURI:             string
+	slurlBase:            string
+	platform?:            'OpenSim' | 'SecondLife'
+	system?:              boolean
+	gatekeeper?:          string
+	helperURI?:           string
+	loginPage?:           string
+	about?:               string
+	help?:                string
+	register?:            string
+	password?:            string
+	search?:              string
+	webProfileURL?:       string
+	currencySymbol?:      string
+	loginIdentifierTypes?: string[]
+	// user-added grids (stored client-side, never in grids.json)
+	userAdded?:           boolean
 }
 
 let _grids: Record<string, Grid> | null = null
