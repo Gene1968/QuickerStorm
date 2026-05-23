@@ -78,6 +78,18 @@ Yjs-backed collaborative docs, whiteboards, and task boards under `src/component
 - Import paths use `@/` for `src/` and `@shared/` for `shared/`.
 - Config always via `import { config } from '@/config/configuration.js'`.
 
+## Agent Model Selection
+
+When spawning subagents via the Agent tool, match model to task complexity:
+
+| Task type | Model |
+|-----------|-------|
+| Explore, search, grep, read-only lookups | `haiku` |
+| Focused single-file impl, simple edits | `sonnet` |
+| Complex multi-file work, architecture, planning | omit (inherits) or `opus` |
+
+Pass `"model": "haiku"` or `"model": "sonnet"` explicitly. Default inherits parent model — always specify for cost control.
+
 ## Git
 
 - Feature branches: `ai/feature-name` for AI-assisted work.
