@@ -8,11 +8,12 @@
 import { readFileSync, existsSync, statSync } from 'fs'
 import { join, normalize, extname } from 'path'
 import { handleLogin, handleLogout } from './handlers/login'
-import { handleClientMessage, startCircuitTimers } from './handlers/lludp'
+import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
 import { deleteSession } from './state/sessions'
 import { C } from '../shared/protocol.js'
 import type { ServerWebSocket } from 'bun'
+import * as dgram from 'dgram'
 
 // ── Load .env.development.local for local dev ───────────────────────────
 if (existsSync('.env.development.local')) {
@@ -30,6 +31,41 @@ if (existsSync('.env.development.local')) {
 } else {
 	console.log('[env] .env.development.local not found — relying on process env')
 }
+
+// ── UDP loopback self-test ──────────────────────────────────────────────
+// WHY: If this fails, bun's dgram recv is broken on this machine/runtime.
+// Run at startup so we know immediately whether receive is functional.
+function selfTestUdp(): void {
+	const sock = dgram.createSocket('udp4')
+	let done = false
+
+	const finish = (pass: boolean, reason: string) => {
+		if (done) return
+		done = true
+		if (pass) console.log(`[udp-self-test] ✓ PASS — ${reason}`)
+		else      console.error(`[udp-self-test] ✗ FAIL — ${reason}`)
+		try { sock.close() } catch { /* already closed */ }
+	}
+
+	sock.on('error', (err: Error) => finish(false, `socket error: ${err.message}`))
+
+	sock.on('message', (msg: Buffer) => {
+		if (msg.toString() === 'ping') finish(true, 'loopback recv OK — bun dgram is functional')
+		else finish(false, `unexpected message: ${msg.toString('hex')}`)
+	})
+
+	sock.bind(0, '127.0.0.1', () => {
+		const { port } = sock.address()
+		console.log(`[udp-self-test] bound on 127.0.0.1:${port}, sending ping to self…`)
+		sock.send(Buffer.from('ping'), port, '127.0.0.1', (err: Error | null) => {
+			if (err) finish(false, `send error: ${err.message}`)
+		})
+		// 2-second timeout — if no message by then, recv is broken
+		setTimeout(() => finish(false, 'timeout — no loopback packet in 2s. Bun dgram recv may be broken on this platform/version.'), 2000)
+	})
+}
+
+selfTestUdp()
 
 const PORT = Number(process.env.PORT) || 8787
 
@@ -142,8 +178,9 @@ const server = Bun.serve<WSData>({
 	},
 
 	websocket: {
-		open(ws: ServerWebSocket<WSData>) {
-			startCircuitTimers(ws.data.sessionId)
+		open(_ws: ServerWebSocket<WSData>) {
+			// WHY: Timer started inside login handler after session + socket are ready.
+			// Starting here (pre-login) finds no session → auto-clears → retransmit never runs.
 		},
 
 		message(ws: ServerWebSocket<WSData>, raw: string | Buffer) {

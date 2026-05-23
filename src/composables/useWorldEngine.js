@@ -30,39 +30,82 @@ export function useWorldEngine(canvasRef) {
 	// ── Input state ─────────────────────────────────────────────────────────
 	const keys    = {}
 	let yaw       = 0        // horizontal camera rotation, radians
-	let pitch     = -0.08   // slight downward tilt
+	let pitch     = -0.08   // slight downward tilt (negative = looking slightly down)
+
+	// Mouse drag state
+	let isDragging   = false
+	let lastMouseX   = 0
+	let lastMouseY   = 0
+	const MOUSE_SENSITIVITY = 0.003  // rad per pixel
 
 	function onKeyDown(e) {
 		// Don't capture keys when typing in an input
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
-		e.preventDefault?.()
+		// Only prevent default for movement keys so browser shortcuts still work
+		if (['KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown'].includes(e.code)) {
+			e.preventDefault()
+		}
 	}
 	function onKeyUp(e) {
 		keys[e.code] = false
 	}
 
+	function onMouseDown(e) {
+		if (e.button !== 0) return  // left button only
+		isDragging = true
+		lastMouseX = e.clientX
+		lastMouseY = e.clientY
+	}
+	function onMouseMove(e) {
+		if (!isDragging) return
+		const dx = e.clientX - lastMouseX
+		const dy = e.clientY - lastMouseY
+		lastMouseX = e.clientX
+		lastMouseY = e.clientY
+		yaw   -= dx * MOUSE_SENSITIVITY
+		pitch -= dy * MOUSE_SENSITIVITY
+		pitch  = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 4, pitch))  // clamp pitch
+	}
+	function onMouseUp() {
+		isDragging = false
+	}
+
+	// Scroll wheel: move camera forward/backward along view direction
+	function onWheel(e) {
+		if (!camera) return
+		e.preventDefault()
+		const delta = e.deltaY > 0 ? -1 : 1
+		const spd   = CAM_SPEED * 0.4
+		const fwd   = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+		camera.position.addScaledVector(fwd, delta * spd)
+		camera.position.y = Math.max(0.5, camera.position.y)
+	}
+
 	// ── Camera update (called each frame with dt) ────────────────────────────
+	// WHY: SL standard — A/D = turn, W/S = walk, Q/E = strafe, arrows same as WASD
 	function updateCamera(dt) {
 		if (!camera) return
 		const turn = CAM_TURN_SPEED * dt
 		const spd  = CAM_SPEED * dt
 		const fly  = CAM_FLY_SPEED * dt
 
-		// Yaw (Q/E, or ArrowLeft/Right without Shift)
-		if (keys['KeyQ'] || keys['ArrowLeft'])  yaw += turn
-		if (keys['KeyE'] || keys['ArrowRight']) yaw -= turn
-
-		// Forward direction (ignores pitch for horizontal movement)
+		// Turn (A/D and ←/→ all turn the same)
+		if (keys['KeyA']     || keys['ArrowLeft'])  yaw += turn
+		if (keys['KeyD']     || keys['ArrowRight']) yaw -= turn
+		// Strafe with Q/E
 		const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
 		const rgt = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw))
+		if (keys['KeyQ']) camera.position.addScaledVector(rgt, -spd)
+		if (keys['KeyE']) camera.position.addScaledVector(rgt,  spd)
 
+		// Walk forward/back (W/↑ and S/↓ identical)
 		if (keys['KeyW'] || keys['ArrowUp'])   camera.position.addScaledVector(fwd, spd)
 		if (keys['KeyS'] || keys['ArrowDown']) camera.position.addScaledVector(fwd, -spd)
-		if (keys['KeyA'])                      camera.position.addScaledVector(rgt, -spd)
-		if (keys['KeyD'])                      camera.position.addScaledVector(rgt, spd)
-		if (keys['PageUp'])                    camera.position.y += fly
-		if (keys['PageDown'])                  camera.position.y -= fly
+
+		// Fly
+		if (keys['PageUp'])   camera.position.y += fly
+		if (keys['PageDown']) camera.position.y -= fly
 
 		// Stay above terrain
 		camera.position.y = Math.max(0.5, camera.position.y)
@@ -71,13 +114,16 @@ export function useWorldEngine(canvasRef) {
 		camera.rotation.set(pitch, yaw, 0, 'YXZ')
 
 		// Derive controlFlags for AgentUpdate
+		// WHY: Q/E strafe maps to SL's left/right strafe flags 0x04/0x08
 		let cf = 0
-		if (keys['KeyW'] || keys['ArrowUp'])   cf |= 0x01
-		if (keys['KeyS'] || keys['ArrowDown']) cf |= 0x02
-		if (keys['KeyA'])                      cf |= 0x04
-		if (keys['KeyD'])                      cf |= 0x08
-		if (keys['PageUp'])                    cf |= 0x10
-		if (keys['PageDown'])                  cf |= 0x20
+		if (keys['KeyW'] || keys['ArrowUp'])    cf |= 0x01  // AGENT_CONTROL_AT_POS
+		if (keys['KeyS'] || keys['ArrowDown'])  cf |= 0x02  // AGENT_CONTROL_AT_NEG
+		if (keys['KeyQ'])                        cf |= 0x04  // AGENT_CONTROL_LEFT_POS (strafe)
+		if (keys['KeyE'])                        cf |= 0x08  // AGENT_CONTROL_LEFT_NEG
+		if (keys['PageUp'])                      cf |= 0x10  // AGENT_CONTROL_UP_POS
+		if (keys['PageDown'])                    cf |= 0x20  // AGENT_CONTROL_UP_NEG
+		if (keys['KeyA'] || keys['ArrowLeft'])   cf |= 0x1000  // AGENT_CONTROL_YAW_POS
+		if (keys['KeyD'] || keys['ArrowRight'])  cf |= 0x2000  // AGENT_CONTROL_YAW_NEG
 		return cf
 	}
 
@@ -91,10 +137,16 @@ export function useWorldEngine(canvasRef) {
 		controlFlags = cf
 		if (agentUpdateAccum < 1 / AGENT_UPDATE_HZ) return
 		agentUpdateAccum = 0
+		// WHY: SL body rotation quaternion for Z-up yaw.
+		// Three.js yaw rotates around Y (Y-up); SL equivalent rotates around Z (Z-up).
+		// SL facing angle = atan2(cos(yaw), -sin(yaw)) ≈ π/2 + yaw.
+		// LLQuaternion stores only xyz; w = sqrt(1 - x²- y² - z²) derived.
+		const slAngle = Math.PI / 2 + yaw   // convert Three.js yaw → SL heading angle
+		const bodyRotZ = Math.sin(slAngle / 2)  // qz for rotation around Z
 		sendMove({
 			controlFlags,
-			bodyRot:   [0, 0, 0],
-			headRot:   [0, 0, 0],
+			bodyRot:   [0, 0, bodyRotZ],
+			headRot:   [0, 0, bodyRotZ],
 			// Convert Three.js Y-up camera pos → SL Z-up coords
 			camCenter: [camera.position.x, -camera.position.z, camera.position.y],
 			camAt:     [-Math.sin(yaw), 0, -Math.cos(yaw)],
@@ -233,6 +285,12 @@ export function useWorldEngine(canvasRef) {
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
 		window.addEventListener('keydown', onKeyDown, { passive: false })
 		window.addEventListener('keyup',   onKeyUp)
+		// Mouse drag on canvas for look control
+		canvasRef.value.addEventListener('mousedown', onMouseDown)
+		window.addEventListener('mousemove', onMouseMove)
+		window.addEventListener('mouseup',   onMouseUp)
+		// Scroll wheel for forward/back movement; passive:false so we can preventDefault
+		canvasRef.value.addEventListener('wheel', onWheel, { passive: false })
 		on(S.OBJECT_UPDATE, onObjectUpdate)
 	})
 
@@ -240,6 +298,10 @@ export function useWorldEngine(canvasRef) {
 		cancelAnimationFrame(animId)
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
+		window.removeEventListener('mousemove', onMouseMove)
+		window.removeEventListener('mouseup',   onMouseUp)
+		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
+		canvasRef.value?.removeEventListener('wheel', onWheel)
 		off(S.OBJECT_UPDATE, onObjectUpdate)
 		ro?.disconnect()
 		renderer?.dispose()

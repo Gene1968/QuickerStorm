@@ -67,16 +67,46 @@ export function buildLoginXml(p: LoginParams): string {
 </methodCall>`
 }
 
-/** Parse an XML-RPC methodResponse struct into a flat object */
+/** Parse an XML-RPC methodResponse struct into a flat object.
+ *  WHY: The original single-pass regex failed on multi-line member values and
+ *  variations in how OpenSim grids format their XML (extra whitespace, CDATA, etc.).
+ *  Two-pass approach: extract <member> blocks first, then parse name + value within each.
+ */
 export function parseLoginResponse(xml: string): LoginResult {
 	const members: Record<string, string> = {}
 
-	const memberRe = /<member>\s*<name>([^<]+)<\/name>\s*<value>\s*(?:<([^>]+)>)?([^<]*)(?:<\/[^>]+>)?\s*<\/value>\s*<\/member>/g
-	let m: RegExpExecArray | null
-	while ((m = memberRe.exec(xml)) !== null) {
-		const [, name, , value] = m
-		members[name.trim()] = value.trim()
+	// Pass 1: extract each <member>…</member> block (dotAll for multiline)
+	const memberBlockRe = /<member>([\s\S]*?)<\/member>/g
+	let block: RegExpExecArray | null
+	while ((block = memberBlockRe.exec(xml)) !== null) {
+		const blockStr = block[1]
+
+		// Extract <name>
+		const nameM = /<name>\s*([\s\S]*?)\s*<\/name>/.exec(blockStr)
+		if (!nameM) continue
+		const name = nameM[1].trim()
+
+		// Extract value: prefer typed inner element (<string>, <int>, <boolean>, etc.)
+		const typedM = /<value>\s*<[^/][^>]*>\s*([\s\S]*?)\s*<\/[^>]+>\s*<\/value>/.exec(blockStr)
+		const plainM = /<value>\s*([\s\S]*?)\s*<\/value>/.exec(blockStr)
+		const rawVal = typedM ? typedM[1].trim() : plainM ? plainM[1].trim() : ''
+
+		// Decode XML entities in values
+		members[name] = rawVal
+			.replace(/&amp;/g, '&')
+			.replace(/&lt;/g, '<')
+			.replace(/&gt;/g, '>')
+			.replace(/&quot;/g, '"')
+			.replace(/&#39;/g, "'")
 	}
+
+	// Log ALL parsed member keys (not values — they may contain session tokens)
+	// WHY: OSGrid may return region_name under a different key or not at all; this surfaces it.
+	const SENSITIVE = new Set(['session_id', 'agent_id', 'seed_capability', 'passwd'])
+	const memberSummary = Object.entries(members)
+		.map(([k, v]) => SENSITIVE.has(k) ? `${k}=<redacted>` : `${k}="${v.slice(0, 40)}"`)
+		.join(', ')
+	console.log(`[xmlrpc] parsed members: ${memberSummary}`)
 
 	// WHY: parseInt returns NaN for malformed values; guard to keep numeric fields typed as number
 	const parseIntSafe = (s: string | undefined, radix = 10): number => {
@@ -89,7 +119,7 @@ export function parseLoginResponse(xml: string): LoginResult {
 		return { login: false, message: members['message'] || 'Login failed' }
 	}
 
-	return {
+	const result: LoginResult = {
 		login: true,
 		session_id:      members['session_id'],
 		agent_id:        members['agent_id'],
@@ -104,6 +134,11 @@ export function parseLoginResponse(xml: string): LoginResult {
 		look_at:         members['look_at'],
 		agent_access:    members['agent_access'],
 	}
+
+	// Debug log so we can verify parsing during development
+	console.log('[xmlrpc] login OK — region:', result.region_name, 'sim:', result.sim_ip, ':', result.sim_port)
+
+	return result
 }
 
 /** POST an XML-RPC request; returns parsed body string */

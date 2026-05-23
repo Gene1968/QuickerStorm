@@ -1,7 +1,7 @@
 <script setup>
+import { onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useSessionStore } from '@/stores/sessionStore'
-import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useGridStore } from '@/stores/gridStore'
 import { useRouter } from 'vue-router'
 
@@ -9,7 +9,6 @@ const ui      = useUiStore()
 const session = useSessionStore()
 const grid    = useGridStore()
 const router  = useRouter()
-const { disconnect } = useRealtimeSocket()
 
 function logout() {
   session.clearSession()
@@ -17,14 +16,24 @@ function logout() {
   router.push('/landing')
 }
 
-// Toolbar button definition — label, icon, action, active flag
+// Toolbar button definition — label, icon, action, active flag, tooltip
 const tools = [
-  { id: 'chat',    icon: '💬', label: 'Nearby Chat',  action: () => ui.toggleChat(),       active: () => ui.showChat },
-  { id: 'people',  icon: '👥', label: 'Nearby',       action: () => ui.toggleAvatarList(), active: () => ui.showAvatarList },
-  { id: 'minimap', icon: '◈',  label: 'Mini-Map',     action: () => ui.toggleMinimap(),    active: () => ui.showMinimap },
-  { id: 'map',     icon: '🗺', label: 'World Map',    action: () => ui.toggleMap(),        active: () => ui.showMap },
-  { id: 'inv',     icon: '📦', label: 'Inventory',    action: () => ui.toggleInventory(),  active: () => ui.showInventory },
+  { id: 'chat',    icon: '💬', label: 'Chat',      title: 'Nearby Chat',    action: () => ui.toggleChat(),       active: () => ui.showChat },
+  { id: 'people',  icon: '👥', label: 'Nearby',    title: 'Nearby Avatars', action: () => ui.toggleAvatarList(), active: () => ui.showAvatarList },
+  { id: 'minimap', icon: '◈',  label: 'Mini-Map',  title: 'Mini-Map',       action: () => ui.toggleMinimap(),    active: () => ui.showMinimap },
+  { id: 'map',     icon: '🗺', label: 'Map',       title: 'Map (Ctrl+M)',   action: () => ui.toggleMap(),        active: () => ui.showMap },
+  { id: 'inv',     icon: '📦', label: 'Inventory', title: 'Inventory',      action: () => ui.toggleInventory(),  active: () => ui.showInventory },
 ]
+
+// Keyboard shortcuts
+function onKeyDown(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+  if (e.ctrlKey && e.key === 'm') { e.preventDefault(); ui.toggleMap() }
+  if (e.key === 'F12') { e.preventDefault(); ui.toggleDebug() }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeyDown))
+onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
@@ -36,7 +45,7 @@ const tools = [
       :key="t.id"
       class="flex flex-col items-center justify-center w-12 h-8 rounded text-[10px] transition-colors"
       :class="t.active() ? 'bg-accent/30 text-accent' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-      :title="t.label"
+      :title="t.title"
       @click="t.action()"
     >
       <span class="text-base leading-none">{{ t.icon }}</span>
@@ -65,6 +74,17 @@ const tools = [
     >
       <span class="text-base leading-none">⚙</span>
       <span class="leading-none mt-0.5 hidden sm:block">Settings</span>
+    </button>
+
+    <!-- Debug panel toggle (F12) -->
+    <button
+      class="flex flex-col items-center justify-center w-12 h-8 rounded text-[10px] transition-colors"
+      :class="ui.showDebug ? 'bg-yellow-500/20 text-yellow-400' : 'text-white/40 hover:bg-white/10 hover:text-white'"
+      title="Debug Panel (F12)"
+      @click="ui.toggleDebug()"
+    >
+      <span class="text-base leading-none">🔌</span>
+      <span class="leading-none mt-0.5 hidden sm:block">Debug</span>
     </button>
 
     <!-- Spacer -->

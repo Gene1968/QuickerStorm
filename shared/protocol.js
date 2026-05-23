@@ -23,6 +23,8 @@ export const S = {
 	TELEPORT_OK:  'tp_ok',      // { regionName, seedCap }
 	CAPS_RESULT:  'caps_result',// { id, status, body }
 	ERROR:        'error',      // { code, message }
+	DEBUG:        'debug',      // { level:'info'|'warn'|'error', msg: string } — server log forwarded to browser
+	DISCONNECTED: 'disconnected', // { reason: string } — sim killed the circuit
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

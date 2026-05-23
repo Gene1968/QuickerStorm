@@ -2,13 +2,17 @@
 import { computed } from 'vue'
 import { use2DFallback } from '@/composables/use2DFallback'
 import { useUiStore } from '@/stores/uiStore'
-import WorldCanvas     from '@/components/WorldCanvas.vue'
-import SimpleWorldView from '@/components/SimpleWorldView.vue'
-import LocationBar     from '@/components/LocationBar.vue'
-import AvatarList      from '@/components/AvatarList.vue'
-import MinimapOverlay  from '@/components/MinimapOverlay.vue'
-import ChatBar         from '@/components/ChatBar.vue'
-import BottomToolbar   from '@/components/BottomToolbar.vue'
+import WorldCanvas        from '@/components/WorldCanvas.vue'
+import SimpleWorldView    from '@/components/SimpleWorldView.vue'
+import LocationBar        from '@/components/LocationBar.vue'
+import AvatarList         from '@/components/AvatarList.vue'
+import MinimapOverlay     from '@/components/MinimapOverlay.vue'
+import ChatBar            from '@/components/ChatBar.vue'
+import BottomToolbar      from '@/components/BottomToolbar.vue'
+import MapFloater         from '@/components/MapFloater.vue'
+import InventoryFloater   from '@/components/InventoryFloater.vue'
+import SettingsFloater    from '@/components/SettingsFloater.vue'
+import DebugPanel         from '@/components/DebugPanel.vue'
 
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
 const { is2D: autoDetect2D } = use2DFallback()
@@ -38,6 +42,12 @@ const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
         <WorldCanvas class="absolute inset-0" />
         <MinimapOverlay v-if="ui.showMinimap" />
         <AvatarList     v-if="ui.showAvatarList" />
+
+        <!-- Floater panels — positioned within the canvas area -->
+        <MapFloater       v-if="ui.showMap" />
+        <InventoryFloater v-if="ui.showInventory" />
+        <SettingsFloater  v-if="ui.showSettings" />
+        <DebugPanel       v-if="ui.showDebug" />
       </div>
 
       <!-- Chat panel -->

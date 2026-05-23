@@ -10,6 +10,7 @@ export const useUiStore = defineStore('ui', () => {
 	const showInventory  = ref(false)
 	const showMap        = ref(false)
 	const showSettings   = ref(false)
+	const showDebug      = ref(false)    // debug/connection panel
 
 	function toggleMode()      { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList(){ showAvatarList.value = !showAvatarList.value }
@@ -18,6 +19,7 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleInventory() { showInventory.value  = !showInventory.value }
 	function toggleMap()       { showMap.value        = !showMap.value }
 	function toggleSettings()  { showSettings.value   = !showSettings.value }
+	function toggleDebug()     { showDebug.value      = !showDebug.value }
 
 	// Camera position — updated by useWorldEngine at ~4 Hz, not every frame
 	const cameraPos = shallowRef({ x: 128, y: 25, z: 128 })  // SL coords (x, z=height, y)
@@ -27,9 +29,9 @@ export const useUiStore = defineStore('ui', () => {
 
 	return {
 		mode, showAvatarList, showMinimap, showChat,
-		showInventory, showMap, showSettings,
+		showInventory, showMap, showSettings, showDebug,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
-		toggleInventory, toggleMap, toggleSettings,
+		toggleInventory, toggleMap, toggleSettings, toggleDebug,
 		cameraPos, setCameraPos,
 	}
 })

@@ -46,7 +46,11 @@ export function retransmitOverdue(s: CircuitState): void {
     }
     entry.retries++
     entry.sentAt = now
-    s.udpSocket.send(entry.buf, s.simPort, s.simIp)
+    // WHY: Set FLAG_RESEND (0x20) on retransmits so sim knows it's a duplicate.
+    // Clone buffer to avoid mutating the original (which may be retransmitted again).
+    const resendBuf = Buffer.from(entry.buf)
+    resendBuf[0] |= 0x20  // FLAG_RESEND
+    s.udpSocket.send(resendBuf, s.simPort, s.simIp)
   }
 }
 

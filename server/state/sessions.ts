@@ -14,6 +14,22 @@ export interface CircuitState {
 	reliableOut: Map<number, { buf: Buffer; sentAt: number; retries: number }>
 	udpSocket:   dgram.Socket
 	ws:          ServerWebSocket<unknown>
+	// Diagnostic counters (updated by lludp handler)
+	udpRxCount:  number   // total UDP packets received from sim
+	lastPingAt:  number   // timestamp of last StartPingCheck received (0 = never)
+	circuitEstablished: boolean  // true once UseCircuitCode acked
+	// Heartbeat: send AgentUpdate periodically to prevent sim 60s timeout
+	lastAgentUpdateAt: number  // 0 = never sent
+	lastAgentParams: {
+		controlFlags: number
+		bodyRot:   [number, number, number]
+		headRot:   [number, number, number]
+		camCenter: [number, number, number]
+		camAt:     [number, number, number]
+		camLeft:   [number, number, number]
+		camUp:     [number, number, number]
+		far:       number
+	} | null
 }
 
 const sessions = new Map<string, CircuitState>()

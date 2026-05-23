@@ -2,10 +2,14 @@
 // Reference: http://wiki.secondlife.com/wiki/LLUDP
 // Message IDs: verify against phoenix-firestorm/indra/newview/app_settings/message.xml
 
-// ── Flags ────────────────────────────────────────────────────────────────
-const FLAG_RELIABLE    = 0x10
-const FLAG_HAS_ACKS    = 0x40
-const FLAG_ZERO_CODED  = 0x01
+// ── Flags — LLUDP spec (wiki.secondlife.com/wiki/LLUDP, LibOpenMetaverse) ──
+// WHY: Flags are bit-significant. Previous values (0x10/0x40/0x01) were wrong:
+//   0x10 = MSG_APPENDED_ACKS (not Reliable!) → sim crashed with IndexOutOfRange
+//   parsing appended acks from our reliable packet bodies.
+const FLAG_ZERO_CODED  = 0x80  // body is zero-coded
+const FLAG_RELIABLE    = 0x40  // packet must be ACKed by receiver
+const FLAG_RESEND      = 0x20  // retransmit of a reliable packet
+const FLAG_HAS_ACKS    = 0x10  // appended ACK list at end of packet
 
 // ── Message ID bytes (verify against message.xml) ─────────────────────────
 const MSG_ID = {
@@ -14,6 +18,10 @@ const MSG_ID = {
   CompleteAgentMovement:     Buffer.from([0xFF, 0xFF, 0x00, 0xF9]),   // Low #249
   LogoutRequest:             Buffer.from([0xFF, 0xFF, 0x00, 0xFC]),   // Low #252
   PacketAck:                 Buffer.from([0xFF, 0xFF, 0xFF, 0xFB]),   // Fixed #251
+  StartPingCheck:            Buffer.from([0xFF, 0xFF, 0x00, 0x01]),   // Low #1  (received from sim)
+  CompletePingCheck:         Buffer.from([0xFF, 0xFF, 0x00, 0x02]),   // Low #2  (we send back)
+  RegionHandshake:           Buffer.from([0xFF, 0xFF, 0x00, 0x94]),   // Low #148 (received from sim)
+  RegionHandshakeReply:      Buffer.from([0xFF, 0xFF, 0x00, 0x95]),   // Low #149 (we send back)
   // Verify these in phoenix-firestorm/indra/newview/app_settings/message.xml:
   ChatFromViewer:            Buffer.from([0xFF, 0xFF, 0x00, 0x50]),   // TODO verify
   ChatFromSimulator:         Buffer.from([0xFF, 0xFF, 0x00, 0x8B]),   // TODO verify
@@ -127,11 +135,13 @@ export function parseMsgType(buf: Buffer, bodyOffset: number): { type: string; d
 interface CircuitParams { agentId: string; sessionId: string; circuitCode: number; seq: number }
 
 export function encodeUseCircuitCode(p: CircuitParams): Buffer {
+  // WHY: SL spec CircuitCode block order is Code(U32), SessionID(UUID), ID/AgentID(UUID)
+  // Previous version had wrong order (AgentID first) — sim silently rejected every packet.
   const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 4)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  body.writeUInt32LE(p.circuitCode, 32)
+  const body = Buffer.allocUnsafe(4 + 16 + 16)
+  body.writeUInt32LE(p.circuitCode, 0)        // Code  (U32)   — FIRST
+  uuidToBytes(p.sessionId).copy(body, 4)      // SessionID     — SECOND
+  uuidToBytes(p.agentId).copy(body, 20)       // ID (AgentID)  — THIRD
   return Buffer.concat([hdr, MSG_ID.UseCircuitCode, body])
 }
 
@@ -150,6 +160,14 @@ export function encodePacketAck(ackIds: number[], seq: number): Buffer {
   body[0] = ackIds.length
   ackIds.forEach((id, i) => body.writeUInt32LE(id, 1 + i * 4))
   return Buffer.concat([hdr, MSG_ID.PacketAck, body])
+}
+
+/** Respond to StartPingCheck (Low#1) with CompletePingCheck (Low#2) to keep circuit alive */
+export function encodeCompletePingCheck(pingId: number, seq: number): Buffer {
+  const hdr  = buildHeader({ seq, reliable: false, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(1)
+  body[0] = pingId
+  return Buffer.concat([hdr, MSG_ID.CompletePingCheck, body])
 }
 
 export function encodeLogoutRequest(p: { agentId: string; sessionId: string; seq: number }): Buffer {
@@ -201,14 +219,16 @@ export function encodeChatFromViewer(p: {
   agentId: string; sessionId: string; seq: number
   message: string; chatType: number; channel: number
 }): Buffer {
+  // WHY: ChatData.Message is Variable2 (2-byte length prefix), not Variable1 (1-byte).
+  // Previous version used 1-byte prefix — chat was malformed and sim ignored it.
   const hdr    = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
   const msgBuf = Buffer.from(p.message, 'utf8')
-  const body   = Buffer.allocUnsafe(32 + 1 + msgBuf.length + 1 + 4)
+  const body   = Buffer.allocUnsafe(16 + 16 + 2 + msgBuf.length + 1 + 4)
   let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body[off++] = msgBuf.length  // variable1 length prefix
-  msgBuf.copy(body, off);      off += msgBuf.length
+  uuidToBytes(p.agentId).copy(body, off);     off += 16
+  uuidToBytes(p.sessionId).copy(body, off);   off += 16
+  body.writeUInt16LE(msgBuf.length, off);     off += 2  // Variable2 — 2-byte length
+  msgBuf.copy(body, off);                     off += msgBuf.length
   body[off++] = p.chatType
   body.writeInt32LE(p.channel, off)
   return Buffer.concat([hdr, MSG_ID.ChatFromViewer, body])
@@ -229,7 +249,7 @@ export function decodeChatFromSimulator(buf: Buffer, dataOffset: number): ChatFr
   let off = dataOffset
   // FromName: variable1 (1-byte length prefix)
   const nameLen  = buf[off++]
-  const fromName = buf.slice(off, off + nameLen).toString('utf8'); off += nameLen
+  const fromName = buf.slice(off, off + nameLen).toString('utf8').replace(/\0/g, ''); off += nameLen
   // SourceID: UUID (16 bytes)
   const sourceId = bytesToUuid(buf, off); off += 16
   // OwnerID: UUID (16 bytes) — skip
@@ -245,7 +265,7 @@ export function decodeChatFromSimulator(buf: Buffer, dataOffset: number): ChatFr
   const pz = buf.readFloatLE(off); off += 4
   // Message: variable2 (2-byte length prefix)
   const msgLen = buf.readUInt16LE(off); off += 2
-  const message = buf.slice(off, off + msgLen).toString('utf8')
+  const message = buf.slice(off, off + msgLen).toString('utf8').replace(/\0/g, '')
   return { fromName, sourceId, chatType, channel: 0, message, position: [px, py, pz] }
 }
 
@@ -304,4 +324,38 @@ export function decodeObjectUpdate(buf: Buffer, dataOffset: number): ObjectData[
     objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos: [0, 0, 0], nameValue })
   }
   return objects
+}
+
+// ── RegionHandshake (Low #148) ────────────────────────────────────────────
+
+export interface RegionHandshakeData {
+  simName:    string
+  simAccess:  number  // 13=PG, 21=Mature, 42=Adult
+}
+
+/**
+ * Decode RegionHandshake — sent by sim right after circuit establishment.
+ * Contains the region name (SimName) among other terrain/flag data.
+ * We MUST reply with RegionHandshakeReply or the sim won't fully initialize our avatar.
+ */
+export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHandshakeData {
+  let off = dataOffset
+  off += 4  // RegionFlags U32
+  const simAccess = buf[off++]  // SimAccess U8 (13=PG, 21=Moderate, 42=Adult)
+  // SimName: Variable1 (1-byte length prefix)
+  const nameLen = buf[off++]
+  const simName = buf.slice(off, off + nameLen).toString('utf8').replace(/\x00/g, '').trim()
+  return { simName, simAccess }
+}
+
+/** Reply to RegionHandshake — required, or avatar won't appear in-world */
+export function encodeRegionHandshakeReply(p: { agentId: string; sessionId: string; seq: number }): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  // AgentData block: AgentID + SessionID
+  // RegionInfo block: Flags U32 = 0
+  const body = Buffer.allocUnsafe(16 + 16 + 4)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  body.writeUInt32LE(0, 32)  // Flags = 0
+  return Buffer.concat([hdr, MSG_ID.RegionHandshakeReply, body])
 }

@@ -3,7 +3,9 @@
     "allow": [
       "Bash(git add *)",
       "Bash(bun test *)",
-      "PowerShell(bun *)"
+      "PowerShell(bun *)",
+      "Bash(C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\bun-windows-x64\\\\bun.exe typecheck *)",
+      "Bash(C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\bun-windows-x64\\\\bun.exe x *)"
     ]
   }
 }
