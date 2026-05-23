@@ -8,7 +8,9 @@ import { ref } from 'vue'
 const LS_KEY = 'darkmode'
 
 // Module-level so state is shared across all callers
-const isDark = ref(localStorage.getItem(LS_KEY) === 'dark')
+// WHY: default dark until user explicitly chooses; null key = first visit = dark
+const stored = localStorage.getItem(LS_KEY)
+const isDark = ref(stored === null ? true : stored === 'dark')
 
 function applyClass() {
 	document.documentElement.classList.toggle('light', !isDark.value)
