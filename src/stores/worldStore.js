@@ -9,9 +9,26 @@ export const useWorldStore = defineStore('world', () => {
 	// Map<localId (number), object>
 	const objects = ref(new Map())
 
+	// WHY: ObjectUpdate nameValue is the raw SL NameValue string, e.g.:
+	//   "FirstName STRING RW SV John\nLastName STRING RW SV Doe\n"
+	// AvatarList reads .name; parse it here so all consumers get a display name.
+	function parseNameValue(nv) {
+		if (!nv) return ''
+		const first = nv.match(/FirstName\s+\S+\s+\S+\s+\S+\s+(\S+)/)?.[1] ?? ''
+		const last  = nv.match(/LastName\s+\S+\s+\S+\s+\S+\s+(\S+)/)?.[1]  ?? ''
+		return [first, last].filter(Boolean).join(' ')
+	}
+
 	function upsertObject(obj) {
-		// obj: { localId, fullId, pcode, pos, rot, scale, name }
-		objects.value.set(obj.localId, { ...objects.value.get(obj.localId), ...obj })
+		// obj: { localId, fullId, pcode, pos, rot, scale, nameValue }
+		const existing = objects.value.get(obj.localId) ?? {}
+		const name = obj.nameValue ? parseNameValue(obj.nameValue) : (existing.name ?? '')
+		objects.value.set(obj.localId, { ...existing, ...obj, name })
+	}
+
+	function updateObjectPos(localId, pos) {
+		const existing = objects.value.get(localId)
+		if (existing) objects.value.set(localId, { ...existing, pos })
 	}
 
 	function removeObject(localId) { objects.value.delete(localId) }
@@ -25,5 +42,5 @@ export const useWorldStore = defineStore('world', () => {
 		[...objects.value.values()].filter(o => o.pcode === PCODE_PRIM)
 	)
 
-	return { objects, avatars, prims, upsertObject, removeObject, clearAll }
+	return { objects, avatars, prims, upsertObject, updateObjectPos, removeObject, clearAll }
 })

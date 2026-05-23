@@ -18,6 +18,8 @@ export interface CircuitState {
 	udpRxCount:  number   // total UDP packets received from sim
 	lastPingAt:  number   // timestamp of last StartPingCheck received (0 = never)
 	circuitEstablished: boolean  // true once UseCircuitCode acked
+	// Diagnostic: track packet types seen, logged once each for unhandled types
+	loggedTypes: Set<string>
 	// Heartbeat: send AgentUpdate periodically to prevent sim 60s timeout
 	lastAgentUpdateAt: number  // 0 = never sent
 	lastAgentParams: {

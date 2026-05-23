@@ -6,6 +6,7 @@ import gsap from 'gsap'
 import { useWorldStore, PCODE_AVATAR } from '@/stores/worldStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useDebugStore } from '@/stores/debugStore'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { S } from '@shared/protocol.js'
@@ -14,23 +15,60 @@ import { S } from '@shared/protocol.js'
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 
 const CAM_SPEED      = 8    // m/s walk
+const CAM_RUN_SPEED  = 16   // m/s run (Shift)
 const CAM_TURN_SPEED = 1.8  // rad/s
 const CAM_FLY_SPEED  = 12   // m/s fly (PageUp/Dn)
+
+// SL AgentUpdate control flags — verified against SL message template
+// WHY: Previous code had 0x1000 (FAST_UP) for YAW_POS and 0x2000 (FLY) for YAW_NEG —
+// pressing D sent AGENT_CONTROL_FLY, causing the avatar to fly/"jump".
+const CTRL_AT_POS    = 0x0001  // forward
+const CTRL_AT_NEG    = 0x0002  // backward
+const CTRL_LEFT_POS  = 0x0004  // strafe left
+const CTRL_LEFT_NEG  = 0x0008  // strafe right
+const CTRL_UP_POS    = 0x0010  // jump / fly up
+const CTRL_UP_NEG    = 0x0020  // crouch / fly down
+const CTRL_YAW_POS   = 0x0100  // turn left
+const CTRL_YAW_NEG   = 0x0200  // turn right
+const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
+const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
+const CTRL_FLY       = 0x2000  // sustained fly state
+
+const EYE_HEIGHT = 1.65  // metres from avatar foot to eye (camera attachment)
 
 export function useWorldEngine(canvasRef) {
 	const worldStore   = useWorldStore()
 	const sessionStore = useSessionStore()
 	const uiStore      = useUiStore()
+	const debugStore   = useDebugStore()
 	const { on, off }  = useRealtimeSocket()
 	const { sendMove } = useLLUDP()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
 
+	// ── Own avatar tracking ───────────────────────────────────────────────────
+	// Set from first ObjectUpdate where fullId == agentId; used to sync camera on TerseUpdate
+	let ownAvatarLocalId       = null
+	// WHY: flag set by onTerseUpdate, consumed by animate() so snap happens once per update
+	// not every frame (which would fight with updateCamera's local movement prediction).
+	let ownAvatarPosNeedsApply = false
+	let ownAvatarSnapPos       = null  // [slX, slY, slZ] to snap to
+	let terseUpdateCount       = 0     // diagnostic: confirm TerseUpdates are flowing
+
 	// ── Input state ─────────────────────────────────────────────────────────
-	const keys    = {}
-	let yaw       = 0        // horizontal camera rotation, radians
-	let pitch     = -0.08   // slight downward tilt (negative = looking slightly down)
+	const keys  = {}
+	let yaw     = 0        // horizontal camera rotation, radians (Y-up Three.js)
+	let pitch   = -0.08    // slight downward tilt
+	let isFlying  = false  // F toggles; sustained CTRL_FLY sent each frame while true
+	let eHoldTime = 0      // seconds E has been continuously held
+
+	// Alt-orbit (third-person camera): alt+drag orbits around a pivot
+	let isAltOrbit  = false
+	let orbitPivot  = new THREE.Vector3(128, 0, -128)  // SL center in Three.js coords
+	let orbitRadius = 8   // metres from pivot
+	let orbitYaw    = 0   // orbit horizontal angle
+	let orbitPitch  = 0.3 // orbit vertical angle (radians)
 
 	// Mouse drag state
 	let isDragging   = false
@@ -38,24 +76,47 @@ export function useWorldEngine(canvasRef) {
 	let lastMouseY   = 0
 	const MOUSE_SENSITIVITY = 0.003  // rad per pixel
 
+	const MOVE_KEYS = [
+		'KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','KeyC','KeyF',
+		'ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown',
+	]
+
 	function onKeyDown(e) {
-		// Don't capture keys when typing in an input
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
-		// Only prevent default for movement keys so browser shortcuts still work
-		if (['KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown'].includes(e.code)) {
+		if (e.code === 'KeyF') {
+			isFlying = !isFlying
 			e.preventDefault()
+			return
 		}
+		if (MOVE_KEYS.includes(e.code)) e.preventDefault()
 	}
-	function onKeyUp(e) {
-		keys[e.code] = false
+	function onKeyUp(e) { keys[e.code] = false }
+	// WHY: When the window loses focus (tab switch, alt-tab), keyup events are not delivered.
+	// Keys appear stuck and the avatar spins / walks indefinitely.
+	// Clear all held keys and mouse drag state on blur to prevent this.
+	function onBlur() {
+		for (const k in keys) keys[k] = false
+		isDragging  = false
+		isAltOrbit  = false
+		eHoldTime   = 0
 	}
 
 	function onMouseDown(e) {
-		if (e.button !== 0) return  // left button only
-		isDragging = true
-		lastMouseX = e.clientX
-		lastMouseY = e.clientY
+		if (e.button !== 0) return
+		isDragging  = true
+		isAltOrbit  = e.altKey
+		lastMouseX  = e.clientX
+		lastMouseY  = e.clientY
+		if (isAltOrbit) {
+			// Seed orbit angles from current camera state
+			orbitYaw   = yaw
+			orbitPitch = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, -pitch + 0.3))
+			// Pivot = where camera is looking at ground level
+			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+			orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
+			orbitPivot.y = 0
+		}
 	}
 	function onMouseMove(e) {
 		if (!isDragging) return
@@ -63,67 +124,103 @@ export function useWorldEngine(canvasRef) {
 		const dy = e.clientY - lastMouseY
 		lastMouseX = e.clientX
 		lastMouseY = e.clientY
-		yaw   -= dx * MOUSE_SENSITIVITY
-		pitch -= dy * MOUSE_SENSITIVITY
-		pitch  = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 4, pitch))  // clamp pitch
+		if (isAltOrbit) {
+			// WHY: Alt-drag orbits camera around pivot (third-person view), matching SL alt+drag
+			orbitYaw   -= dx * MOUSE_SENSITIVITY
+			orbitPitch  = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPitch + dy * MOUSE_SENSITIVITY))
+		} else {
+			yaw   -= dx * MOUSE_SENSITIVITY
+			pitch -= dy * MOUSE_SENSITIVITY
+			pitch  = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 4, pitch))
+		}
 	}
-	function onMouseUp() {
-		isDragging = false
-	}
+	function onMouseUp() { isDragging = false; isAltOrbit = false }
 
-	// Scroll wheel: move camera forward/backward along view direction
+	// Scroll wheel: zoom in orbit mode, forward/back otherwise
 	function onWheel(e) {
 		if (!camera) return
 		e.preventDefault()
 		const delta = e.deltaY > 0 ? -1 : 1
-		const spd   = CAM_SPEED * 0.4
-		const fwd   = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
-		camera.position.addScaledVector(fwd, delta * spd)
-		camera.position.y = Math.max(0.5, camera.position.y)
+		if (isAltOrbit || (e.altKey && isDragging)) {
+			orbitRadius = Math.max(2, Math.min(64, orbitRadius - delta * 2))
+		} else {
+			const spd = CAM_SPEED * 0.4
+			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+			camera.position.addScaledVector(fwd, delta * spd)
+			camera.position.y = Math.max(0.5, camera.position.y)
+		}
 	}
 
 	// ── Camera update (called each frame with dt) ────────────────────────────
-	// WHY: SL standard — A/D = turn, W/S = walk, Q/E = strafe, arrows same as WASD
 	function updateCamera(dt) {
 		if (!camera) return
-		const turn = CAM_TURN_SPEED * dt
-		const spd  = CAM_SPEED * dt
-		const fly  = CAM_FLY_SPEED * dt
 
-		// Turn (A/D and ←/→ all turn the same)
-		if (keys['KeyA']     || keys['ArrowLeft'])  yaw += turn
-		if (keys['KeyD']     || keys['ArrowRight']) yaw -= turn
-		// Strafe with Q/E
-		const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
-		const rgt = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw))
-		if (keys['KeyQ']) camera.position.addScaledVector(rgt, -spd)
-		if (keys['KeyE']) camera.position.addScaledVector(rgt,  spd)
+		const shift = keys['ShiftLeft'] || keys['ShiftRight']
+		const turn  = CAM_TURN_SPEED * dt
+		const spd   = (shift ? CAM_RUN_SPEED : CAM_SPEED) * dt
+		const fly   = CAM_FLY_SPEED * dt
+		const fwd   = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+		const rgt   = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw))
 
-		// Walk forward/back (W/↑ and S/↓ identical)
-		if (keys['KeyW'] || keys['ArrowUp'])   camera.position.addScaledVector(fwd, spd)
+		if (isAltOrbit) {
+			// Alt-orbit: update camera position only, don't move avatar
+			const cx = orbitPivot.x + orbitRadius * Math.sin(orbitYaw) * Math.cos(orbitPitch)
+			const cy = orbitPivot.y + orbitRadius * Math.sin(orbitPitch)
+			const cz = orbitPivot.z + orbitRadius * Math.cos(orbitYaw) * Math.cos(orbitPitch)
+			camera.position.set(cx, cy, cz)
+			camera.lookAt(orbitPivot)
+			return 0  // no control flags while orbiting
+		}
+
+		// WHY: Shift held = strafe instead of turn (matches SL/Firestorm Shift behaviour)
+		if (!shift) {
+			if (keys['KeyA'] || keys['ArrowLeft'])  yaw += turn
+			if (keys['KeyD'] || keys['ArrowRight']) yaw -= turn
+		}
+
+		// Walk / run forward + back
+		if (keys['KeyW'] || keys['ArrowUp'])   camera.position.addScaledVector(fwd,  spd)
 		if (keys['KeyS'] || keys['ArrowDown']) camera.position.addScaledVector(fwd, -spd)
 
-		// Fly
-		if (keys['PageUp'])   camera.position.y += fly
-		if (keys['PageDown']) camera.position.y -= fly
+		// Strafe: Q always strafes left; Shift+A/D also strafe
+		if (keys['KeyQ'] || (shift && (keys['KeyA'] || keys['ArrowLeft'])))
+			camera.position.addScaledVector(rgt, -spd)
+		if (shift && (keys['KeyD'] || keys['ArrowRight']))
+			camera.position.addScaledVector(rgt,  spd)
 
-		// Stay above terrain
+		// E = jump/fly-up; C = crouch/fly-down; PgUp/PgDn same
+		// WHY: hold E > 1.5s auto-activates fly, matching SL/Firestorm behaviour
+		const goUp   = keys['KeyE'] || keys['PageUp']
+		const goDown = keys['KeyC'] || keys['PageDown']
+		if (goUp) {
+			eHoldTime += dt
+			if (eHoldTime >= 1.5 && !isFlying) isFlying = true
+			camera.position.y += (isFlying ? fly : spd * 0.5)
+		} else {
+			eHoldTime = 0
+		}
+		if (goDown && isFlying) camera.position.y -= fly
+
 		camera.position.y = Math.max(0.5, camera.position.y)
-
-		// Apply rotation (YXZ order = yaw first, then pitch)
 		camera.rotation.set(pitch, yaw, 0, 'YXZ')
 
-		// Derive controlFlags for AgentUpdate
-		// WHY: Q/E strafe maps to SL's left/right strafe flags 0x04/0x08
+		// ── Control flags ──────────────────────────────────────────────────────
 		let cf = 0
-		if (keys['KeyW'] || keys['ArrowUp'])    cf |= 0x01  // AGENT_CONTROL_AT_POS
-		if (keys['KeyS'] || keys['ArrowDown'])  cf |= 0x02  // AGENT_CONTROL_AT_NEG
-		if (keys['KeyQ'])                        cf |= 0x04  // AGENT_CONTROL_LEFT_POS (strafe)
-		if (keys['KeyE'])                        cf |= 0x08  // AGENT_CONTROL_LEFT_NEG
-		if (keys['PageUp'])                      cf |= 0x10  // AGENT_CONTROL_UP_POS
-		if (keys['PageDown'])                    cf |= 0x20  // AGENT_CONTROL_UP_NEG
-		if (keys['KeyA'] || keys['ArrowLeft'])   cf |= 0x1000  // AGENT_CONTROL_YAW_POS
-		if (keys['KeyD'] || keys['ArrowRight'])  cf |= 0x2000  // AGENT_CONTROL_YAW_NEG
+		if (isFlying) cf |= CTRL_FLY
+
+		if (!shift) {
+			if (keys['KeyA'] || keys['ArrowLeft'])  cf |= CTRL_YAW_POS
+			if (keys['KeyD'] || keys['ArrowRight']) cf |= CTRL_YAW_NEG
+		}
+		if (keys['KeyW'] || keys['ArrowUp'])   cf |= CTRL_AT_POS  | (shift ? CTRL_FAST_AT   : 0)
+		if (keys['KeyS'] || keys['ArrowDown']) cf |= CTRL_AT_NEG  | (shift ? CTRL_FAST_AT   : 0)
+		if (keys['KeyQ']  || (shift && (keys['KeyA'] || keys['ArrowLeft'])))
+			cf |= CTRL_LEFT_POS | (shift ? CTRL_FAST_LEFT : 0)
+		if (shift && (keys['KeyD'] || keys['ArrowRight']))
+			cf |= CTRL_LEFT_NEG | CTRL_FAST_LEFT
+		if (goUp)   cf |= CTRL_UP_POS
+		if (goDown) cf |= CTRL_UP_NEG
+
 		return cf
 	}
 
@@ -139,19 +236,29 @@ export function useWorldEngine(canvasRef) {
 		agentUpdateAccum = 0
 		// WHY: SL body rotation quaternion for Z-up yaw.
 		// Three.js yaw rotates around Y (Y-up); SL equivalent rotates around Z (Z-up).
-		// SL facing angle = atan2(cos(yaw), -sin(yaw)) ≈ π/2 + yaw.
-		// LLQuaternion stores only xyz; w = sqrt(1 - x²- y² - z²) derived.
-		const slAngle = Math.PI / 2 + yaw   // convert Three.js yaw → SL heading angle
-		const bodyRotZ = Math.sin(slAngle / 2)  // qz for rotation around Z
+		// SL facing angle = π/2 + yaw (Three.js yaw=0 → facing north = SL +Y → angle=π/2).
+		// LLQuaternion stores only xyz; w = sqrt(1-x²-y²-z²) derived by server (always ≥ 0).
+		// WHY negate when w<0: if cos(halfAngle)<0 the server's sqrt recovers the wrong sign,
+		// making avatar face the mirror direction. Negating xyz preserves the same rotation
+		// since (q and -q) are equivalent quaternions, but ensures reconstructed w > 0.
+		const slAngle  = Math.PI / 2 + yaw
+		const halfAngle = slAngle / 2
+		let bodyRotZ = Math.sin(halfAngle)
+		if (Math.cos(halfAngle) < 0) bodyRotZ = -bodyRotZ
+
+		// WHY: camAt/camLeft must be in SL Z-up space, not Three.js Y-up space.
+		// Conversion: SL(x,y,z) = Three(x, -z, y).
+		// Three.js forward = (-sin(yaw), 0, -cos(yaw)) → SL = (-sin(yaw), cos(yaw), 0)
+		// Three.js right   = ( cos(yaw), 0, -sin(yaw)) → SL = ( cos(yaw), sin(yaw), 0)
+		// SL camLeft is actually the camera's LEFT vector = -right in SL space
 		sendMove({
 			controlFlags,
 			bodyRot:   [0, 0, bodyRotZ],
 			headRot:   [0, 0, bodyRotZ],
-			// Convert Three.js Y-up camera pos → SL Z-up coords
-			camCenter: [camera.position.x, -camera.position.z, camera.position.y],
-			camAt:     [-Math.sin(yaw), 0, -Math.cos(yaw)],
-			camLeft:   [-Math.cos(yaw), 0, Math.sin(yaw)],
-			camUp:     [0, 1, 0],
+			camCenter: [camera.position.x, -camera.position.z, camera.position.y],  // Three→SL
+			camAt:     [-Math.sin(yaw),  Math.cos(yaw), 0],   // forward in SL space
+			camLeft:   [-Math.cos(yaw), -Math.sin(yaw), 0],   // left   in SL space
+			camUp:     [0, 0, 1],                              // Z-up in SL space
 			far:       128,
 		})
 	}
@@ -173,7 +280,10 @@ export function useWorldEngine(canvasRef) {
 		scene.fog = new THREE.FogExp2(0x87ceeb, 0.002)
 
 		camera = new THREE.PerspectiveCamera(70, 1, 0.1, 512)
-		camera.position.set(128, 25, -128)  // SL default — region center, ~25m up
+		// WHY: Start at SL z=25 (Three.js y=25) — matches heartbeat camCenter default so
+		// the sim receives a sensible above-ground camera while waiting for first TerseUpdate.
+		// TerseUpdate snap corrects to real avatar position once sim responds.
+		camera.position.set(128, 25, -128)
 		camera.rotation.set(pitch, yaw, 0, 'YXZ')
 
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
@@ -256,10 +366,65 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	// ── Incoming messages ─────────────────────────────────────────────────────
-	function onObjectUpdate(msg) {
-		for (const obj of (msg.d?.objects ?? [])) {
+	let objUpdateCount = 0
+	function onObjectUpdate(payload) {
+		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers, not the full {t,d} envelope.
+		// So payload = { objects: [...] } — access as payload.objects, not payload.d.objects.
+		const objs = payload?.objects ?? []
+		objUpdateCount++
+		if (objUpdateCount === 1 || objUpdateCount % 20 === 0) {
+			const avCount = objs.filter(o => o.pcode === PCODE_AVATAR).length
+			debugStore.push('info', `[3D] ObjectUpdate #${objUpdateCount}: ${objs.length} objects (${avCount} av) agentId=${sessionStore.agentId?.slice(0,8)}`)
+		}
+		for (const obj of objs) {
 			worldStore.upsertObject(obj)
 			upsertMesh(obj)
+			// WHY: Identify our own avatar by fullId == agentId so TerseUpdate can
+			// sync camera to sim-authoritative position (others see us here).
+			// WHY: bytesToUuid() returns lowercase; login XML may return uppercase agentId.
+			// Case-insensitive compare prevents ownAvatarLocalId from staying null.
+			if (obj.pcode === PCODE_AVATAR &&
+				obj.fullId.toLowerCase() === sessionStore.agentId.toLowerCase()) {
+				ownAvatarLocalId = obj.localId
+				const p = obj.pos
+				debugStore.push('info', `[3D] Own avatar localId=${obj.localId} pos=${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
+				// If ObjectUpdate already has a valid position, snap to it immediately
+				if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+					ownAvatarSnapPos       = p
+					ownAvatarPosNeedsApply = true
+				}
+			}
+		}
+	}
+
+	function onTerseUpdate(payload) {
+		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers.
+		// payload = { objects: [...] } — use payload.objects directly.
+		const objs = payload?.objects ?? []
+		terseUpdateCount++
+		if (terseUpdateCount === 1 || terseUpdateCount % 50 === 0) {
+			debugStore.push('info', `[3D] TerseUpdate #${terseUpdateCount} — ${objs.length} objects, ownId=${ownAvatarLocalId}`)
+		}
+		for (const obj of objs) {
+			// Update world store position
+			worldStore.updateObjectPos(obj.localId, obj.pos)
+			// Move the mesh
+			const mesh = meshMap.get(obj.localId)
+			if (mesh && obj.pos) {
+				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+				gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+			}
+			// WHY: Queue own avatar position for next animate() frame instead of snapping here.
+			// Snapping inside the WS callback (outside rAF loop) can cause off-frame position jumps.
+			if (obj.localId === ownAvatarLocalId && obj.pos) {
+				const firstSnap = !ownAvatarSnapPos
+				ownAvatarSnapPos       = obj.pos
+				ownAvatarPosNeedsApply = true
+				if (firstSnap) {
+					const p = obj.pos
+					debugStore.push('info', `[3D] First TerseUpdate own avatar → ${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
+				}
+			}
 		}
 	}
 
@@ -271,6 +436,18 @@ export function useWorldEngine(canvasRef) {
 		lastTime = time
 
 		const cf = updateCamera(dt)
+
+		// WHY: Snap camera to sim-authoritative position once per TerseUpdate arrival.
+		// Applied after updateCamera so local movement runs, then server corrects.
+		// Snapping at ~10Hz (sim physics rate) is visible but ensures camera = sim avatar.
+		if (ownAvatarPosNeedsApply && ownAvatarSnapPos) {
+			ownAvatarPosNeedsApply = false
+			const t = slToThree(ownAvatarSnapPos[0], ownAvatarSnapPos[1], ownAvatarSnapPos[2])
+			camera.position.x = t.x
+			camera.position.y = t.y + EYE_HEIGHT
+			camera.position.z = t.z
+		}
+
 		maybeAgentUpdate(dt, cf ?? 0)
 		maybeReportPos(dt)
 
@@ -281,10 +458,12 @@ export function useWorldEngine(canvasRef) {
 	// ── Lifecycle ─────────────────────────────────────────────────────────────
 	onMounted(() => {
 		if (!canvasRef.value) return
+		debugStore.push('info', '[3D] World engine mounted — 3D mode active')
 		initScene()
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
 		window.addEventListener('keydown', onKeyDown, { passive: false })
 		window.addEventListener('keyup',   onKeyUp)
+		window.addEventListener('blur',    onBlur)
 		// Mouse drag on canvas for look control
 		canvasRef.value.addEventListener('mousedown', onMouseDown)
 		window.addEventListener('mousemove', onMouseMove)
@@ -292,17 +471,20 @@ export function useWorldEngine(canvasRef) {
 		// Scroll wheel for forward/back movement; passive:false so we can preventDefault
 		canvasRef.value.addEventListener('wheel', onWheel, { passive: false })
 		on(S.OBJECT_UPDATE, onObjectUpdate)
+		on(S.TERSE_UPDATE,  onTerseUpdate)
 	})
 
 	onUnmounted(() => {
 		cancelAnimationFrame(animId)
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
+		window.removeEventListener('blur',    onBlur)
 		window.removeEventListener('mousemove', onMouseMove)
 		window.removeEventListener('mouseup',   onMouseUp)
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
 		canvasRef.value?.removeEventListener('wheel', onWheel)
 		off(S.OBJECT_UPDATE, onObjectUpdate)
+		off(S.TERSE_UPDATE,  onTerseUpdate)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()
@@ -310,9 +492,6 @@ export function useWorldEngine(canvasRef) {
 		meshMap.clear()
 		worldStore.clearAll()
 	})
-
-	// WHY: sessionStore kept for future own-avatar tint based on agentId
-	void sessionStore
 
 	return { scene, camera }
 }

@@ -3,21 +3,25 @@ import { getSession, deleteSession } from '../state/sessions'
 import type { CircuitState } from '../state/sessions'
 import {
 	parseHeader, parseMsgType,
-	decodeChatFromSimulator, decodeObjectUpdate, decodeRegionHandshake,
-	decodeZeroCoded,
+	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
+	decodeRegionHandshake, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
 
-// Message type codes — Low freq IDs verified against SL message.xml
-const LOW_START_PING_CHECK    = 1     // Sim → viewer: keepalive ping
-const LOW_REGION_HANDSHAKE    = 148   // Sim → viewer: region name + terrain info
-const LOW_DISABLE_SIMULATOR   = 152   // Sim → viewer: circuit terminated
-const LOW_CHAT_FROM_SIM       = 139
-const LOW_OBJECT_UPDATE       = 12
-const LOW_OBJECT_UPDATE_TERSE = 11    // ImprovedTerseObjectUpdate (reserved)
+// Message type codes — verified against packet log + LibOpenMetaverse message.xml
+// WHY: ObjectUpdate (12), ImprovedTerseObjectUpdate (15), StartPingCheck (1), CompletePingCheck (2)
+// are HIGH-frequency messages (1-byte ID prefix). Earlier code incorrectly used LOW prefix
+// (4-byte 0xFF 0xFF + U16), so handlers never fired and no object data reached the browser.
+// RegionHandshake (148), DisableSimulator (152), ChatFromSimulator (139) ARE Low-frequency.
+const HIGH_START_PING_CHECK   = 1     // Sim → viewer: keepalive ping (High freq, 1-byte prefix)
+const HIGH_OBJECT_UPDATE      = 12    // Sim → viewer: full object/avatar update (High freq)
+const HIGH_OBJECT_UPDATE_TERSE= 15    // ImprovedTerseObjectUpdate — position-only (High freq)
+const LOW_REGION_HANDSHAKE    = 148   // Sim → viewer: region name + terrain info (Low freq)
+const LOW_DISABLE_SIMULATOR   = 152   // Sim → viewer: circuit terminated (Low freq)
+const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
@@ -87,7 +91,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 
 	// WHY: StartPingCheck is sent periodically by the sim; we MUST reply with CompletePingCheck
 	// or the circuit is declared dead and the viewer goes "not online" to others.
-	if (type === `low:${LOW_START_PING_CHECK}`) {
+	if (type === `high:${HIGH_START_PING_CHECK}`) {
 		const pingId = buf[dataOffset]
 		const pkt    = encodeCompletePingCheck(pingId, nextSeq(session))
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
@@ -133,19 +137,37 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
-	if (type === `low:${LOW_OBJECT_UPDATE}`) {
-		try {
-			const objects = decodeObjectUpdate(buf, dataOffset)
-			if (objects.length > 0) {
-				slog.info(session.ws, `ObjectUpdate: ${objects.length} objects (pcodes: ${objects.map(o=>o.pcode).join(',')})`)
-				session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
-			}
-		} catch (e) { slog.warn(session.ws, `objectUpdate decode error: ${(e as Error).message}`) }
+	if (type === `high:${HIGH_OBJECT_UPDATE}`) {
+		// WHY: onError callback lets decoder return partial results (objects decoded before
+		// the bad one) instead of throwing and losing the whole packet.
+		const objects = decodeObjectUpdate(buf, dataOffset, (errMsg) => {
+			slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`)
+		})
+		if (objects.length > 0) {
+			slog.info(session.ws, `ObjectUpdate: ${objects.length} objects (pcodes: ${objects.map(o=>o.pcode).join(',')})`)
+			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
+		} else {
+			slog.warn(session.ws, `[ObjUpd] decode returned 0 objects (bufLen=${buf.length})`)
+		}
 		return
 	}
 
-	// Unknown packet type — log for debugging (only first 5 per type to avoid spam)
-	// (No per-type dedup here — just log occasional unknown types)
+	if (type === `high:${HIGH_OBJECT_UPDATE_TERSE}`) {
+		try {
+			const objects = decodeImprovedTerseObjectUpdate(buf, dataOffset)
+			if (objects.length > 0) {
+				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
+			}
+		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// WHY: Log each unknown packet type once so we can see if sim sends ObjectUpdateCompressed
+	// (low:13), ObjectUpdateCached (low:14), or other unhandled types.
+	if (!session.loggedTypes.has(type)) {
+		session.loggedTypes.add(type)
+		slog.info(session.ws, `[UDP] first-seen unhandled type=${type} size=${rawBuf.length}b`)
+	}
 
 	// Flush any pending acks after processing
 	sendPendingAcks(session)
@@ -223,5 +245,3 @@ export function startCircuitTimers(sessionId: string): () => void {
 	return () => clearInterval(timer)
 }
 
-// Suppress unused variable warning for LOW_OBJECT_UPDATE_TERSE — reserved for Task 9
-void LOW_OBJECT_UPDATE_TERSE

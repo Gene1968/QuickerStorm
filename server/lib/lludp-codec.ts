@@ -18,15 +18,15 @@ const MSG_ID = {
   CompleteAgentMovement:     Buffer.from([0xFF, 0xFF, 0x00, 0xF9]),   // Low #249
   LogoutRequest:             Buffer.from([0xFF, 0xFF, 0x00, 0xFC]),   // Low #252
   PacketAck:                 Buffer.from([0xFF, 0xFF, 0xFF, 0xFB]),   // Fixed #251
-  StartPingCheck:            Buffer.from([0xFF, 0xFF, 0x00, 0x01]),   // Low #1  (received from sim)
-  CompletePingCheck:         Buffer.from([0xFF, 0xFF, 0x00, 0x02]),   // Low #2  (we send back)
+  StartPingCheck:            Buffer.from([0x01]),                     // High #1 (received from sim)
+  CompletePingCheck:         Buffer.from([0x02]),                     // High #2 (we send back)
   RegionHandshake:           Buffer.from([0xFF, 0xFF, 0x00, 0x94]),   // Low #148 (received from sim)
   RegionHandshakeReply:      Buffer.from([0xFF, 0xFF, 0x00, 0x95]),   // Low #149 (we send back)
-  // Verify these in phoenix-firestorm/indra/newview/app_settings/message.xml:
-  ChatFromViewer:            Buffer.from([0xFF, 0xFF, 0x00, 0x50]),   // TODO verify
-  ChatFromSimulator:         Buffer.from([0xFF, 0xFF, 0x00, 0x8B]),   // TODO verify
-  ObjectUpdate:              Buffer.from([0xFF, 0xFF, 0x00, 0x0C]),   // TODO verify
-  ImprovedTerseObjectUpdate: Buffer.from([0xFF, 0xFF, 0x00, 0x0B]),   // TODO verify
+  // Verified from packet log: these arrive as High-frequency (1-byte prefix)
+  ChatFromViewer:            Buffer.from([0xFF, 0xFF, 0x00, 0x50]),   // Low #80 (we send)
+  ChatFromSimulator:         Buffer.from([0xFF, 0xFF, 0x00, 0x8B]),   // Low #139 (received)
+  ObjectUpdate:              Buffer.from([0x0C]),                     // High #12 (received from sim)
+  ImprovedTerseObjectUpdate: Buffer.from([0x0F]),                     // High #15 (received from sim)
 }
 
 // ── UUID helpers ─────────────────────────────────────────────────────────
@@ -279,11 +279,15 @@ export interface ObjectData {
 }
 
 /**
- * Minimal ObjectUpdate decoder — extracts type and scale.
- * Position is inside a packed ObjectData blob (complex format); returns [0,0,0] until
- * ImprovedTerseObjectUpdate parser is added (Task 9 TODO).
+ * Minimal ObjectUpdate decoder — extracts type, scale, position, and name.
+ * WHY: ObjectData blob format: if length >= 12, first 12 bytes are position as 3 F32LE.
+ * Full float updates (76 bytes) and half-precision (48 bytes) both start with F32 position.
  */
-export function decodeObjectUpdate(buf: Buffer, dataOffset: number): ObjectData[] {
+export function decodeObjectUpdate(
+  buf: Buffer,
+  dataOffset: number,
+  onError?: (msg: string) => void,
+): ObjectData[] {
   const objects: ObjectData[] = []
   let off = dataOffset
 
@@ -294,36 +298,161 @@ export function decodeObjectUpdate(buf: Buffer, dataOffset: number): ObjectData[
   // ObjectData block (variable count)
   const count = buf[off++]
   for (let i = 0; i < count && off < buf.length; i++) {
-    const localId = buf.readUInt32LE(off); off += 4
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _state   = buf[off++]
-    const fullId   = bytesToUuid(buf, off); off += 16
-    off += 4   // CRC
-    const pcode = buf[off++]
-    off += 2   // material, clickAction
-    const sx = buf.readFloatLE(off); off += 4  // Scale
-    const sy = buf.readFloatLE(off); off += 4
-    const sz = buf.readFloatLE(off); off += 4
-    // ObjectData variable1: packed position/velocity/rotation — skip
-    const odLen = buf[off++]; off += odLen
-    off += 4   // parentId
-    off += 4   // updateFlags
-    // Skip path/profile params (10 bytes)
-    off += 10
-    // Variable fields: each variable2 has 2-byte length prefix, variable1 has 1-byte
-    const skipVar2 = () => { const len = buf.readUInt16LE(off); off += 2 + len }
-    const skipVar1 = () => { const len = buf[off++]; off += len }
-    skipVar2()  // TextureEntry
-    skipVar2()  // TextureAnim
-    // NameValue: variable2
-    const nvLen    = buf.readUInt16LE(off); off += 2
-    const nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
-    skipVar1()  // Data
-    skipVar1()  // Text
-    skipVar1()  // MediaURL
-    objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos: [0, 0, 0], nameValue })
+    // WHY: Per-object try/catch — if one object's decode fails (corrupt packet, unknown
+    // extension, wrong offset) we still forward the objects decoded so far rather than
+    // losing the entire packet. Error is rethrown with position context for server logging.
+    const objStartOff = off
+    let localId = 0, pcode = 0
+    let _diag = ''   // WHY: declared before try so catch block can read it
+    try {
+      localId = buf.readUInt32LE(off); off += 4
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _state   = buf[off++]
+      const fullId   = bytesToUuid(buf, off); off += 16
+      off += 4   // CRC
+      pcode = buf[off++]
+      off += 2   // material, clickAction
+      const sx = buf.readFloatLE(off); off += 4  // Scale
+      const sy = buf.readFloatLE(off); off += 4
+      const sz = buf.readFloatLE(off); off += 4
+      // WHY: ObjectData blob format per LibOpenMetaverse ObjectManager.cs:
+      //   76 bytes → avatar full update: CollisionPlane(16B F32) THEN Position(12B F32)
+      //   60 bytes → prim full update: Position(12B F32) at byte 0
+      //   48 bytes → mixed update: Position(12B F32) at byte 0
+      // Reading byte 0 for a 76-byte blob gives the collision-plane normal [0,0,1,−z],
+      // which decodes as SL pos (0,0,1) and places the avatar mesh at the region corner.
+      const odLen = buf[off++]
+      _diag = `od=${odLen}`
+      let pos: [number, number, number] = [0, 0, 0]
+      if (odLen >= 12) {
+        const posOff = (odLen === 76) ? off + 16 : off   // skip CollisionPlane for avatar blobs
+        pos = [buf.readFloatLE(posOff), buf.readFloatLE(posOff + 4), buf.readFloatLE(posOff + 8)]
+      }
+      off += odLen
+      off += 4   // parentId
+      off += 4   // updateFlags
+      // WHY: Path/profile block is 23 bytes, not 10.
+      //   PathCurve(1) + ProfileCurve(1) + PathBegin(2) + PathEnd(2) +
+      //   PathScaleX(1) + PathScaleY(1) + PathShearX(1) + PathShearY(1) +
+      //   PathTwist(1) + PathTwistBegin(1) + PathRadiusOffset(1) +
+      //   PathTaperX(1) + PathTaperY(1) + PathRevolutions(1) + PathSkew(1) +
+      //   ProfileBegin(2) + ProfileEnd(2) + ProfileHollow(2) = 23
+      // Previous off+=10 caused readUInt16LE to land on PathScaleX/Y (0x80,0x80 = 32896),
+      // making TextureEntry skip 32KB → RangeError → decode crash → no obj_upd WS message.
+      off += 23
+      // Variable fields: each variable2 has 2-byte length prefix, variable1 has 1-byte
+      // WHY: closures capture `off` by reference so each call advances the shared offset.
+      // WHY safe guards: if off goes OOB inside a field skip, throw with field name
+      // rather than silently producing NaN (undefined arithmetic) that masks which field failed.
+      const skipVar2 = (name: string) => {
+        if (off + 1 >= buf.length) throw new Error(`${name} prefix OOB at off=${off}`)
+        const len = buf.readUInt16LE(off)
+        _diag += ` ${name}=${len}`
+        off += 2 + len
+      }
+      const skipVar1 = (name: string) => {
+        if (off >= buf.length) throw new Error(`${name} prefix OOB at off=${off}`)
+        const len = buf[off++]
+        _diag += ` ${name}=${len}`
+        if (len === undefined) throw new Error(`${name}: undefined len at off=${off - 1}`)
+        off += len
+      }
+      _diag += ` @TE=${off}`  // WHY: absolute offset of TE prefix — tells us if prior field count is right
+      skipVar2('TE')  // TextureEntry (Variable2)
+      // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
+      // LLUDP message_template: TextureAnim { Variable 1 }
+      // Bug was: skipVar2() reading 1-byte TA prefix + 1-byte NV prefix as U16LE → crash.
+      skipVar1('TA')  // TextureAnim (Variable1 — 1-byte prefix)
+      // NameValue: variable2 — read value before skipping
+      if (off + 1 >= buf.length) throw new Error(`NV prefix OOB at off=${off}`)
+      const nvLen    = buf.readUInt16LE(off); off += 2
+      _diag += ` NV=${nvLen}`
+      const nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
+      skipVar1('Data')
+      skipVar1('Text')
+      off += 4    // WHY: TextColor is Fixed4 (RGBA), NOT a variable field — easy to miss
+      skipVar1('MediaURL')
+      // WHY: Must skip ALL remaining fields so `off` lands at the next object's ID for
+      // multi-object packets (count > 1). Stopping at MediaURL leaves ~66+ bytes unread,
+      // corrupting every subsequent object parse.
+      skipVar1('PSBlock')  // particle system data, 0-86 bytes
+      skipVar1('ExtraParams')
+      off += 16   // Sound UUID
+      off += 16   // OwnerID UUID
+      off += 4    // SoundGain F32
+      off += 1    // Flags U8
+      off += 4    // SoundRadius F32
+      off += 1    // JointType U8
+      off += 12   // JointPivot LLVector3
+      off += 12   // JointAxisOrAnchor LLVector3
+      objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos, nameValue })
+    } catch (e) {
+      // Hex dump first 80 bytes from startOff to reveal actual binary structure
+      // WHY: 200 bytes covers fixed header (41) + od (≤76) + fixed tail (31) + enough variable fields
+      // to see what the TE prefix bytes actually are and whether TE length itself is sane.
+      const _hex = buf.slice(objStartOff, Math.min(buf.length, objStartOff + 200)).toString('hex')
+      const _msg = `obj[${i}/${count}] localId=${localId} pcode=${pcode} startOff=${objStartOff} failOff=${off} bufLen=${buf.length} [${_diag}]\n  hex@start: ${_hex}\n  cause: ${(e as Error).message}`
+      if (onError) {
+        // WHY: with error callback, return objects decoded so far rather than losing the whole packet
+        onError(_msg)
+        break
+      }
+      throw new Error(_msg)
+    }
   }
   return objects
+}
+
+// ── ImprovedTerseObjectUpdate (Low #11) ──────────────────────────────────────
+
+export interface TerseObjectData {
+  localId: number
+  pos:     [number, number, number]
+}
+
+/**
+ * Decode ImprovedTerseObjectUpdate — sent by sim for every position/velocity change.
+ * WHY: Per SL message.xml, ObjectData block layout is always:
+ *   ID(U32) + State(U8) + FootCollisionPlane(LLVector4=16B) + Data(Variable1)
+ * FootCollisionPlane is always present (zeroed for non-avatars).
+ * Data.length == 38 → avatar with F32 position; Data.length == 32 → prim with U16 position.
+ */
+export function decodeImprovedTerseObjectUpdate(buf: Buffer, dataOffset: number): TerseObjectData[] {
+  const results: TerseObjectData[] = []
+  let off = dataOffset
+
+  // RegionData block
+  off += 8  // RegionHandle U64
+  off += 2  // TimeDilation U16
+
+  const count = buf[off++]
+
+  for (let i = 0; i < count && off < buf.length; i++) {
+    const localId = buf.readUInt32LE(off); off += 4
+    off += 1   // State U8
+    off += 16  // FootCollisionPlane: LLVector4 (4 F32) — always present, zeroed for prims
+
+    const dataLen = buf[off++]
+    let pos: [number, number, number] = [0, 0, 0]
+
+    if (dataLen >= 12 && dataLen > 32) {
+      // WHY: Avatar terse data (38 bytes) starts with F32 position (3 * 4 = 12 bytes).
+      // Prim terse data (32 bytes) starts with U16 quantized position (3 * 2 = 6 bytes).
+      // dataLen > 32 reliably distinguishes avatar from prim across OpenSim versions.
+      pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
+    } else if (dataLen >= 6) {
+      // WHY: Prim position quantized to region bounds [0, 256] as U16 in range [0, 65535].
+      const px = buf.readUInt16LE(off)     * (256.0 / 65535.0)
+      const py = buf.readUInt16LE(off + 2) * (256.0 / 65535.0)
+      const pz = buf.readUInt16LE(off + 4) * (256.0 / 65535.0)
+      pos = [px, py, pz]
+    }
+
+    off += dataLen
+    results.push({ localId, pos })
+  }
+
+  return results
 }
 
 // ── RegionHandshake (Low #148) ────────────────────────────────────────────

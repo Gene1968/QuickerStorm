@@ -92,7 +92,7 @@ function onEditKeydown(e) {
   <div class="flex items-center gap-2 px-3 h-8 bg-black/70 border-b border-brd text-xs text-white shrink-0 select-none">
 
     <!-- Connection status dot -->
-    <span :class="connected ? 'text-green-400' : 'text-red-400'" class="text-[10px] shrink-0">
+    <span :class="connected ? 'text-green-400' : 'text-red-400'" class="fs-5 pb-1 shrink-0">
       {{ connected ? '●' : '○' }}
     </span>
 

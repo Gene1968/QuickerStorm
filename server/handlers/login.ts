@@ -73,6 +73,7 @@ export async function handleLogin(
 		circuitEstablished: false,
 		lastAgentUpdateAt:  0,
 		lastAgentParams:    null,
+		loggedTypes:        new Set<string>(),
 	}
 
 	createSession(sessionId, circuit)
