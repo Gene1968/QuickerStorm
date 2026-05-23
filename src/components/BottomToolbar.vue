@@ -29,7 +29,7 @@ const tools = [
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
   if (e.ctrlKey && e.key === 'm') { e.preventDefault(); ui.toggleMap() }
-  if (e.key === 'F12') { e.preventDefault(); ui.toggleDebug() }
+  if (e.ctrlKey && e.shiftKey && e.code === 'Digit4') { e.preventDefault(); ui.toggleDebug() }
 }
 
 onMounted(() => window.addEventListener('keydown', onKeyDown))
@@ -76,11 +76,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
       <span class="leading-none mt-0.5 hidden sm:block">Settings</span>
     </button>
 
-    <!-- Debug panel toggle (F12) -->
+    <!-- Debug panel toggle (Ctrl+Shift+4) -->
     <button
       class="flex flex-col items-center justify-center w-12 h-8 rounded text-[10px] transition-colors"
       :class="ui.showDebug ? 'bg-yellow-500/20 text-yellow-400' : 'text-white/40 hover:bg-white/10 hover:text-white'"
-      title="Debug Panel (F12)"
+      title="Debug Panel (Ctrl+Shift+4)"
       @click="ui.toggleDebug()"
     >
       <span class="text-base leading-none">🔌</span>

@@ -1,9 +1,11 @@
 <script setup>
 import { useSessionStore } from '@/stores/sessionStore'
-import { useDebugStore } from '@/stores/debugStore'
+import { useDebugStore }   from '@/stores/debugStore'
+import { useUiStore }      from '@/stores/uiStore'
 
 const session = useSessionStore()
 const debug   = useDebugStore()
+const ui      = useUiStore()
 
 const COLOR = {
   info:  'text-green-300',
@@ -23,6 +25,11 @@ const COLOR = {
       <span class="text-white font-semibold flex-1">🔌 Debug / Connection</span>
       <span class="text-white/30">{{ debug.lines.length }} lines</span>
       <button class="text-white/40 hover:text-white ml-2" @click="debug.clear()">clear</button>
+      <button
+        class="text-white/40 hover:text-white/80 text-xs leading-none ml-2 shrink-0 transition-colors"
+        title="Close (Ctrl+Shift+4)"
+        @click="ui.toggleDebug()"
+      >✕</button>
     </div>
 
     <!-- Session data -->
