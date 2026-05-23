@@ -2,106 +2,116 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Dark theme variables — deep navy ────────────────────────────── */
+/* ── Dark theme variables — earth / rust ─────────────────────────── */
 :root {
-	--color-bg:     #0d1f35;
-	--color-bg2:    #142840;
-	--color-card:   #1a3050;
-	--color-card2:  #213660;
-	--color-side:   #0a101af2;
-	--color-brd:    #1e3555;
-	--color-brd2:   #284468;
-	--color-t1:     #e2eaf5;
-	--color-t2:     #8da0b8;
-	--color-tm:     #728aaa;   /* was #4d6080 — raised for ~3.7:1 contrast on card bg */
-	--color-accent: #00b4d8;
-	--color-accent2:#0077b6;
-	--color-accent3:#90e0ef;
-	--color-blue:   #2979ff;
-	--color-teal:   #00bcd4;
-	--color-green:  #15753d;
+	--color-bg:     #1A0905;
+	--color-bg2:    #241108;
+	--color-card:   #32180D;
+	--color-card2:  #3D1E11;
+	--color-side:   rgba(26, 9, 5, 0.93);
+	--color-brd:    #5C2918;
+	--color-brd2:   #7A3522;
+	--color-t1:     #F5EAE0;
+	--color-t2:     #C8A090;
+	--color-tm:     #9A7060;   /* muted warm — ≥3.5:1 contrast on card bg */
+	--color-accent: #E9972D;   /* carrot orange — primary interactive */
+	--color-accent2:#C4501B;   /* sinopia */
+	--color-accent3:#F2C181;   /* carrot 60% tint */
+	--color-blue:   #2979ff;   /* keep for functional info/link states */
+	--color-teal:   #E9972D;   /* repurposed → carrot alias */
+	--color-green:  #2B5B3F;   /* hunter green */
 	--color-red:    #f44336;
-	--color-accent-orng: #ee9919;
+	--color-accent-orng: #E9972D;
+	/* ── Named palette ───────────────────────────────────────────── */
+	--color-rufous:  #A0361B;
+	--color-sinopia: #C4501B;
+	--color-carrot:  #E9972D;
+	--color-hunter:  #2B5B3F;
+	--color-forest:  #143829;
+	/* ── Floater alphas (use for HUD/panels/labels) ──────────────── */
+	--color-floater:    rgba(26, 9, 5, 0.85);
+	--color-floater-sm: rgba(26, 9, 5, 0.45);
+	--color-floater-lg: rgba(26, 9, 5, 0.95);
 	--sidebar-w:         clamp(9rem, 15vw, 19rem);
 	--sidebar-collapsed-w: 3.25rem;
 	/* Updated by TheSidebar when collapsed; use --canvas-left to center fixed DOM elements over the canvas */
 	--canvas-left:       var(--sidebar-w);
 }
 
-/* ── Light theme — bright daytime office ─────────────────────────── */
+/* ── Light theme — warm earth / cream ────────────────────────────── */
 html.light {
-	--color-bg:     #eef5fc;
-	--color-bg2:    #e2edf8;
-	--color-card:   #f5f9fe;
-	--color-card2:  #eaf2fa;
-	--color-side:   #5599ddc2;
-	--color-brd:    #bad0e8;
-	--color-brd2:   #9bbad8;
-	--color-t1:     #08192c;
-	--color-t2:     #1e3d5c;
-	--color-tm:     #333;
-	--color-accent: #0077b6;
-	--color-accent2:#005f99;
-	--color-accent3:#0096c7;
-	--fp-svg-bg:    #ddeefa;
+	--color-bg:     #FDF6EF;
+	--color-bg2:    #F5E8D8;
+	--color-card:   #FDF9F5;
+	--color-card2:  #F3E8DC;
+	--color-side:   rgba(160, 54, 27, 0.88);
+	--color-brd:    #D4A882;
+	--color-brd2:   #BC8860;
+	--color-t1:     #1A0905;
+	--color-t2:     #5A2616;
+	--color-tm:     #6B4030;
+	--color-accent: #A0361B;   /* rufous — primary interactive in light */
+	--color-accent2:#7A2210;
+	--color-accent3:#C4501B;   /* sinopia */
+	--fp-svg-bg:    #FDECD8;
 }
 
-/* HUD buttons — light bg, dark text in light mode */
+/* HUD buttons — cream bg, rufous accents in light mode */
 html.light .hud-btn {
-	background: rgba(245, 251, 255, 0.92);
+	background: rgba(253, 249, 245, 0.92);
 	border-color: var(--color-brd);
 	color: var(--color-t2);
 }
 html.light .hud-btn:hover {
-	background: rgba(220, 238, 255, 0.95);
+	background: rgba(243, 232, 220, 0.95);
 	border-color: var(--color-brd2);
 	color: var(--color-t1);
 }
 html.light .hud-btn.active {
-	background: rgba(0, 72, 170, 0.13);
-	border-color: rgba(0, 72, 170, 0.65);
-	color: #003d99;
+	background: rgba(160, 54, 27, 0.13);
+	border-color: rgba(160, 54, 27, 0.65);
+	color: #7A2210;
 }
 
 
 /* Door labels on canvas */
 html.light .door-label {
-	background: rgba(235, 248, 255, 0.45);
-	border-color: rgba(0, 119, 182, 0.15);
+	background: rgba(253, 246, 239, 0.45);
+	border-color: rgba(160, 54, 27, 0.15);
 	color: var(--color-tm);
 }
 html.light .door-label--nav {
-	background: rgba(235, 248, 255, 0.92);
-	border-color: rgba(0, 119, 182, 0.55);
+	background: rgba(253, 246, 239, 0.92);
+	border-color: rgba(160, 54, 27, 0.55);
 	color: var(--color-accent);
 }
 html.light .door-label--nav:hover {
-	background: rgba(210, 238, 255, 0.96);
+	background: rgba(243, 232, 220, 0.96);
 	border-color: var(--color-accent);
 	color: var(--color-accent2);
 }
 
 /* Avatar trigger (CornerMenu) */
 html.light .avatar-trigger {
-	background: rgba(245, 251, 255, 0.92);
+	background: rgba(253, 249, 245, 0.92);
 	border-color: var(--color-brd);
 }
 html.light .avatar-trigger:hover,
 html.light .avatar-trigger.active {
-	background: rgba(220, 238, 255, 0.95);
+	background: rgba(243, 232, 220, 0.95);
 	border-color: var(--color-brd2);
 }
 
 /* Room HUD pill ("You are in: Lobby") */
 html.light .room-hud-text {
-	background: rgba(245, 221, 155, 0.92);
+	background: rgba(233, 151, 45, 0.18);
 	border-color: var(--color-brd);
 	color: var(--color-t2);
 }
 
 /* Proximity voice bar */
 html.light .voice-bar {
-	background: #5599ddc2;
+	background: rgba(160, 54, 27, 0.78);
 	border-color: rgba(255, 255, 255, 0.18);
 }
 html.light .talk-btn:hover    { background: rgba(255,255,255,0.15); color: #fff; }
@@ -114,7 +124,7 @@ html.light .slack-invite-btn.member  { color: var(--color-side); }
 
 /* Office app shelf */
 html.light .shelf-inner {
-	background: #4b83c3d1;
+	background: rgba(160, 54, 27, 0.82);
 	border-color: rgba(255, 255, 255, 0.18);
 }
 html.light .shelf-name        { color: rgba(255,255,255,0.85); }
@@ -156,7 +166,7 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 		transition: background 0.12s, border-color 0.12s, color 0.12s;
 	}
 	.ava-btn:hover:not(:disabled) {
-		background: rgba(0, 180, 216, 0.1);
+		background: rgba(233, 151, 45, 0.1);
 		border-color: var(--color-accent);
 		color: var(--color-t1);
 	}
@@ -318,8 +328,8 @@ a { color: inherit; text-decoration: none; }
 	display: flex;
 	align-items: center;
 	gap: 0.125rem;
-	background: rgba(8, 13, 20, 0.45);
-	border: 1px solid rgba(0, 180, 216, 0.15);
+	background: var(--color-floater-sm);
+	border: 1px solid rgba(233, 151, 45, 0.15);
 	border-radius: 0.3125rem;
 	color: var(--color-tm);
 	font-size: 0.625rem;
@@ -334,8 +344,8 @@ a { color: inherit; text-decoration: none; }
 
 /* Navigable door label — click to enter */
 .door-label--nav {
-	background: rgba(8, 13, 20, 0.88);
-	border: 1px solid rgba(0, 180, 216, 0.6);
+	background: var(--color-floater);
+	border: 1px solid rgba(233, 151, 45, 0.6);
 	border-radius: 0.3125rem;
 	color: var(--color-accent);
 	font-size: 0.8125rem;
@@ -355,7 +365,7 @@ a { color: inherit; text-decoration: none; }
 	opacity: 0.75;
 }
 .door-label--nav:hover {
-	background: rgba(0, 180, 216, 0.14);
+	background: rgba(233, 151, 45, 0.14);
 	border-color: var(--color-accent3);
 	color: #fff;
 }
@@ -379,10 +389,10 @@ a { color: inherit; text-decoration: none; }
 /* Room-name label — overhead only, slightly above room center */
 .room-name-label {
 	display: none;    /* hidden in POV by default */
-	background: rgba(8, 13, 20, 0.82);
-	border: 1px solid rgba(0, 180, 216, 0.45);
+	background: var(--color-floater);
+	border: 1px solid rgba(233, 151, 45, 0.45);
 	border-radius: 0.375rem;
-	color: #c8e8f8;
+	color: #F2C181;
 	font-size: 0.6875rem;
 	font-weight: 600;
 	letter-spacing: 0.04em;
@@ -395,18 +405,18 @@ a { color: inherit; text-decoration: none; }
 	user-select: none;
 }
 .room-name-label:hover {
-	background: rgba(0, 180, 216, 0.18);
-	border-color: #00b4d8;
+	background: rgba(233, 151, 45, 0.18);
+	border-color: #E9972D;
 	color: #fff;
 }
 html.light .room-name-label {
-	background: rgba(235, 248, 255, 0.92);
-	border-color: rgba(0, 119, 182, 0.5);
-	color: #1a4a6e;
+	background: rgba(253, 246, 239, 0.92);
+	border-color: rgba(160, 54, 27, 0.5);
+	color: #5A2616;
 }
 html.light .room-name-label:hover {
-	background: rgba(210, 238, 255, 0.96);
-	border-color: #0077b6;
+	background: rgba(243, 232, 220, 0.96);
+	border-color: #A0361B;
 }
 /* Show only in overhead mode */
 [data-view="overhead"] .room-name-label {
@@ -434,10 +444,10 @@ html.light .room-name-label:hover {
 	--gradient-angle: -10deg;
 	background: repeating-conic-gradient(
 		from var(--gradient-angle) at 150% -50%,
-		#00b4d8 0deg, transparent 2.5deg,
-		transparent 6.5deg, #2979ff 10deg,
+		#E9972D 0deg, transparent 2.5deg,
+		transparent 6.5deg, #A0361B 10deg,
 		transparent 12.5deg, transparent 16deg,
-		#00b4d8 18.5deg
+		#E9972D 18.5deg
 	);
 	-webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
 	-webkit-mask-composite: xor;
@@ -453,10 +463,10 @@ html.light .room-name-label:hover {
 html.light .animated-border::before {
 	background: repeating-conic-gradient(
 		from var(--gradient-angle) at 150% -50%,
-		#0044c8 0deg, transparent 2.5deg,
-		transparent 6.5deg, #7722ee 10deg,
+		#A0361B 0deg, transparent 2.5deg,
+		transparent 6.5deg, #2B5B3F 10deg,
 		transparent 12.5deg, transparent 16deg,
-		#0044c8 18.5deg
+		#A0361B 18.5deg
 	);
 }
 
@@ -509,7 +519,7 @@ html.light .animated-border::before {
 	display: flex;
 	align-items: center;
 	gap: 0.375rem;
-	background: rgba(13, 21, 32, 0.85);
+	background: var(--color-floater);
 	border: 1px solid var(--color-brd);
 	border-radius: 0.5rem;
 	padding: 0.4375rem 0.5rem;
@@ -525,12 +535,12 @@ html.light .animated-border::before {
 .hud-btn:hover {
 	color: var(--color-t1);
 	border-color: var(--color-brd2);
-	background: rgba(19, 28, 46, 0.9);
+	background: rgba(36, 17, 8, 0.9);
 }
 .hud-btn.active {
 	color: var(--color-accent3);
 	border-color: var(--color-accent);
-	background: rgba(0, 119, 182, 0.15);
+	background: rgba(233, 151, 45, 0.15);
 }
 
 
