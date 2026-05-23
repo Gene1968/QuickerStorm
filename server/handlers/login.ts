@@ -12,7 +12,7 @@ import { S } from '../../shared/protocol.js'
 export async function handleLogin(
 	ws: ServerWebSocket<unknown>,
 	sessionId: string,
-	data: { grid: string; username: string; password: string }
+	data: { grid: string; username: string; password: string; destination?: string }
 ): Promise<void> {
 	const grid = getGrid(data.grid)
 	if (!grid) {
@@ -26,7 +26,9 @@ export async function handleLogin(
 	const last  = parts.length > 1 ? parts.slice(1).join(' ') : 'Resident'
 
 	const hashedPass = hashPassword(data.password)
-	const loginXml   = buildLoginXml({ first, last, hashedPass, start: 'last' })
+	// WHY: destination forwarded from client — 'last', 'home', or 'uri:RegionName&x&y&z'
+	const start      = data.destination ?? 'last'
+	const loginXml   = buildLoginXml({ first, last, hashedPass, start })
 
 	let loginResult
 	try {
@@ -89,11 +91,16 @@ export async function handleLogin(
 		ws.send(JSON.stringify({
 			t: S.LOGIN_OK,
 			d: {
-				agentId:   loginResult.agent_id,
-				sessionId: loginResult.session_id,
-				simIp:     loginResult.sim_ip,
-				simPort:   loginResult.sim_port,
-				seedCap:   loginResult.seed_capability,
+				agentId:       loginResult.agent_id,
+				sessionId:     loginResult.session_id,
+				simIp:         loginResult.sim_ip,
+				simPort:       loginResult.sim_port,
+				seedCap:       loginResult.seed_capability,
+				regionName:    loginResult.region_name ?? '',
+				regionX:       loginResult.region_x ?? 0,
+				regionY:       loginResult.region_y ?? 0,
+				startLocation: loginResult.start_location ?? start,
+				agentAccess:   loginResult.agent_access ?? '',
 			},
 		}))
 	})

@@ -14,7 +14,7 @@ export function useGridLogin() {
 	const sessionStore = useSessionStore()
 	const router       = useRouter()
 
-	async function login(username, password) {
+	async function login(username, password, destination = 'last') {
 		gridStore.setLoginState('loading')
 
 		connect()  // idempotent — no-op if already connected
@@ -43,9 +43,10 @@ export function useGridLogin() {
 
 		// Send login — Bun proxies XML-RPC to grid
 		emit(C.LOGIN, {
-			grid:     gridStore.selectedNick,
+			grid:        gridStore.selectedNick,
 			username,
 			password,
+			destination,  // 'last', 'home', or 'uri:RegionName&x&y&z'
 		})
 
 		// Wait for LOGIN_OK or LOGIN_FAIL with timeout

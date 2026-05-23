@@ -1,38 +1,50 @@
 <script setup>
+import { computed } from 'vue'
 import { use2DFallback } from '@/composables/use2DFallback'
 import { useUiStore } from '@/stores/uiStore'
 import WorldCanvas     from '@/components/WorldCanvas.vue'
 import SimpleWorldView from '@/components/SimpleWorldView.vue'
-import HUDLayer        from '@/components/HUDLayer.vue'
+import LocationBar     from '@/components/LocationBar.vue'
 import AvatarList      from '@/components/AvatarList.vue'
 import MinimapOverlay  from '@/components/MinimapOverlay.vue'
 import ChatBar         from '@/components/ChatBar.vue'
+import BottomToolbar   from '@/components/BottomToolbar.vue'
 
-const { is2D, setMode } = use2DFallback()
+// use2DFallback auto-detects on mount; uiStore.mode can also force 2D
+const { is2D: autoDetect2D } = use2DFallback()
 const ui = useUiStore()
+
+// Show 2D if auto-detected low-end OR user manually toggled to '2d' in toolbar
+const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
 </script>
 
 <template>
-  <div class="w-screen h-screen overflow-hidden bg-bg relative">
+  <div class="w-screen h-screen flex flex-col overflow-hidden bg-bg">
 
-    <!-- 2D fallback (mobile / no WebGL) -->
-    <SimpleWorldView v-if="is2D" />
+    <!-- 2D fallback -->
+    <template v-if="show2D">
+      <LocationBar />
+      <SimpleWorldView class="flex-1" />
+      <BottomToolbar />
+    </template>
 
     <!-- 3D world -->
     <template v-else>
-      <WorldCanvas class="absolute inset-0" />
-      <HUDLayer />
-      <AvatarList      v-if="ui.showAvatarList" />
-      <MinimapOverlay  v-if="ui.showMinimap" />
-      <ChatBar         v-if="ui.showChat" />
+      <!-- Top: location / status bar -->
+      <LocationBar />
 
-      <!-- 2D-mode toggle -->
-      <button
-        class="absolute top-2 right-52 text-xs bg-black/50 text-white px-2 py-0.5 rounded hover:bg-black/70"
-        @click="setMode('2d')"
-      >
-        2D View
-      </button>
+      <!-- Middle: canvas area with overlays -->
+      <div class="flex-1 relative overflow-hidden">
+        <WorldCanvas class="absolute inset-0" />
+        <MinimapOverlay v-if="ui.showMinimap" />
+        <AvatarList     v-if="ui.showAvatarList" />
+      </div>
+
+      <!-- Chat panel -->
+      <ChatBar v-if="ui.showChat" />
+
+      <!-- Bottom toolbar -->
+      <BottomToolbar />
     </template>
 
   </div>
