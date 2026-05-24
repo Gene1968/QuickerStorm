@@ -1,9 +1,9 @@
 <script setup>
-import { computed } from 'vue'
-import GridSelector from '@/components/GridSelector.vue'
+import { computed }		from 'vue'
+import GridSelector		from '@/components/GridSelector.vue'
 import LoginForm		from '@/components/LoginForm.vue'
-import { useTheme }		 from '@/composables/useTheme'
-import { useGridStore } from '@/stores/gridStore'
+import { useTheme }		from '@/composables/useTheme'
+import { useGridStore }	from '@/stores/gridStore'
 
 const { isDark, toggle } = useTheme()
 const gridStore = useGridStore()

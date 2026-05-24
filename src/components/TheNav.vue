@@ -127,7 +127,7 @@ const toggleManageAccess = () => {
 
 <style scoped>
 .header-container {
-	 background: linear-gradient( 30deg, #082E5C, #1B4F98 );
+	background: linear-gradient( 30deg, #082E5C, #1B4F98 );
 }
 
 .manage-access {

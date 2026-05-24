@@ -294,7 +294,7 @@ onUnmounted(() => {
 .pf-shell {
 	background: var(--color-card);
 	border: 1px solid var(--color-brd2);
-	border-radius: 0.75rem;
+	border-radius: 0.5rem; /* = rounded-lg, matches other floaters */
 	width: clamp(32rem, 58vw, 52rem);
 	height: clamp(26rem, 72vh, 44rem);
 	box-shadow: 0 16px 60px rgba(0, 0, 0, 0.6);

@@ -3,14 +3,14 @@ import { ref, computed, watch } from 'vue'
 import { useGridLogin } from '@/composables/useGridLogin'
 import { useGridStore } from '@/stores/gridStore'
 
-const { login }	 = useGridLogin()
-const gridStore	 = useGridStore()
+const { login }		= useGridLogin()
+const gridStore		= useGridStore()
 
 const username		= ref('')
 const password		= ref('')
-const destType		= ref('last')		 // 'last' | 'home' | 'region'
-const destRegion	= ref('')				 // region name when destType === 'region'
-const error			 = ref('')
+const destType		= ref('last')// 'last' | 'home' | 'region'
+const destRegion	= ref('')	// region name when destType === 'region'
+const error			= ref('')
 
 // Recent region destinations stored per-grid in localStorage
 const RECENT_KEY = 'qs_recent_regions'

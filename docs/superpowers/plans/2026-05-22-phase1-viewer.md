@@ -19,7 +19,6 @@
 src/api/supabase/
 src/composables/useSlack.js
 src/composables/useJitsiMeet.js
-src/composables/useGoogleCalendar.js
 src/composables/useGmailNotify.js
 src/composables/useCollabDoc.js
 src/composables/useWhiteboard.js
@@ -110,7 +109,6 @@ package.json                — remove @supabase/supabase-js, yjs, y-protocols
 cd "C:\Users\gene1\Downloads\Pages\git\QuickerStorm"
 Remove-Item -Recurse -Force src/api/supabase
 Remove-Item -Force src/composables/useSlack.js, src/composables/useJitsiMeet.js
-Remove-Item -Force src/composables/useGoogleCalendar.js, src/composables/useGmailNotify.js
 Remove-Item -Force src/composables/useCollabDoc.js, src/composables/useWhiteboard.js
 Remove-Item -Force src/composables/useTaskBoard.js, src/composables/useYjsProvider.js
 Remove-Item -Force src/composables/usePolls.js, src/composables/useDeliveryBots.js

@@ -6,7 +6,7 @@ const world = useWorldStore()
 <template>
   <!-- Positioned as absolute overlay on the right side of the canvas area -->
   <div class="absolute right-0 top-0 h-full w-44 bg-black/60 backdrop-blur-sm border-l border-white/10 overflow-y-auto flex flex-col">
-    <p class="text-white/50 text-[10px] px-3 py-1.5 uppercase tracking-widest border-b border-white/10 shrink-0">
+    <p class="text-white/50 text-xs px-3 py-1.5 uppercase tracking-widest border-b border-white/10 shrink-0">
       Nearby · {{ world.avatars.length }}
     </p>
     <ul class="flex-1 overflow-y-auto">

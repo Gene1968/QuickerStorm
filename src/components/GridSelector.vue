@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useGridStore } from '@/stores/gridStore'
 import AddGridModal from './AddGridModal.vue'
 
-const store	 = useGridStore()
+const store = useGridStore()
 const showAdd = ref(false)
 
 function onChange(e) {

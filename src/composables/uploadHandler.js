@@ -29,7 +29,7 @@ export function useFileUpload() {
 			errors: [],
 			response: null,
 		};
-	
+
 		if (!allowedFileTypes.includes(file.type)) {
 			debugInfo.errors.push("File type not allowed");
 			return {
@@ -38,49 +38,49 @@ export function useFileUpload() {
 				debugInfo: debugInfo
 			};
 		}
-	
+
 		try {
 			debugInfo.steps.push({
 				step: "File validation passed",
 				timestamp: new Date().toISOString()
 			});
-		
+
 			// Create unique filename to prevent duplicates
 			let uniqueFileName = `${Date.now()}_${file.name}`;
 			uniqueFileName = uniqueFileName.replaceAll(" ", "");
 			const renamedFile = new File([file], uniqueFileName, {
 				type: file.type,
 			});
-		
+
 			debugInfo.steps.push({
 				step: "File renamed",
 				details: { originalName: file.name, newName: uniqueFileName },
 				timestamp: new Date().toISOString()
 			});
-		
+
 			filePreview.value = await createFilePreview(file);
 			if (filePreview.value){
 			dev.log("File preview :", filePreview.value)
 			}
-		
+
 			// Construct server-relative path from listUrl
 			const listUrlObj = new URL(config.lists.docs.listUrl);
 			const serverRelativePath = listUrlObj.pathname + config.lists.docs.listName;
 			// Remove trailing slash if present and ensure it starts with /
 			const cleanPath = serverRelativePath.replace(/\/$/, '');
 			const folderPath = cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath;
-		
+
 			debugInfo.serverRelativePath = folderPath;
 			debugInfo.steps.push({
 				step: "Server-relative path constructed",
-				details: { 
+				details: {
 					listUrl: config.lists.docs.listUrl,
 					listName: config.lists.docs.listName,
 					serverRelativePath: folderPath
 				},
 				timestamp: new Date().toISOString()
 			});
-		
+
 			// Construct the API URL for debugging
 			const constructedFileUrl = config.lists.docs.listUrl + "_api/web/GetFolderByServerRelativeUrl('" + encodeURIComponent(folderPath) + "')/";
 			debugInfo.constructedUrl = constructedFileUrl;
@@ -89,7 +89,7 @@ export function useFileUpload() {
 				details: { url: constructedFileUrl },
 				timestamp: new Date().toISOString()
 			});
-		
+
 			debugInfo.steps.push({
 				step: "Calling ListApi.uploadFile",
 				details: {
@@ -98,43 +98,43 @@ export function useFileUpload() {
 				},
 				timestamp: new Date().toISOString()
 			});
-		
+
 			// Upload to SharePoint document library
 			const uploadResponse = await ListApi(
 				config.lists.docs.listUrl,
 				null,
 				folderPath
 			).uploadFile(renamedFile);
-	
+
 			debugInfo.steps.push({
 				step: "Upload response received",
 				timestamp: new Date().toISOString()
 			});
-	
+
 			if (!uploadResponse) {
 				debugInfo.errors.push("Upload response was null or undefined");
 				throw new Error("Failed to upload file");
 			}
-	
+
 			debugInfo.response = {
 				raw: uploadResponse,
 				length: uploadResponse.length
 			};
-	
+
 			// Parse response and get file URL
 			const mediaData = JSON.parse(uploadResponse);
 			debugInfo.steps.push({
 				step: "Response parsed successfully",
 				timestamp: new Date().toISOString()
 			});
-	
+
 			let fileUrl = mediaData.d.ServerRelativeUrl.toString();
 			debugInfo.steps.push({
 				step: "File URL extracted",
 				details: { originalUrl: fileUrl },
 				timestamp: new Date().toISOString()
 			});
-	
+
 			dev.log("File URL: ", fileUrl)
 			dev.log("Env: ", import.meta.env.VITE_APP_ENV)
 			// Adjust URL based on environment
@@ -147,18 +147,18 @@ export function useFileUpload() {
 			} else {
 				fileUrl = fileUrl.replaceAll("/avadev/", "")
 			}
-	
+
 			debugInfo.steps.push({
 				step: "File URL processed",
 				details: { processedUrl: fileUrl },
 				timestamp: new Date().toISOString()
 			});
-	
+
 			dev.log("File URL on the way out: ", fileUrl)
-	
+
 			debugInfo.endTime = new Date().toISOString();
 			debugInfo.success = true;
-	
+
 			return {
 				success: true,
 				fileInfo: {
@@ -176,7 +176,7 @@ export function useFileUpload() {
 			});
 			debugInfo.endTime = new Date().toISOString();
 			debugInfo.success = false;
-	
+
 			dev.error("Error uploading PDF:", error);
 			return {
 				success: false,
@@ -239,7 +239,7 @@ export function useFileUpload() {
 		let returnValue = false
 		dev.log("Running blobToFile")
 		try {
-		//	 const type = "application/pdf";
+		// const type = "application/pdf";
 			const file = new File([blob], fileName, {
 				type: fileType,
 				lastModified: new Date().getTime(),
@@ -418,8 +418,7 @@ export function useFileUpload() {
 				$value: true
 			}, config.siteUrl.substring(0, config.siteUrl.length - 1), url);
 			dev.log("File info: ", fileInfo)
-			 returnValue = fileInfo
-
+				returnValue = fileInfo
 			} catch (error) {
 			dev.error("Error fetching file content:", error);
 			returnValue = false;

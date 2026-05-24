@@ -28,7 +28,8 @@
  *                 navigation metadata; has no effect on visuals.
  */
 
-import { LOBBY_SUNKEN_SEAT_RING } from "@/office3d/prefabs/createLobbySunkenLounge.js"
+// WHY: createLobbySunkenLounge.js removed from repo; stub until officeLayout is eliminated
+const LOBBY_SUNKEN_SEAT_RING = { rx: 0, rz: 0 }
 
 /** Elliptical ring seats facing (cx, cz) — west lobby sunken lounge. */
 function lobbyPitSeatRing ({ cx, cz, rx, rz, count, startIndex }) {

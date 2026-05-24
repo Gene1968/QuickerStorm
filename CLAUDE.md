@@ -33,8 +33,7 @@ Copy `.env.development.local-example` → `.env.development.local` before first 
 ### Frontend → Bun WS → Supabase
 
 - **Vite SPA** served standalone or from SharePoint (`mode=im|production` → `index.aspx` + `VITE_PATH` base).
-- **Bun WS server** (`server/index.ts`) handles signaling, presence relay, pose sync, chat, cursors, collab docs, polls, reactions — all in real time. Modular handlers under `server/handlers/`.
-- **Supabase** for persistent data (messaging, auth, presence rows, announcements). Client at `src/api/supabase/client.js`; all queries via repo files in `src/api/supabase/`.
+- **Bun WS server** (`server/index.ts`) handles signaling, presence relay, pose sync, chat, cursors, reactions — all in real time. Modular handlers under `server/handlers/`.
 - **Hash-based routing** (`createWebHashHistory`) — required for SharePoint and standalone embedding. Two routes: `/setup` and `/office`. All unknown paths → `/office`.
 
 ### Key Composables
@@ -46,7 +45,7 @@ Copy `.env.development.local-example` → `.env.development.local` before first 
 | `src/composables/useProximityVoice.js` | WebRTC voice — peer connections, VAD, mic/speaker, signaled via WS |
 | `src/composables/useMessaging.js` | DM + group messaging via Supabase Realtime |
 | `src/composables/usePoseSync.js` | Per-room avatar pose relay |
-| `src/composables/useOfficeEngine.js` | Three.js scene, avatar meshes, door meshes, room geometry |
+| `src/composables/useWorldEngine.js` | Three.js scene, avatar meshes, door meshes, room geometry |
 | `src/composables/useTheme.js` | Light/dark toggle, shared `isDark` ref |
 | `src/composables/useVersionCheck.js` | Polls `version.json` every 5 min; shows reload banner |
 
@@ -59,10 +58,6 @@ Naming: stores use `*Store` suffix; composables use `use*` prefix.
 ### Three.js / 3D Engine
 
 `useOfficeEngine.js` owns the Three.js scene. GSAP handles tweening. Door meshes animate open/close and block navigation when locked. Avatar meshes are built from `avatarStore` config (colors, skin, hair).
-
-### Collab Features
-
-Yjs-backed collaborative docs, whiteboards, and task boards under `src/components/collab/`. Provider in `src/composables/useYjsProvider.js`. Server syncs Yjs updates through the WS collab handlers.
 
 ## Presence System Warning
 

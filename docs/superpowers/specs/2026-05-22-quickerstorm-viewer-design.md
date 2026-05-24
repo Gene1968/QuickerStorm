@@ -63,7 +63,6 @@ Browser → [username + password] → Bun /api/login
 | `src/api/supabase/` | No Supabase — grid is the backend |
 | `src/composables/useSlack.js` | External integration N/A |
 | `src/composables/useJitsiMeet.js` | Replaced by WebRTC voice via grid |
-| `src/composables/useGoogleCalendar.js`, `useGmailNotify.js` | N/A |
 | `src/composables/useCollabDoc.js`, `useWhiteboard.js`, `useTaskBoard.js` | Office collab N/A |
 | `src/composables/useYjsProvider.js`, `usePolls.js` | Office collab N/A |
 | `src/composables/useDeliveryBots.js`, `centipede/` | AVA-specific |

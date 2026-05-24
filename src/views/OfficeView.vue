@@ -21,7 +21,6 @@ import DogPopup from '@/components/ui/DogPopup.vue'
 import DmFlyout from '@/components/ui/DmFlyout.vue'
 import BreakRoomTV from '@/components/ui/BreakRoomTV.vue'
 import ConferenceHud from '@/components/office/ConferenceHud.vue'
-// SettingsPanel removed — preferences now via PreferencesFloater in App.vue (Ctrl+P / Quick Prefs)
 import SoundConsentModal from '@/components/ui/SoundConsentModal.vue'
 import AnnouncementBanner from '@/components/ui/AnnouncementBanner.vue'
 import CallInviteBanner from '@/components/ui/CallInviteBanner.vue'

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, markRaw } from 'vue'
 import { getRoomById, OFFICES } from '@/config/officeLayout.js'
 import { usePresenceStore } from '@/stores/presenceStore.js'
-import { pickMyOfficeDestination } from '@/utils/pickMyOffice.js'
+// import { pickMyOfficeDestination } from '@/utils/pickMyOffice.js'
 
 export const useOfficeStore = defineStore('office', () => {
 	// ── State ──────────────────────────────────────────────────────

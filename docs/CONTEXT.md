@@ -65,7 +65,6 @@ Always import config as: `import { config } from ‘@/config/configuration.js’
 | `src/components/ui/UserPopup.vue` | Click-on-avatar popup (DM, Email, Call Here, Visit) |
 | `src/components/ui/SettingsPanel.vue` | User settings (avatar, Google, Slack, audio prefs) |
 | `src/components/office/SimpleOfficeView.vue` | 2D flat top-down office map (low-end/mobile) |
-| `src/components/sidebar/TheSidebar.vue` | Left sidebar (users, DMs, rooms) |
 | `src/components/ConsolePanel.vue` | Dev/admin console panel |
 
 ---

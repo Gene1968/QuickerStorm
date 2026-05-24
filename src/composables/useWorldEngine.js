@@ -47,7 +47,6 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
-	let _primPosLogs = 0       // DIAG: log first 5 prim positions to verify placement
 
 	// ── Own avatar tracking ───────────────────────────────────────────────────
 	// Set from first ObjectUpdate where fullId == agentId
@@ -89,15 +88,8 @@ export function useWorldEngine(canvasRef) {
 	]
 
 	function onKeyDown(e) {
-		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-			// WHY: Log input-focus blocks so user can see W/S arriving but skipped.
-			if (e.code === 'KeyW' || e.code === 'KeyS') console.log(`[3D] ${e.code} skipped — INPUT focused (${e.target.tagName}#${e.target.id})`)
-			return
-		}
+		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
-		if (e.code === 'KeyW' || e.code === 'KeyS') {
-			console.log(`[3D] ${e.code} registered avatarSLPos=${JSON.stringify(avatarSLPos)} ownAvatarLocalId=${ownAvatarLocalId}`)
-		}
 		if (e.code === 'KeyF') {
 			isFlying = !isFlying
 			e.preventDefault()
@@ -275,7 +267,7 @@ export function useWorldEngine(canvasRef) {
 		if (agentUpdateAccum < 1 / AGENT_UPDATE_HZ) return
 		agentUpdateAccum = 0
 		moveCount++
-		if (cf !== 0) console.log(`[3D] sendMove #${moveCount} cf=0x${cf.toString(16)}`)
+
 		// WHY: SL body rotation quaternion for Z-up yaw.
 		// Three.js yaw rotates around Y (Y-up); SL equivalent rotates around Z (Z-up).
 		// SL facing angle = π/2 + yaw (Three.js yaw=0 → facing north = SL +Y → angle=π/2).
@@ -379,11 +371,22 @@ export function useWorldEngine(canvasRef) {
 			const geo = isAvatar
 				? new THREE.CapsuleGeometry(0.3, 1.2, 4, 8)
 				: new THREE.BoxGeometry(1, 1, 1)
+			// WHY: Other avatars = cyan (0x00b4d8). Own avatar recolored to green in onObjectUpdate
+			// after ownAvatarLocalId is set. Prims = light grey.
 			const mat = new THREE.MeshStandardMaterial({ color: isAvatar ? 0x00b4d8 : 0xcccccc })
 			mesh = new THREE.Mesh(geo, mat)
 			mesh.castShadow = true
 
 			if (isAvatar) {
+				// WHY: Forward-pointing arm so avatar rotation direction is visually obvious.
+				// Three.js -Z = forward when yaw=0. Orange box pokes out ~0.15m past capsule radius.
+				const armGeo = new THREE.BoxGeometry(0.12, 0.12, 0.35)
+				const armMat = new THREE.MeshStandardMaterial({ color: 0xff6600 })
+				const arm = new THREE.Mesh(armGeo, armMat)
+				arm.position.set(0, 0.1, -0.42)  // -Z = forward direction
+				arm.castShadow = false
+				mesh.add(arm)
+
 				const div = document.createElement('div')
 				div.style.cssText = 'color:#fff;font-size:0.75rem;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:4px;white-space:nowrap;'
 				div.textContent = obj.name ?? 'Avatar'
@@ -399,18 +402,26 @@ export function useWorldEngine(canvasRef) {
 		if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
 		if (obj.pos) {
 			const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
-			gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
-			// DIAG: verify prim positions; remove once placement confirmed
-			if (obj.pcode !== PCODE_AVATAR && _primPosLogs < 5) {
-				_primPosLogs++
-				console.log(`[3D] prim#${_primPosLogs} id=${obj.localId} SL=(${obj.pos[0].toFixed(1)},${obj.pos[1].toFixed(1)},${obj.pos[2].toFixed(1)}) 3JS=(${t.x.toFixed(1)},${t.y.toFixed(1)},${t.z.toFixed(1)})`)
+			// WHY: ObjectUpdate is sparse (login + new objects in range). Direct set for prims;
+			// avatars lerp so they don't pop when a belated full-update arrives mid-motion.
+			if (obj.pcode === PCODE_AVATAR) {
+				gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+			} else {
+				mesh.position.set(t.x, t.y, t.z)
 			}
 		}
 	}
 
 	function removeMesh(localId) {
 		const mesh = meshMap.get(localId)
-		if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); meshMap.delete(localId) }
+		if (mesh) {
+			// WHY: Traverse to dispose child geometry/materials (arm indicator etc.) not just root
+			mesh.traverse(child => {
+				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
+			})
+			scene.remove(mesh)
+			meshMap.delete(localId)
+		}
 	}
 
 	// ── Incoming messages ─────────────────────────────────────────────────────
@@ -431,14 +442,14 @@ export function useWorldEngine(canvasRef) {
 			// drive the third-person follow camera via avatarSLPos.
 			// WHY: bytesToUuid() returns lowercase; login XML may return uppercase agentId.
 			// Case-insensitive compare prevents ownAvatarLocalId from staying null.
-			if (obj.pcode === PCODE_AVATAR) {
-				const agId = sessionStore.agentId
-				const match = obj.fullId.toLowerCase() === agId.toLowerCase()
-				console.log(`[3D] pcode=47 localId=${obj.localId} fullId=${obj.fullId} agentId=${agId} match=${match}`)
-			}
 			if (obj.pcode === PCODE_AVATAR &&
 				obj.fullId.toLowerCase() === sessionStore.agentId.toLowerCase()) {
 				ownAvatarLocalId = obj.localId
+				// WHY: Recolor own avatar to green so it's visually distinct from other cyan avatars.
+				// Material is set after mesh creation so this works whether mesh was just created
+				// or already existed (e.g., duplicate ObjectUpdate).
+				const ownMesh = meshMap.get(obj.localId)
+				if (ownMesh) ownMesh.material.color.setHex(0x00e676)
 				const p = obj.pos
 				debugStore.push('info', `[3D] Own avatar localId=${obj.localId} pos=${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
 				if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
@@ -470,7 +481,15 @@ export function useWorldEngine(canvasRef) {
 			const mesh = meshMap.get(obj.localId)
 			if (mesh && obj.pos) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
-				gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+				// WHY: Avatars get GSAP lerp to smooth 10Hz TerseUpdate jitter into fluid motion.
+				// Prims use direct set — GSAP on many static prims restarts tweens every update
+				// and can cause brief visible oscillation when position data has decode noise.
+				const stored = worldStore.objects.get(obj.localId)
+				if (stored?.pcode === PCODE_AVATAR) {
+					gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+				} else {
+					mesh.position.set(t.x, t.y, t.z)
+				}
 			}
 			// WHY: avatarSLPos drives third-person follow camera in animate().
 			// Updated here (inside WS callback) — lerp in animate() smooths any jitter.
@@ -503,6 +522,25 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	function onKillObject(payload) {
+		// WHY: Sim sends KillObject (High #16) when prims/avatars/NPCs leave or are deleted.
+		// Remove from Three.js scene and worldStore so they don't persist as ghost objects.
+		const ids = payload?.ids ?? []
+		for (const id of ids) {
+			removeMesh(id)
+			worldStore.removeObject(id)
+		}
+		if (ids.length > 0) {
+			// If own avatar was killed (region cross / sim kick), clear tracking
+			if (ids.includes(ownAvatarLocalId)) {
+				ownAvatarLocalId = null
+				avatarSLPos = null
+				debugStore.push('warn', `[3D] Own avatar killed — awaiting respawn`)
+			}
+			debugStore.push('info', `[3D] KillObject: removed ${ids.length} objects`)
+		}
+	}
+
 	// ── Render loop ───────────────────────────────────────────────────────────
 	let lastTime = 0
 	function animate(time) {
@@ -513,9 +551,8 @@ export function useWorldEngine(canvasRef) {
 		const cf = updateCamera(dt)
 
 		// WHY: Third-person follow camera — positions camera behind and above avatar.
-		// Lerp factor 0.15 smooths latency from ~10Hz TerseUpdate into fluid motion.
-		// Snap (lerp=1.0) when: Esc pressed, camera far (>8m off target), or W/S moving
-		// so forward movement always resets a lost camera back to follow position.
+		// Lerp factor 0.15 smooths 10Hz TerseUpdate jitter into fluid motion.
+		// Hard-snap (lerp=1.0) only on Esc or >50m off target (see snap comment below).
 		if (avatarSLPos && !isAltOrbit) {
 			const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 			const target = new THREE.Vector3(
@@ -524,37 +561,31 @@ export function useWorldEngine(canvasRef) {
 				t.z + Math.cos(yaw) * followDist,
 			)
 			const distToTarget = camera.position.distanceTo(target)
-			// WHY: Only hard-snap when Esc pressed or camera is very far (>12m) from avatar.
-			// Removed isMovingFwd from snap condition — pressing W/S should produce a smooth
-			// glide into follow position, not a jarring teleport. The 0.15 lerp (~30 frames
-			// at 60fps) gives a natural "follow" feel matching Firestorm third-person camera.
-			const snap = cameraSnapRequested || distToTarget > 12
+			// WHY: Hard-snap only on Esc (explicit request) or >50m off target (teleport/first login).
+			// Removed the old 12m threshold — normal movement at 5m/s + 10Hz TerseUpdate jitter
+			// could put the target ~10-15m ahead of the camera, triggering snap every few seconds
+			// and causing a jarring strobe-like "flicker" each time. Esc and onAgentSpawnPos both
+			// set cameraSnapRequested=true so teleports and login always snap correctly.
+			const snap = cameraSnapRequested || distToTarget > 50
 			cameraSnapRequested = false
 			camera.position.lerp(target, snap ? 1.0 : 0.15)
 			camera.lookAt(t.x, t.y + 1.0, t.z)
+
+			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
+			// Capsule is symmetric so visual diff is subtle, but sets up correct orientation
+			// for when we get directional avatar geometry. Three.js Y-up: rotation.y = yaw
+			// where yaw=0 faces -Z (= SL north). No TerseUpdate rotation decode needed for own avatar.
+			if (ownAvatarLocalId) {
+				const ownMesh = meshMap.get(ownAvatarLocalId)
+				if (ownMesh) ownMesh.rotation.y = yaw
+			}
 		}
 
 		maybeAgentUpdate(dt, cf ?? 0)
-
-		// WHY: Dead reckoning — update avatarSLPos locally when movement keys pressed.
-		// Some OpenSim sims don't send TerseUpdates for own avatar; sim corrects via
-		// TerseUpdate if/when it arrives. Without this, avatarSLPos freezes and the
-		// location bar / camera never reflect movement. Clamp dt to 50ms to prevent
-		// large jumps on tab return. SL forward dir in SL coords: fwdX = -sin(yaw),
-		// fwdY = cos(yaw) (SL Y = sim north, yaw=0 faces south = -Y in three.js).
-		if (avatarSLPos && controlFlags) {
-			const spd = (controlFlags & CTRL_FAST_AT) ? CAM_RUN_SPEED : CAM_SPEED
-			const dtClamp = Math.min(dt, 0.05)
-			const fwdX = -Math.sin(yaw)
-			const fwdY =  Math.cos(yaw)
-			let [sx, sy, sz] = avatarSLPos
-			if (controlFlags & CTRL_AT_POS) { sx += fwdX * spd * dtClamp; sy += fwdY * spd * dtClamp }
-			if (controlFlags & CTRL_AT_NEG) { sx -= fwdX * spd * dtClamp; sy -= fwdY * spd * dtClamp }
-			if (controlFlags & CTRL_UP_POS) sz += (isFlying ? CAM_FLY_SPEED : spd * 0.5) * dtClamp
-			if (controlFlags & CTRL_UP_NEG) sz -= (isFlying ? CAM_FLY_SPEED : spd * 0.5) * dtClamp
-			avatarSLPos = [sx, sy, sz]
-			worldStore.setAvatarPos(sx, sy, sz)
-		}
+		// WHY: Dead reckoning REMOVED. Now that OpenSim physics works (STAND_UP fix),
+		// sim sends TerseUpdates for own avatar as it moves. Dead reckoning fought those
+		// corrections each frame, causing visible position oscillation → flickering camera.
+		// Camera follows TerseUpdate positions via lerp — smooth at 10Hz TerseUpdate rate.
 
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
@@ -602,6 +633,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.OBJECT_UPDATE,    onObjectUpdate)
 		on(S.TERSE_UPDATE,     onTerseUpdate)
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
+		on(S.KILL_OBJECT,      onKillObject)
 	})
 
 	onUnmounted(() => {
@@ -616,6 +648,7 @@ export function useWorldEngine(canvasRef) {
 		off(S.OBJECT_UPDATE,   onObjectUpdate)
 		off(S.TERSE_UPDATE,    onTerseUpdate)
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
+		off(S.KILL_OBJECT,     onKillObject)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()

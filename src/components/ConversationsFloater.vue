@@ -47,17 +47,17 @@ async function submitChat() {
 		resize:both lets user scale; position+size will be persisted (indexedDB, see tech-debt).
 	-->
 	<div
-		class="absolute flex flex-col border border-brd rounded-lg shadow-2xl overflow-hidden bg-black/80"
-		style="left: 0.25%; top: 8%; width: clamp(14rem, 24vw, 36rem); height: clamp(12rem, 30vh, 28rem); resize: both;"
+		class="absolute flex flex-col border border-brd rounded-lg shadow-2xl overflow-hidden bg-card"
+		style="left: 0.125%; top: 7%; width: 25vw; height: 33vh; resize: both;"
 	>
 		<!-- ── Title bar ─────────────────────────────────────────── -->
-		<div class="flex items-center justify-between px-3 py-1 border-b border-brd shrink-0 bg-black/40">
+		<div class="flex items-center justify-between px-3 py-1 border-b border-brd shrink-0 bg-card2">
 			<span class="text-t1 text-[11px] font-semibold tracking-wide truncate select-none">
 				Conversations
 				<span v-if="avatar.displayName" class="text-accent font-normal"> — {{ avatar.displayName }}</span>
 			</span>
 			<button
-				class="text-white/40 hover:text-white/80 text-xs leading-none ml-2 shrink-0 transition-colors"
+				class="text-tm hover:text-t1 text-xs leading-none ml-2 shrink-0 transition-colors"
 				title="Close"
 				@click="ui.toggleChat()"
 			>✕</button>
@@ -71,7 +71,7 @@ async function submitChat() {
 				<button
 					v-for="tab in tabs"
 					:key="tab.id"
-					class="flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] leading-tight hover:bg-white/5 transition-colors border-l-2"
+					class="flex flex-col items-center gap-0.5 py-2 px-1 text-xs leading-tight hover:bg-white/5 transition-colors border-l-2"
 					:class="activeTab === tab.id
 						? 'bg-white/10 text-accent border-accent'
 						: 'text-white/50 hover:text-white/70 border-transparent'"

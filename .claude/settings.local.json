@@ -21,7 +21,12 @@
       "Bash(npx --no ts-node --version)",
       "Bash(xargs grep -l \"Ctrl+P\\\\|commandPalette\\\\|darkMode\\\\|dark-mode\\\\|isDark\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\" -Recurse -File)",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\" -Recurse -Name)",
+      "Bash(xargs grep -l \"toolbar_button\\\\|tool_btn\\\\|CommandMgr\\\\|command_id\")",
+      "Bash(xargs grep -l \"toybox\\\\|toolbar_button\\\\|floater_toybox\")",
+      "Bash(node_modules/.bin/prettier --check src/components/BottomToolbar.vue src/stores/uiStore.js)",
+      "Bash(npx --no-install prettier --check src/components/BottomToolbar.vue src/stores/uiStore.js)"
     ]
   }
 }

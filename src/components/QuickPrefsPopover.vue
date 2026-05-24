@@ -111,11 +111,11 @@ onUnmounted(() => {
 .qp-popover {
 	position: fixed;
 	bottom: 44px; /* toolbar height + gap */
-	right: 0.5rem;
+	right: 0.1875%;
 	width: clamp(14rem, 22vw, 20rem);
 	background: var(--color-card);
 	border: 1px solid var(--color-brd2);
-	border-radius: 0.625rem;
+	border-radius: 0.5rem; /* = rounded-lg, matches other floaters */
 	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
 	display: flex;
 	flex-direction: column;
@@ -127,7 +127,7 @@ onUnmounted(() => {
 .qp-caret {
 	position: absolute;
 	bottom: -7px;
-	right: 1.5rem; /* align with the button */
+	right: 1.35rem; /* align with the button */
 	width: 14px;
 	height: 7px;
 	overflow: visible;

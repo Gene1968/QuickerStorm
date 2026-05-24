@@ -22,7 +22,7 @@ const TYPE_CLASS = { 0: 'text-white/50 italic', 1: 'text-white', 2: 'text-yellow
   <div class="flex flex-col bg-black/60 border-t border-brd shrink-0" style="max-height: 180px">
     <!-- Header -->
     <div class="flex items-center px-3 py-0.5 border-b border-white/10">
-      <span class="text-white/60 text-[10px] uppercase tracking-widest">Nearby Chat</span>
+      <span class="text-white/60 text-xs uppercase tracking-widest">Nearby Chat</span>
     </div>
 
     <!-- Message history -->
