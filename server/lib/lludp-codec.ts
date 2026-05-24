@@ -424,6 +424,15 @@ export function decodeObjectUpdate(
       const fullId   = bytesToUuid(buf, off); off += 16
       off += 4   // CRC
       pcode = buf[off++]
+      // WHY: pcode=3 (legacy tree/particle), pcode=95 (grass), pcode=255 (tree) use
+      // non-standard ObjectData layouts in OpenSim. Their TE field reads as garbage
+      // (animated texture UV data) rather than a real TE size prefix, causing thousands
+      // of OOB errors per session that flood server-log.txt. We don't render these in
+      // Phase 1. Break SILENTLY (no onError call) to suppress the log spam. Cannot
+      // `continue` because off would be corrupted after the failed TE variable-field skip.
+      // avatarSLPos and ownAvatarLocalId survive any avatar-packet loss via worldStore
+      // restore in onMounted (see useWorldEngine.js).
+      if (pcode === 3 || pcode === 95 || pcode === 255) break
       off += 2   // material, clickAction
       const sx = buf.readFloatLE(off); off += 4  // Scale
       const sy = buf.readFloatLE(off); off += 4
@@ -470,7 +479,11 @@ export function decodeObjectUpdate(
         if (len === undefined) throw new Error(`${name}: undefined len at off=${off - 1}`)
         off += len
       }
-      _diag += ` @TE=${off}`  // WHY: absolute offset of TE prefix — tells us if prior field count is right
+      // WHY: Log the actual 2 bytes at the TE prefix position so we can see if the
+      // length is garbage (misalignment) or legitimately large. TE bytes change each packet
+      // for animated-texture objects — if they're always "random" values the field is misaligned.
+      const _teBytesHex = off + 1 < buf.length ? buf.slice(off, off + 2).toString('hex') : 'OOB'
+      _diag += ` @TE=${off}[${_teBytesHex}]`  // WHY: prefix bytes confirm alignment
       skipVar2('TE')  // TextureEntry (Variable2)
       // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
       // LLUDP message_template: TextureAnim { Variable 1 }
@@ -507,10 +520,10 @@ export function decodeObjectUpdate(
         onDiag?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} startOff=${objStartOff} endOff=${off} [${_diag}] NEXT40=${_nextHex}`)
       }
     } catch (e) {
-      // Hex dump first 80 bytes from startOff to reveal actual binary structure
-      // WHY: 200 bytes covers fixed header (41) + od (≤76) + fixed tail (31) + enough variable fields
-      // to see what the TE prefix bytes actually are and whether TE length itself is sane.
-      const _hex = buf.slice(objStartOff, Math.min(buf.length, objStartOff + 200)).toString('hex')
+      // WHY: Extend hex dump to 320 bytes so it covers @TE (typically at offset 131–304 from
+      // objStart). 200 bytes was insufficient for large-ObjectData objects (od=232 → @TE=304).
+      const _dumpEnd = Math.min(buf.length, Math.max(objStartOff + 320, off + 4))
+      const _hex = buf.slice(objStartOff, _dumpEnd).toString('hex')
       const _msg = `obj[${i}/${count}] localId=${localId} pcode=${pcode} startOff=${objStartOff} failOff=${off} bufLen=${buf.length} [${_diag}]\n  hex@start: ${_hex}\n  cause: ${(e as Error).message}`
       if (onError) {
         // WHY: with error callback, return objects decoded so far rather than losing the whole packet
@@ -537,7 +550,11 @@ export interface TerseObjectData {
  * FootCollisionPlane is always present (zeroed for non-avatars).
  * Data.length == 38 → avatar with F32 position; Data.length == 32 → prim with U16 position.
  */
-export function decodeImprovedTerseObjectUpdate(buf: Buffer, dataOffset: number): TerseObjectData[] {
+export function decodeImprovedTerseObjectUpdate(
+  buf: Buffer,
+  dataOffset: number,
+  onRaw?: (localId: number, dataLen: number, pos: [number, number, number], sentinel: boolean) => void,
+): TerseObjectData[] {
   const results: TerseObjectData[] = []
   let off = dataOffset
 
@@ -574,9 +591,9 @@ export function decodeImprovedTerseObjectUpdate(buf: Buffer, dataOffset: number)
     // positions that break camera follow or location bar. Object removal will arrive
     // via ObjectUpdate with KillObject flag (handled separately or ignored for now).
     const FLT_MAX = 3.4e38
-    if (Math.abs(pos[0]) > FLT_MAX * 0.5 || Math.abs(pos[1]) > FLT_MAX * 0.5 || Math.abs(pos[2]) > FLT_MAX * 0.5) {
-      continue
-    }
+    const isSentinel = Math.abs(pos[0]) > FLT_MAX * 0.5 || Math.abs(pos[1]) > FLT_MAX * 0.5 || Math.abs(pos[2]) > FLT_MAX * 0.5
+    onRaw?.(localId, dataLen, pos, isSentinel)
+    if (isSentinel) continue
     results.push({ localId, pos })
   }
 

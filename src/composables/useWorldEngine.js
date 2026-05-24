@@ -87,14 +87,15 @@ export function useWorldEngine(canvasRef) {
 		'ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown',
 	]
 
-	// WHY: Track first W/S press for diagnosing movement issues (cf generation).
-	let wsDiagnosed = false
 	function onKeyDown(e) {
-		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+			// WHY: Log input-focus blocks so user can see W/S arriving but skipped.
+			if (e.code === 'KeyW' || e.code === 'KeyS') console.log(`[3D] ${e.code} skipped — INPUT focused (${e.target.tagName}#${e.target.id})`)
+			return
+		}
 		keys[e.code] = true
-		if (!wsDiagnosed && (e.code === 'KeyW' || e.code === 'KeyS')) {
-			wsDiagnosed = true
-			debugStore.push('info', `[3D] Key ${e.code} registered (target=${e.target.tagName} avatarSLPos=${!!avatarSLPos})`)
+		if (e.code === 'KeyW' || e.code === 'KeyS') {
+			console.log(`[3D] ${e.code} registered avatarSLPos=${JSON.stringify(avatarSLPos)} ownAvatarLocalId=${ownAvatarLocalId}`)
 		}
 		if (e.code === 'KeyF') {
 			isFlying = !isFlying
@@ -265,11 +266,15 @@ export function useWorldEngine(canvasRef) {
 	const AGENT_UPDATE_HZ = 10
 	let controlFlags = 0
 
+	// WHY: diagnostic counter — track how many MOVE messages are actually sent
+	let moveCount = 0
 	function maybeAgentUpdate(dt, cf) {
 		agentUpdateAccum += dt
 		controlFlags = cf
 		if (agentUpdateAccum < 1 / AGENT_UPDATE_HZ) return
 		agentUpdateAccum = 0
+		moveCount++
+		if (cf !== 0) console.log(`[3D] sendMove #${moveCount} cf=0x${cf.toString(16)}`)
 		// WHY: SL body rotation quaternion for Z-up yaw.
 		// Three.js yaw rotates around Y (Y-up); SL equivalent rotates around Z (Z-up).
 		// SL facing angle = π/2 + yaw (Three.js yaw=0 → facing north = SL +Y → angle=π/2).
@@ -320,7 +325,7 @@ export function useWorldEngine(canvasRef) {
 
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
 		renderer.shadowMap.enabled = true
-		renderer.shadowMap.type = THREE.PCFSoftShadowMap
+		renderer.shadowMap.type = THREE.PCFShadowMap
 		renderer.toneMapping = THREE.ACESFilmicToneMapping
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
@@ -415,6 +420,11 @@ export function useWorldEngine(canvasRef) {
 			// drive the third-person follow camera via avatarSLPos.
 			// WHY: bytesToUuid() returns lowercase; login XML may return uppercase agentId.
 			// Case-insensitive compare prevents ownAvatarLocalId from staying null.
+			if (obj.pcode === PCODE_AVATAR) {
+				const agId = sessionStore.agentId
+				const match = obj.fullId.toLowerCase() === agId.toLowerCase()
+				console.log(`[3D] pcode=47 localId=${obj.localId} fullId=${obj.fullId} agentId=${agId} match=${match}`)
+			}
 			if (obj.pcode === PCODE_AVATAR &&
 				obj.fullId.toLowerCase() === sessionStore.agentId.toLowerCase()) {
 				ownAvatarLocalId = obj.localId
@@ -515,6 +525,26 @@ export function useWorldEngine(canvasRef) {
 
 		maybeAgentUpdate(dt, cf ?? 0)
 
+		// WHY: Dead reckoning — update avatarSLPos locally when movement keys pressed.
+		// Some OpenSim sims don't send TerseUpdates for own avatar; sim corrects via
+		// TerseUpdate if/when it arrives. Without this, avatarSLPos freezes and the
+		// location bar / camera never reflect movement. Clamp dt to 50ms to prevent
+		// large jumps on tab return. SL forward dir in SL coords: fwdX = -sin(yaw),
+		// fwdY = cos(yaw) (SL Y = sim north, yaw=0 faces south = -Y in three.js).
+		if (avatarSLPos && controlFlags) {
+			const spd = (controlFlags & CTRL_FAST_AT) ? CAM_RUN_SPEED : CAM_SPEED
+			const dtClamp = Math.min(dt, 0.05)
+			const fwdX = -Math.sin(yaw)
+			const fwdY =  Math.cos(yaw)
+			let [sx, sy, sz] = avatarSLPos
+			if (controlFlags & CTRL_AT_POS) { sx += fwdX * spd * dtClamp; sy += fwdY * spd * dtClamp }
+			if (controlFlags & CTRL_AT_NEG) { sx -= fwdX * spd * dtClamp; sy -= fwdY * spd * dtClamp }
+			if (controlFlags & CTRL_UP_POS) sz += (isFlying ? CAM_FLY_SPEED : spd * 0.5) * dtClamp
+			if (controlFlags & CTRL_UP_NEG) sz -= (isFlying ? CAM_FLY_SPEED : spd * 0.5) * dtClamp
+			avatarSLPos = [sx, sy, sz]
+			worldStore.setAvatarPos(sx, sy, sz)
+		}
+
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
 	}
@@ -523,6 +553,30 @@ export function useWorldEngine(canvasRef) {
 	onMounted(() => {
 		if (!canvasRef.value) return
 		debugStore.push('info', '[3D] World engine mounted — 3D mode active')
+
+		// WHY: avatarSLPos is composable-local (let variable) — resets to null on any remount
+		// (HMR, navigation away/back). worldStore.avatarPos is Pinia and survives remount.
+		// Restore here so dead reckoning and camera work immediately without waiting for
+		// the next AGENT_SPAWN_POS or ObjectUpdate. Even restoring the default (128,128,25)
+		// is better than null: explore-mode camera has no avatar anchor, so A/D rotation
+		// produces no visible reference when the scene has objects at real positions.
+		const wp = worldStore.avatarPos
+		avatarSLPos = [wp.x, wp.y, wp.z]
+		cameraSnapRequested = true
+		debugStore.push('info', `[3D] avatarSLPos init from worldStore: ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}`)
+		// WHY: Also try to restore ownAvatarLocalId from worldStore.objects so TerseUpdate
+		// attribution works across remounts.
+		const agId = sessionStore.agentId
+		if (agId) {
+			for (const [lid, obj] of worldStore.objects) {
+				if (obj.pcode === 47 && obj.fullId?.toLowerCase() === agId.toLowerCase()) {
+					ownAvatarLocalId = lid
+					debugStore.push('info', `[3D] Restored ownAvatarLocalId=${lid} from worldStore`)
+					break
+				}
+			}
+		}
+
 		initScene()
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
 		window.addEventListener('keydown', onKeyDown, { passive: false })

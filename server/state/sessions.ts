@@ -23,6 +23,8 @@ export interface CircuitState {
 	circuitEstablished: boolean  // true once UseCircuitCode acked
 	// Diagnostic: track packet types seen, logged once each for unhandled types
 	loggedTypes: Set<string>
+	// Diagnostic counters
+	wsMoveCount?: number  // total MOVE messages received from browser client
 	// Heartbeat: send AgentUpdate periodically to prevent sim 60s timeout
 	lastAgentUpdateAt: number  // 0 = never sent
 	lastAgentParams: {

@@ -213,7 +213,17 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 
 	if (type === `high:${HIGH_OBJECT_UPDATE_TERSE}`) {
 		try {
-			const objects = decodeImprovedTerseObjectUpdate(buf, dataOffset)
+			// WHY: onRaw logs each entry before kill-sentinel filter so we can confirm whether
+			// own avatar's TerseUpdates ever arrive (sentinel or valid). Critical for movement diag.
+			const rawEntries: string[] = []
+			const objects = decodeImprovedTerseObjectUpdate(buf, dataOffset,
+				(localId, dataLen, pos, sentinel) => {
+					rawEntries.push(`${localId}(dlen=${dataLen} pos=${pos.map(v=>v.toFixed(1)).join(',')} ${sentinel?'SENTINEL':''})`)
+				},
+			)
+			if (rawEntries.length > 0) {
+				slog.info(session.ws, `[TerseRaw] ${rawEntries.join(' | ')}`)
+			}
 			if (objects.length > 0) {
 				// WHY: Log first TerseUpdate + every 50th so we can see which localIds the sim
 				// is sending position updates for. Critical for diagnosing whether own-avatar
@@ -223,8 +233,6 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					slog.info(session.ws, `[TerseUpd] ${objects.length} objs: ${ids}`)
 				}
 				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
-			} else {
-				slog.warn(session.ws, `[TerseUpd] decoded 0 objects (bufLen=${buf.length})`)
 			}
 		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
 		return
@@ -263,8 +271,13 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const seq = nextSeq(session)
 		const pkt = encodeAgentUpdate({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		// WHY: Log when controlFlags > 0 so we can confirm movement commands reach server.
-		// Only log first occurrence per unique flag value to avoid flooding.
+		// WHY: Log move count so we can verify moves reach server even when cf=0.
+		// Log first move, every 50th, and every non-zero cf (first per unique value).
+		session.wsMoveCount = (session.wsMoveCount ?? 0) + 1
+		const mc = session.wsMoveCount
+		if (mc === 1 || mc % 50 === 0) {
+			slog.info(session.ws, `→ MOVE #${mc} cf=0x${d.controlFlags.toString(16)} camCenter=${d.camCenter?.map(v=>v.toFixed(1)).join(',')}`)
+		}
 		if (d.controlFlags !== 0 && !session.loggedTypes.has(`cf:${d.controlFlags}`)) {
 			session.loggedTypes.add(`cf:${d.controlFlags}`)
 			slog.info(session.ws, `→ AgentUpdate controlFlags=0x${d.controlFlags.toString(16)} (first occurrence)`)
