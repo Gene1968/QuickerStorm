@@ -3,7 +3,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import builtinGrids from '@/config/grids.json'
 
-const USER_GRIDS_KEY = 'qs_user_grids'
+const USER_GRIDS_KEY  = 'qs_user_grids'
+const SELECTED_KEY    = 'qs_selected_grid'
 
 function loadUserGrids() {
 	try {
@@ -30,8 +31,8 @@ export const useGridStore = defineStore('grid', () => {
 		})
 	})
 
-	// Default to OSGrid
-	const selectedNick = ref('osgrid')
+	// Default to OSGrid; persist selection across sessions
+	const selectedNick = ref(localStorage.getItem(SELECTED_KEY) || 'osgrid')
 
 	const selectedGrid = computed(() =>
 		grids.value.find(g => g.nick === selectedNick.value) ?? null
@@ -43,6 +44,7 @@ export const useGridStore = defineStore('grid', () => {
 
 	function selectGrid(nick) {
 		selectedNick.value = nick
+		try { localStorage.setItem(SELECTED_KEY, nick) } catch {}
 		loginState.value = 'idle'
 		loginError.value = ''
 	}
@@ -65,6 +67,7 @@ export const useGridStore = defineStore('grid', () => {
 		userGrids.value = { ...userGrids.value, [normalized.nick]: normalized }
 		saveUserGrids(userGrids.value)
 		selectedNick.value = normalized.nick
+		try { localStorage.setItem(SELECTED_KEY, normalized.nick) } catch {}
 	}
 
 	/** Remove a user-added grid. Cannot remove built-in grids. */

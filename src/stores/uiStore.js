@@ -21,11 +21,15 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleSettings()  { showSettings.value   = !showSettings.value }
 	function toggleDebug()     { showDebug.value      = !showDebug.value }
 
-	// Camera position — updated by useWorldEngine at ~4 Hz, not every frame
+	// Camera position + heading — updated by useWorldEngine at ~4 Hz, not every frame
 	const cameraPos = shallowRef({ x: 128, y: 25, z: 128 })  // SL coords (x, z=height, y)
 	function setCameraPos(x, y, z) {
 		cameraPos.value = { x: Math.round(x), y: Math.round(y), z: Math.round(z) }
 	}
+
+	// Three.js yaw radians; 0 = facing North (SL +Y). SL world angle = π/2 + cameraYaw.
+	const cameraYaw = ref(0)
+	function setCameraYaw(y) { cameraYaw.value = y }
 
 	return {
 		mode, showAvatarList, showMinimap, showChat,
@@ -33,5 +37,6 @@ export const useUiStore = defineStore('ui', () => {
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleSettings, toggleDebug,
 		cameraPos, setCameraPos,
+		cameraYaw, setCameraYaw,
 	}
 })

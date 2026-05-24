@@ -3,7 +3,7 @@ import * as dgram from 'dgram'
 import type { ServerWebSocket } from 'bun'
 import { getGrid } from '../lib/grids'
 import { hashPassword, buildLoginXml, parseLoginResponse, xmlRpcPost } from '../lib/xmlrpc'
-import { encodeUseCircuitCode, encodeCompleteAgentMovement } from '../lib/lludp-codec'
+import { encodeUseCircuitCode, encodeCompleteAgentMovement, encodeAgentThrottle } from '../lib/lludp-codec'
 import { nextSeq, trackReliable } from '../lib/circuit'
 import { createSession, deleteSession, getSession } from '../state/sessions'
 import { handleUdpMessage, startCircuitTimers } from './lludp'
@@ -57,19 +57,25 @@ export async function handleLogin(
 	// Open UDP socket for this session
 	const udpSocket = dgram.createSocket('udp4')
 
+	// WHY: regionHandle is U64 = (regionY << 32) | regionX. Both values are global
+	// meter coordinates from XML-RPC login. Updated from AgentMovementComplete once circuit
+	// is live. Pre-seeded here so TeleportLocationRequest can be sent immediately after login.
+	const regionX = loginResult.region_x ?? 0
+	const regionY = loginResult.region_y ?? 0
 	const circuit = {
-		agentId:     loginResult.agent_id!,
-		sessionId:   loginResult.session_id!,
-		simIp:       loginResult.sim_ip!,
-		simPort:     loginResult.sim_port!,
-		circuitCode: loginResult.circuit_code!,
-		seqNum:      0,
-		pendingAcks: [] as number[],
-		reliableOut: new Map(),
+		agentId:      loginResult.agent_id!,
+		sessionId:    loginResult.session_id!,
+		simIp:        loginResult.sim_ip!,
+		simPort:      loginResult.sim_port!,
+		circuitCode:  loginResult.circuit_code!,
+		regionHandle: (BigInt(regionY) << 32n) | BigInt(regionX),
+		seqNum:       0,
+		pendingAcks:  [] as number[],
+		reliableOut:  new Map(),
 		udpSocket,
 		ws,
-		udpRxCount:  0,
-		lastPingAt:  0,
+		udpRxCount:   0,
+		lastPingAt:   0,
 		circuitEstablished: false,
 		lastAgentUpdateAt:  0,
 		lastAgentParams:    null,
@@ -118,6 +124,23 @@ export async function handleLogin(
 		udpSocket.send(completeMove, circuit.simPort, circuit.simIp, (err) => {
 			if (err) slog.error(ws, `CompleteAgentMovement send error: ${err.message}`)
 			else     slog.info(ws, `→ CompleteAgentMovement sent (seq=${seq2}) → ${circuit.simIp}:${circuit.simPort}`)
+		})
+
+		// WHY: AgentThrottle tells sim bandwidth allocation per packet category.
+		// OpenSim requires this after CompleteAgentMovement to enable avatar physics.
+		// Without it: animations work (state-only) but movement/rotation silently blocked.
+		// Firestorm sends this immediately after CompleteAgentMovement.
+		const seq3 = nextSeq(circuit)
+		const throttlePkt = encodeAgentThrottle({
+			agentId:     circuit.agentId,
+			sessionId:   circuit.sessionId,
+			circuitCode: circuit.circuitCode,
+			seq:         seq3,
+		})
+		trackReliable(circuit, seq3, throttlePkt)
+		udpSocket.send(throttlePkt, circuit.simPort, circuit.simIp, (err) => {
+			if (err) slog.error(ws, `AgentThrottle send error: ${err.message}`)
+			else     slog.info(ws, `→ AgentThrottle sent (seq=${seq3}) — physics movement enabled`)
 		})
 
 		// 10-second diagnostic: warn if sim has sent nothing back

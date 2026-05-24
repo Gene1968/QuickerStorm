@@ -34,7 +34,8 @@ const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
 
-const EYE_HEIGHT = 1.65  // metres from avatar foot to eye (camera attachment)
+const FOLLOW_DIST   = 3.5   // metres behind avatar (third-person)
+const FOLLOW_HEIGHT = 1.8   // metres above avatar feet
 
 export function useWorldEngine(canvasRef) {
 	const worldStore   = useWorldStore()
@@ -48,13 +49,14 @@ export function useWorldEngine(canvasRef) {
 	const meshMap = new Map()  // localId → THREE.Mesh
 
 	// ── Own avatar tracking ───────────────────────────────────────────────────
-	// Set from first ObjectUpdate where fullId == agentId; used to sync camera on TerseUpdate
-	let ownAvatarLocalId       = null
-	// WHY: flag set by onTerseUpdate, consumed by animate() so snap happens once per update
-	// not every frame (which would fight with updateCamera's local movement prediction).
-	let ownAvatarPosNeedsApply = false
-	let ownAvatarSnapPos       = null  // [slX, slY, slZ] to snap to
-	let terseUpdateCount       = 0     // diagnostic: confirm TerseUpdates are flowing
+	// Set from first ObjectUpdate where fullId == agentId
+	let ownAvatarLocalId = null
+	// WHY: avatarSLPos is sim-authoritative [slX, slY, slZ], updated from every TerseUpdate and
+	// ObjectUpdate for own avatar. Drives third-person follow camera in animate().
+	// Replacing old snap (ownAvatarSnapPos/ownAvatarPosNeedsApply) with lerp-based follow.
+	let avatarSLPos      = null
+	let followDist       = FOLLOW_DIST
+	let terseUpdateCount = 0  // diagnostic: confirm TerseUpdates are flowing
 
 	// ── Input state ─────────────────────────────────────────────────────────
 	const keys  = {}
@@ -62,6 +64,10 @@ export function useWorldEngine(canvasRef) {
 	let pitch   = -0.08    // slight downward tilt
 	let isFlying  = false  // F toggles; sustained CTRL_FLY sent each frame while true
 	let eHoldTime = 0      // seconds E has been continuously held
+
+	// WHY: Esc or W-press when camera is displaced snaps camera back to follow position.
+	// Flag set in onKeyDown (Escape) or detected via distance in animate().
+	let cameraSnapRequested = false
 
 	// Alt-orbit (third-person camera): alt+drag orbits around a pivot
 	let isAltOrbit  = false
@@ -89,6 +95,19 @@ export function useWorldEngine(canvasRef) {
 			e.preventDefault()
 			return
 		}
+		// WHY: Esc resets camera to default follow position behind avatar.
+		// Same effect as W (which auto-snaps when far) but explicit and instant.
+		// Also exits alt-orbit mode so follow camera resumes.
+		if (e.code === 'Escape' && avatarSLPos) {
+			// WHY: Reset zoom distance too so Esc is visibly useful even when camera
+			// was only displaced by scrollwheel (followDist changed, position wasn't lost).
+			followDist = FOLLOW_DIST
+			cameraSnapRequested = true
+			isAltOrbit = false
+			isDragging = false
+			e.preventDefault()
+			return
+		}
 		if (MOVE_KEYS.includes(e.code)) e.preventDefault()
 	}
 	function onKeyUp(e) { keys[e.code] = false }
@@ -112,10 +131,15 @@ export function useWorldEngine(canvasRef) {
 			// Seed orbit angles from current camera state
 			orbitYaw   = yaw
 			orbitPitch = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, -pitch + 0.3))
-			// Pivot = where camera is looking at ground level
-			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
-			orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
-			orbitPivot.y = 0
+			// WHY: Pivot on avatar when known; avoids y=0 ground-lock when flying.
+			// Fallback: project forward from camera at ground level (old behavior).
+			if (avatarSLPos) {
+				orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
+			} else {
+				const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+				orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
+				orbitPivot.y = 0
+			}
 		}
 	}
 	function onMouseMove(e) {
@@ -136,14 +160,19 @@ export function useWorldEngine(canvasRef) {
 	}
 	function onMouseUp() { isDragging = false; isAltOrbit = false }
 
-	// Scroll wheel: zoom in orbit mode, forward/back otherwise
+	// Scroll wheel: zoom in orbit mode or third-person; forward/back in explore mode
 	function onWheel(e) {
 		if (!camera) return
 		e.preventDefault()
 		const delta = e.deltaY > 0 ? -1 : 1
 		if (isAltOrbit || (e.altKey && isDragging)) {
 			orbitRadius = Math.max(2, Math.min(64, orbitRadius - delta * 2))
+		} else if (avatarSLPos) {
+			// WHY: Third-person — scroll zooms follow distance, not camera position.
+			// Camera position is driven by avatarSLPos + followDist in animate().
+			followDist = Math.max(1.5, Math.min(20, followDist - delta))
 		} else {
+			// Explore mode (no avatar yet): scroll moves camera forward
 			const spd = CAM_SPEED * 0.4
 			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
 			camera.position.addScaledVector(fwd, delta * spd)
@@ -153,23 +182,21 @@ export function useWorldEngine(canvasRef) {
 
 	// ── Camera update (called each frame with dt) ────────────────────────────
 	function updateCamera(dt) {
-		if (!camera) return
+		if (!camera) return 0
 
 		const shift = keys['ShiftLeft'] || keys['ShiftRight']
 		const turn  = CAM_TURN_SPEED * dt
 		const spd   = (shift ? CAM_RUN_SPEED : CAM_SPEED) * dt
 		const fly   = CAM_FLY_SPEED * dt
-		const fwd   = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
-		const rgt   = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw))
 
 		if (isAltOrbit) {
-			// Alt-orbit: update camera position only, don't move avatar
+			// Alt-orbit: update camera position only, no control flags
 			const cx = orbitPivot.x + orbitRadius * Math.sin(orbitYaw) * Math.cos(orbitPitch)
 			const cy = orbitPivot.y + orbitRadius * Math.sin(orbitPitch)
 			const cz = orbitPivot.z + orbitRadius * Math.cos(orbitYaw) * Math.cos(orbitPitch)
 			camera.position.set(cx, cy, cz)
 			camera.lookAt(orbitPivot)
-			return 0  // no control flags while orbiting
+			return 0
 		}
 
 		// WHY: Shift held = strafe instead of turn (matches SL/Firestorm Shift behaviour)
@@ -178,16 +205,6 @@ export function useWorldEngine(canvasRef) {
 			if (keys['KeyD'] || keys['ArrowRight']) yaw -= turn
 		}
 
-		// Walk / run forward + back
-		if (keys['KeyW'] || keys['ArrowUp'])   camera.position.addScaledVector(fwd,  spd)
-		if (keys['KeyS'] || keys['ArrowDown']) camera.position.addScaledVector(fwd, -spd)
-
-		// Strafe: Q always strafes left; Shift+A/D also strafe
-		if (keys['KeyQ'] || (shift && (keys['KeyA'] || keys['ArrowLeft'])))
-			camera.position.addScaledVector(rgt, -spd)
-		if (shift && (keys['KeyD'] || keys['ArrowRight']))
-			camera.position.addScaledVector(rgt,  spd)
-
 		// E = jump/fly-up; C = crouch/fly-down; PgUp/PgDn same
 		// WHY: hold E > 1.5s auto-activates fly, matching SL/Firestorm behaviour
 		const goUp   = keys['KeyE'] || keys['PageUp']
@@ -195,16 +212,29 @@ export function useWorldEngine(canvasRef) {
 		if (goUp) {
 			eHoldTime += dt
 			if (eHoldTime >= 1.5 && !isFlying) isFlying = true
-			camera.position.y += (isFlying ? fly : spd * 0.5)
 		} else {
 			eHoldTime = 0
 		}
-		if (goDown && isFlying) camera.position.y -= fly
 
-		camera.position.y = Math.max(0.5, camera.position.y)
-		camera.rotation.set(pitch, yaw, 0, 'YXZ')
+		// WHY: Explore-mode (before avatar position known): move camera freely with WASD.
+		// Once avatarSLPos is set, animate() drives camera via third-person follow and
+		// camera.position / camera.rotation are set there instead.
+		if (!avatarSLPos) {
+			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+			const rgt = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw))
+			if (keys['KeyW'] || keys['ArrowUp'])   camera.position.addScaledVector(fwd,  spd)
+			if (keys['KeyS'] || keys['ArrowDown']) camera.position.addScaledVector(fwd, -spd)
+			if (keys['KeyQ'] || (shift && (keys['KeyA'] || keys['ArrowLeft'])))
+				camera.position.addScaledVector(rgt, -spd)
+			if (shift && (keys['KeyD'] || keys['ArrowRight']))
+				camera.position.addScaledVector(rgt,  spd)
+			if (goUp)   camera.position.y += (isFlying ? fly : spd * 0.5)
+			if (goDown && isFlying) camera.position.y -= fly
+			camera.position.y = Math.max(0.5, camera.position.y)
+			camera.rotation.set(pitch, yaw, 0, 'YXZ')
+		}
 
-		// ── Control flags ──────────────────────────────────────────────────────
+		// ── Control flags (always sent to sim regardless of camera mode) ──────
 		let cf = 0
 		if (isFlying) cf |= CTRL_FLY
 
@@ -214,7 +244,7 @@ export function useWorldEngine(canvasRef) {
 		}
 		if (keys['KeyW'] || keys['ArrowUp'])   cf |= CTRL_AT_POS  | (shift ? CTRL_FAST_AT   : 0)
 		if (keys['KeyS'] || keys['ArrowDown']) cf |= CTRL_AT_NEG  | (shift ? CTRL_FAST_AT   : 0)
-		if (keys['KeyQ']  || (shift && (keys['KeyA'] || keys['ArrowLeft'])))
+		if (keys['KeyQ'] || (shift && (keys['KeyA'] || keys['ArrowLeft'])))
 			cf |= CTRL_LEFT_POS | (shift ? CTRL_FAST_LEFT : 0)
 		if (shift && (keys['KeyD'] || keys['ArrowRight']))
 			cf |= CTRL_LEFT_NEG | CTRL_FAST_LEFT
@@ -251,6 +281,9 @@ export function useWorldEngine(canvasRef) {
 		// Three.js forward = (-sin(yaw), 0, -cos(yaw)) → SL = (-sin(yaw), cos(yaw), 0)
 		// Three.js right   = ( cos(yaw), 0, -sin(yaw)) → SL = ( cos(yaw), sin(yaw), 0)
 		// SL camLeft is actually the camera's LEFT vector = -right in SL space
+		// WHY: Update minimap compass yaw at AgentUpdate rate (10Hz); avoids needing
+		// a separate timer and keeps uiStore.cameraYaw close to avatar facing direction.
+		uiStore.setCameraYaw(yaw)
 		sendMove({
 			controlFlags,
 			bodyRot:   [0, 0, bodyRotZ],
@@ -263,15 +296,8 @@ export function useWorldEngine(canvasRef) {
 		})
 	}
 
-	// ── Camera position → uiStore ~4 Hz ──────────────────────────────────────
-	let posReportAccum = 0
-	function maybeReportPos(dt) {
-		posReportAccum += dt
-		if (posReportAccum < 0.25) return
-		posReportAccum = 0
-		// Convert Three.js Y-up → SL Z-up for display (x, z=height, y=depth)
-		uiStore.setCameraPos(camera.position.x, camera.position.y, -camera.position.z)
-	}
+	// WHY: Camera position reporting replaced by worldStore.setAvatarPos() calls
+	// in onObjectUpdate/onTerseUpdate. LocationBar reads worldStore.avatarPos directly.
 
 	// ── Scene setup ──────────────────────────────────────────────────────────
 	function initScene() {
@@ -380,7 +406,7 @@ export function useWorldEngine(canvasRef) {
 			worldStore.upsertObject(obj)
 			upsertMesh(obj)
 			// WHY: Identify our own avatar by fullId == agentId so TerseUpdate can
-			// sync camera to sim-authoritative position (others see us here).
+			// drive the third-person follow camera via avatarSLPos.
 			// WHY: bytesToUuid() returns lowercase; login XML may return uppercase agentId.
 			// Case-insensitive compare prevents ownAvatarLocalId from staying null.
 			if (obj.pcode === PCODE_AVATAR &&
@@ -388,10 +414,15 @@ export function useWorldEngine(canvasRef) {
 				ownAvatarLocalId = obj.localId
 				const p = obj.pos
 				debugStore.push('info', `[3D] Own avatar localId=${obj.localId} pos=${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
-				// If ObjectUpdate already has a valid position, snap to it immediately
 				if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
-					ownAvatarSnapPos       = p
-					ownAvatarPosNeedsApply = true
+					avatarSLPos = p
+					worldStore.setAvatarPos(p[0], p[1], p[2])
+					// WHY: Edge positions (< 10 or > 246 in X/Y) indicate a region boundary.
+					// Avatars stuck near edges cannot move — likely a stale sim state from
+					// a previous session that ended without proper logout.
+					if (p[0] < 10 || p[0] > 246 || p[1] < 10 || p[1] > 246) {
+						debugStore.push('warn', `[3D] Avatar near region edge (${p[0].toFixed(0)},${p[1].toFixed(0)},${p[2].toFixed(0)}) — movement may be blocked. Re-login with "home" or teleport to 128,128.`)
+					}
 				}
 			}
 		}
@@ -414,17 +445,34 @@ export function useWorldEngine(canvasRef) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
 			}
-			// WHY: Queue own avatar position for next animate() frame instead of snapping here.
-			// Snapping inside the WS callback (outside rAF loop) can cause off-frame position jumps.
+			// WHY: avatarSLPos drives third-person follow camera in animate().
+			// Updated here (inside WS callback) — lerp in animate() smooths any jitter.
 			if (obj.localId === ownAvatarLocalId && obj.pos) {
-				const firstSnap = !ownAvatarSnapPos
-				ownAvatarSnapPos       = obj.pos
-				ownAvatarPosNeedsApply = true
-				if (firstSnap) {
+				const firstUpdate = !avatarSLPos
+				avatarSLPos = obj.pos
+				worldStore.setAvatarPos(obj.pos[0], obj.pos[1], obj.pos[2])
+				if (firstUpdate) {
 					const p = obj.pos
 					debugStore.push('info', `[3D] First TerseUpdate own avatar → ${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
 				}
 			}
+		}
+	}
+
+	function onAgentSpawnPos(payload) {
+		// WHY: AgentMovementComplete fires once after login — sim's authoritative spawn position.
+		// Arrives before ObjectUpdate (pcode=47) and before any TerseUpdate.
+		// Set avatarSLPos immediately so camera snaps to correct location before scene loads.
+		const p = payload?.pos
+		if (!p || p.length < 3) return
+		const [x, y, z] = p
+		if (x === 0 && y === 0 && z === 0) return
+		avatarSLPos = p
+		worldStore.setAvatarPos(x, y, z)
+		cameraSnapRequested = true  // snap camera to new position immediately
+		debugStore.push('info', `[3D] AgentMovementComplete spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)}`)
+		if (x < 10 || x > 246 || y < 10 || y > 246) {
+			debugStore.push('warn', `[3D] Spawn near region edge — movement may be blocked`)
 		}
 	}
 
@@ -437,19 +485,26 @@ export function useWorldEngine(canvasRef) {
 
 		const cf = updateCamera(dt)
 
-		// WHY: Snap camera to sim-authoritative position once per TerseUpdate arrival.
-		// Applied after updateCamera so local movement runs, then server corrects.
-		// Snapping at ~10Hz (sim physics rate) is visible but ensures camera = sim avatar.
-		if (ownAvatarPosNeedsApply && ownAvatarSnapPos) {
-			ownAvatarPosNeedsApply = false
-			const t = slToThree(ownAvatarSnapPos[0], ownAvatarSnapPos[1], ownAvatarSnapPos[2])
-			camera.position.x = t.x
-			camera.position.y = t.y + EYE_HEIGHT
-			camera.position.z = t.z
+		// WHY: Third-person follow camera — positions camera behind and above avatar.
+		// Lerp factor 0.15 smooths latency from ~10Hz TerseUpdate into fluid motion.
+		// Snap (lerp=1.0) when: Esc pressed, camera far (>8m off target), or W/S moving
+		// so forward movement always resets a lost camera back to follow position.
+		if (avatarSLPos && !isAltOrbit) {
+			const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			const target = new THREE.Vector3(
+				t.x + Math.sin(yaw) * followDist,
+				t.y + FOLLOW_HEIGHT,
+				t.z + Math.cos(yaw) * followDist,
+			)
+			const isMovingFwd = keys['KeyW'] || keys['KeyS'] || keys['ArrowUp'] || keys['ArrowDown']
+			const distToTarget = camera.position.distanceTo(target)
+			const snap = cameraSnapRequested || distToTarget > 8 || isMovingFwd
+			cameraSnapRequested = false
+			camera.position.lerp(target, snap ? 1.0 : 0.15)
+			camera.lookAt(t.x, t.y + 1.0, t.z)
 		}
 
 		maybeAgentUpdate(dt, cf ?? 0)
-		maybeReportPos(dt)
 
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
@@ -470,8 +525,9 @@ export function useWorldEngine(canvasRef) {
 		window.addEventListener('mouseup',   onMouseUp)
 		// Scroll wheel for forward/back movement; passive:false so we can preventDefault
 		canvasRef.value.addEventListener('wheel', onWheel, { passive: false })
-		on(S.OBJECT_UPDATE, onObjectUpdate)
-		on(S.TERSE_UPDATE,  onTerseUpdate)
+		on(S.OBJECT_UPDATE,    onObjectUpdate)
+		on(S.TERSE_UPDATE,     onTerseUpdate)
+		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
 	})
 
 	onUnmounted(() => {
@@ -483,8 +539,9 @@ export function useWorldEngine(canvasRef) {
 		window.removeEventListener('mouseup',   onMouseUp)
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
 		canvasRef.value?.removeEventListener('wheel', onWheel)
-		off(S.OBJECT_UPDATE, onObjectUpdate)
-		off(S.TERSE_UPDATE,  onTerseUpdate)
+		off(S.OBJECT_UPDATE,   onObjectUpdate)
+		off(S.TERSE_UPDATE,    onTerseUpdate)
+		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()

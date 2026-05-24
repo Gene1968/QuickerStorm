@@ -1,14 +1,15 @@
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue'
 import { useSessionStore } from '@/stores/sessionStore'
-import { useUiStore } from '@/stores/uiStore'
+import { useWorldStore } from '@/stores/worldStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
+import { C } from '@shared/protocol.js'
 
 const session = useSessionStore()
-const ui      = useUiStore()
+const world   = useWorldStore()
 const grid    = useGridStore()
-const { connected } = useRealtimeSocket()
+const { connected, emit } = useRealtimeSocket()
 
 // ── Maturity rating ───────────────────────────────────────────────────────
 const MATURITY = {
@@ -28,9 +29,10 @@ const region  = computed(() => {
   return 'Unknown Region'
 })
 const coords  = computed(() => {
-  const p = ui.cameraPos
-  // cameraPos: x=SL_X, y=SL_Z(height), z=SL_Y — display as X, Y, Z
-  return `${p.x}, ${p.z}, ${p.y}`
+  // WHY: Read sim-authoritative avatar position, not camera position.
+  // Camera orbits behind avatar — camera coords diverge from avatar coords.
+  const p = world.avatarPos  // { x: SL_X, y: SL_Y, z: SL_Z(height) }
+  return `${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`
 })
 
 // ── Click-to-edit: show hop:// or secondlife:// URL ───────────────────────
@@ -49,8 +51,8 @@ watch(editing, async (val) => {
 
 const hopUrl = computed(() => {
   const r = region.value
-  const p = ui.cameraPos
-  const x = p.x, y = p.z, z = p.y  // SL coords
+  const p = world.avatarPos
+  const x = Math.round(p.x), y = Math.round(p.y), z = Math.round(p.z)  // SL coords
   const g = grid.selectedGrid
 
   if (!g) return `secondlife://${encodeURIComponent(r)}/${x}/${y}/${z}`
@@ -77,9 +79,24 @@ function cancelEdit() {
 }
 
 function commitEdit() {
-  // For now just close; actual teleport handled in Phase 2
+  const raw = editVal.value.trim()
   editing.value = false
-  // TODO: parse hop:// or secondlife:// URL and initiate teleport
+  if (!session.connected || !raw) return
+
+  // WHY: Accept three formats:
+  //   "X, Y, Z"         — bare SL coords (same region)
+  //   "X Y Z"           — same but space-separated
+  //   "hop://gw/Reg/X/Y/Z" or "sl://Reg/X/Y/Z" — URL (extract trailing X/Y/Z)
+  // Extract the last three numeric tokens as X, Y, Z.
+  const nums = raw.match(/[-\d.]+/g)?.map(Number) ?? []
+  if (nums.length < 3) return
+  const [x, y, z] = nums.slice(-3)
+  if (isNaN(x) || isNaN(y) || isNaN(z)) return
+  // Clamp to safe region interior (avoid edge limbo)
+  const safeX = Math.max(1, Math.min(255, x))
+  const safeY = Math.max(1, Math.min(255, y))
+  const safeZ = Math.max(0.5, z)
+  emit(C.TELEPORT, { x: safeX, y: safeY, z: safeZ })
 }
 
 function onEditKeydown(e) {

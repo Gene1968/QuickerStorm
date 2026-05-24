@@ -6,6 +6,7 @@ import {
 	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
 	decodeRegionHandshake, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
+	encodeTeleportLocationRequest,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -19,8 +20,9 @@ import { S, C } from '../../shared/protocol.js'
 const HIGH_START_PING_CHECK   = 1     // Sim → viewer: keepalive ping (High freq, 1-byte prefix)
 const HIGH_OBJECT_UPDATE      = 12    // Sim → viewer: full object/avatar update (High freq)
 const HIGH_OBJECT_UPDATE_TERSE= 15    // ImprovedTerseObjectUpdate — position-only (High freq)
-const LOW_REGION_HANDSHAKE    = 148   // Sim → viewer: region name + terrain info (Low freq)
-const LOW_DISABLE_SIMULATOR   = 152   // Sim → viewer: circuit terminated (Low freq)
+const LOW_REGION_HANDSHAKE        = 148   // Sim → viewer: region name + terrain info (Low freq)
+const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spawn position (Low freq)
+const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
 const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 
@@ -120,6 +122,27 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `low:${LOW_AGENT_MOVEMENT_COMPLETE}`) {
+		// WHY: Sim confirms avatar placed in region at authoritative position.
+		// Body: AgentID(16)+SessionID(16)+Position(12=3xF32LE)+LookAt(12)+RegionHandle(8)+Timestamp(4)+ChannelVersion(V1)
+		try {
+			const x = buf.readFloatLE(dataOffset + 32)
+			const y = buf.readFloatLE(dataOffset + 36)
+			const z = buf.readFloatLE(dataOffset + 40)
+			// WHY: Extract region handle from packet (more authoritative than login estimate).
+			// Required for TeleportLocationRequest (user can teleport by editing LocationBar coords).
+			// readBigUInt64LE at offset+56 (after position(12) + lookAt(12) = 24 bytes past +32)
+			if (dataOffset + 64 <= buf.length) {
+				session.regionHandle = buf.readBigUInt64LE(dataOffset + 56)
+			}
+			slog.info(session.ws, `✓ AgentMovementComplete: confirmed spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`)
+			// Forward confirmed sim-authoritative position to browser so it can correct
+			// worldStore.avatarPos before the first TerseUpdate arrives.
+			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos: [x, y, z] } }))
+		} catch (e) { slog.warn(session.ws, `AgentMovementComplete parse error: ${(e as Error).message}`) }
+		return
+	}
+
 	if (type === `low:${LOW_DISABLE_SIMULATOR}`) {
 		// Sim terminated the circuit (timeout, teleport out, admin kick, etc.)
 		slog.warn(session.ws, '⚠ DisableSimulator received — sim terminated circuit')
@@ -160,7 +183,16 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const objects = decodeImprovedTerseObjectUpdate(buf, dataOffset)
 			if (objects.length > 0) {
+				// WHY: Log first TerseUpdate + every 50th so we can see which localIds the sim
+				// is sending position updates for. Critical for diagnosing whether own-avatar
+				// TerseUpdates are flowing when keys are pressed.
+				if (session.udpRxCount <= 25 || session.udpRxCount % 50 === 1) {
+					const ids = objects.slice(0, 5).map(o => `${o.localId}(${o.pos[0].toFixed(1)},${o.pos[1].toFixed(1)},${o.pos[2].toFixed(1)})`).join(' ')
+					slog.info(session.ws, `[TerseUpd] ${objects.length} objs: ${ids}`)
+				}
 				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
+			} else {
+				slog.warn(session.ws, `[TerseUpd] decoded 0 objects (bufLen=${buf.length})`)
 			}
 		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
 		return
@@ -199,6 +231,31 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const seq = nextSeq(session)
 		const pkt = encodeAgentUpdate({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		// WHY: Log when controlFlags > 0 so we can confirm movement commands reach server.
+		// Only log first occurrence per unique flag value to avoid flooding.
+		if (d.controlFlags !== 0 && !session.loggedTypes.has(`cf:${d.controlFlags}`)) {
+			session.loggedTypes.add(`cf:${d.controlFlags}`)
+			slog.info(session.ws, `→ AgentUpdate controlFlags=0x${d.controlFlags.toString(16)} (first occurrence)`)
+		}
+		return
+	}
+
+	if (msg.t === C.TELEPORT) {
+		const d = msg.d as { x: number; y: number; z: number }
+		const x = Math.max(1, Math.min(255, d.x))
+		const y = Math.max(1, Math.min(255, d.y))
+		const z = Math.max(0.5, d.z)
+		const seq = nextSeq(session)
+		const pkt = encodeTeleportLocationRequest({
+			agentId:      session.agentId,
+			sessionId:    session.sessionId,
+			seq,
+			regionHandle: session.regionHandle,
+			x, y, z,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ TeleportLocationRequest: ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`)
 		return
 	}
 

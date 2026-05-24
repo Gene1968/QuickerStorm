@@ -31,19 +31,17 @@ const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 
 		<!-- ── Login strip — 1rem from all edges, rounded, dark bg ───────── -->
 		<div
-			class="absolute inset-x-4 bottom-4 bg-forest/80 w-[18.25vw] min-w-[22rem] rounded-2xl overflow-y-auto"
+			class="absolute inset-x-3 bottom-3 bg-forest/80 w-[18.75vw] rounded-2xl overflow-y-auto"
 			style="backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08);"
 		>
 			<div class="flex flex-col items-start gap-5 px-5 py-4">
 
 				<!-- Brand + disclaimer -->
 				<div class="shrink-0 flex flex-col gap-1 w-full pt-0.5">
-					<div class="flex items-center gap-2">
-						<h1 class="text-2xl font-bold text-white tracking-tight leading-none">
+					<div class="flex items-center justify-between gap-2">
+						<h1 class="text-3xl font-bold text-white tracking-tight ">
 							quicker<span class="font-black">STORM</span>
 						</h1>
-						<!-- Spacer pushes toggle to right -->
-						<div class="flex-1" />
 						<!-- Theme toggle -->
 						<button
 							class="rounded-full hover:bg-accent3 p-1 text-white/50 hover:text-white text-xl leading-none shrink-0 transition-colors aspect-square"
@@ -52,8 +50,8 @@ const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 						>{{ isDark ? '☀' : '🌙' }}</button>
 					</div>
 
-					<p class="text-white/45 text-sm leading-snug my-1">
-						Web viewer for OpenSimulator &amp; Second Life
+					<p class="text-white/45 text-md leading-snug my-1">
+						Web-based metaverse viewer for OpenSimulator &amp; Second Life
 					</p>
 				</div>
 
@@ -72,7 +70,7 @@ const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 				<!-- Disclaimer -->
 				<div class="w-full mt-5 text-t1 text-xs leading-relaxed">
 					<p>
-						quickerSTORM is an independent project., not affiliated with or sponsored by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
+						quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
 					</p>
 					<p class="mt-2">
 						Credentials are transmitted once for grid login only and are never stored.  Session token held in browser memory only.

@@ -18,9 +18,9 @@ function onChange(e) {
 </script>
 
 <template>
-	<div class="flex gap-2">
+	<div class="flex flex-row gap-3">
 		<select
-			class="flex-1 px-3 py-2 rounded bg-card2 border border-brd text-t1 focus:outline-none focus:ring-2 focus:ring-accent"
+			class="flex-1 w-full px-3 py-2 rounded bg-card2 border border-brd text-t1 focus:outline-none focus:ring-2 focus:ring-accent"
 			:value="store.selectedNick"
 			@change="onChange"
 		>
@@ -68,7 +68,7 @@ function onChange(e) {
 	</div>
 
 	<!-- Grid detail hints (register / forgot password) -->
-	<div v-if="store.selectedGrid" class="flex gap-3 mt-1 text-xs text-t1">
+	<div v-if="store.selectedGrid" class="flex gap-3 justify-end mt-1 pe-12 text-xs text-t1">
 		<a
 			v-if="store.selectedGrid.register"
 			:href="store.selectedGrid.register"

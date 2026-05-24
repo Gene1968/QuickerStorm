@@ -6,7 +6,17 @@
       "PowerShell(bun *)",
       "Bash(C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\bun-windows-x64\\\\bun.exe typecheck *)",
       "Bash(C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\bun-windows-x64\\\\bun.exe x *)",
-      "Bash(xargs grep -l \"tab\\\\|Tab\")"
+      "Bash(xargs grep -l \"tab\\\\|Tab\")",
+      "WebFetch(domain:wiki.firestormviewer.org)",
+      "WebSearch",
+      "Bash(npx vue-tsc *)",
+      "Bash(npm run *)",
+      "Bash(npx vite *)",
+      "Bash(npx tsc *)",
+      "Bash(npx --yes typescript/bin/tsc --project server/tsconfig.json --noEmit)",
+      "Bash(node_modules/.bin/tsc --project server/tsconfig.json --noEmit)",
+      "Bash(bun run *)",
+      "Bash(kill %1)"
     ]
   }
 }

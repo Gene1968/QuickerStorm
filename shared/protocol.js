@@ -11,6 +11,7 @@ export const C = {
 	MOVE:         'move',       // { controlFlags, bodyRot, headRot, camCenter, camAt, camLeft, camUp, far }
 	CHAT:         'chat',       // { message, type, channel }
 	CAPS_FETCH:   'caps_fetch', // { url, method, body? } — CORS proxy
+	TELEPORT:     'teleport',  // { x, y, z } — same-region teleport via LocationBar coord edit
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -25,7 +26,8 @@ export const S = {
 	CAPS_RESULT:  'caps_result',// { id, status, body }
 	ERROR:        'error',      // { code, message }
 	DEBUG:        'debug',      // { level:'info'|'warn'|'error', msg: string } — server log forwarded to browser
-	DISCONNECTED: 'disconnected', // { reason: string } — sim killed the circuit
+	DISCONNECTED:    'disconnected',  // { reason: string } — sim killed the circuit
+	AGENT_SPAWN_POS: 'spawn_pos',    // { pos: [slX, slY, slZ] } — AgentMovementComplete confirmed position
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

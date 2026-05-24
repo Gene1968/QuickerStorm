@@ -3,12 +3,15 @@ import * as dgram from 'dgram'
 import type { ServerWebSocket } from 'bun'
 
 export interface CircuitState {
-	agentId:     string
-	sessionId:   string
-	simIp:       string
-	simPort:     number
-	circuitCode: number
-	seqNum:      number   // next outgoing sequence number (increment before use)
+	agentId:      string
+	sessionId:    string
+	simIp:        string
+	simPort:      number
+	circuitCode:  number
+	// WHY: regionHandle is U64 extracted from AgentMovementComplete. Required to build
+	// TeleportLocationRequest (same-region teleport from LocationBar coord edit).
+	regionHandle: bigint
+	seqNum:       number   // next outgoing sequence number (increment before use)
 	pendingAcks: number[] // incoming reliable packet IDs awaiting our ack
 	// Reliable packets we sent, waiting for sim's ack
 	reliableOut: Map<number, { buf: Buffer; sentAt: number; retries: number }>

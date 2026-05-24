@@ -42,5 +42,17 @@ export const useWorldStore = defineStore('world', () => {
 		[...objects.value.values()].filter(o => o.pcode === PCODE_PRIM)
 	)
 
-	return { objects, avatars, prims, upsertObject, updateObjectPos, removeObject, clearAll }
+	// WHY: Sim-authoritative avatar position in SL coords (X=east, Y=north, Z=height).
+	// Updated from ObjectUpdate and TerseUpdate for own avatar in useWorldEngine.
+	// LocationBar reads this instead of camera position so scroll/explore don't affect display.
+	const avatarPos = ref({ x: 128, y: 128, z: 25 })
+	function setAvatarPos(slX, slY, slZ) {
+		avatarPos.value = {
+			x: Math.max(0, Math.min(256, slX)),
+			y: Math.max(0, Math.min(256, slY)),
+			z: Math.max(0, slZ),
+		}
+	}
+
+	return { objects, avatars, prims, upsertObject, updateObjectPos, removeObject, clearAll, avatarPos, setAvatarPos }
 })

@@ -16,12 +16,14 @@ const MSG_ID = {
   AgentUpdate:               Buffer.from([0x04]),                     // High #4
   UseCircuitCode:            Buffer.from([0xFF, 0xFF, 0x00, 0x03]),   // Low #3
   CompleteAgentMovement:     Buffer.from([0xFF, 0xFF, 0x00, 0xF9]),   // Low #249
+  AgentThrottle:             Buffer.from([0xFF, 0xFF, 0x00, 0x4C]),   // Low #76
   LogoutRequest:             Buffer.from([0xFF, 0xFF, 0x00, 0xFC]),   // Low #252
   PacketAck:                 Buffer.from([0xFF, 0xFF, 0xFF, 0xFB]),   // Fixed #251
   StartPingCheck:            Buffer.from([0x01]),                     // High #1 (received from sim)
   CompletePingCheck:         Buffer.from([0x02]),                     // High #2 (we send back)
   RegionHandshake:           Buffer.from([0xFF, 0xFF, 0x00, 0x94]),   // Low #148 (received from sim)
   RegionHandshakeReply:      Buffer.from([0xFF, 0xFF, 0x00, 0x95]),   // Low #149 (we send back)
+  AgentMovementComplete:     Buffer.from([0xFF, 0xFF, 0x00, 0xFA]),   // Low #250 (received from sim)
   // Verified from packet log: these arrive as High-frequency (1-byte prefix)
   ChatFromViewer:            Buffer.from([0xFF, 0xFF, 0x00, 0x50]),   // Low #80 (we send)
   ChatFromSimulator:         Buffer.from([0xFF, 0xFF, 0x00, 0x8B]),   // Low #139 (received)
@@ -154,6 +156,35 @@ export function encodeCompleteAgentMovement(p: CircuitParams): Buffer {
   return Buffer.concat([hdr, MSG_ID.CompleteAgentMovement, body])
 }
 
+/** AgentThrottle — tell sim bandwidth allocation per category (bps).
+ *  WHY: OpenSim requires this after CompleteAgentMovement to enable avatar physics.
+ *  Without it, animations work (state-only) but movement/rotation are silently blocked.
+ *  Firestorm sends this immediately after CompleteAgentMovement with Firestorm-typical values.
+ *  Values are in bits/sec: resend, land, wind, cloud, task, texture, asset.
+ */
+export function encodeAgentThrottle(p: { agentId: string; sessionId: string; circuitCode: number; seq: number }): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  // 7 throttle categories × 4 bytes F32LE = 28 bytes
+  // WHY: Using Firestorm-like defaults. Too low → sim starves textures/objects.
+  // Too high → sim floods us and we can't keep up. These are typical mid-range values.
+  const THROTTLES = [150000, 162000, 20000, 20000, 700000, 1300000, 500000]
+  const throttleBuf = Buffer.allocUnsafe(28)
+  THROTTLES.forEach((v, i) => throttleBuf.writeFloatLE(v, i * 4))
+
+  // WHY: AgentThrottle has two blocks: AgentData(AgentID+SessionID+CircuitCode) and
+  // Throttle(GenCounter+Throttles). GenCounter is always 0 for the initial throttle set.
+  // Missing GenCounter shifts Throttles by 4 bytes → sim reads garbage throttle values.
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1 + 28)  // 69 bytes
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(p.circuitCode, off);   off += 4
+  body.writeUInt32LE(0, off);               off += 4  // GenCounter = 0
+  body[off++] = 28  // Variable1 length prefix for Throttle field
+  throttleBuf.copy(body, off)
+  return Buffer.concat([hdr, MSG_ID.AgentThrottle, body])
+}
+
 export function encodePacketAck(ackIds: number[], seq: number): Buffer {
   const hdr  = buildHeader({ seq, reliable: false, hasAcks: false, zeroCoded: false })
   const body = Buffer.allocUnsafe(1 + ackIds.length * 4)
@@ -168,6 +199,38 @@ export function encodeCompletePingCheck(pingId: number, seq: number): Buffer {
   const body = Buffer.allocUnsafe(1)
   body[0] = pingId
   return Buffer.concat([hdr, MSG_ID.CompletePingCheck, body])
+}
+
+/** TeleportLocationRequest (Low #69 = 0x45) — teleport avatar to position within any region.
+ *  WHY: Triggered when user edits coords in LocationBar. Same-region teleport completes
+ *  without a new circuit; cross-region requires full region handshake (future work).
+ *  Sim responds with TeleportProgress → TeleportFinish → AgentMovementComplete at new pos.
+ */
+export function encodeTeleportLocationRequest(p: {
+  agentId:      string
+  sessionId:    string
+  seq:          number
+  regionHandle: bigint   // U64LE — current or target region handle
+  x:            number   // SL X (east) in metres [0..256]
+  y:            number   // SL Y (north) in metres [0..256]
+  z:            number   // SL Z (height) in metres
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG  = Buffer.from([0xFF, 0xFF, 0x00, 0x45])  // Low #69
+  // AgentData block (32) + TeleportData block (8+12+12=32) = 64 bytes
+  const body = Buffer.allocUnsafe(64)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeBigUInt64LE(p.regionHandle, off); off += 8
+  body.writeFloatLE(p.x, off); off += 4
+  body.writeFloatLE(p.y, off); off += 4
+  body.writeFloatLE(p.z, off); off += 4
+  // LookAt — face north (0, 1, 0) as default orientation
+  body.writeFloatLE(0, off); off += 4
+  body.writeFloatLE(1, off); off += 4
+  body.writeFloatLE(0, off); off += 4
+  return Buffer.concat([hdr, MSG, body])
 }
 
 export function encodeLogoutRequest(p: { agentId: string; sessionId: string; seq: number }): Buffer {
