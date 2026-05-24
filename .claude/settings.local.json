@@ -18,7 +18,10 @@
       "Bash(bun run *)",
       "Bash(kill %1)",
       "Bash(Get-Content *)",
-      "Bash(npx --no ts-node --version)"
+      "Bash(npx --no ts-node --version)",
+      "Bash(xargs grep -l \"Ctrl+P\\\\|commandPalette\\\\|darkMode\\\\|dark-mode\\\\|isDark\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\" -Recurse -File)",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ]
   }
 }

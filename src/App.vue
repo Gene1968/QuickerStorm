@@ -4,12 +4,15 @@ import { RouterView, useRouter } from 'vue-router'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useDebugStore } from '@/stores/debugStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useUiStore } from '@/stores/uiStore'
 import { S } from '@shared/protocol.js'
+import PreferencesFloater from '@/components/PreferencesFloater.vue'
 
 const { on, off } = useRealtimeSocket()
-const debug	 = useDebugStore()
+const debug   = useDebugStore()
 const session = useSessionStore()
-const router	= useRouter()
+const ui      = useUiStore()
+const router  = useRouter()
 
 // WHY: Register handlers at app root so messages are captured regardless of which
 // view is currently mounted.
@@ -32,18 +35,32 @@ function onDisconnected(d) {
 	router.push('/landing')
 }
 
+// WHY: Ctrl+P opens Preferences globally — works pre-login and post-login.
+// BottomToolbar also handles it post-login but this covers all routes.
+function onKeyDown(e) {
+	if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA') return
+	if (e.ctrlKey && e.key === 'p') {
+		e.preventDefault()
+		ui.togglePreferences()
+	}
+}
+
 onMounted(() => {
 	on(S.DEBUG, onDebug)
 	on(S.REGION_INFO, onRegionInfo)
 	on(S.DISCONNECTED, onDisconnected)
+	window.addEventListener('keydown', onKeyDown)
 })
 onUnmounted(() => {
 	off(S.DEBUG, onDebug)
 	off(S.REGION_INFO, onRegionInfo)
 	off(S.DISCONNECTED, onDisconnected)
+	window.removeEventListener('keydown', onKeyDown)
 })
 </script>
 
 <template>
 	<RouterView />
+	<!-- WHY: PreferencesFloater lives at app root — accessible pre-login and post-login via Ctrl+P -->
+	<PreferencesFloater v-if="ui.showPreferences" />
 </template>

@@ -98,10 +98,10 @@ function connectSlack() {
 							class="theme-toggle"
 							:class="{ dark: theme.isDark.value }"
 							@click="theme.toggle()"
-							:title="theme.isDark.value ? 'Switch to light mode' : 'Switch to dark mode'"
+							:title="theme.isDark.value ? 'Light mode' : 'Dark mode'"
 						>
 							<span class="theme-knob" />
-							<span class="theme-label">{{ theme.isDark.value ? '🌙 Night' : '☀️ Day' }}</span>
+							<span class="theme-label">{{ theme.isDark.value ? '☀ Light mode' : '🌙 Dark mode' }}</span>
 						</button>
 					</div>
 				</div>

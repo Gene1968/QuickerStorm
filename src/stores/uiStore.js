@@ -9,17 +9,22 @@ export const useUiStore = defineStore('ui', () => {
 	const showChat       = ref(true)
 	const showInventory  = ref(false)
 	const showMap        = ref(false)
-	const showSettings   = ref(false)
-	const showDebug      = ref(false)    // debug/connection panel
+	const showSettings    = ref(false)
+	const showDebug       = ref(false)    // debug/connection panel
+	const showPreferences = ref(false)    // full Preferences floater (Ctrl+P)
+	const showQuickPrefs  = ref(false)    // Quick Prefs popover (bottom-bar btn)
 
-	function toggleMode()      { mode.value = mode.value === '3d' ? '2d' : '3d' }
-	function toggleAvatarList(){ showAvatarList.value = !showAvatarList.value }
-	function toggleMinimap()   { showMinimap.value   = !showMinimap.value }
-	function toggleChat()      { showChat.value       = !showChat.value }
-	function toggleInventory() { showInventory.value  = !showInventory.value }
-	function toggleMap()       { showMap.value        = !showMap.value }
-	function toggleSettings()  { showSettings.value   = !showSettings.value }
-	function toggleDebug()     { showDebug.value      = !showDebug.value }
+	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
+	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
+	function toggleMinimap()     { showMinimap.value     = !showMinimap.value }
+	function toggleChat()        { showChat.value        = !showChat.value }
+	function toggleInventory()   { showInventory.value   = !showInventory.value }
+	function toggleMap()         { showMap.value         = !showMap.value }
+	function toggleSettings()    { showSettings.value    = !showSettings.value }
+	function toggleDebug()       { showDebug.value       = !showDebug.value }
+	function togglePreferences() { showPreferences.value = !showPreferences.value; showQuickPrefs.value = false }
+	function openPreferences()   { showPreferences.value = true;  showQuickPrefs.value = false }
+	function toggleQuickPrefs()  { showQuickPrefs.value  = !showQuickPrefs.value; showPreferences.value = false }
 
 	// Camera position + heading — updated by useWorldEngine at ~4 Hz, not every frame
 	const cameraPos = shallowRef({ x: 128, y: 25, z: 128 })  // SL coords (x, z=height, y)
@@ -34,8 +39,10 @@ export const useUiStore = defineStore('ui', () => {
 	return {
 		mode, showAvatarList, showMinimap, showChat,
 		showInventory, showMap, showSettings, showDebug,
+		showPreferences, showQuickPrefs,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleSettings, toggleDebug,
+		togglePreferences, openPreferences, toggleQuickPrefs,
 		cameraPos, setCameraPos,
 		cameraYaw, setCameraYaw,
 	}

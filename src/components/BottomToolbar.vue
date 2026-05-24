@@ -4,6 +4,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useRouter } from 'vue-router'
+import QuickPrefsPopover from '@/components/QuickPrefsPopover.vue'
 
 const ui      = useUiStore()
 const session = useSessionStore()
@@ -30,6 +31,8 @@ function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
   if (e.ctrlKey && e.key === 'm') { e.preventDefault(); ui.toggleMap() }
   if (e.ctrlKey && e.shiftKey && e.code === 'Digit4') { e.preventDefault(); ui.toggleDebug() }
+  // Ctrl+P → open Preferences (also handled globally in App.vue for pre-login)
+  if (e.ctrlKey && e.key === 'p') { e.preventDefault(); ui.openPreferences() }
 }
 
 onMounted(() => window.addEventListener('keydown', onKeyDown))
@@ -66,16 +69,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
     <div class="w-px h-5 bg-white/20 mx-1" />
 
-    <!-- Settings -->
-    <button
-      class="flex flex-col items-center justify-center w-12 h-8 rounded text-[10px] text-white/70 hover:bg-white/10 hover:text-white transition-colors"
-      title="Settings"
-      @click="ui.toggleSettings()"
-    >
-      <span class="text-base leading-none">⚙</span>
-      <span class="leading-none mt-0.5 hidden sm:block">Settings</span>
-    </button>
-
     <!-- Debug panel toggle (Ctrl+Shift+4) -->
     <button
       class="flex flex-col items-center justify-center w-12 h-8 rounded text-[10px] transition-colors"
@@ -103,5 +96,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
     >
       Logout
     </button>
+
+    <!-- Quick Prefs (last btn, right edge) -->
+    <button
+      data-quick-prefs-trigger
+      class="flex flex-col items-center justify-center w-12 h-8 rounded text-[10px] transition-colors"
+      :class="ui.showQuickPrefs ? 'bg-accent/30 text-accent' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+      title="Quick Preferences"
+      @click="ui.toggleQuickPrefs()"
+    >
+      <span class="text-base leading-none">⚙</span>
+      <span class="leading-none mt-0.5 hidden sm:block">Prefs</span>
+    </button>
+
+    <!-- Quick Prefs popover (rendered outside toolbar flow, fixed-positioned) -->
+    <QuickPrefsPopover v-if="ui.showQuickPrefs" />
   </div>
 </template>

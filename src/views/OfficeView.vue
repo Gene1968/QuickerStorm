@@ -21,7 +21,7 @@ import DogPopup from '@/components/ui/DogPopup.vue'
 import DmFlyout from '@/components/ui/DmFlyout.vue'
 import BreakRoomTV from '@/components/ui/BreakRoomTV.vue'
 import ConferenceHud from '@/components/office/ConferenceHud.vue'
-import SettingsPanel from '@/components/ui/SettingsPanel.vue'
+// SettingsPanel removed — preferences now via PreferencesFloater in App.vue (Ctrl+P / Quick Prefs)
 import SoundConsentModal from '@/components/ui/SoundConsentModal.vue'
 import AnnouncementBanner from '@/components/ui/AnnouncementBanner.vue'
 import CallInviteBanner from '@/components/ui/CallInviteBanner.vue'
@@ -58,6 +58,7 @@ import gsap from 'gsap'
 import { useOfficeStore } from '@/stores/officeStore.js'
 import { useAvatarStore } from '@/stores/avatarStore.js'
 import { usePresenceStore } from '@/stores/presenceStore.js'
+import { useUiStore } from '@/stores/uiStore.js'
 import { usePresence, isDisplaced, isPaused, pauseSession, resumeSession } from '@/composables/usePresence.js'
 import { useIdleDetector } from '@/composables/useIdleDetector.js'
 import { useArrivalChime } from '@/composables/useArrivalChime.js'
@@ -89,9 +90,10 @@ import { OFFICES } from '@/config/officeLayout.js'
 
 const isMyOffice = computed(() => !!officeStore.myCurrentOfficeId)
 
-const officeStore = useOfficeStore()
-const avatarStore = useAvatarStore()
+const officeStore   = useOfficeStore()
+const avatarStore   = useAvatarStore()
 const presenceStore = usePresenceStore()
+const ui            = useUiStore()
 const presence = usePresence()
 // const slack = useSlack()
 const messaging = useMessaging()
@@ -107,7 +109,7 @@ function reloadPage () { window.location.reload() }
 const officeCanvasRef = ref(null)
 const showAvatarMaker = ref(false)
 const showMetrics = ref(false)
-const showSettings = ref(false)
+// showSettings replaced by ui.showPreferences (PreferencesFloater in App.vue)
 const showSoundConsent = ref(true)
 const showAnnouncementModal = ref(false)
 const magazineUrl = ref('')
@@ -657,7 +659,7 @@ function onAvatarDone () {
 	showAvatarMaker.value = false
 	if (openSettingsAfterFirstAvatarSave.value) {
 		openSettingsAfterFirstAvatarSave.value = false
-		showSettings.value = true
+		ui.openPreferences()
 	}
 	const engine = officeStore.engineRef
 	if (engine && avatarStore.displayName) {
@@ -720,7 +722,7 @@ const roomLabel = computed(() => {
 	<!-- flex row: sidebar + canvas -->
 	<div class="flex w-screen h-screen overflow-hidden bg-bg">
 		<!-- Left sidebar -->
-		<TheSidebar @open-avatar="showAvatarMaker = true" @open-settings="showSettings = true" />
+		<TheSidebar @open-avatar="showAvatarMaker = true" @open-settings="ui.openPreferences()" />
 
 		<!-- Main canvas area -->
 		<div class="relative flex-1 overflow-hidden" @pointerdown="messaging.activeConversation.value && messaging.closeConversation()">
@@ -761,7 +763,7 @@ const roomLabel = computed(() => {
 			<AppGrid class="absolute top-3 left-3" />
 
 			<!-- Corner menu (top right HUD) -->
-			<CornerMenu @open-avatar="showAvatarMaker = true" @open-settings="showSettings = true" @open-announcement="showAnnouncementModal = true" @open-metrics="showMetrics = true" @open-phone="showPhone = true" />
+			<CornerMenu @open-avatar="showAvatarMaker = true" @open-settings="ui.openPreferences()" @open-announcement="showAnnouncementModal = true" @open-metrics="showMetrics = true" @open-phone="showPhone = true" />
 
 			<!-- Break room TV overlay -->
 			<BreakRoomTV />
@@ -877,10 +879,7 @@ const roomLabel = computed(() => {
 		<!-- Avatar maker modal — root is <Teleport>, which <Transition> can't animate. -->
 		<AvatarMaker v-if="showAvatarMaker" @close="showAvatarMaker = false" @done="onAvatarDone" />
 
-		<!-- Settings modal -->
-		<Transition name="modal">
-			<SettingsPanel v-if="showSettings" @close="showSettings = false" />
-		</Transition>
+		<!-- Preferences rendered in App.vue via ui.showPreferences / Ctrl+P -->
 
 		<!-- Announcement sender modal -->
 		<Transition name="modal">
