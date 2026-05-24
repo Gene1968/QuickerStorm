@@ -233,6 +233,50 @@ export function encodeTeleportLocationRequest(p: {
   return Buffer.concat([hdr, MSG, body])
 }
 
+/** RequestMultipleObjects (Medium #22 = 0xFF 0x16) — ask sim for full ObjectUpdate for
+ *  objects we have in ObjectUpdateCached but don't know about.
+ *  WHY: Sims send ObjectUpdateCached (high:11) for objects they think the viewer has cached.
+ *  Since we have no object cache, we must reply to get the full update (pcode, pos, name).
+ *  Without this, our own avatar's ObjectUpdate (pcode=47) is never received, ownAvatarLocalId
+ *  stays null, and TerseUpdates are never attributed → location bar never updates on movement.
+ */
+export function encodeRequestMultipleObjects(p: {
+  agentId:   string
+  sessionId: string
+  seq:       number
+  ids:       number[]  // localIds to request
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG  = Buffer.from([0xFF, 0x16])  // Medium #22
+  const body = Buffer.allocUnsafe(16 + 16 + 1 + p.ids.length * 5)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body[off++] = p.ids.length
+  for (const id of p.ids) {
+    body[off++] = 0   // CacheMissType = 0 (full update)
+    body.writeUInt32LE(id, off); off += 4
+  }
+  return Buffer.concat([hdr, MSG, body])
+}
+
+/** Decode ObjectUpdateCached (High #11) — sim sends this for objects viewer supposedly has.
+ *  Returns array of localIds we should request via RequestMultipleObjects.
+ */
+export function decodeObjectUpdateCached(buf: Buffer, dataOffset: number): number[] {
+  const ids: number[] = []
+  let off = dataOffset
+  off += 8   // RegionHandle U64
+  off += 2   // TimeDilation U16
+  const count = buf[off++]
+  for (let i = 0; i < count && off + 7 < buf.length; i++) {
+    const localId = buf.readUInt32LE(off); off += 4
+    off += 4   // CRC U32
+    if (localId !== 0) ids.push(localId)
+  }
+  return ids
+}
+
 export function encodeLogoutRequest(p: { agentId: string; sessionId: string; seq: number }): Buffer {
   const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
   const body = Buffer.allocUnsafe(32)
@@ -525,6 +569,14 @@ export function decodeImprovedTerseObjectUpdate(buf: Buffer, dataOffset: number)
     }
 
     off += dataLen
+    // WHY: Positions near ±FLT_MAX (3.4e38) are "kill sentinels" — the sim signals
+    // that an object should be removed from the scene. Skip these to avoid garbage
+    // positions that break camera follow or location bar. Object removal will arrive
+    // via ObjectUpdate with KillObject flag (handled separately or ignored for now).
+    const FLT_MAX = 3.4e38
+    if (Math.abs(pos[0]) > FLT_MAX * 0.5 || Math.abs(pos[1]) > FLT_MAX * 0.5 || Math.abs(pos[2]) > FLT_MAX * 0.5) {
+      continue
+    }
     results.push({ localId, pos })
   }
 

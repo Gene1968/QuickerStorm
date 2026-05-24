@@ -81,14 +81,16 @@ function cancelEdit() {
 function commitEdit() {
   const raw = editVal.value.trim()
   editing.value = false
-  if (!session.connected || !raw) return
+  // WHY: Use connected.value (WS state) not session.connected (login state).
+  // WS must be open to emit; session.connected may lag or differ.
+  if (!connected.value || !raw) return
 
   // WHY: Accept three formats:
   //   "X, Y, Z"         — bare SL coords (same region)
   //   "X Y Z"           — same but space-separated
   //   "hop://gw/Reg/X/Y/Z" or "sl://Reg/X/Y/Z" — URL (extract trailing X/Y/Z)
   // Extract the last three numeric tokens as X, Y, Z.
-  const nums = raw.match(/[-\d.]+/g)?.map(Number) ?? []
+  const nums = raw.match(/\d+\.?\d*/g)?.map(Number) ?? []
   if (nums.length < 3) return
   const [x, y, z] = nums.slice(-3)
   if (isNaN(x) || isNaN(y) || isNaN(z)) return
@@ -96,6 +98,7 @@ function commitEdit() {
   const safeX = Math.max(1, Math.min(255, x))
   const safeY = Math.max(1, Math.min(255, y))
   const safeZ = Math.max(0.5, z)
+  console.log(`[LocationBar] teleport → ${safeX},${safeY},${safeZ} raw="${raw}"`)
   emit(C.TELEPORT, { x: safeX, y: safeY, z: safeZ })
 }
 

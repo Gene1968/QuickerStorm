@@ -4,6 +4,7 @@ import type { CircuitState } from '../state/sessions'
 import {
 	parseHeader, parseMsgType,
 	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
+	decodeObjectUpdateCached, encodeRequestMultipleObjects,
 	decodeRegionHandshake, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
 	encodeTeleportLocationRequest,
@@ -17,9 +18,10 @@ import { S, C } from '../../shared/protocol.js'
 // are HIGH-frequency messages (1-byte ID prefix). Earlier code incorrectly used LOW prefix
 // (4-byte 0xFF 0xFF + U16), so handlers never fired and no object data reached the browser.
 // RegionHandshake (148), DisableSimulator (152), ChatFromSimulator (139) ARE Low-frequency.
-const HIGH_START_PING_CHECK   = 1     // Sim → viewer: keepalive ping (High freq, 1-byte prefix)
-const HIGH_OBJECT_UPDATE      = 12    // Sim → viewer: full object/avatar update (High freq)
-const HIGH_OBJECT_UPDATE_TERSE= 15    // ImprovedTerseObjectUpdate — position-only (High freq)
+const HIGH_START_PING_CHECK    = 1     // Sim → viewer: keepalive ping (High freq, 1-byte prefix)
+const HIGH_OBJECT_UPDATE_CACHED= 11    // ObjectUpdateCached — reply with RequestMultipleObjects (High freq)
+const HIGH_OBJECT_UPDATE       = 12    // Sim → viewer: full object/avatar update (High freq)
+const HIGH_OBJECT_UPDATE_TERSE = 15    // ImprovedTerseObjectUpdate — position-only (High freq)
 const LOW_REGION_HANDSHAKE        = 148   // Sim → viewer: region name + terrain info (Low freq)
 const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spawn position (Low freq)
 const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
@@ -157,6 +159,36 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			slog.info(session.ws, `Chat from "${chat.fromName}": ${chat.message.slice(0, 60)}`)
 			session.ws.send(JSON.stringify({ t: S.CHAT_MSG, d: chat }))
 		} catch (e) { slog.warn(session.ws, `chat decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `high:${HIGH_OBJECT_UPDATE_CACHED}`) {
+		// WHY: Sim sends ObjectUpdateCached when it believes we have objects cached from a
+		// previous session. Since we maintain no object cache, we request full updates for
+		// all IDs. Without this, our own avatar's ObjectUpdate (pcode=47) is never received:
+		// ownAvatarLocalId stays null → TerseUpdates not attributed → location bar frozen.
+		try {
+			const ids = decodeObjectUpdateCached(buf, dataOffset)
+			if (ids.length > 0) {
+				// Batch into chunks of 16 to avoid oversized packets
+				const BATCH = 16
+				for (let i = 0; i < ids.length; i += BATCH) {
+					const chunk = ids.slice(i, i + BATCH)
+					const seq = nextSeq(session)
+					const pkt = encodeRequestMultipleObjects({
+						agentId:   session.agentId,
+						sessionId: session.sessionId,
+						seq,
+						ids:       chunk,
+					})
+					session.udpSocket.send(pkt, session.simPort, session.simIp)
+				}
+				if (ids.length <= 4 || !session.loggedTypes.has('objcache')) {
+					session.loggedTypes.add('objcache')
+					slog.info(session.ws, `[ObjCached] ${ids.length} ids → RequestMultipleObjects (first batch ids=${ids.slice(0,4).join(',')})`)
+				}
+			}
+		} catch (e) { slog.warn(session.ws, `ObjectUpdateCached decode error: ${(e as Error).message}`) }
 		return
 	}
 

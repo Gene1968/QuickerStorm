@@ -87,9 +87,15 @@ export function useWorldEngine(canvasRef) {
 		'ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown',
 	]
 
+	// WHY: Track first W/S press for diagnosing movement issues (cf generation).
+	let wsDiagnosed = false
 	function onKeyDown(e) {
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
+		if (!wsDiagnosed && (e.code === 'KeyW' || e.code === 'KeyS')) {
+			wsDiagnosed = true
+			debugStore.push('info', `[3D] Key ${e.code} registered (target=${e.target.tagName} avatarSLPos=${!!avatarSLPos})`)
+		}
 		if (e.code === 'KeyF') {
 			isFlying = !isFlying
 			e.preventDefault()
@@ -496,9 +502,12 @@ export function useWorldEngine(canvasRef) {
 				t.y + FOLLOW_HEIGHT,
 				t.z + Math.cos(yaw) * followDist,
 			)
-			const isMovingFwd = keys['KeyW'] || keys['KeyS'] || keys['ArrowUp'] || keys['ArrowDown']
 			const distToTarget = camera.position.distanceTo(target)
-			const snap = cameraSnapRequested || distToTarget > 8 || isMovingFwd
+			// WHY: Only hard-snap when Esc pressed or camera is very far (>12m) from avatar.
+			// Removed isMovingFwd from snap condition — pressing W/S should produce a smooth
+			// glide into follow position, not a jarring teleport. The 0.15 lerp (~30 frames
+			// at 60fps) gives a natural "follow" feel matching Firestorm third-person camera.
+			const snap = cameraSnapRequested || distToTarget > 12
 			cameraSnapRequested = false
 			camera.position.lerp(target, snap ? 1.0 : 0.15)
 			camera.lookAt(t.x, t.y + 1.0, t.z)
