@@ -10,7 +10,7 @@ import { join, normalize, extname } from 'path'
 import { handleLogin, handleLogout } from './handlers/login'
 import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
-import { deleteSession } from './state/sessions'
+import { deleteSession, resolveCircuitId, attachWs, detachWs, scheduleExpire } from './state/sessions'
 import { C } from '../shared/protocol.js'
 import type { ServerWebSocket } from 'bun'
 import * as dgram from 'dgram'
@@ -189,14 +189,17 @@ const server = Bun.serve<WSData>({
 			let msg: { t: string; d: unknown }
 			try { msg = JSON.parse(raw) } catch { return }
 
-			const { sessionId } = ws.data
+			const wsId     = ws.data.sessionId
+			// WHY: Reconnect WS has a new per-connection UUID; resolve to the existing circuitId
+			// so MOVE/CHAT find the right session even after a page-reload reconnect.
+			const circuitId = resolveCircuitId(wsId)
 
 			switch (msg.t) {
 				case C.LOGIN:
-					handleLogin(ws, sessionId, msg.d as { grid: string; username: string; password: string })
+					handleLogin(ws, wsId, msg.d as { grid: string; username: string; password: string })
 					break
 				case C.LOGOUT:
-					handleLogout(ws, sessionId)
+					handleLogout(ws, circuitId)
 					break
 				case C.CAPS_FETCH: {
 					const d = msg.d as { id: string; url: string; method?: string; body?: string }
@@ -204,13 +207,18 @@ const server = Bun.serve<WSData>({
 					break
 				}
 				default:
-					// MOVE and CHAT go to LLUDP bridge
-					handleClientMessage(sessionId, msg)
+					// MOVE and CHAT go to LLUDP bridge — use resolved circuitId
+					handleClientMessage(circuitId, msg)
 			}
 		},
 
 		close(ws: ServerWebSocket<WSData>) {
-			deleteSession(ws.data.sessionId)
+			const wsId     = ws.data.sessionId
+			const circuitId = resolveCircuitId(wsId)
+			detachWs(wsId)
+			// WHY: Don't destroy circuit immediately — hold for CIRCUIT_HOLD_MS so the browser
+			// can reconnect (page reload) and resume the same sim circuit without re-login.
+			scheduleExpire(circuitId)
 		},
 
 		perMessageDeflate: true,

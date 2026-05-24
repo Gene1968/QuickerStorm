@@ -5,19 +5,54 @@ import { getGrid } from '../lib/grids'
 import { hashPassword, buildLoginXml, parseLoginResponse, xmlRpcPost } from '../lib/xmlrpc'
 import { encodeUseCircuitCode, encodeCompleteAgentMovement, encodeAgentThrottle } from '../lib/lludp-codec'
 import { nextSeq, trackReliable } from '../lib/circuit'
-import { createSession, deleteSession, getSession } from '../state/sessions'
+import { createSession, deleteSession, getSession, findCircuitByUser, attachWs, cancelExpire } from '../state/sessions'
 import { handleUdpMessage, startCircuitTimers } from './lludp'
 import { slog } from '../lib/serverLog'
 import { S } from '../../shared/protocol.js'
 
 export async function handleLogin(
 	ws: ServerWebSocket<unknown>,
-	sessionId: string,
+	wsId: string,
 	data: { grid: string; username: string; password: string; destination?: string }
 ): Promise<void> {
 	const grid = getGrid(data.grid)
 	if (!grid) {
 		ws.send(JSON.stringify({ t: S.LOGIN_FAIL, d: { message: `Unknown grid: ${data.grid}` } }))
+		return
+	}
+
+	// ── Fast-path: reconnect to existing live circuit ──────────────────────
+	// WHY: On page reload the WS drops but the sim circuit stays alive (held for 15s).
+	// If the same user reconnects within that window we skip XML-RPC re-login entirely
+	// (which would be rejected "already logged in") and resume the existing circuit.
+	const userKey = `${data.grid}:${data.username.trim().toLowerCase()}`
+	const existing = findCircuitByUser(userKey)
+	if (existing) {
+		const { circuitId, circuit } = existing
+		cancelExpire(circuitId)
+		circuit.ws = ws         // swap WS ref so UDP relay goes to new connection
+		attachWs(wsId, circuitId)
+		slog.info(ws, `Session resume — reattached WS to existing circuit (circuitId=${circuitId.slice(0,8)}…)`)
+		if (circuit.cachedLoginOk) {
+			ws.send(JSON.stringify({ t: S.LOGIN_OK, d: circuit.cachedLoginOk }))
+		} else {
+			// Fallback: synthesise minimal payload from circuit state
+			ws.send(JSON.stringify({
+				t: S.LOGIN_OK,
+				d: {
+					agentId:    circuit.agentId,
+					sessionId:  circuit.sessionId,
+					simIp:      circuit.simIp,
+					simPort:    circuit.simPort,
+					seedCap:    '',
+					regionName: '',
+					regionX:    0,
+					regionY:    0,
+					startLocation: 'last',
+					agentAccess:   '',
+				},
+			}))
+		}
 		return
 	}
 
@@ -62,6 +97,21 @@ export async function handleLogin(
 	// is live. Pre-seeded here so TeleportLocationRequest can be sent immediately after login.
 	const regionX = loginResult.region_x ?? 0
 	const regionY = loginResult.region_y ?? 0
+
+	// Cache the full LOGIN_OK payload for session resume (reconnect within hold window)
+	const cachedLoginOk = {
+		agentId:       loginResult.agent_id!,
+		sessionId:     loginResult.session_id!,
+		simIp:         loginResult.sim_ip!,
+		simPort:       loginResult.sim_port!,
+		seedCap:       loginResult.seed_capability ?? '',
+		regionName:    loginResult.region_name ?? '',
+		regionX,
+		regionY,
+		startLocation: loginResult.start_location ?? start,
+		agentAccess:   loginResult.agent_access ?? '',
+	}
+
 	const circuit = {
 		agentId:      loginResult.agent_id!,
 		sessionId:    loginResult.session_id!,
@@ -80,15 +130,23 @@ export async function handleLogin(
 		lastAgentUpdateAt:  0,
 		lastAgentParams:    null,
 		loggedTypes:        new Set<string>(),
+		caps:               new Map<string, string>(),
+		userKey,
+		cachedLoginOk,
 	}
 
-	createSession(sessionId, circuit)
+	// WHY: wsId is the first WS's per-connection UUID — used as both the circuitId and
+	// the initial wsToCircuit entry. Reconnect WS gets a new UUID; attachWs maps it to this circuitId.
+	createSession(wsId, circuit)
+	attachWs(wsId, wsId)  // first connection: wsId === circuitId
 
 	// Wire up UDP → WS relay
-	udpSocket.on('message', (msg: Buffer) => handleUdpMessage(sessionId, msg))
+	// WHY: Closure captures wsId (= circuitId for first connection). UDP relay always uses
+	// circuitId — independent of which WS is currently attached (circuit.ws is updated on reconnect).
+	udpSocket.on('message', (msg: Buffer) => handleUdpMessage(wsId, msg))
 	udpSocket.on('error', (err: Error) => {
 		slog.error(ws, `UDP socket error: ${err.message}`)
-		deleteSession(sessionId)
+		deleteSession(wsId)
 	})
 
 	// Bind explicitly to 0.0.0.0 (all interfaces, OS-assigned port)
@@ -99,7 +157,7 @@ export async function handleLogin(
 
 		// WHY: Timer started here (after session + socket ready). Starting at WS open finds
 		// no session yet → auto-clears → retransmit never runs. Stops itself when session gone.
-		startCircuitTimers(sessionId)
+		startCircuitTimers(wsId)
 
 		const seq1 = nextSeq(circuit)
 		const useCircuit = encodeUseCircuitCode({
@@ -147,7 +205,7 @@ export async function handleLogin(
 		// ViewerFlags.SentSeeds before fully initializing world data. SentSeeds is set
 		// ONLY when the viewer HTTP POSTs to the seed capability URL (BunchOfCaps.cs line 391).
 		// Without this fetch, NeedInitialData loops and world-state init is indefinitely deferred.
-		// POST empty LLSD array — server sets SentSeeds regardless of requested caps list.
+		// We request RebakeAvatarTextures so we get its URL back for Ctrl+Alt+R rebake support.
 		const seedCapUrl = loginResult.seed_capability
 		if (seedCapUrl) {
 			setTimeout(async () => {
@@ -155,9 +213,23 @@ export async function handleLogin(
 					const res = await fetch(seedCapUrl, {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/llsd+xml' },
-						body: '<?xml version="1.0"?>\n<llsd><array/></llsd>',
+						body: '<?xml version="1.0"?>\n<llsd><array><string>RebakeAvatarTextures</string></array></llsd>',
 					})
 					slog.info(ws, `✓ Seed cap fetched (${res.status}) → SentSeeds set in OpenSim`)
+					// WHY: Parse RebakeAvatarTextures URL from LLSD XML response so the client
+					// can trigger server-side avatar rebake (Force Appearance Update, Ctrl+Alt+R).
+					// OpenSim returns LLSD map: <key>RebakeAvatarTextures</key><string>URL</string>
+					const xml = await res.text()
+					const m = xml.match(/RebakeAvatarTextures<\/key>\s*<string>([^<]+)<\/string>/)
+					if (m) {
+						const s = getSession(wsId)
+						if (s) {
+							s.caps.set('RebakeAvatarTextures', m[1].trim())
+							slog.info(ws, `✓ RebakeAvatarTextures cap stored → rebake available`)
+						}
+					} else {
+						slog.info(ws, `ℹ RebakeAvatarTextures cap not offered by this grid`)
+					}
 				} catch (e) {
 					slog.warn(ws, `Seed cap fetch failed: ${(e as Error).message}`)
 				}
@@ -167,7 +239,7 @@ export async function handleLogin(
 		// 10-second diagnostic: warn if sim has sent nothing back
 		// WHY: Most common cause is Windows Firewall blocking inbound UDP for bun.exe.
 		setTimeout(() => {
-			const s = getSession(sessionId)
+			const s = getSession(wsId)
 			if (s && s.udpRxCount === 0) {
 				slog.warn(ws,
 					'⚠ No UDP packets from sim after 10s. Likely cause: Windows Firewall blocking ' +

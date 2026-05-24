@@ -9,13 +9,16 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUiStore }			from '@/stores/uiStore'
-import { useSessionStore } from '@/stores/sessionStore'
+import { useSessionStore }	from '@/stores/sessionStore'
 import { useGridStore }		from '@/stores/gridStore'
+import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
+import { C }					from '@shared/protocol.js'
 
 const ui			= useUiStore()
-const session = useSessionStore()
+const session	= useSessionStore()
 const grid		= useGridStore()
 const router	= useRouter()
+const { emit }	= useRealtimeSocket()
 
 // ── Active menu ───────────────────────────────────────────────────────────
 const openMenu = ref(null)	 // id of open top-level menu, or null
@@ -31,9 +34,14 @@ function close() {
 function onMouseDown(e) {
 	if (!e.target.closest('.mb-root')) close()
 }
-// Close on Escape
+// Close on Escape; global shortcuts
 function onKey(e) {
-	if (e.key === 'Escape') close()
+	if (e.key === 'Escape') { close(); return }
+	// Ctrl+Alt+R — Force Appearance Update (rebake)
+	if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
+		e.preventDefault()
+		rebake()
+	}
 }
 
 onMounted(() => {
@@ -58,22 +66,34 @@ function logout() {
 	router.push('/landing')
 }
 
+function rebake() {
+	close()
+	emit(C.REBAKE, {})
+}
+
 // ── Menu definitions ──────────────────────────────────────────────────────
-// item: { label, kbd?, action?, disabled?, sep? }
-// sep: true → render a divider instead of an item
+// item: { label, kbd?, action?, disabled?, sep?, submenu? }
+// sep: true → divider. submenu: Item[] → nested dropdown (hover to open, CSS-only).
 
 const MENUS = [
 	{
 		id: 'avatar', label: 'Avatar',
 		items: [
-			{ label: 'Preferences…',		kbd: 'Ctrl+P',			action: () => act(() => ui.openPreferences()) },
+			{ label: 'Preferences…',		kbd: 'Ctrl+P',	action: () => act(() => ui.openPreferences()) },
 			{ sep: true },
-			{ label: 'Inventory',									action: () => act(() => ui.toggleInventory()) },
-			{ label: 'Profile…',			action: () => act(() => ui.openProfile()) },
+			{ label: 'Inventory',							action: () => act(() => ui.toggleInventory()) },
+			{ label: 'Profile…',							action: () => act(() => ui.openProfile()) },
 			{ sep: true },
 			{ label: 'Snapshot…',			disabled: true },
 			{ sep: true },
-			{ label: 'Logout avatar',								action: logout },
+			{
+				label: 'Avatar Health',
+				submenu: [
+					{ label: 'Force Appearance Update', kbd: 'Ctrl+Alt+R', action: () => act(rebake) },
+				],
+			},
+			{ sep: true },
+			{ label: 'Logout avatar',						action: logout },
 		],
 	},
 	{
@@ -172,6 +192,31 @@ const MENUS = [
 				<div v-if="openMenu === menu.id" class="mb-dropdown">
 					<template v-for="(item, i) in menu.items" :key="i">
 						<div v-if="item.sep" class="mb-sep" />
+
+						<!-- Submenu item (hover to reveal nested dropdown) -->
+						<div v-else-if="item.submenu" class="mb-sub-wrap">
+							<button class="mb-item mb-item--has-sub">
+								<span class="mb-item-label">{{ item.label }}</span>
+								<span class="mb-item-arrow">›</span>
+							</button>
+							<div class="mb-submenu">
+								<template v-for="(sub, j) in item.submenu" :key="j">
+									<div v-if="sub.sep" class="mb-sep" />
+									<button
+										v-else
+										class="mb-item"
+										:class="{ 'mb-item--disabled': sub.disabled }"
+										:disabled="sub.disabled"
+										@click="sub.action && sub.action()"
+									>
+										<span class="mb-item-label">{{ sub.label }}</span>
+										<span v-if="sub.kbd" class="mb-item-kbd">{{ sub.kbd }}</span>
+									</button>
+								</template>
+							</div>
+						</div>
+
+						<!-- Regular item -->
 						<button
 							v-else
 							class="mb-item"
@@ -275,6 +320,44 @@ const MENUS = [
 	font-family: monospace;
 	white-space: nowrap;
 	flex-shrink: 0;
+}
+
+/* ── Nested submenu ──────────────────────────────────────────────────────── */
+/* WHY: Pure CSS hover — no extra Vue state. mb-sub-wrap is position:relative so
+   mb-submenu anchors to its right edge. Sibling hover keeps submenu open while
+   moving mouse rightward into it. */
+.mb-sub-wrap {
+	position: relative;
+}
+
+.mb-item--has-sub {
+	cursor: default;
+}
+
+.mb-item-arrow {
+	font-size: 0.75rem;
+	color: rgba(255, 255, 255, 0.4);
+	flex-shrink: 0;
+	line-height: 1;
+}
+
+.mb-submenu {
+	display: none;
+	position: absolute;
+	top: 0;
+	left: 100%;
+	min-width: 13rem;
+	background: rgba(14, 18, 28, 0.97);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 0 0.375rem 0.375rem 0.375rem;
+	box-shadow: 4px 8px 24px rgba(0, 0, 0, 0.6);
+	padding: 0.25rem 0;
+	z-index: 801;
+	flex-direction: column;
+}
+
+.mb-sub-wrap:hover .mb-submenu {
+	display: flex;
 }
 
 /* ── Separator ───────────────────────────────────────────────────────────── */

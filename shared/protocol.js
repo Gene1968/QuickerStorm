@@ -12,6 +12,7 @@ export const C = {
 	CHAT:         'chat',       // { message, type, channel }
 	CAPS_FETCH:   'caps_fetch', // { url, method, body? } — CORS proxy
 	TELEPORT:     'teleport',  // { x, y, z } — same-region teleport via LocationBar coord edit
+	REBAKE:       'rebake',   // {} — trigger RebakeAvatarTextures cap (Avatar Health → Force Appearance Update)
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────

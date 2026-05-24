@@ -406,6 +406,24 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		slog.info(session.ws, `→ ChatFromViewer: "${d.message.slice(0, 40)}" type=${d.chatType} ch=${d.channel}`)
 		return
 	}
+
+	if (msg.t === C.REBAKE) {
+		const url = session.caps?.get('RebakeAvatarTextures')
+		if (!url) {
+			slog.warn(session.ws, 'Rebake: RebakeAvatarTextures cap not available (grid may not support it, or 3s init window not elapsed)')
+			return
+		}
+		// WHY: POST to RebakeAvatarTextures cap triggers server-side avatar appearance re-bake.
+		// This makes the avatar visible/correct on other viewers without needing local texture baking.
+		fetch(url, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/llsd+xml' },
+			body: '<llsd><map /></llsd>',
+		})
+			.then(() => slog.info(session.ws, '✓ RebakeAvatarTextures → avatar appearance pushed to grid'))
+			.catch((e: Error) => slog.error(session.ws, `RebakeAvatarTextures failed: ${e.message}`))
+		return
+	}
 }
 
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */

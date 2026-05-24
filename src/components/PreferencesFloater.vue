@@ -303,7 +303,7 @@ onUnmounted(() => {
 .pf-tabnav {
 	display: flex;
 	flex-direction: column;
-	width: 8.5rem;
+	width: 11rem;
 	flex-shrink: 0;
 	border-right: 1px solid var(--color-brd);
 	overflow-y: auto;
