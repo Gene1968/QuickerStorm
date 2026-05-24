@@ -3,6 +3,7 @@ import { ref, computed, nextTick } from 'vue'
 import { useLocalChat }  from '@/composables/useLocalChat'
 import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
+import FloaterWindow      from '@/components/FloaterWindow.vue'
 
 const avatar = useAvatarStore()
 const ui     = useUiStore()
@@ -22,6 +23,10 @@ const tabs = computed(() => [
 	...openIMs.value.map(im => ({ id: im.agentId, label: im.agentName, icon: '💬' })),
 ])
 
+const floaterTitle = computed(() =>
+	avatar.displayName ? `Conversations — ${avatar.displayName}` : 'Conversations'
+)
+
 const TYPE_CLASS = {
 	0: 'text-white/50 italic',          // whisper
 	1: 'text-t1',                        // normal
@@ -37,32 +42,18 @@ async function submitChat() {
 	if (msgEl.value) msgEl.value.scrollTop = 0
 }
 
-// TODO: drag to reposition — persist position + size to indexedDB (too many floaters for localStorage)
+// TODO: persist position + size to indexedDB (too many floaters for localStorage)
 // See docs/tech-debt.md
 </script>
 
 <template>
-	<!--
-		Default: left 0.25%, top 8%.  Size: clamp(14rem,24vw,36rem) × clamp(12rem,30vh,28rem).
-		resize:both lets user scale; position+size will be persisted (indexedDB, see tech-debt).
-	-->
-	<div
-		class="absolute flex flex-col border border-brd rounded-lg shadow-2xl overflow-hidden bg-card"
-		style="left: 0.125%; top: 7%; width: 25vw; height: 33vh; resize: both;"
+	<FloaterWindow
+		id="conversations"
+		:title="floaterTitle"
+		:wrap-style="{ width: '25vw', height: '33vh', resize: 'both' }"
+		:default-pos="{ left: '0.125%', top: '7%' }"
+		@close="ui.toggleChat()"
 	>
-		<!-- ── Title bar ─────────────────────────────────────────── -->
-		<div class="flex items-center justify-between px-3 py-1 border-b border-brd shrink-0 bg-card2">
-			<span class="text-t1 text-[11px] font-semibold tracking-wide truncate select-none">
-				Conversations
-				<span v-if="avatar.displayName" class="text-accent font-normal"> — {{ avatar.displayName }}</span>
-			</span>
-			<button
-				class="text-tm hover:text-t1 text-xs leading-none ml-2 shrink-0 transition-colors"
-				title="Close"
-				@click="ui.toggleChat()"
-			>✕</button>
-		</div>
-
 		<!-- ── Body: vertical tabs + content ─────────────────────── -->
 		<div class="flex flex-1 min-h-0">
 
@@ -137,5 +128,5 @@ async function submitChat() {
 
 			</div>
 		</div>
-	</div>
+	</FloaterWindow>
 </template>

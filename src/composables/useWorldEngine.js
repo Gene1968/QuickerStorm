@@ -34,8 +34,8 @@ const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
 
-const FOLLOW_DIST   = 3.5   // metres behind avatar (third-person)
-const FOLLOW_HEIGHT = 1.8   // metres above avatar feet
+const FOLLOW_DIST   = 7.0   // metres behind avatar (third-person)
+const FOLLOW_HEIGHT = 4.0   // metres above avatar feet
 
 export function useWorldEngine(canvasRef) {
 	const worldStore   = useWorldStore()
@@ -317,9 +317,13 @@ export function useWorldEngine(canvasRef) {
 		camera.rotation.set(pitch, yaw, 0, 'YXZ')
 
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
-		renderer.shadowMap.enabled = true
-		renderer.shadowMap.type = THREE.PCFShadowMap
+		// WHY: Shadow maps disabled for Phase 1 (see prior WHY on shadow frustum mismatch).
+		renderer.shadowMap.enabled = false
 		renderer.toneMapping = THREE.ACESFilmicToneMapping
+		// WHY: Explicit SRGBColorSpace — older Three.js defaulted to LinearEncoding which skips
+		// gamma correction. Without this, ACES linear output hits an sRGB monitor raw → colours
+		// appear darker than expected, and prim shadow faces show as an unintended dark brown.
+		renderer.outputColorSpace = THREE.SRGBColorSpace
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
 		labelRenderer = new CSS2DRenderer()
@@ -327,9 +331,11 @@ export function useWorldEngine(canvasRef) {
 		canvasRef.value.parentElement.appendChild(labelRenderer.domElement)
 
 		// Terrain placeholder
+		// WHY: MeshBasicMaterial — terrain is placeholder geometry. Unlit = no dark-face artefacts,
+		// consistent flat colour regardless of camera angle.
 		const terrain = new THREE.Mesh(
 			new THREE.PlaneGeometry(256, 256, 64, 64),
-			new THREE.MeshStandardMaterial({ color: 0x4a7c59 }),
+			new THREE.MeshBasicMaterial({ color: 0x4a7c59 }),
 		)
 		terrain.rotation.x = -Math.PI / 2
 		// WHY: SL region occupies SL X:[0,256], Y:[0,256]. Three.js coord:
@@ -337,15 +343,20 @@ export function useWorldEngine(canvasRef) {
 		// → Three.js(128, 0, -128). Without this the terrain is at (0,0,0)
 		// and sits behind the camera when the avatar spawns at SL Y>128.
 		terrain.position.set(128, 0, -128)
-		terrain.receiveShadow = true
 		scene.add(terrain)
 
-		// Lighting
-		const sun = new THREE.DirectionalLight(0xfff4e6, 1.5)
+		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
+		// Prims now use MeshBasicMaterial (unlit) so lighting doesn't affect them at all.
+		const sun = new THREE.DirectionalLight(0xfff4e6, 1.2)
 		sun.position.set(50, 80, 50)
-		sun.castShadow = true
 		scene.add(sun)
-		scene.add(new THREE.AmbientLight(0x6688cc, 0.4))
+		// WHY: Fill light from opposite side of sun. Prevents avatar shadow faces going near-zero
+		// (which after ACES + any outputColorSpace quirk produces the dark-face artefact).
+		// ~35% sun intensity keeps shadow side visible without flattening the 3D form.
+		const fill = new THREE.DirectionalLight(0xaad4f5, 0.45)
+		fill.position.set(-60, -20, -80)
+		scene.add(fill)
+		scene.add(new THREE.AmbientLight(0xfff4e6, 0.5))
 
 		// Resize observer
 		ro = new ResizeObserver(onResize)
@@ -366,16 +377,21 @@ export function useWorldEngine(canvasRef) {
 	// ── Mesh management ───────────────────────────────────────────────────────
 	function upsertMesh(obj) {
 		let mesh = meshMap.get(obj.localId)
-		if (!mesh) {
+		const isNew = !mesh
+
+		if (isNew) {
 			const isAvatar = obj.pcode === PCODE_AVATAR
 			const geo = isAvatar
 				? new THREE.CapsuleGeometry(0.3, 1.2, 4, 8)
 				: new THREE.BoxGeometry(1, 1, 1)
-			// WHY: Other avatars = cyan (0x00b4d8). Own avatar recolored to green in onObjectUpdate
-			// after ownAvatarLocalId is set. Prims = light grey.
-			const mat = new THREE.MeshStandardMaterial({ color: isAvatar ? 0x00b4d8 : 0xcccccc })
+			// WHY: Avatars = MeshStandardMaterial so the capsule shows 3D volume under lighting.
+			// Prims = MeshBasicMaterial (unlit) — placeholder boxes don't benefit from PBR and
+			// their shadow faces (facing away from sun) produced the dark-artefact flicker.
+			// MeshBasicMaterial ignores all lights; all faces render at full material colour.
+			const mat = isAvatar
+				? new THREE.MeshStandardMaterial({ color: 0x00b4d8 })
+				: new THREE.MeshBasicMaterial({ color: 0xcccccc })
 			mesh = new THREE.Mesh(geo, mat)
-			mesh.castShadow = true
 
 			if (isAvatar) {
 				// WHY: Forward-pointing arm so avatar rotation direction is visually obvious.
@@ -389,25 +405,45 @@ export function useWorldEngine(canvasRef) {
 
 				const div = document.createElement('div')
 				div.style.cssText = 'color:#fff;font-size:0.75rem;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:4px;white-space:nowrap;'
-				div.textContent = obj.name ?? 'Avatar'
+				// WHY: obj.name may be absent on first ObjectUpdate (NameValue arrives later).
+				// Fall back to worldStore (just upserted) then 'Avatar'. Stored on userData
+				// so later ObjectUpdates can refresh the label text without recreating the mesh.
+				div.textContent = obj.name || worldStore.objects.get(obj.localId)?.name || 'Avatar'
+				mesh.userData.labelDiv = div
 				const label = new CSS2DObject(div)
 				label.position.set(0, 1.2, 0)
 				mesh.add(label)
 			}
 
+			// WHY: Set position BEFORE scene.add — prevents 1-frame flash at world origin.
+			// Zero-pos guard: skip placement if pos is [0,0,0] (decode error); mesh stays
+			// at origin temporarily but won't be at camera level for legit scene objects.
+			if (obj.pos && (obj.pos[0] !== 0 || obj.pos[1] !== 0 || obj.pos[2] !== 0)) {
+				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+				mesh.position.set(t.x, t.y, t.z)
+			}
+			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+
 			scene.add(mesh)
 			meshMap.set(obj.localId, mesh)
-		}
-
-		if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
-		if (obj.pos) {
-			const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
-			// WHY: ObjectUpdate is sparse (login + new objects in range). Direct set for prims;
-			// avatars lerp so they don't pop when a belated full-update arrives mid-motion.
-			if (obj.pcode === PCODE_AVATAR) {
-				gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
-			} else {
-				mesh.position.set(t.x, t.y, t.z)
+		} else {
+			// Existing mesh: scale update + animated position
+			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			if (obj.pos) {
+				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+				// WHY: ObjectUpdate is sparse (login + new objects in range). Avatar gets GSAP
+				// so a belated full-update doesn't jerk it mid-motion. Prims: direct set.
+				if (obj.pcode === PCODE_AVATAR) {
+					gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+				} else {
+					mesh.position.set(t.x, t.y, t.z)
+				}
+			}
+			// WHY: NameValue data can arrive in a later ObjectUpdate after the mesh was created.
+			// Refresh label text whenever we get a real name so "Avatar" placeholder gets replaced.
+			if (obj.pcode === PCODE_AVATAR && obj.name && mesh.userData.labelDiv) {
+				const current = mesh.userData.labelDiv.textContent
+				if (current !== obj.name) mesh.userData.labelDiv.textContent = obj.name
 			}
 		}
 	}
@@ -475,12 +511,18 @@ export function useWorldEngine(canvasRef) {
 			debugStore.push('info', `[3D] TerseUpdate #${terseUpdateCount} — ${objs.length} objects, ownId=${ownAvatarLocalId}`)
 		}
 		for (const obj of objs) {
+			const pos = obj.pos
+			// WHY: Zero-pos guard for ALL objects. A TerseUpdate with pos=[0,0,0] is a decode
+			// error — legitimate prims/avatars at exact SL origin are essentially impossible.
+			// Without this, a large prim briefly teleports to SL(0,0,0) = Three.js(0,0,0) which
+			// can be near the camera, filling half the viewport with a grey rectangle.
+			if (!pos || (pos[0] === 0 && pos[1] === 0 && pos[2] === 0)) continue
 			// Update world store position
-			worldStore.updateObjectPos(obj.localId, obj.pos)
+			worldStore.updateObjectPos(obj.localId, pos)
 			// Move the mesh
 			const mesh = meshMap.get(obj.localId)
-			if (mesh && obj.pos) {
-				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+			if (mesh) {
+				const t = slToThree(pos[0], pos[1], pos[2])
 				// WHY: Avatars get GSAP lerp to smooth 10Hz TerseUpdate jitter into fluid motion.
 				// Prims use direct set — GSAP on many static prims restarts tweens every update
 				// and can cause brief visible oscillation when position data has decode noise.
@@ -493,12 +535,15 @@ export function useWorldEngine(canvasRef) {
 			}
 			// WHY: avatarSLPos drives third-person follow camera in animate().
 			// Updated here (inside WS callback) — lerp in animate() smooths any jitter.
-			if (obj.localId === ownAvatarLocalId && obj.pos) {
+			// Zero-pos guard: occasional malformed TerseUpdates send [0,0,0] — don't snap camera
+			// to region corner for one frame (would show a brief blue sky flash).
+			const p = obj.pos
+			if (obj.localId === ownAvatarLocalId && p &&
+				(p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
 				const firstUpdate = !avatarSLPos
-				avatarSLPos = obj.pos
-				worldStore.setAvatarPos(obj.pos[0], obj.pos[1], obj.pos[2])
+				avatarSLPos = p
+				worldStore.setAvatarPos(p[0], p[1], p[2])
 				if (firstUpdate) {
-					const p = obj.pos
 					debugStore.push('info', `[3D] First TerseUpdate own avatar → ${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
 				}
 			}
@@ -561,15 +606,20 @@ export function useWorldEngine(canvasRef) {
 				t.z + Math.cos(yaw) * followDist,
 			)
 			const distToTarget = camera.position.distanceTo(target)
-			// WHY: Hard-snap only on Esc (explicit request) or >50m off target (teleport/first login).
-			// Removed the old 12m threshold — normal movement at 5m/s + 10Hz TerseUpdate jitter
-			// could put the target ~10-15m ahead of the camera, triggering snap every few seconds
-			// and causing a jarring strobe-like "flicker" each time. Esc and onAgentSpawnPos both
-			// set cameraSnapRequested=true so teleports and login always snap correctly.
+			// WHY: Hard-snap only on Esc (explicit) or >50m (teleport/first login).
+			// Variable lerp: when a movement key is held and camera is displaced, glide back
+			// faster (up to 0.35) so pressing W naturally re-centres the camera without a jarring
+			// teleport. Scales with distance so the acceleration eases off as it converges.
 			const snap = cameraSnapRequested || distToTarget > 50
 			cameraSnapRequested = false
-			camera.position.lerp(target, snap ? 1.0 : 0.15)
-			camera.lookAt(t.x, t.y + 1.0, t.z)
+			const isMoving = MOVE_KEYS.some(k => keys[k])
+			const lerpFactor = snap ? 1.0
+				: isMoving ? Math.min(0.35, 0.15 + distToTarget * 0.02)
+				: 0.15
+			camera.position.lerp(target, lerpFactor)
+			// WHY: lookAt at y+1.4 (chest/shoulder level, not waist). Higher lookAt + taller
+			// camera height pushes avatar into lower frame area — feet near bottom, more scene above.
+			camera.lookAt(t.x, t.y + 1.4, t.z)
 
 			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
 			// Capsule is symmetric so visual diff is subtle, but sets up correct orientation

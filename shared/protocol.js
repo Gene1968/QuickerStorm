@@ -29,6 +29,7 @@ export const S = {
 	DEBUG:        'debug',      // { level:'info'|'warn'|'error', msg: string } — server log forwarded to browser
 	DISCONNECTED:    'disconnected',  // { reason: string } — sim killed the circuit
 	AGENT_SPAWN_POS: 'spawn_pos',    // { pos: [slX, slY, slZ] } — AgentMovementComplete confirmed position
+	KILL_OBJECT:     'kill_obj',     // { ids: number[] } — sim removed these localIds from scene
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

@@ -143,6 +143,27 @@ export async function handleLogin(
 			else     slog.info(ws, `→ AgentThrottle sent (seq=${seq3}) — physics movement enabled`)
 		})
 
+		// WHY: OpenSim's NeedInitialData counter (ScenePresence.cs) waits for
+		// ViewerFlags.SentSeeds before fully initializing world data. SentSeeds is set
+		// ONLY when the viewer HTTP POSTs to the seed capability URL (BunchOfCaps.cs line 391).
+		// Without this fetch, NeedInitialData loops and world-state init is indefinitely deferred.
+		// POST empty LLSD array — server sets SentSeeds regardless of requested caps list.
+		const seedCapUrl = loginResult.seed_capability
+		if (seedCapUrl) {
+			setTimeout(async () => {
+				try {
+					const res = await fetch(seedCapUrl, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/llsd+xml' },
+						body: '<?xml version="1.0"?>\n<llsd><array/></llsd>',
+					})
+					slog.info(ws, `✓ Seed cap fetched (${res.status}) → SentSeeds set in OpenSim`)
+				} catch (e) {
+					slog.warn(ws, `Seed cap fetch failed: ${(e as Error).message}`)
+				}
+			}, 3000)  // WHY: 3s delay — allow UDP circuit + RegionHandshake exchange to complete first
+		}
+
 		// 10-second diagnostic: warn if sim has sent nothing back
 		// WHY: Most common cause is Windows Firewall blocking inbound UDP for bun.exe.
 		setTimeout(() => {

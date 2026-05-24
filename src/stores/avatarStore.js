@@ -41,6 +41,7 @@ export const useAvatarStore = defineStore('avatar', () => {
 	/** Supabase auth user id (UUID). Used as the canonical key for presence/voice. */
 	const authUserId = ref(null)
 	const googleAccountIndex = ref(1) // which /u/N/ Google account to open (0 = first/personal, 1 = work, etc.)
+	const bio = ref('')   // About / profile bio text
 
 	// ── Computed ───────────────────────────────────────────────────
 	const avatarInitials = computed(() => {
@@ -75,6 +76,7 @@ export const useAvatarStore = defineStore('avatar', () => {
 			slackTeamId:        slackTeamId.value,
 			authUserId:         authUserId.value,
 			googleAccountIndex: googleAccountIndex.value,
+			bio:                bio.value,
 			isSetupDone:        isSetupDone.value,
 		}
 	}
@@ -101,6 +103,7 @@ export const useAvatarStore = defineStore('avatar', () => {
 		// boot so existing avatars don't lose their seat identity.
 		authUserId.value         = saved.authUserId ?? saved.sharePointId ?? null
 		googleAccountIndex.value = saved.googleAccountIndex ?? 1
+		bio.value                = saved.bio ?? ''
 		isSetupDone.value        = saved.isSetupDone        ?? false
 	}
 
@@ -189,6 +192,11 @@ export const useAvatarStore = defineStore('avatar', () => {
 		await save()
 	}
 
+	async function setBio(text) {
+		bio.value = (text || '').trim()
+		await save()
+	}
+
 	// Called by useSlack when it identifies this user's Slack account.
 	// slackId and avaEmail are stable once discovered — persist them immediately.
 	async function setSlackIdentity(newSlackId, newAvaEmail) {
@@ -271,6 +279,7 @@ export const useAvatarStore = defineStore('avatar', () => {
 		displayName,
 		title,
 		initials,
+		bio,
 		status,
 		statusEmoji,
 		statusMessage,
@@ -294,6 +303,7 @@ export const useAvatarStore = defineStore('avatar', () => {
 		setAvatarUrl,
 		setSlackIdentity,
 		setSlackUserToken,
+		setBio,
 		fromAuthUser,
 	}
 })

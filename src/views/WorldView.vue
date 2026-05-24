@@ -12,6 +12,7 @@ import ConversationsFloater	from '@/components/ConversationsFloater.vue'
 import BottomToolbar		from '@/components/BottomToolbar.vue'
 import MapFloater			from '@/components/MapFloater.vue'
 import InventoryFloater		from '@/components/InventoryFloater.vue'
+import ProfileFloater		from '@/components/ProfileFloater.vue'
 import SettingsFloater		from '@/components/SettingsFloater.vue'
 import DebugPanel			from '@/components/DebugPanel.vue'
 
@@ -56,11 +57,12 @@ const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
 				<AvatarList				v-if="ui.showAvatarList" />
 
 				<!-- Floater panels — positioned within the canvas area -->
-				<MapFloater				v-if="ui.showMap" />
+				<ConversationsFloater	v-if="ui.showChat" />
 				<InventoryFloater		v-if="ui.showInventory" />
+				<MapFloater				v-if="ui.showMap" />
+				<ProfileFloater			v-if="ui.showProfile" />
 				<SettingsFloater		v-if="ui.showSettings" />
 				<DebugPanel				v-if="ui.showDebug" />
-				<ConversationsFloater	v-if="ui.showChat" />
 			</div>
 
 			<!-- Bottom toolbar -->

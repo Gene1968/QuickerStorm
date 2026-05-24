@@ -1,14 +1,42 @@
 <script setup>
-import { computed }		from 'vue'
-import GridSelector		from '@/components/GridSelector.vue'
-import LoginForm		from '@/components/LoginForm.vue'
-import { useTheme }		from '@/composables/useTheme'
-import { useGridStore }	from '@/stores/gridStore'
+import { computed, onMounted, ref }	from 'vue'
+import GridSelector					from '@/components/GridSelector.vue'
+import LoginForm					from '@/components/LoginForm.vue'
+import { useTheme }				from '@/composables/useTheme'
+import { useGridStore }			from '@/stores/gridStore'
+import { useGridLogin }			from '@/composables/useGridLogin'
 
 const { isDark, toggle } = useTheme()
 const gridStore = useGridStore()
+const { login } = useGridLogin()
 
 const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
+
+// ── Auto-reconnect on reload ──────────────────────────────────────────────
+// WHY: Session state (Pinia) is in-memory only — clears on page reload.
+// If "Remember me" was used, credentials are in localStorage. Check synchronously
+// before first render so the spinner shows immediately (not 1 frame later).
+// On success, useGridLogin sets session + navigates to /world automatically.
+// On failure, clear stored creds and show normal login form.
+const AUTOLOGIN_KEY = 'qs_autologin'
+
+let _stored = null
+try { _stored = JSON.parse(localStorage.getItem(AUTOLOGIN_KEY)) } catch {}
+const hasStoredCreds = !!(_stored?.username && _stored?.password)
+
+const reconnecting   = ref(hasStoredCreds)   // true → shows spinner on first render
+const reconnectError = ref(false)
+
+onMounted(async () => {
+	if (!hasStoredCreds) return
+	try {
+		await login(_stored.username, _stored.password, 'last')
+	} catch {
+		localStorage.removeItem(AUTOLOGIN_KEY)
+		reconnecting.value   = false
+		reconnectError.value = true
+	}
+})
 </script>
 
 <template>
@@ -58,28 +86,44 @@ const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 				<!-- Divider -->
 				<div class="self-stretch w-px bg-white/10 shrink-0" />
 
-				<!-- Grid + form — constrained width -->
-				<div class="flex flex-col gap-3 w-full">
-					<div>
-						<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
-						<GridSelector />
+				<!-- Auto-reconnect spinner -->
+				<template v-if="reconnecting">
+					<div class="flex flex-col items-center gap-3 w-full py-4 text-center">
+						<div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+						<p class="text-t1 text-sm">Reconnecting to {{ gridStore.selectedGrid?.name ?? gridStore.selectedNick }}…</p>
 					</div>
-					<LoginForm />
-				</div>
+				</template>
 
-				<!-- Disclaimer -->
-				<div class="w-full mt-5 text-t1 text-xs leading-relaxed">
-					<p>
-						quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
-					</p>
-					<p class="mt-2">
-						Credentials are transmitted once for grid login only and are never stored.  Session token held in browser memory only.
-					</p>
-					<p class="mt-3 opacity-60">
-						Inspired by Firestorm Viewer &amp; SpeedLight
-						<br />Built with Vue 3 · Three.js · Bun · WebRTC
-					</p>
-				</div>
+				<!-- Normal login form -->
+				<template v-else>
+					<!-- Grid + form — constrained width -->
+					<div class="flex flex-col gap-3 w-full">
+						<p
+							v-if="reconnectError"
+							class="text-yellow-400 text-xs"
+						>Session expired — please log in again.</p>
+						<div>
+							<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
+							<GridSelector />
+						</div>
+						<LoginForm />
+					</div>
+
+					<!-- Disclaimer -->
+					<div class="w-full mt-5 text-t1 text-xs leading-relaxed">
+						<p>
+							quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
+						</p>
+						<p class="mt-2">
+							Credentials are used for grid login only. With <em>Remember me</em>, your username and password are stored in your browser's local storage for auto-reconnect.
+						</p>
+						<p class="mt-3 opacity-60">
+							Inspired by Firestorm Viewer &amp; SpeedLight
+							<br />Built with Vue 3 · Three.js · Bun · WebRTC
+						</p>
+					</div>
+				</template>
+
 			</div>
 		</div>
 

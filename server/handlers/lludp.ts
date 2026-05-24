@@ -8,7 +8,7 @@ import {
 	decodeRegionHandshake, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
 	encodeTeleportLocationRequest, encodeCompleteAgentMovement,
-	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance,
+	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance, decodeKillObject,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -23,6 +23,7 @@ const HIGH_START_PING_CHECK    = 1     // Sim → viewer: keepalive ping (High f
 const HIGH_OBJECT_UPDATE_CACHED= 11    // ObjectUpdateCached — reply with RequestMultipleObjects (High freq)
 const HIGH_OBJECT_UPDATE       = 12    // Sim → viewer: full object/avatar update (High freq)
 const HIGH_OBJECT_UPDATE_TERSE = 15    // ImprovedTerseObjectUpdate — position-only (High freq)
+const HIGH_KILL_OBJECT         = 16    // Sim → viewer: remove these localIds from scene (High freq)
 const LOW_REGION_HANDSHAKE        = 148   // Sim → viewer: region name + terrain info (Low freq)
 const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spawn position (Low freq)
 const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
@@ -145,16 +146,35 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			// worldStore.avatarPos before the first TerseUpdate arrives.
 			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos: [x, y, z] } }))
 
-			// WHY: Send minimal AgentSetAppearance immediately after AgentMovementComplete.
-			// Some OpenSim sims defer avatar physics initialization until they receive
-			// AgentSetAppearance — without it the avatar plays animations but won't translate
-			// (walk animation visible but no spatial movement). Empty wearables/params = gray
-			// avatar with physics body. Firestorm sends full baked textures; we send minimal.
-			const seqA = nextSeq(session)
-			const appPkt = encodeAgentSetAppearance({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA })
-			trackReliable(session, seqA, appPkt)
-			session.udpSocket.send(appPkt, session.simPort, session.simIp)
-			slog.info(session.ws, `→ AgentSetAppearance sent (seq=${seqA}) — signal physics ready`)
+			// WHY: AgentSetAppearance NOT sent here despite being tempting for physics.
+			// OpenSim source confirms: appearance pipeline does NOT gate PhysicsActor creation.
+			// Sending with empty TextureEntry (our minimal stub) sets avatar texture data to null
+			// → all other viewers see avatar as invisible cloud. STAND_UP alone handles PhysicsActor.
+
+			// WHY: Send AgentUpdate with AGENT_CONTROL_STAND_UP (0x00080000) once after
+			// AgentMovementComplete. OpenSim source (ScenePresence.cs line 2650):
+			//   if ((allFlags & ACFlags.AGENT_CONTROL_STAND_UP) != 0) StandUp();
+			// StandUp() calls AddToPhysicalScene(false) if PhysicsActor == null (line 3226).
+			// Root cause of "walk anim, no movement": avatar was seated in previous session
+			// (ParentID != 0) → MakeRootAgent skips AddToPhysicalScene → PhysicsActor stays
+			// null → HandleAgentUpdate gates at actor==null, TargetVelocity never set.
+			// STAND_UP is safe when already standing: StandUp() skips AddToPhysics if actor≠null.
+			const CTRL_STAND_UP = 0x00080000
+			const standParams = session.lastAgentParams ?? {
+				controlFlags: 0, bodyRot: [0, 0, 0] as [number, number, number],
+				headRot:   [0, 0, 0] as [number, number, number],
+				camCenter: [128, 128, 25] as [number, number, number],
+				camAt:     [1, 0, 0] as [number, number, number],
+				camLeft:   [0, 1, 0] as [number, number, number],
+				camUp:     [0, 0, 1] as [number, number, number], far: 128,
+			}
+			const seqS = nextSeq(session)
+			const standPkt = encodeAgentUpdate({
+				agentId: session.agentId, sessionId: session.sessionId, seq: seqS,
+				...standParams, controlFlags: CTRL_STAND_UP,
+			})
+			session.udpSocket.send(standPkt, session.simPort, session.simIp)
+			slog.info(session.ws, `→ AgentUpdate STAND_UP sent (seq=${seqS}) — force AddToPhysicalScene`)
 		} catch (e) { slog.warn(session.ws, `AgentMovementComplete parse error: ${(e as Error).message}`) }
 		return
 	}
@@ -249,6 +269,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
 			}
 		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `high:${HIGH_KILL_OBJECT}`) {
+		// WHY: Sim sends KillObject when prims, avatars, or NPCs leave the region or are deleted.
+		// Without this, they stay in our Three.js scene and Pinia worldStore indefinitely.
+		try {
+			const ids = decodeKillObject(buf, dataOffset)
+			if (ids.length > 0) {
+				slog.info(session.ws, `[KillObj] removing ${ids.length} localIds: ${ids.slice(0, 4).join(',')}${ids.length > 4 ? '…' : ''}`)
+				session.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids } }))
+			}
+		} catch (e) { slog.warn(session.ws, `KillObject decode error: ${(e as Error).message}`) }
 		return
 	}
 

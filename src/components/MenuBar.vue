@@ -69,11 +69,11 @@ const MENUS = [
 			{ label: 'Preferences…',		kbd: 'Ctrl+P',			action: () => act(() => ui.openPreferences()) },
 			{ sep: true },
 			{ label: 'Inventory',									action: () => act(() => ui.toggleInventory()) },
-			{ label: 'Profile…',			disabled: true },
+			{ label: 'Profile…',			action: () => act(() => ui.openProfile()) },
 			{ sep: true },
 			{ label: 'Snapshot…',			disabled: true },
 			{ sep: true },
-			{ label: 'Logout avatar',							action: logout },
+			{ label: 'Logout avatar',								action: logout },
 		],
 	},
 	{
@@ -150,7 +150,7 @@ const MENUS = [
 </script>
 
 <template>
-	<div class="mb-root flex items-stretch shrink-0">
+	<div class="mb-root flex items-stretch shrink-0 h-full">
 		<!--
 			Each menu is wrapped in a relative container so its dropdown
 			anchors directly below its own label, not the root's left edge.
@@ -204,7 +204,7 @@ const MENUS = [
 .mb-label {
 	display: flex;
 	align-items: center;
-	padding: 0 0.625rem;
+	padding: 0 1rem;
 	height: 100%;
 	font-size: 0.6875rem;
 	font-weight: 500;

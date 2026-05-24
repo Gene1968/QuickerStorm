@@ -1,18 +1,18 @@
 <script setup>
 /**
  * PreferencesFloater — full Firestorm-style preferences dialog.
- * Centered, search bar, vertical tabs, OK/Cancel.
+ * Vertical tabs, search bar, OK/Cancel. Floater — no backdrop.
  * Available pre-login and post-login (mounted in App.vue via uiStore).
  *
  * OK:     commits any pending changes and closes.
  * Cancel: reverts live-preview changes (theme) and closes.
- * Esc:    same as Cancel.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme.js'
 import { useAvatarStore } from '@/stores/avatarStore.js'
 import { useUiStore } from '@/stores/uiStore.js'
-import { X as XIcon, Search as SearchIcon } from '@lucide/vue'
+import { Search as SearchIcon } from '@lucide/vue'
+import FloaterWindow from '@/components/FloaterWindow.vue'
 
 const ui          = useUiStore()
 const theme       = useTheme()
@@ -65,8 +65,8 @@ function cancel() {
 }
 
 // ── Keyboard ───────────────────────────────────────────────────────────────
+// WHY: Enter = OK; Esc reserved for camera reset, not floater close
 function onKey(e) {
-	if (e.key === 'Escape') cancel()
 	if (e.key === 'Enter' && e.target?.tagName !== 'TEXTAREA') ok()
 }
 
@@ -80,20 +80,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-	<!-- Backdrop -->
-	<div class="pf-backdrop" @click.self="cancel">
-		<div class="pf-shell" role="dialog" aria-modal="true" aria-label="Preferences">
-
-			<!-- ── Title bar ──────────────────────────────────────────────── -->
-			<div class="pf-header">
-				<span class="pf-title">Preferences</span>
-				<span class="pf-shortcut">Ctrl+P</span>
-				<button class="pf-close" title="Cancel (Esc)" @click="cancel">
-					<XIcon style="width:0.9rem;height:0.9rem" />
-				</button>
-			</div>
-
-			<!-- ── Search ─────────────────────────────────────────────────── -->
+	<FloaterWindow
+		id="preferences"
+		title="Preferences"
+		:wrap-style="{ width: 'clamp(32rem, 58vw, 52rem)', height: 'clamp(26rem, 72vh, 44rem)' }"
+		@close="cancel"
+	>
+		<!-- ── Search ─────────────────────────────────────────────────── -->
 			<div class="pf-searchbar">
 				<SearchIcon class="pf-search-icon" style="width:0.85rem;height:0.85rem" />
 				<input
@@ -273,78 +266,10 @@ onUnmounted(() => {
 				<button class="pf-btn pf-btn--ok"     @click="ok">OK</button>
 			</div>
 
-		</div><!-- /pf-shell -->
-	</div><!-- /pf-backdrop -->
+	</FloaterWindow>
 </template>
 
 <style scoped>
-/* ── Backdrop ────────────────────────────────────────────────────────────── */
-.pf-backdrop {
-	position: fixed;
-	inset: 0;
-	background: rgba(4, 10, 20, 0.65);
-	backdrop-filter: blur(4px);
-	z-index: 700;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-/* ── Shell ───────────────────────────────────────────────────────────────── */
-.pf-shell {
-	background: var(--color-card);
-	border: 1px solid var(--color-brd2);
-	border-radius: 0.5rem; /* = rounded-lg, matches other floaters */
-	width: clamp(32rem, 58vw, 52rem);
-	height: clamp(26rem, 72vh, 44rem);
-	box-shadow: 0 16px 60px rgba(0, 0, 0, 0.6);
-	display: flex;
-	flex-direction: column;
-	overflow: hidden;
-}
-
-/* ── Title bar ───────────────────────────────────────────────────────────── */
-.pf-header {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	padding: 0.75rem 1rem;
-	border-bottom: 1px solid var(--color-brd);
-	flex-shrink: 0;
-}
-
-.pf-title {
-	font-size: 0.9375rem;
-	font-weight: 700;
-	color: var(--color-t1);
-	letter-spacing: 0.01em;
-	flex: 1;
-}
-
-.pf-shortcut {
-	font-size: 0.625rem;
-	color: var(--color-tm);
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
-	border-radius: 0.25rem;
-	padding: 0.125rem 0.375rem;
-	font-family: monospace;
-	letter-spacing: 0.05em;
-}
-
-.pf-close {
-	background: none;
-	border: none;
-	cursor: pointer;
-	color: var(--color-tm);
-	display: flex;
-	align-items: center;
-	padding: 0.25rem;
-	border-radius: 0.25rem;
-	transition: color 0.15s;
-}
-.pf-close:hover { color: var(--color-t1); }
-
 /* ── Search ──────────────────────────────────────────────────────────────── */
 .pf-searchbar {
 	display: flex;

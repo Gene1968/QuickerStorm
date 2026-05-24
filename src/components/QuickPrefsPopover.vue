@@ -19,9 +19,7 @@ function openPreferences() {
 	ui.openPreferences()
 }
 
-function onKey(e) {
-	if (e.key === 'Escape') close()
-}
+function onKey(_e) { /* reserved — Esc is camera reset */ }
 
 function onClickOutside(e) {
 	// The trigger button has data-quick-prefs-trigger; don't close on that click
@@ -158,8 +156,11 @@ onUnmounted(() => {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0.6rem 0.875rem 0.5rem;
+	padding: 0.5rem 0.75rem;
 	border-bottom: 1px solid var(--color-brd);
+	background: var(--color-card2);
+	border-radius: 0.5rem 0.5rem 0 0;
+	flex-shrink: 0;
 }
 .qp-title {
 	font-size: 0.8125rem;

@@ -26,7 +26,11 @@
       "Bash(xargs grep -l \"toolbar_button\\\\|tool_btn\\\\|CommandMgr\\\\|command_id\")",
       "Bash(xargs grep -l \"toybox\\\\|toolbar_button\\\\|floater_toybox\")",
       "Bash(node_modules/.bin/prettier --check src/components/BottomToolbar.vue src/stores/uiStore.js)",
-      "Bash(npx --no-install prettier --check src/components/BottomToolbar.vue src/stores/uiStore.js)"
+      "Bash(npx --no-install prettier --check src/components/BottomToolbar.vue src/stores/uiStore.js)",
+      "Bash(date *)",
+      "Bash(npx vitest *)",
+      "PowerShell(cd \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\"; $env:ESLINT_USE_FLAT_CONFIG=\"false\"; npx eslint \"src/components/ProfileFloater.vue\" --fix 2>&1)",
+      "PowerShell(cd \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\"; $env:ESLINT_USE_FLAT_CONFIG=\"false\"; npx eslint \"src/components/ProfileFloater.vue\" --fix; Write-Host \"Exit code: $LASTEXITCODE\")"
     ]
   }
 }

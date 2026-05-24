@@ -20,6 +20,9 @@ export const useUiStore = defineStore('ui', () => {
 	const showSearch         = ref(false)    // search floater (stub)
 	const showSnapshot       = ref(false)    // snapshot/screenshot floater (stub)
 	const showAO             = ref(false)    // animation override floater (stub)
+	const showProfile        = ref(false)    // profile floater
+	const profileTargetId    = ref(null)     // null = self; UUID string = other user
+	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
 
 	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
@@ -39,6 +42,12 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleSearch()         { showSearch.value         = !showSearch.value }
 	function toggleSnapshot()       { showSnapshot.value       = !showSnapshot.value }
 	function toggleAO()             { showAO.value             = !showAO.value }
+	function openProfile(id = null) { profileTargetId.value = id; showProfile.value = true }
+	function toggleProfile()        { showProfile.value = !showProfile.value }
+	// WHY: push to top of stack on focus; remove+re-add keeps order clean
+	function focusFloater(id) {
+		floaterStack.value = [...floaterStack.value.filter(f => f !== id), id]
+	}
 
 	// Camera position + heading — updated by useWorldEngine at ~4 Hz, not every frame
 	const cameraPos = shallowRef({ x: 128, y: 25, z: 128 })  // SL coords (x, z=height, y)
@@ -56,11 +65,14 @@ export const useUiStore = defineStore('ui', () => {
 		showPreferences, showQuickPrefs,
 		showVoiceControls, showMoveControls, showCameraControls,
 		showAppearance, showSearch, showSnapshot, showAO,
+		showProfile, profileTargetId,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleSettings, toggleDebug,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,
+		openProfile, toggleProfile,
+		floaterStack, focusFloater,
 		cameraPos, setCameraPos,
 		cameraYaw, setCameraYaw,
 	}

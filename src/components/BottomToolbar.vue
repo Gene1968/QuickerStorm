@@ -51,13 +51,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-	<div class="flex items-center gap-1 px-2 h-10 bg-black/80 border-t border-brd shrink-0 select-none">
+	<div class="flex items-center justify-evenly gap-1 px-2 h-10 bg-black/80 border-t border-brd shrink-0 select-none">
 
 		<!-- Tool buttons -->
 		<button
 			v-for="t in tools"
 			:key="t.id"
-			class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs transition-colors"
+			class="flex grow flex-col items-center justify-center h-8 rounded text-xs transition-colors"
 			:class="t.disabled
 				? 'opacity-40 cursor-not-allowed text-white/50'
 				: t.active()
@@ -75,7 +75,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 		<!-- 2D / 3D toggle -->
 		<button
-			class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+			class="flex grow flex-col items-center justify-center h-8 rounded text-xs text-white/70 hover:bg-white/10 hover:text-white transition-colors"
 			:title="ui.mode === '3d' ? 'Switch to 2D view' : 'Switch to 3D view'"
 			@click="ui.toggleMode()"
 		>
@@ -87,7 +87,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 		<!-- Debug panel toggle (Ctrl+Shift+4) -->
 		<button
-			class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs transition-colors"
+			class="flex grow flex-col items-center justify-center h-8 rounded text-xs transition-colors"
 			:class="ui.showDebug ? 'bg-yellow-500/20 text-yellow-400' : 'text-white/40 hover:bg-white/10 hover:text-white'"
 			title="Debug Panel (Ctrl+Shift+4)"
 			@click="ui.toggleDebug()"
@@ -99,10 +99,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<!-- Spacer -->
 		<div class="flex-1" />
 
-		<!-- Agent ID (truncated) -->
-		<span v-if="session.agentId" class="text-white/30 text-xs font-mono hidden lg:block mr-2" :title="session.agentId">
-			{{ session.agentId.slice(0, 8) }}…
-		</span>
 
 		<!-- Logout -->
 		<!-- <button
@@ -116,13 +112,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<!-- Quick Prefs (last btn, right edge) -->
 		<button
 			data-quick-prefs-trigger
-			class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs transition-colors"
+			class="flex grow flex-col items-center justify-center h-8 rounded text-xs transition-colors"
 			:class="ui.showQuickPrefs ? 'bg-accent/30 text-accent' : 'text-white/70 hover:bg-white/10 hover:text-white'"
 			title="Quick Preferences"
 			@click="ui.toggleQuickPrefs()"
 		>
 			<span class="text-base leading-none">⚙</span>
-			<span class="leading-none mt-0.5 hidden sm:block">Qk Prefs</span>
+			<span class="leading-none mt-0.5 hidden sm:block text-nowrap">Qk Prefs</span>
 		</button>
 
 		<!-- Quick Prefs popover (rendered outside toolbar flow, fixed-positioned) -->

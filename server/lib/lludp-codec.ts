@@ -629,6 +629,20 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
   return { simName, simAccess }
 }
 
+/** Decode KillObject (High #16) — sim removes objects from the viewer's scene.
+ *  Body: count(U8) + array of LocalID(U32). One packet can kill multiple objects.
+ *  WHY: Without this handler, removed prims/avatars/NPCs stay in scene forever.
+ */
+export function decodeKillObject(buf: Buffer, dataOffset: number): number[] {
+  const ids: number[] = []
+  let off = dataOffset
+  const count = buf[off++]
+  for (let i = 0; i < count && off + 3 < buf.length; i++) {
+    ids.push(buf.readUInt32LE(off)); off += 4
+  }
+  return ids
+}
+
 /** Decode TeleportLocal (Low #64) — sim's response to same-region TeleportLocationRequest.
  *  Contains the new avatar position within the same region circuit.
  *  Sim sends this instead of TeleportFinish when the target is in the current region.

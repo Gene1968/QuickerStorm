@@ -12,7 +12,13 @@ const destType		= ref('last')// 'last' | 'home' | 'region'
 const destRegion	= ref('')	// region name when destType === 'region'
 const error			= ref('')
 
-// Recent region destinations stored per-grid in localStorage
+// ── Remember Me ──────────────────────────────────────────────────────────
+const AUTOLOGIN_KEY = 'qs_autologin'
+// WHY: Default true — auto-reconnect on reload is expected behaviour for a viewer.
+// User can uncheck to opt out. Persists their preference via localStorage presence.
+const rememberMe = ref(true)
+
+// ── Recent region destinations ────────────────────────────────────────────
 const RECENT_KEY = 'qs_recent_regions'
 function loadRecent() {
 	try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '{}') } catch { return {} }
@@ -38,12 +44,21 @@ watch(destType, v => { if (v !== 'region') destRegion.value = '' })
 
 async function submit() {
 	error.value = ''
+	if (destType.value === 'region' && destRegion.value.trim()) {
+		saveRecent(gridStore.selectedNick, destRegion.value.trim())
+	}
+	// WHY: Save creds BEFORE login() resolves — login() calls router.push() then resolves,
+	// and the router navigation can unmount this component before the post-await line runs.
+	// Saving first is safe: on failure we clear them so no stale creds persist.
+	if (rememberMe.value) {
+		localStorage.setItem(AUTOLOGIN_KEY, JSON.stringify({ username: username.value, password: password.value }))
+	} else {
+		localStorage.removeItem(AUTOLOGIN_KEY)
+	}
 	try {
-		if (destType.value === 'region' && destRegion.value.trim()) {
-			saveRecent(gridStore.selectedNick, destRegion.value.trim())
-		}
 		await login(username.value, password.value, destination.value)
 	} catch (e) {
+		localStorage.removeItem(AUTOLOGIN_KEY)  // don't persist bad creds
 		error.value = e.message
 	}
 }
@@ -99,6 +114,12 @@ async function submit() {
 				<p class="text-t2 text-xs">Region name as it appears on the grid's map.</p>
 			</div>
 		</div>
+
+		<!-- Remember me -->
+		<label class="flex items-center gap-2 text-t1 text-sm cursor-pointer select-none">
+			<input type="checkbox" v-model="rememberMe" class="rounded accent-accent" />
+			Remember me
+		</label>
 
 		<button
 			type="submit"
