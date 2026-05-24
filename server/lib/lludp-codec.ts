@@ -16,7 +16,7 @@ const MSG_ID = {
   AgentUpdate:               Buffer.from([0x04]),                     // High #4
   UseCircuitCode:            Buffer.from([0xFF, 0xFF, 0x00, 0x03]),   // Low #3
   CompleteAgentMovement:     Buffer.from([0xFF, 0xFF, 0x00, 0xF9]),   // Low #249
-  AgentThrottle:             Buffer.from([0xFF, 0xFF, 0x00, 0x4C]),   // Low #76
+  AgentThrottle:             Buffer.from([0xFF, 0xFF, 0x00, 0x51]),   // Low #81
   LogoutRequest:             Buffer.from([0xFF, 0xFF, 0x00, 0xFC]),   // Low #252
   PacketAck:                 Buffer.from([0xFF, 0xFF, 0xFF, 0xFB]),   // Fixed #251
   StartPingCheck:            Buffer.from([0x01]),                     // High #1 (received from sim)
@@ -201,10 +201,10 @@ export function encodeCompletePingCheck(pingId: number, seq: number): Buffer {
   return Buffer.concat([hdr, MSG_ID.CompletePingCheck, body])
 }
 
-/** TeleportLocationRequest (Low #69 = 0x45) — teleport avatar to position within any region.
+/** TeleportLocationRequest (Low #63) — teleport avatar to position within any region.
  *  WHY: Triggered when user edits coords in LocationBar. Same-region teleport completes
- *  without a new circuit; cross-region requires full region handshake (future work).
- *  Sim responds with TeleportProgress → TeleportFinish → AgentMovementComplete at new pos.
+ *  with TeleportLocal (Low #64); cross-region teleport gets TeleportFinish (Low #69).
+ *  Previous code had wrong ID 0x45 (Low #69 = TeleportFinish!) — sim got garbled packet.
  */
 export function encodeTeleportLocationRequest(p: {
   agentId:      string
@@ -216,7 +216,7 @@ export function encodeTeleportLocationRequest(p: {
   z:            number   // SL Z (height) in metres
 }): Buffer {
   const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG  = Buffer.from([0xFF, 0xFF, 0x00, 0x45])  // Low #69
+  const MSG  = Buffer.from([0xFF, 0xFF, 0x00, 0x3F])  // Low #63
   // AgentData block (32) + TeleportData block (8+12+12=32) = 64 bytes
   const body = Buffer.allocUnsafe(64)
   let off = 0
@@ -484,6 +484,13 @@ export function decodeObjectUpdate(
       // for animated-texture objects — if they're always "random" values the field is misaligned.
       const _teBytesHex = off + 1 < buf.length ? buf.slice(off, off + 2).toString('hex') : 'OOB'
       _diag += ` @TE=${off}[${_teBytesHex}]`  // WHY: prefix bytes confirm alignment
+      // WHY: Sanity-check TE prefix before skipping. Legitimate TE for any SL/OpenSim
+      // object (prim, avatar, particle) is ≤ ~500 bytes (16 faces × ~30B each).
+      // Prefix > 2048 means the field pointer is misaligned — this pcode's layout
+      // differs from the standard decoder (hits pcode=25, pcode=29, and any future
+      // unknowns that also have garbage TE). Break SILENTLY (no onError) to suppress
+      // log spam. Cannot `continue` — off is at a wrong position for this packet.
+      if (off + 1 < buf.length && buf.readUInt16LE(off) > 2048) break
       skipVar2('TE')  // TextureEntry (Variable2)
       // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
       // LLUDP message_template: TextureAnim { Variable 1 }
@@ -620,6 +627,86 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
   const nameLen = buf[off++]
   const simName = buf.slice(off, off + nameLen).toString('utf8').replace(/\x00/g, '').trim()
   return { simName, simAccess }
+}
+
+/** Decode TeleportLocal (Low #64) — sim's response to same-region TeleportLocationRequest.
+ *  Contains the new avatar position within the same region circuit.
+ *  Sim sends this instead of TeleportFinish when the target is in the current region.
+ *  Body: AgentID(16) + LocationID(4) + Position(12) + LookAt(12) + TeleportFlags(4)
+ */
+export function decodeTeleportLocal(buf: Buffer, dataOffset: number): {
+  pos:    [number, number, number]
+  lookAt: [number, number, number]
+} {
+  let off = dataOffset
+  off += 16  // AgentID (UUID)
+  off += 4   // LocationID (U32)
+  const x = buf.readFloatLE(off); off += 4
+  const y = buf.readFloatLE(off); off += 4
+  const z = buf.readFloatLE(off); off += 4
+  const lx = buf.readFloatLE(off); off += 4
+  const ly = buf.readFloatLE(off); off += 4
+  const lz = buf.readFloatLE(off); off += 4
+  // TeleportFlags U32 — skip
+  return { pos: [x, y, z], lookAt: [lx, ly, lz] }
+}
+
+/** Decode TeleportFinish (Low #69) — sim's response to cross-region TeleportLocationRequest.
+ *  Contains new sim IP/port, regionHandle, and seed capability URL for new circuit.
+ *  Body: AgentID(16) + LocationID(4) + SimIP(4 BE) + SimPort(2 BE) + RegionHandle(8 LE) +
+ *        SeedCapability(V2) + SimAccess(1) + TeleportFlags(4)
+ */
+export function decodeTeleportFinish(buf: Buffer, dataOffset: number): {
+  simIp:        string
+  simPort:      number
+  regionHandle: bigint
+  seedCap:      string
+  simAccess:    number
+  teleportFlags: number
+} {
+  let off = dataOffset
+  off += 16  // AgentID (UUID)
+  off += 4   // LocationID (U32)
+  // WHY: IPADDR is 4-byte big-endian (network byte order), IPPORT is 2-byte big-endian
+  const ipU32 = buf.readUInt32BE(off); off += 4
+  const simIp = `${(ipU32 >> 24) & 0xFF}.${(ipU32 >> 16) & 0xFF}.${(ipU32 >> 8) & 0xFF}.${ipU32 & 0xFF}`
+  const simPort = buf.readUInt16BE(off); off += 2
+  const regionHandle = buf.readBigUInt64LE(off); off += 8
+  // SeedCapability: Variable2 (2-byte LE length prefix + UTF8 string)
+  const seedLen = buf.readUInt16LE(off); off += 2
+  const seedCap = buf.slice(off, off + seedLen).toString('utf8').replace(/\0/g, ''); off += seedLen
+  const simAccess = buf[off++]
+  const teleportFlags = buf.readUInt32LE(off)
+  return { simIp, simPort, regionHandle, seedCap, simAccess, teleportFlags }
+}
+
+/** AgentSetAppearance (Low #84) — minimal stub to signal appearance readiness.
+ *  WHY: Some OpenSim sims defer full physics initialization until AgentSetAppearance received.
+ *  Send after AgentMovementComplete with empty wearables/params (gray avatar, physics enabled).
+ *  Firestorm sends full baked textures; we send minimal to unblock physics without art pipeline.
+ *  Body: AgentData(48) + WearableData(1=count) + ObjectData.TE(2=empty) + VisualParam(1=count)
+ */
+export function encodeAgentSetAppearance(p: { agentId: string; sessionId: string; seq: number }): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG = Buffer.from([0xFF, 0xFF, 0x00, 0x54])  // Low #84
+  // AgentData Single: AgentID(16) + SessionID(16) + SerialNum(4) + Size LLVector3(12)
+  // WearableData Variable: count(1) = 0 items
+  // ObjectData Single: TextureEntry Variable2(2) = empty
+  // VisualParam Variable: count(1) = 0 items
+  const body = Buffer.alloc(16 + 16 + 4 + 12 + 1 + 2 + 1)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(1, off); off += 4  // SerialNum = 1
+  // WHY: Default avatar bounding box (width, depth, height) in SL metres.
+  // Sim uses this for collision detection. Approximate standard avatar size.
+  body.writeFloatLE(0.45, off); off += 4
+  body.writeFloatLE(0.60, off); off += 4
+  body.writeFloatLE(1.84, off); off += 4
+  body[off++] = 0          // WearableData count = 0
+  body.writeUInt16LE(0, off); off += 2  // ObjectData.TextureEntry length = 0
+  body[off++] = 0          // VisualParam count = 0
+  return Buffer.concat([hdr, MSG, body])
 }
 
 /** Reply to RegionHandshake — required, or avatar won't appear in-world */

@@ -22,7 +22,8 @@ export const S = {
 	TERSE_UPDATE: 'terse_upd', // { objects: [{ localId, pos:[x,y,z] }] } — position-only sim updates
 	CHAT_MSG:     'chat_msg',   // { fromName, sourceId, type, channel, message, pos }
 	REGION_INFO:  'region',     // { name, handle, waterHeight }
-	TELEPORT_OK:  'tp_ok',      // { regionName, seedCap }
+	TELEPORT_OK:     'tp_ok',      // { regionName, seedCap }
+	TELEPORT_FINISH: 'tp_finish',  // { simIp, simPort, regionHandle, seedCap, simAccess } — cross-region TP
 	CAPS_RESULT:  'caps_result',// { id, status, body }
 	ERROR:        'error',      // { code, message }
 	DEBUG:        'debug',      // { level:'info'|'warn'|'error', msg: string } — server log forwarded to browser

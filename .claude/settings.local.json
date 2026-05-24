@@ -17,7 +17,8 @@
       "Bash(node_modules/.bin/tsc --project server/tsconfig.json --noEmit)",
       "Bash(bun run *)",
       "Bash(kill %1)",
-      "Bash(Get-Content *)"
+      "Bash(Get-Content *)",
+      "Bash(npx --no ts-node --version)"
     ]
   }
 }

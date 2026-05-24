@@ -7,7 +7,8 @@ import {
 	decodeObjectUpdateCached, encodeRequestMultipleObjects,
 	decodeRegionHandshake, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
-	encodeTeleportLocationRequest,
+	encodeTeleportLocationRequest, encodeCompleteAgentMovement,
+	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -26,6 +27,8 @@ const LOW_REGION_HANDSHAKE        = 148   // Sim → viewer: region name + terra
 const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spawn position (Low freq)
 const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
 const LOW_CHAT_FROM_SIM       = 139   // Low freq
+const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
+const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
@@ -141,6 +144,17 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			// Forward confirmed sim-authoritative position to browser so it can correct
 			// worldStore.avatarPos before the first TerseUpdate arrives.
 			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos: [x, y, z] } }))
+
+			// WHY: Send minimal AgentSetAppearance immediately after AgentMovementComplete.
+			// Some OpenSim sims defer avatar physics initialization until they receive
+			// AgentSetAppearance — without it the avatar plays animations but won't translate
+			// (walk animation visible but no spatial movement). Empty wearables/params = gray
+			// avatar with physics body. Firestorm sends full baked textures; we send minimal.
+			const seqA = nextSeq(session)
+			const appPkt = encodeAgentSetAppearance({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA })
+			trackReliable(session, seqA, appPkt)
+			session.udpSocket.send(appPkt, session.simPort, session.simIp)
+			slog.info(session.ws, `→ AgentSetAppearance sent (seq=${seqA}) — signal physics ready`)
 		} catch (e) { slog.warn(session.ws, `AgentMovementComplete parse error: ${(e as Error).message}`) }
 		return
 	}
@@ -235,6 +249,52 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
 			}
 		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_TELEPORT_LOCAL}`) {
+		// WHY: TeleportLocal = same-region teleport completed. Sim sends new position within
+		// current circuit; no new UDP circuit needed. Just update avatar position.
+		// Body: AgentID(16) + LocationID(4) + Position(LLVector3) + LookAt(LLVector3) + TeleportFlags(4)
+		try {
+			const { pos, lookAt } = decodeTeleportLocal(buf, dataOffset)
+			slog.info(session.ws, `✓ TeleportLocal: pos=${pos[0].toFixed(1)},${pos[1].toFixed(1)},${pos[2].toFixed(1)} lookAt=${lookAt[0].toFixed(2)},${lookAt[1].toFixed(2)},${lookAt[2].toFixed(2)}`)
+			// Forward to browser as a position update (same as AgentMovementComplete)
+			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos } }))
+		} catch (e) { slog.warn(session.ws, `TeleportLocal decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_TELEPORT_FINISH}`) {
+		// WHY: TeleportFinish = cross-region teleport (or same-region TP on some OpenSim grids).
+		// For same sim IP/port: re-send CompleteAgentMovement; sim replies with AgentMovementComplete.
+		// For different sim: forward to browser for future cross-sim reconnection (Phase 2).
+		try {
+			const { simIp, simPort, regionHandle, seedCap, simAccess } = decodeTeleportFinish(buf, dataOffset)
+			slog.info(session.ws, `✓ TeleportFinish: ${simIp}:${simPort} handle=${regionHandle} access=${simAccess} cap=${seedCap.slice(0, 40)}…`)
+
+			const sameSim = simIp === session.simIp && simPort === session.simPort
+			if (sameSim) {
+				// WHY: Same sim = position teleport within current circuit. Re-send CompleteAgentMovement
+				// so the sim re-places the avatar at the destination. AgentMovementComplete reply
+				// will arrive with new position and we forward it to the browser via AGENT_SPAWN_POS.
+				session.regionHandle = regionHandle
+				const seq = nextSeq(session)
+				const pkt = encodeCompleteAgentMovement({ agentId: session.agentId, sessionId: session.sessionId, circuitCode: session.circuitCode, seq })
+				trackReliable(session, seq, pkt)
+				session.udpSocket.send(pkt, session.simPort, session.simIp)
+				slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim) — awaiting AgentMovementComplete at new pos`)
+			} else {
+				// WHY: Different sim = true cross-region teleport. Circuit switch required.
+				// Phase 2 work: create new UDP socket, UseCircuitCode+CompleteAgentMovement to new sim.
+				// For now forward to browser so UI can show "teleporting to new region" state.
+				slog.warn(session.ws, `TeleportFinish cross-sim → ${simIp}:${simPort} — cross-region TP not yet implemented`)
+				session.ws.send(JSON.stringify({
+					t: S.TELEPORT_FINISH,
+					d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess },
+				}))
+			}
+		} catch (e) { slog.warn(session.ws, `TeleportFinish decode error: ${(e as Error).message}`) }
 		return
 	}
 

@@ -47,6 +47,7 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
+	let _primPosLogs = 0       // DIAG: log first 5 prim positions to verify placement
 
 	// ── Own avatar tracking ───────────────────────────────────────────────────
 	// Set from first ObjectUpdate where fullId == agentId
@@ -339,6 +340,11 @@ export function useWorldEngine(canvasRef) {
 			new THREE.MeshStandardMaterial({ color: 0x4a7c59 }),
 		)
 		terrain.rotation.x = -Math.PI / 2
+		// WHY: SL region occupies SL X:[0,256], Y:[0,256]. Three.js coord:
+		// SL(x,y,z) → Three.js(x, z, -y). Region center SL(128,128,0)
+		// → Three.js(128, 0, -128). Without this the terrain is at (0,0,0)
+		// and sits behind the camera when the avatar spawns at SL Y>128.
+		terrain.position.set(128, 0, -128)
 		terrain.receiveShadow = true
 		scene.add(terrain)
 
@@ -394,6 +400,11 @@ export function useWorldEngine(canvasRef) {
 		if (obj.pos) {
 			const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 			gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+			// DIAG: verify prim positions; remove once placement confirmed
+			if (obj.pcode !== PCODE_AVATAR && _primPosLogs < 5) {
+				_primPosLogs++
+				console.log(`[3D] prim#${_primPosLogs} id=${obj.localId} SL=(${obj.pos[0].toFixed(1)},${obj.pos[1].toFixed(1)},${obj.pos[2].toFixed(1)}) 3JS=(${t.x.toFixed(1)},${t.y.toFixed(1)},${t.z.toFixed(1)})`)
+			}
 		}
 	}
 
