@@ -97,14 +97,14 @@ function saveNotes() {
 				:class="[
 					'relative px-3 py-1.5 text-xs font-medium rounded-t transition-colors',
 					tab.soon
-						? 'text-t1/30 cursor-default'
+						? 'text-t1 cursor-default'
 						: activeTab === tab.id
 							? 'text-accent border-b-2 border-accent -mb-px bg-accent/10'
-							: 'text-t1/70 hover:text-t1 hover:bg-white/5',
+							: 'text-t1 hover:text-t1 hover:bg-white/5',
 				]"
 			>
 				{{ tab.label }}
-				<span v-if="tab.soon" class="absolute -top-1 -right-1 text-[9px] font-bold text-t1/40 leading-none">soon</span>
+				<span v-if="tab.soon" class="absolute -top-1 -right-1 text-[9px] font-bold text-t1 leading-none">soon</span>
 			</button>
 		</div>
 
@@ -121,14 +121,14 @@ function saveNotes() {
 						{{ onlineStatus === 'online' ? 'Online' : 'Offline' }}
 					</p>
 					<div class="flex items-baseline gap-2 mt-1">
-						<span class="text-[10px] text-t1/40 w-14 shrink-0">Key</span>
-						<span class="text-[11px] text-t1/70 font-mono select-all break-all">{{ profileUUID }}</span>
+						<span class="text-2xs text-t1 w-14 shrink-0">Key</span>
+						<span class="text-2xs text-t1 font-mono select-all break-all">{{ profileUUID }}</span>
 					</div>
 				</div>
 
 				<!-- Photo + remaining fields -->
 				<div class="flex gap-4">
-					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-4xl text-t1/30 select-none">👤</div>
+					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-4xl text-t1 select-none">👤</div>
 					<div class="flex flex-col gap-1 pt-0.5">
 						<div
 							v-for="field in [
@@ -139,51 +139,51 @@ function saveNotes() {
 							:key="field.label"
 							class="flex items-baseline gap-2"
 						>
-							<span class="text-[10px] text-t1/40 w-14 shrink-0">{{ field.label }}</span>
-							<span class="text-[11px] text-t1/70 font-mono">{{ field.value }}</span>
+							<span class="text-2xs text-t1 w-14 shrink-0">{{ field.label }}</span>
+							<span class="text-2xs text-t1 font-mono">{{ field.value }}</span>
 						</div>
 					</div>
 				</div>
 
 				<div>
-					<p class="text-[10px] text-t1/40 mb-1">Groups</p>
-					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1/40 italic min-h-[2rem]">(none)</div>
+					<p class="text-2xs text-t1 mb-1">Groups</p>
+					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 italic min-h-[2rem]">(none)</div>
 				</div>
 
 				<div class="flex flex-col gap-1">
-					<p class="text-[10px] text-t1/40">About</p>
+					<p class="text-2xs text-t1">About</p>
 					<textarea
 						v-if="isSelf"
 						v-model="bioEdit"
 						rows="5"
 						placeholder="Write something about yourself…"
-						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placeholder-t1/30 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
 					/>
-					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1/70 min-h-[5rem] whitespace-pre-wrap">(no about text)</div>
+					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">(no about text)</div>
 				</div>
 
 				<div v-if="isSelf && bioDirty" class="flex justify-end gap-2 mt-1">
-					<button @click="discardBio" class="px-3 py-1 text-xs rounded border border-brd text-t1/60 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
+					<button @click="discardBio" class="px-3 py-1 text-xs rounded border border-brd text-t1 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
 					<button @click="saveBio"    class="px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
 				</div>
 			</div>
 
 			<!-- Notes tab -->
 			<div v-else-if="activeTab === 'notes'" class="flex flex-col gap-2 h-full">
-				<p class="text-[10px] text-t1/40 shrink-0">Private notes — only visible to you</p>
+				<p class="text-2xs text-t1 shrink-0">Private notes — only visible to you</p>
 				<textarea
 					v-model="notes"
 					@input="saveNotes"
 					rows="14"
 					placeholder="Notes about this person…"
-					class="w-full flex-1 rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placeholder-t1/30 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+					class="w-full flex-1 rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
 				/>
 			</div>
 
 			<!-- Coming soon -->
 			<div v-else class="flex flex-col items-center justify-center h-40 gap-2">
-				<span class="text-2xl opacity-30">🚧</span>
-				<p class="text-sm text-t1/40">Coming soon</p>
+				<span class="text-2xl text-t1">🚧</span>
+				<p class="text-sm text-t1">Coming soon</p>
 			</div>
 		</div>
 
@@ -193,7 +193,7 @@ function saveNotes() {
 				v-for="btn in ['IM', 'Pay', 'Block', 'Find on Map', 'Offer TP', 'Remove Friend']"
 				:key="btn"
 				disabled
-				class="px-2.5 py-1 text-xs rounded border border-brd text-t1/30 cursor-not-allowed opacity-50"
+				class="px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
 			>{{ btn }}</button>
 		</div>
 	</FloaterWindow>

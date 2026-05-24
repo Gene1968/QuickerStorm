@@ -8,7 +8,7 @@ const debug		= useDebugStore()
 const ui		= useUiStore()
 
 const COLOR = {
-	info:	'text-green-300',
+	info:	'text-green-600',
 	warn:	'text-yellow-300',
 	error:	'text-red-400',
 }

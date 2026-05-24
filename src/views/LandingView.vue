@@ -25,16 +25,17 @@ try { _stored = JSON.parse(localStorage.getItem(AUTOLOGIN_KEY)) } catch {}
 const hasStoredCreds = !!(_stored?.username && _stored?.password)
 
 const reconnecting   = ref(hasStoredCreds)   // true → shows spinner on first render
-const reconnectError = ref(false)
+const reconnectError = ref('')               // '' = none; string = error message to show
 
 onMounted(async () => {
 	if (!hasStoredCreds) return
 	try {
 		await login(_stored.username, _stored.password, 'last')
-	} catch {
-		localStorage.removeItem(AUTOLOGIN_KEY)
+	} catch (e) {
+		// WHY: Don't clear creds — grid may need time to release old circuit.
+		// Pre-filled form lets user retry with one click without re-typing.
 		reconnecting.value   = false
-		reconnectError.value = true
+		reconnectError.value = e?.message || 'Auto-reconnect failed — please log in again.'
 	}
 })
 </script>
@@ -101,7 +102,7 @@ onMounted(async () => {
 						<p
 							v-if="reconnectError"
 							class="text-yellow-400 text-xs"
-						>Session expired — please log in again.</p>
+						>{{ reconnectError }}</p>
 						<div>
 							<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
 							<GridSelector />

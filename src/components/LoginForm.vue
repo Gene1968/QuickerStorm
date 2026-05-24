@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useGridLogin } from '@/composables/useGridLogin'
 import { useGridStore } from '@/stores/gridStore'
 
@@ -14,6 +14,16 @@ const error			= ref('')
 
 // ── Remember Me ──────────────────────────────────────────────────────────
 const AUTOLOGIN_KEY = 'qs_autologin'
+
+// WHY: Pre-fill from stored creds so after auto-reconnect failure user can
+// retry with one click instead of re-typing credentials.
+onMounted(() => {
+	try {
+		const stored = JSON.parse(localStorage.getItem(AUTOLOGIN_KEY))
+		if (stored?.username) username.value = stored.username
+		if (stored?.password) password.value = stored.password
+	} catch {}
+})
 // WHY: Default true — auto-reconnect on reload is expected behaviour for a viewer.
 // User can uncheck to opt out. Persists their preference via localStorage presence.
 const rememberMe = ref(true)

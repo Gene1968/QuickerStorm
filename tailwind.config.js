@@ -30,6 +30,7 @@ export default {
 			 * browser root (16px), not html — so they do not double-scale with the fluid html root.
 			 */
 			fontSize: {
+				'2xs': ['clamp(0.625rem, 0.25vw + 0.55rem, 0.75rem)', { lineHeight: '1rem' }],
 				xs: [
 					'clamp(0.75rem, 0.35vw + 0.65rem, 0.875rem)',
 					{ lineHeight: '1rem' },

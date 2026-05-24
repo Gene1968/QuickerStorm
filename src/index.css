@@ -5,29 +5,29 @@
 /* ── Dark theme variables — earth / rust ─────────────────────────── */
 /*
  * Palette shades used here:
- *   rufous-s80 #200B05 · rufous-s60 #40160B · rufous-s40 #602010 · rufous-s20 #802B16
+ *   rufous-s80 #200B05 · rufous-s60 #40160B  · rufous-s40 #602010 · rufous-s20 #802B16
  *   rufous     #A0361B · rufous-80  #B35E49  · rufous-60  #C68676
  *   hunter-s40 #1A3726 · forest-s60 #081610
  *   carrot     #E9972D · carrot-60  #F2C181  · sinopia    #C4501B
  */
 :root {
 	color-scheme: dark;
-	--color-bg:     #200B05;              /* rufous-s80 — deepest dark */
-	--color-bg2:    #40160B;              /* rufous-s60 */
-	--color-card:   #602010;              /* rufous-s40 */
-	--color-card2:  #1A3726;              /* hunter-s40 — green counterpoint */
-	--color-side:   rgba(8, 22, 16, 0.93); /* forest-s60 alpha */
-	--color-brd:    #802B16;              /* rufous-s20 */
-	--color-brd2:   #A0361B;              /* rufous */
+	--color-bg:     #200B05;				/* rufous-s80 — deepest dark */
+	--color-bg2:    #40160B;				/* rufous-s60 */
+	--color-card:   #602010;				/* rufous-s40 */
+	--color-card2:  #1A3726;				/* hunter-s40 — green counterpoint */
+	--color-side:   rgba(8, 22, 16, 0.93);/* forest-s60 alpha */
+	--color-brd:    #802B16;				/* rufous-s20 */
+	--color-brd2:   #A0361B;				/* rufous */
 	--color-t1:     #F5EAE0;
-	--color-t2:     #C68676;              /* rufous-60 tint */
-	--color-tm:     #B35E49;              /* rufous-80 tint — muted warm */
-	--color-accent: #E9972D;              /* carrot — primary interactive */
-	--color-accent2:#C4501B;              /* sinopia */
-	--color-accent3:#F2C181;              /* carrot-60 tint */
-	--color-blue:   #2979ff;              /* functional info/link */
-	--color-teal:   #E9972D;              /* carrot alias */
-	--color-green:  #2B5B3F;              /* hunter */
+	--color-t2:     #C68676;				/* rufous-60 tint */
+	--color-tm:     #B35E49;				/* rufous-80 tint — muted warm */
+	--color-accent: #E9972D;				/* carrot — primary interactive */
+	--color-accent2:#C4501B;				/* sinopia */
+	--color-accent3:#F2C181;				/* carrot-60 tint */
+	--color-blue:   #2979ff;				/* functional info/link */
+	--color-teal:   #E9972D;				/* carrot alias */
+	--color-green:  #2B5B3F;				/* hunter */
 	--color-red:    #f44336;
 	--color-accent-orng: #E9972D;
 	/* ── Named palette ───────────────────────────────────────────── */
@@ -37,7 +37,7 @@
 	--color-hunter:  #2B5B3F;
 	--color-forest:  #143829;
 	/* ── Floater alphas (use for HUD/panels/labels) ──────────────── */
-	--color-floater:    rgba(32, 11, 5, 0.85);  /* rufous-s80 */
+	--color-floater:    rgba(32, 11, 5, 0.85);	/* rufous-s80 */
 	--color-floater-sm: rgba(32, 11, 5, 0.45);
 	--color-floater-lg: rgba(32, 11, 5, 0.95);
 	--sidebar-w:         clamp(9rem, 15vw, 19rem);
@@ -49,19 +49,19 @@
 /* ── Light theme — warm earth / cream ────────────────────────────── */
 html.light {
 	color-scheme: light;
-	--color-bg:     #FBEAD5;              /* carrot-20 — warm page wash */
-	--color-bg2:    #FEFCFA;              /* near-white warm */
-	--color-card:   #FFFFFF;              /* white card surface */
-	--color-card2:  #F3DCD1;              /* sinopia-20 — warm secondary surface */
-	--color-side:   rgba(160, 54, 27, 0.88); /* rufous alpha */
-	--color-brd:    #C68676;              /* rufous-60 */
-	--color-brd2:   #B35E49;              /* rufous-80 */
+	--color-bg:     #FBEAD5;					/* carrot-20 — warm page wash */
+	--color-bg2:    #FEFCFA;					/* near-white warm */
+	--color-card:   #F6EBE8;					/* rufous-s10 card surface */
+	--color-card2:  #F3DCD1;					/* sinopia-20 — warm secondary surface */
+	--color-side:   rgba(160, 54, 27, 0.88);	/* rufous alpha */
+	--color-brd:    #C68676;					/* rufous-60 */
+	--color-brd2:   #B35E49;					/* rufous-80 */
 	--color-t1:     #1A0905;
-	--color-t2:     #802B16;              /* rufous-s20 */
-	--color-tm:     #602010;              /* rufous-s40 — muted */
-	--color-accent: #A0361B;              /* rufous — primary interactive in light */
-	--color-accent2:#802B16;              /* rufous-s20 */
-	--color-accent3:#C4501B;              /* sinopia */
+	--color-t2:     #802B16;					/* rufous-s20 */
+	--color-tm:     #602010;					/* rufous-s40 — muted */
+	--color-accent: #A0361B;					/* rufous — primary interactive in light */
+	--color-accent2:#802B16;					/* rufous-s20 */
+	--color-accent3:#C4501B;					/* sinopia */
 	--fp-svg-bg:    #FDECD8;
 }
 

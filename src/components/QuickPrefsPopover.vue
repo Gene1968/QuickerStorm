@@ -125,7 +125,7 @@ onUnmounted(() => {
 .qp-caret {
 	position: absolute;
 	bottom: -7px;
-	right: 1.35rem; /* align with the button */
+	right: 4.1rem; /* align with the button */
 	width: 14px;
 	height: 7px;
 	overflow: visible;

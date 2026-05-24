@@ -522,8 +522,8 @@ onUnmounted(()  => window.removeEventListener('keydown', onKey))
 								:key="field.label"
 								class="flex items-baseline gap-2"
 							>
-								<span class="text-[10px] text-t1/40 w-14 shrink-0">{{ field.label }}</span>
-								<span class="text-[11px] text-t1/70 truncate font-mono select-all">{{ field.value }}</span>
+								<span class="text-2xs text-t1/40 w-14 shrink-0">{{ field.label }}</span>
+								<span class="text-2xs text-t1/70 truncate font-mono select-all">{{ field.value }}</span>
 							</div>
 						</div>
 					</div>
@@ -531,7 +531,7 @@ onUnmounted(()  => window.removeEventListener('keydown', onKey))
 
 				<!-- Groups -->
 				<div>
-					<p class="text-[10px] text-t1/40 mb-1">Groups</p>
+					<p class="text-2xs text-t1/40 mb-1">Groups</p>
 					<div
 						class="rounded bg-white/5 border border-brd px-2 py-1.5
 						       text-xs text-t1/40 italic min-h-[2rem]"
@@ -540,7 +540,7 @@ onUnmounted(()  => window.removeEventListener('keydown', onKey))
 
 				<!-- About / bio -->
 				<div class="flex flex-col gap-1">
-					<p class="text-[10px] text-t1/40">About</p>
+					<p class="text-2xs text-t1/40">About</p>
 
 					<!-- Editable for self -->
 					<textarea
@@ -578,7 +578,7 @@ onUnmounted(()  => window.removeEventListener('keydown', onKey))
 
 			<!-- ── Notes tab ─────────────────────────────────────────── -->
 			<div v-else-if="activeTab === 'notes'" class="flex flex-col gap-2 h-full">
-				<p class="text-[10px] text-t1/40 shrink-0">Private notes — only visible to you</p>
+				<p class="text-2xs text-t1/40 shrink-0">Private notes — only visible to you</p>
 				<textarea
 					v-model="notes"
 					@input="saveNotes"
