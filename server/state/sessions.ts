@@ -18,8 +18,9 @@ export interface CircuitState {
 	udpSocket:   dgram.Socket
 	ws:          ServerWebSocket<unknown>
 	// Diagnostic counters (updated by lludp handler)
-	udpRxCount:  number   // total UDP packets received from sim
-	lastPingAt:  number   // timestamp of last StartPingCheck received (0 = never)
+	udpRxCount:   number  // total UDP packets received from sim
+	lastPingAt:   number  // timestamp of last StartPingCheck received (0 = never)
+	lastUdpRxAt:  number  // timestamp of last ANY packet from sim (0 = never)
 	circuitEstablished: boolean  // true once UseCircuitCode acked
 	// Diagnostic: track packet types seen, logged once each for unhandled types
 	loggedTypes: Set<string>

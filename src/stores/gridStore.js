@@ -38,9 +38,10 @@ export const useGridStore = defineStore('grid', () => {
 		grids.value.find(g => g.nick === selectedNick.value) ?? null
 	)
 
-	// login state: 'idle' | 'loading' | 'connected' | 'error'
-	const loginState = ref('idle')
-	const loginError = ref('')
+	// login state: 'idle' | 'loading' | 'connected' | 'error' | 'disconnected'
+	const loginState      = ref('idle')
+	const loginError      = ref('')
+	const disconnectReason = ref('')   // set when loginState === 'disconnected'
 
 	function selectGrid(nick) {
 		selectedNick.value = nick
@@ -50,8 +51,14 @@ export const useGridStore = defineStore('grid', () => {
 	}
 
 	function setLoginState(state, error = '') {
-		loginState.value = state
-		loginError.value = error
+		loginState.value  = state
+		loginError.value  = error
+		if (state !== 'disconnected') disconnectReason.value = ''
+	}
+
+	function setDisconnected(reason) {
+		loginState.value      = 'disconnected'
+		disconnectReason.value = reason
 	}
 
 	// ── User-managed grids ───────────────────────────────────────────────────
@@ -92,8 +99,10 @@ export const useGridStore = defineStore('grid', () => {
 		selectedGrid,
 		loginState,
 		loginError,
+		disconnectReason,
 		selectGrid,
 		setLoginState,
+		setDisconnected,
 		addUserGrid,
 		removeUserGrid,
 		isUserGrid,

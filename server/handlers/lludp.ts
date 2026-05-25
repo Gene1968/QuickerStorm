@@ -34,6 +34,9 @@ const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
+// WHY: 65s — sim kicks idle circuits at 60s. If we've received packets before (circuitEstablished)
+// and then see silence for 65s, the sim dropped the circuit without sending DisableSimulator.
+const SIM_IDLE_TIMEOUT_MS = 65_000
 
 // Log every N packets to avoid flooding the debug panel
 const LOG_EVERY_N_PACKETS = 20
@@ -44,6 +47,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (!session) return
 
 	session.udpRxCount++
+	session.lastUdpRxAt = Date.now()
 
 	let buf = rawBuf
 	const hdr = parseHeader(buf)
@@ -450,11 +454,32 @@ function sendHeartbeat(s: CircuitState): void {
 	s.udpSocket.send(pkt, s.simPort, s.simIp)
 }
 
-/** Start per-session retransmit + heartbeat timer. Returns cleanup fn. */
+/** Start per-session retransmit + heartbeat + idle-detection timer. Returns cleanup fn. */
 export function startCircuitTimers(sessionId: string): () => void {
 	const timer = setInterval(() => {
 		const s = getSession(sessionId)
 		if (!s) { clearInterval(timer); return }
+
+		// WHY: Sim may drop circuit silently (no DisableSimulator) after 60s of no outbound
+		// or inbound traffic. We send heartbeat AgentUpdates, but if the sim stops responding
+		// we'd never know — avatar stays "online" in UI forever. Detect via lastUdpRxAt.
+		// Only start checking after circuit is live and we've received at least one packet;
+		// circuit setup itself takes a few seconds before first sim packet arrives.
+		if (s.circuitEstablished && s.udpRxCount > 0) {
+			const idleMs = Date.now() - s.lastUdpRxAt
+			if (idleMs > SIM_IDLE_TIMEOUT_MS) {
+				const idleSec = Math.round(idleMs / 1000)
+				slog.warn(s.ws, `⚠ No UDP from sim for ${idleSec}s — circuit dropped without DisableSimulator`)
+				s.ws.send(JSON.stringify({
+					t: S.DISCONNECTED,
+					d: { reason: `No response from simulator for ${idleSec}s — connection lost` },
+				}))
+				deleteSession(sessionId)
+				clearInterval(timer)
+				return
+			}
+		}
+
 		retransmitOverdue(s)
 		sendPendingAcks(s)
 		sendHeartbeat(s)

@@ -61,6 +61,9 @@ function act(fn) {
 
 function logout() {
 	close()
+	// WHY: Send C.LOGOUT before navigating — tells Bun to send LogoutRequest UDP to sim
+	// and deleteSession immediately (cancels the 15s reconnect hold so a fresh login works).
+	emit(C.LOGOUT, {})
 	session.clearSession()
 	grid.setLoginState('idle')
 	router.push('/landing')

@@ -4,6 +4,7 @@ import { RouterView, useRouter } from 'vue-router'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useDebugStore } from '@/stores/debugStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useGridStore } from '@/stores/gridStore'
 import { useUiStore } from '@/stores/uiStore'
 import { S } from '@shared/protocol.js'
 import PreferencesFloater from '@/components/PreferencesFloater.vue'
@@ -11,6 +12,7 @@ import PreferencesFloater from '@/components/PreferencesFloater.vue'
 const { on, off } = useRealtimeSocket()
 const debug   = useDebugStore()
 const session = useSessionStore()
+const grid    = useGridStore()
 const ui      = useUiStore()
 const router  = useRouter()
 
@@ -31,8 +33,10 @@ function onDisconnected(d) {
 	// Sim terminated circuit (timeout, kick, teleport, etc.)
 	const reason = d?.reason ?? 'Disconnected from simulator'
 	debug.push('warn', `Disconnected: ${reason}`)
-	session.clearSession()
-	router.push('/landing')
+	// WHY: Don't route immediately — show disconnection overlay on WorldView so user
+	// sees why they were dropped and chooses to return to login. session.clearSession()
+	// is called by the overlay's "Return to Login" button, not here.
+	grid.setDisconnected(reason)
 }
 
 // WHY: Ctrl+P opens Preferences globally — works pre-login and post-login.

@@ -3,7 +3,7 @@ import * as dgram from 'dgram'
 import type { ServerWebSocket } from 'bun'
 import { getGrid } from '../lib/grids'
 import { hashPassword, buildLoginXml, parseLoginResponse, xmlRpcPost } from '../lib/xmlrpc'
-import { encodeUseCircuitCode, encodeCompleteAgentMovement, encodeAgentThrottle } from '../lib/lludp-codec'
+import { encodeUseCircuitCode, encodeCompleteAgentMovement, encodeAgentThrottle, encodeLogoutRequest } from '../lib/lludp-codec'
 import { nextSeq, trackReliable } from '../lib/circuit'
 import { createSession, deleteSession, getSession, findCircuitByUser, attachWs, cancelExpire } from '../state/sessions'
 import { handleUdpMessage, startCircuitTimers } from './lludp'
@@ -126,6 +126,7 @@ export async function handleLogin(
 		ws,
 		udpRxCount:   0,
 		lastPingAt:   0,
+		lastUdpRxAt:  Date.now(),  // WHY: Init to now so idle timer doesn't fire during circuit setup
 		circuitEstablished: false,
 		lastAgentUpdateAt:  0,
 		lastAgentParams:    null,
@@ -270,5 +271,17 @@ export async function handleLogin(
 }
 
 export function handleLogout(_ws: ServerWebSocket<unknown>, sessionId: string): void {
+	const circuit = getSession(sessionId)
+	if (circuit) {
+		// WHY: Send LogoutRequest UDP so the sim releases the circuit immediately.
+		// Without this the sim holds the circuit ~60s, blocking re-login with "already logged in".
+		const seq = nextSeq(circuit)
+		const pkt = encodeLogoutRequest({
+			agentId:   circuit.agentId,
+			sessionId: circuit.sessionId,
+			seq,
+		})
+		circuit.udpSocket.send(pkt, circuit.simPort, circuit.simIp)
+	}
 	deleteSession(sessionId)
 }
