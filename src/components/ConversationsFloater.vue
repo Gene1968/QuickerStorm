@@ -3,6 +3,7 @@ import { ref, computed, nextTick } from 'vue'
 import { useLocalChat }  from '@/composables/useLocalChat'
 import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
+import { playSound } from '@/composables/useAudio'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
 
 const avatar = useAvatarStore()
@@ -12,6 +13,7 @@ const { messages, send } = useLocalChat()
 const activeTab  = ref('nearby')
 const chatInput  = ref('')
 const msgEl      = ref(null)
+const inputEl    = ref(null)
 
 // TODO: openIMs — populated by incoming IM events; shape: { agentId, agentName, messages[] }
 // Switching to a new IM from WorldView should push here + set activeTab = agentId
@@ -31,6 +33,22 @@ const TYPE_CLASS = {
 	0: 'text-white/50 italic',          // whisper
 	1: 'text-t1',                        // normal
 	2: 'text-yellow-400 font-semibold',  // shout
+}
+
+function onInput() {
+	if (chatInput.value.length === 1) playSound('typing.mp3')
+}
+
+async function selectTab(id) {
+	activeTab.value = id
+	if (id === 'nearby') {
+		await nextTick()
+		inputEl.value?.focus()
+	}
+}
+
+function focusInput() {
+	inputEl.value?.focus()
 }
 
 async function submitChat() {
@@ -66,7 +84,7 @@ async function submitChat() {
 					:class="activeTab === tab.id
 						? 'bg-white/10 text-accent border-accent'
 						: 'text-white/50 hover:text-white/70 border-transparent'"
-					@click="activeTab = tab.id"
+					@click="selectTab(tab.id)"
 				>
 					<span class="text-sm leading-none">{{ tab.icon }}</span>
 					<span class="truncate w-full text-center mt-0.5">{{ tab.label }}</span>
@@ -87,7 +105,8 @@ async function submitChat() {
 				<template v-else-if="activeTab === 'nearby'">
 					<div
 						ref="msgEl"
-						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0"
+						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0 cursor-text"
+						@click="focusInput"
 					>
 						<div
 							v-for="m in [...messages].reverse().slice(0, 60)"
@@ -106,11 +125,13 @@ async function submitChat() {
 						@submit.prevent="submitChat"
 					>
 						<input
+							ref="inputEl"
 							v-model="chatInput"
 							type="text"
 							placeholder="To nearby chat"
 							class="flex-1 bg-white/10 border border-white/20 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 							maxlength="1023"
+							@input="onInput"
 						/>
 						<button
 							type="submit"
