@@ -1,10 +1,15 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useWorldStore } from '@/stores/worldStore'
 import { useUiStore }    from '@/stores/uiStore'
+import { useAudio } from '@/composables/useAudio.js'
 
 const world = useWorldStore()
 const ui    = useUiStore()
+const { playSound } = useAudio()
+
+onMounted(()   => playSound('pop.mp3'))
+onUnmounted(() => playSound('pop.mp3'))
 
 const SIZE   = 128   // viewBox coordinate space
 const REGION = 256   // SL region = 256×256 m

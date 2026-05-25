@@ -1,11 +1,17 @@
 <script setup>
+import { onMounted, onUnmounted } from 'vue'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { useDebugStore }	from '@/stores/debugStore'
 import { useUiStore }		from '@/stores/uiStore'
+import { useAudio } from '@/composables/useAudio.js'
 
 const session	= useSessionStore()
 const debug		= useDebugStore()
 const ui		= useUiStore()
+const { playSound } = useAudio()
+
+onMounted(()   => playSound('pop.mp3'))
+onUnmounted(() => playSound('pop.mp3'))
 
 const COLOR = {
 	info:	'text-green-600',

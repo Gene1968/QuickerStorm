@@ -8,9 +8,11 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme.js'
 import { useUiStore } from '@/stores/uiStore.js'
+import { useAudio } from '@/composables/useAudio.js'
 
 const theme = useTheme()
 const ui    = useUiStore()
+const { playSound } = useAudio()
 
 function close() { ui.showQuickPrefs = false }
 
@@ -28,11 +30,13 @@ function onClickOutside(e) {
 }
 
 onMounted(() => {
+	playSound('pop.mp3')
 	window.addEventListener('keydown', onKey)
 	// Defer so the opening click doesn't immediately close it
 	setTimeout(() => window.addEventListener('mousedown', onClickOutside), 50)
 })
 onUnmounted(() => {
+	playSound('pop.mp3')
 	window.removeEventListener('keydown', onKey)
 	window.removeEventListener('mousedown', onClickOutside)
 })

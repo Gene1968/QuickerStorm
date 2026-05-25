@@ -1,6 +1,13 @@
 <script setup>
+import { onMounted, onUnmounted } from 'vue'
 import { useWorldStore } from '@/stores/worldStore'
+import { useAudio } from '@/composables/useAudio.js'
+
 const world = useWorldStore()
+const { playSound } = useAudio()
+
+onMounted(()   => playSound('pop.mp3'))
+onUnmounted(() => playSound('pop.mp3'))
 </script>
 
 <template>
