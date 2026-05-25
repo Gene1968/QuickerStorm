@@ -305,9 +305,27 @@ export function useWorldEngine(canvasRef) {
 	// WHY: Camera position reporting replaced by worldStore.setAvatarPos() calls
 	// in onObjectUpdate/onTerseUpdate. LocationBar reads worldStore.avatarPos directly.
 
-	// WHY: Placeholder — full implementation in Task 7 (onTerrainPatch).
-	// Called here to avoid undefined reference in rebuildTerrainFromStore.
-	function applyHeightColor(geometry, heights, waterY) { /* TODO Task 7: height-based topo coloring */ }
+	// WHY: Topo coloring matches spec: teal near water, green mid, stone high.
+	// Returns [r, g, b] in 0–1 range. Smooth lerp between bands avoids hard edges.
+	function heightColor(h) {
+		// deep/underwater
+		if (h <= 0)   return [0.08, 0.30, 0.60]
+		// shallow → low land
+		if (h <= 10)  return lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], h / 10)
+		// low land → grass
+		if (h <= 20)  return lerpRgb([0.25, 0.55, 0.45], [0.29, 0.49, 0.35], (h - 10) / 10)
+		// grass → earthy mid
+		if (h <= 40)  return lerpRgb([0.29, 0.49, 0.35], [0.45, 0.42, 0.35], (h - 20) / 20)
+		// earthy → stone grey
+		return lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((h - 40) / 60, 1))
+	}
+
+	function lerpRgb(a, b, t) { return a.map((v, i) => v + (b[i] - v) * t) }
+
+	function applyHeightColor(colAttr, vertexIndex, h) {
+		const [r, g, b] = heightColor(h)
+		colAttr.setXYZ(vertexIndex, r, g, b)
+	}
 
 	// WHY: HMR and navigation away/back trigger onUnmounted+onMounted. worldStore.terrainHeights
 	// persists across remounts (Pinia ref). Rebuild geometry immediately on mount so terrain
@@ -324,9 +342,9 @@ export function useWorldEngine(canvasRef) {
 				const h  = worldStore.terrainHeights[vi]
 				if (h !== 0) anyNonZero = true
 				pos.setY(vi, h)
+				applyHeightColor(col, vi, h)
 			}
 		}
-		applyHeightColor(terrainMesh.geometry, worldStore.terrainHeights, 20)
 		// WHY: always mark dirty — even an all-zero heights write (clearTerrain + rebuild)
 		// must flush stale GPU data. computeVertexNormals only needed when heights change.
 		pos.needsUpdate = true
@@ -650,6 +668,40 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	function onTerrainPatch(payload) {
+		if (!terrainMesh) return
+		const { layerType, patchSize = 16, patches } = payload
+		if (layerType === 'WATER') return  // water plane height fixed at 20 for Phase 1
+
+		const pos    = terrainMesh.geometry.attributes.position
+		const col    = terrainMesh.geometry.attributes.color
+		const stride = 257  // vertices per row
+
+		for (const { x: px, y: py, heights } of patches) {
+			// Store in worldStore for remount persistence
+			worldStore.setTerrainPatch(px, py, heights, patchSize)
+
+			// WHY: Update (patchSize+1)×(patchSize+1) vertices to fill seam between patches.
+			// Clamped height index prevents reading out-of-bounds on the patch edge.
+			for (let j = 0; j <= patchSize; j++) {
+				for (let i = 0; i <= patchSize; i++) {
+					const slX = px * patchSize + i
+					const slY = py * patchSize + j
+					if (slX > 255 || slY > 255) continue
+					const vi = slY * stride + slX
+					const hIdx = Math.min(j, patchSize - 1) * patchSize + Math.min(i, patchSize - 1)
+					const h = heights[hIdx]
+					pos.setY(vi, h)
+					applyHeightColor(col, vi, h)
+				}
+			}
+		}
+
+		pos.needsUpdate = true
+		col.needsUpdate = true
+		terrainMesh.geometry.computeVertexNormals()
+	}
+
 	// ── Render loop ───────────────────────────────────────────────────────────
 	let lastTime = 0
 	function animate(time) {
@@ -780,6 +832,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.TERSE_UPDATE,     onTerseUpdate)
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
 		on(S.KILL_OBJECT,      onKillObject)
+		on(S.TERRAIN_PATCH,    onTerrainPatch)
 	})
 
 	onUnmounted(() => {
@@ -795,6 +848,7 @@ export function useWorldEngine(canvasRef) {
 		off(S.TERSE_UPDATE,    onTerseUpdate)
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
 		off(S.KILL_OBJECT,     onKillObject)
+		off(S.TERRAIN_PATCH,   onTerrainPatch)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()
