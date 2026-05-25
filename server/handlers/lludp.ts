@@ -15,14 +15,15 @@ import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
 import { decodeLayerData } from '../lib/terrain-codec.js'
 
-// Message type codes — verified against packet log + LibOpenMetaverse message.xml
-// WHY: ObjectUpdate (12), ImprovedTerseObjectUpdate (15), StartPingCheck (1), CompletePingCheck (2)
-// are HIGH-frequency messages (1-byte ID prefix). Earlier code incorrectly used LOW prefix
-// (4-byte 0xFF 0xFF + U16), so handlers never fired and no object data reached the browser.
-// RegionHandshake (148), DisableSimulator (152), ChatFromSimulator (139) ARE Low-frequency.
+// Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
+// WHY: High-freq = 1-byte prefix. Medium-freq = 0xFF + 1-byte ID. Low-freq = 0xFF 0xFF + U16LE.
+// Earlier code had MEDIUM_LAYER_DATA=6 (wrong — Medium 6 is CoarseLocationUpdate, not terrain)
+// and HIGH_OBJECT_UPDATE_CACHED=11 (wrong — High 11 is LayerData; ObjectUpdateCached is High 14).
+// Both bugs caused terrain to never decode and ObjectUpdateCached to fire on terrain packets.
 const HIGH_START_PING_CHECK    = 1     // Sim → viewer: keepalive ping (High freq, 1-byte prefix)
-const HIGH_OBJECT_UPDATE_CACHED= 11    // ObjectUpdateCached — reply with RequestMultipleObjects (High freq)
+const HIGH_LAYER_DATA          = 11    // LayerData (terrain patches) — High freq, msg ID 11
 const HIGH_OBJECT_UPDATE       = 12    // Sim → viewer: full object/avatar update (High freq)
+const HIGH_OBJECT_UPDATE_CACHED= 14    // ObjectUpdateCached — reply with RequestMultipleObjects (High freq)
 const HIGH_OBJECT_UPDATE_TERSE = 15    // ImprovedTerseObjectUpdate — position-only (High freq)
 const HIGH_KILL_OBJECT         = 16    // Sim → viewer: remove these localIds from scene (High freq)
 const LOW_REGION_HANDSHAKE        = 148   // Sim → viewer: region name + terrain info (Low freq)
@@ -32,7 +33,7 @@ const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
 const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
-const MEDIUM_LAYER_DATA       = 6     // LayerData (terrain patches) — Medium frequency, msg ID 6
+const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
@@ -291,17 +292,21 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
-	if (type === `med:${MEDIUM_LAYER_DATA}`) {
-		// WHY: Full-packet hex (raw, before ack-strip/zero-decode) + body hex reveal byte layout.
-		// raw10 = flags + seq(4) + extra + msgId(2b: 0xFF 0x06) + first 2 body bytes
-		// body24 = [Type blockCount? dataLen(2) groupHdr(4: stride(2) patchSize layerType) patchHdr...]
-		// These three values let us verify: is patchSize=16? is layerType byte LAND? is dataLen plausible?
+	if (type === `high:${HIGH_LAYER_DATA}`) {
+		// WHY: LayerData is High 11. Body layout at dataOffset (= bodyOffset+1 = 7):
+		//   [0] LayerID.Type U8 — layer type byte (0x4C='L' for LAND, etc.)
+		//   [1] DataBlock.LayerType U8 — same type value repeated (LLUDP Single-block layout)
+		//   [2..3] DataBlock.Data.Length U16LE — byte count of terrain data payload
+		//   [4+] DataBlock.Data — group header (stride U16, patchSize U8, layerType U8) + bit-packed patches
+		// terrain-codec.ts tries two-type layout ([0]=type, [2..3]=dataLen, [4+]=data) first,
+		// falls back to single-type layout ([0]=type, [1..2]=dataLen, [3+]=data) if it overruns.
+		// body24 will show which layout the sim uses: two same bytes at [0..1] → two-type.
 		const typeB = dataOffset < buf.length ? `0x${buf[dataOffset].toString(16).padStart(2,'0')}` : '??'
 		const raw10 = Array.from(rawBuf.slice(0, Math.min(10, rawBuf.length)))
 			.map(b => b.toString(16).padStart(2, '0')).join(' ')
 		const body24 = Array.from(buf.slice(dataOffset, Math.min(dataOffset + 24, buf.length)))
 			.map(b => b.toString(16).padStart(2, '0')).join(' ')
-		slog.info(session.ws, `[terrain] med:6 rx size=${rawBuf.length}b typeB=${typeB} raw10=[${raw10}] body24=[${body24}]`)
+		slog.info(session.ws, `[terrain] high:11 rx size=${rawBuf.length}b typeB=${typeB} raw10=[${raw10}] body24=[${body24}]`)
 		const result = decodeLayerData(buf, dataOffset, session.ws)
 		if (!result) {
 			slog.warn(session.ws, `[terrain] decode returned null for typeB=${typeB}`)
@@ -328,6 +333,27 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				})),
 			},
 		}))
+		return
+	}
+
+	if (type === `med:${MEDIUM_COARSE_LOCATION_UPDATE}`) {
+		// WHY: CoarseLocationUpdate (Medium 6) arrives every ~4.5s with approximate avatar positions
+		// for the minimap. Body: locCount U8 | [X U8, Y U8, Z U8]×N | You S16 | Prey S16 |
+		// agentCount U8 | [AgentID UUID(16)]×N. X/Y = region metres (0-255). Z = metres/4 (0xFF=unknown).
+		// You/Prey are indices into the Locations array identifying self and tracked target.
+		try {
+			const locCount = buf[dataOffset]
+			const locs: { x: number; y: number; z: number }[] = []
+			let off = dataOffset + 1
+			for (let i = 0; i < locCount && off + 3 <= buf.length; i++, off += 3) {
+				locs.push({ x: buf[off], y: buf[off + 1], z: buf[off + 2] === 0xFF ? -1 : buf[off + 2] * 4 })
+			}
+			// Log once so we can confirm body parsing is correct
+			if (!session.loggedTypes.has('coarse_loc')) {
+				session.loggedTypes.add('coarse_loc')
+				slog.info(session.ws, `[CoarseLoc] first rx: ${locCount} avatar(s) ${locs.map(l => `(${l.x},${l.y},${l.z === -1 ? '?m' : l.z + 'm'})`).join(' ')}`)
+			}
+		} catch (e) { slog.warn(session.ws, `CoarseLocationUpdate decode error: ${(e as Error).message}`) }
 		return
 	}
 
@@ -377,8 +403,8 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
-	// WHY: Log each unknown packet type once so we can see if sim sends ObjectUpdateCompressed
-	// (low:13), ObjectUpdateCached (low:14), or other unhandled types.
+	// WHY: Log each unknown packet type once so we can detect unhandled messages.
+	// Handled: high:1,11,12,14,15,16 med:6 low:64,69,139,148,152,250 fixed:251.
 	if (!session.loggedTypes.has(type)) {
 		session.loggedTypes.add(type)
 		slog.info(session.ws, `[UDP] first-seen unhandled type=${type} size=${rawBuf.length}b`)

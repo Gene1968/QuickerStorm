@@ -236,30 +236,48 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		else    console.warn(`[terrain-codec] ${msg}`)
 	}
 	try {
-		if (dataOffset + 3 > buf.length) { dbg(`buf too short: ${buf.length} < dataOffset+3=${dataOffset+3}`); return null }
+		if (dataOffset + 4 > buf.length) { dbg(`buf too short: ${buf.length} < dataOffset+4=${dataOffset+4}`); return null }
 
+		// WHY: LayerData body layout per message_template.msg (High 11), two-type-byte variant:
+		//   [dataOffset+0] LayerID.Type       U8       — layer type (0x4C='L'=LAND etc)
+		//   [dataOffset+1] DataBlock.LayerType U8      — SAME type repeated (Single block, no count)
+		//   [dataOffset+2..3] DataBlock.Data.Length U16LE
+		//   [dataOffset+4+]   DataBlock.Data bytes (group header + bit-packed patches)
+		// Alt single-type-byte layout (if sim omits LayerID block): type=[0], dataLen=[1..2], data=[3+].
+		// body24 in lludp.ts high:11 handler will show which applies: two same bytes → two-type layout.
 		const layerTypeByte = buf[dataOffset]
-		const dataLen       = buf.readUInt16LE(dataOffset + 1)
-		const dataStart     = dataOffset + 3
+		// Try two-type-byte layout first (per spec); fall back to single-type-byte if it overruns.
+		let dataLen   = buf.readUInt16LE(dataOffset + 2)
+		let dataStart = dataOffset + 4
+		if (dataStart + dataLen > buf.length) {
+			const dataLenAlt = buf.readUInt16LE(dataOffset + 1)
+			const dataStartAlt = dataOffset + 3
+			if (dataStartAlt + dataLenAlt <= buf.length) {
+				// WHY: Sim sends single-type-byte layout (no LayerID block). Use alt offsets.
+				dbg(`layout=single-type-byte dataLen=${dataLenAlt} (two-type gave overrun=${dataLen}) bufLen=${buf.length}`)
+				dataLen   = dataLenAlt
+				dataStart = dataStartAlt
+			} else {
+				dbg(`dataLen overrun: two-type=${dataLen} single-type=${dataLenAlt} bufLen=${buf.length} — body24 in lludp.ts shows layout`)
+				return null
+			}
+		}
 
-		if (dataStart + dataLen > buf.length) { dbg(`dataLen=${dataLen} overruns buf (dataStart=${dataStart} bufLen=${buf.length})`); return null }
-
-		// WHY: SL/OpenSim layer type bytes come in two encodings:
-		//   ASCII (classic SL): 0x4C ('L')=LAND, 0x57 ('W')=WIND, 0x43 ('C')=CLOUD, 0x38 ('8')=WATER
-		//   Integer enum (newer OpenSim, e.g. OSGrid 0.9+): 6=LAND, 55=WIND, 3=CLOUD, 4=WATER, 7=LandExtended
-		// WIND (0x57) is often mislabelled WATER in older docs — be explicit.
-		// 0x37 (LandExtended=55) used by OpenSim var-regions (512×512, 1024×1024) — patchSize=32.
-		const isLand = layerTypeByte === 0x4C   // ASCII 'L' — classic SL
-		            || layerTypeByte === 0x06    // integer 6 — newer OpenSim (OSGrid 0.9+)
+		// WHY: LayerData type byte (LayerID.Type) uses ASCII values derived from message_template.msg:
+		//   0x4C ('L') = LAND       — classic SL and standard OpenSim
+		//   0x4D ('M') = LandExtended — var-region terrain (512×512, 1024×1024), patchSize=32
+		//   0x57 ('W') = WIND       — wind field (not terrain, skip)
+		//   0x43 ('C') = CLOUD      — cloud field (not terrain, skip)
+		//   0x38 ('8') = WATER      — water field (not terrain, skip)
+		// NOTE: 0x06 was briefly added as "OSGrid LAND int enum" but that was wrong — Medium 6
+		// is CoarseLocationUpdate; those packets were never LayerData. Removed 2026-05-25.
+		const isLand = layerTypeByte === 0x4C   // ASCII 'L' — LAND (standard regions)
+		            || layerTypeByte === 0x4D    // ASCII 'M' — LandExtended (var-regions, unsupported patchSize=32)
 		const type = isLand ? 'LAND' : null
 		if (!type) {
-			const label = layerTypeByte === 0x57 ? 'WIND(ASCII)'
-			            : layerTypeByte === 0x43 ? 'CLOUD(ASCII)'
-			            : layerTypeByte === 0x38 ? 'WATER(ASCII)'
-			            : layerTypeByte === 0x37 ? 'LandExtended(0x37/var-region)'
-			            : layerTypeByte === 55   ? 'WIND(int)'
-			            : layerTypeByte === 3    ? 'CLOUD(int)'
-			            : layerTypeByte === 4    ? 'WATER(int)'
+			const label = layerTypeByte === 0x57 ? 'WIND(0x57)'
+			            : layerTypeByte === 0x43 ? 'CLOUD(0x43)'
+			            : layerTypeByte === 0x38 ? 'WATER(0x38)'
 			            : `unknown(0x${layerTypeByte.toString(16)})`
 			dbg(`skipping non-LAND layer type=${label}`)
 			return null
