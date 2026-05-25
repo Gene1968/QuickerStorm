@@ -292,14 +292,16 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `med:${MEDIUM_LAYER_DATA}`) {
-		// WHY: Always log receipt so we can distinguish "no packets arrive" from "decode fails".
-		// Without this, a silent null return from decodeLayerData looks identical to packet loss.
-		// hex12: first 12 body bytes reveal: [TypeByte blockCount? dataLen(2b) groupHdr(4b) patchHdrStart]
-		// This lets us verify byte-layout assumptions without a packet capture tool.
+		// WHY: Full-packet hex (raw, before ack-strip/zero-decode) + body hex reveal byte layout.
+		// raw10 = flags + seq(4) + extra + msgId(2b: 0xFF 0x06) + first 2 body bytes
+		// body24 = [Type blockCount? dataLen(2) groupHdr(4: stride(2) patchSize layerType) patchHdr...]
+		// These three values let us verify: is patchSize=16? is layerType byte LAND? is dataLen plausible?
 		const typeB = dataOffset < buf.length ? `0x${buf[dataOffset].toString(16).padStart(2,'0')}` : '??'
-		const hex12 = Array.from(buf.slice(dataOffset, Math.min(dataOffset + 12, buf.length)))
+		const raw10 = Array.from(rawBuf.slice(0, Math.min(10, rawBuf.length)))
 			.map(b => b.toString(16).padStart(2, '0')).join(' ')
-		slog.info(session.ws, `[terrain] med:6 rx size=${rawBuf.length}b typeB=${typeB} body12=[${hex12}]`)
+		const body24 = Array.from(buf.slice(dataOffset, Math.min(dataOffset + 24, buf.length)))
+			.map(b => b.toString(16).padStart(2, '0')).join(' ')
+		slog.info(session.ws, `[terrain] med:6 rx size=${rawBuf.length}b typeB=${typeB} raw10=[${raw10}] body24=[${body24}]`)
 		const result = decodeLayerData(buf, dataOffset, session.ws)
 		if (!result) {
 			slog.warn(session.ws, `[terrain] decode returned null for typeB=${typeB}`)
