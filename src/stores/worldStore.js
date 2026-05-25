@@ -54,5 +54,31 @@ export const useWorldStore = defineStore('world', () => {
 		}
 	}
 
-	return { objects, avatars, prims, upsertObject, updateObjectPos, removeObject, clearAll, avatarPos, setAvatarPos }
+	// WHY: Terrain heights survive remount (HMR, navigation away/back).
+	// 257×257 = 66,049 vertices: 256×256 metre region, 1 vertex per metre, +1 for overlap.
+	// useWorldEngine rebuilds geometry from this on mount without needing a new LoginLayerData burst.
+	const terrainHeights = ref(new Float32Array(66049))
+
+	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per
+	// TERRAIN_PATCH message). Update only the 17×17 vertices affected by this patch.
+	function setTerrainPatch(px, py, heights, patchSize = 16) {
+		const stride = 257  // vertices per row (255 segments + 1)
+		for (let j = 0; j < patchSize; j++) {
+			for (let i = 0; i < patchSize; i++) {
+				const slX = px * patchSize + i  // SL X coord (column)
+				const slY = py * patchSize + j  // SL Y coord (row)
+				if (slX > 256 || slY > 256) continue
+				terrainHeights.value[slY * stride + slX] = heights[j * patchSize + i]
+			}
+		}
+	}
+
+	function clearTerrain() { terrainHeights.value.fill(0) }
+
+	return {
+		objects, avatars, prims,
+		upsertObject, updateObjectPos, removeObject, clearAll,
+		avatarPos, setAvatarPos,
+		terrainHeights, setTerrainPatch, clearTerrain,
+	}
 })
