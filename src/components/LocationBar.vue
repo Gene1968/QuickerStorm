@@ -4,13 +4,14 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
-import { C } from '@shared/protocol.js'
+import { useTeleport } from '@/composables/useTeleport.js'
 import { MicVocalIcon, BirdIcon, SwordIcon, CuboidIcon, ScrollTextIcon, StarIcon } from '@lucide/vue'
 
 const session = useSessionStore()
 const world	 = useWorldStore()
 const grid		= useGridStore()
-const { connected, emit } = useRealtimeSocket()
+const { connected } = useRealtimeSocket()
+const { requestTeleport } = useTeleport()
 
 // ── Maturity rating ───────────────────────────────────────────────────────
 const MATURITY = {
@@ -99,12 +100,9 @@ function commitEdit() {
 	if (nums.length < 3) return
 	const [x, y, z] = nums.slice(-3)
 	if (isNaN(x) || isNaN(y) || isNaN(z)) return
-	// Clamp to safe region interior (avoid edge limbo)
-	const safeX = Math.max(1, Math.min(255, x))
-	const safeY = Math.max(1, Math.min(255, y))
-	const safeZ = Math.max(0.5, z)
-	console.log(`[LocationBar] teleport → ${safeX},${safeY},${safeZ} raw="${raw}"`)
-	emit(C.TELEPORT, { x: safeX, y: safeY, z: safeZ })
+
+	console.log(`[LocationBar] teleport → ${x},${y},${z} raw="${raw}"`)
+	requestTeleport({ x, y, z })
 }
 
 function onEditKeydown(e) {
