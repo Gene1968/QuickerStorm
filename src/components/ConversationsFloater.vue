@@ -36,7 +36,7 @@ const TYPE_CLASS = {
 }
 
 function onInput() {
-	if (chatInput.value.length === 1) playSound('typing.mp3')
+	if (chatInput.value.length === 1) playSound('typing.mp3', 0.3)
 }
 
 async function selectTab(id) {

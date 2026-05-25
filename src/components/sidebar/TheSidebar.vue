@@ -715,7 +715,7 @@ function isUserTalking(user) {
 
 			<button
 				class="collapse-btn"
-				@click="collapsed = !collapsed; playSound('pop.mp3')"
+				@click="collapsed = !collapsed; playSound('pop.mp3', 0.7)"
 				:data-tooltip="collapsed ? 'Expand' : 'Collapse'"
 				:title="collapsed ? 'Expand' : 'Collapse'"
 			>
@@ -729,7 +729,7 @@ function isUserTalking(user) {
 			<div
 				class="my-presence"
 				ref="myPresenceEl"
-				@click="showStatusMenu = !showStatusMenu; playSound('pop.mp3')"
+				@click="showStatusMenu = !showStatusMenu; playSound('pop.mp3', 0.7)"
 			>
 				<div class="avatar-bubble" :style="{ background: myColor }">
 					{{ myInitials }}
@@ -891,7 +891,7 @@ function isUserTalking(user) {
 					v-if="!collapsed"
 					type="button"
 					class="sidebar-section-toggle"
-					@click="showRooms = !showRooms; playSound('pop.mp3')"
+					@click="showRooms = !showRooms; playSound('pop.mp3', 0.7)"
 				>
 					<Squares2X2Icon
 						class="sidebar-section-icon"
@@ -971,7 +971,7 @@ function isUserTalking(user) {
 				<button
 					type="button"
 					class="sidebar-section-toggle"
-					@click="showQuickerStorm = !showQuickerStorm; playSound('pop.mp3')"
+					@click="showQuickerStorm = !showQuickerStorm; playSound('pop.mp3', 0.7)"
 				>
 					<UserGroupIcon
 						class="sidebar-section-icon"
@@ -981,7 +981,7 @@ function isUserTalking(user) {
 						>quickerSTORM users</span
 					>
 					<span
-						@click.stop="showOffline = !showOffline; playSound('pop.mp3')"
+						@click.stop="showOffline = !showOffline; playSound('pop.mp3', 0.7)"
 						v-if="teamTotal"
 						class="sidebar-section-badge"
 						:title="`${onlineCount} of ${teamTotal} online. Toggle offline users on/off`"
@@ -1069,7 +1069,7 @@ function isUserTalking(user) {
 				<button
 					type="button"
 					class="sidebar-section-toggle"
-					@click="showGroupDMs = !showGroupDMs; playSound('pop.mp3')"
+					@click="showGroupDMs = !showGroupDMs; playSound('pop.mp3', 0.7)"
 				>
 					<ChatBubbleLeftRightIcon
 						class="sidebar-section-icon"
@@ -1142,7 +1142,7 @@ function isUserTalking(user) {
 				<button
 					type="button"
 					class="sidebar-section-toggle"
-					@click="showChannels = !showChannels; playSound('pop.mp3')"
+					@click="showChannels = !showChannels; playSound('pop.mp3', 0.7)"
 				>
 					<HashtagIcon
 						class="sidebar-section-icon"

@@ -86,7 +86,7 @@ async function signOut() {
 				class="avatar-trigger animated-border"
 				:class="{ active: open }"
 				:aria-expanded="open"
-				@click="open = !open; playSound('pop.mp3')"
+				@click="open = !open; playSound('pop.mp3', 0.7)"
 			>
 				<div class="avatar-circle" :style="{ background: myColor }">
 					{{ myInitials }}

@@ -6,8 +6,8 @@ import { useAudio } from '@/composables/useAudio.js'
 const world = useWorldStore()
 const { playSound } = useAudio()
 
-onMounted(()   => playSound('pop.mp3'))
-onUnmounted(() => playSound('pop.mp3'))
+onMounted(()   => playSound('pop.mp3', 0.7))
+onUnmounted(() => playSound('pop.mp3', 0.7))
 </script>
 
 <template>

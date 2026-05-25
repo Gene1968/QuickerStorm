@@ -47,7 +47,7 @@ function focus() { ui.focusFloater(props.id) }
 // Auto-focus on open
 onMounted(() => {
 	focus()
-	playSound('pop.mp3')
+	playSound('pop.mp3', 0.7)
 })
 
 // ── Drag ─────────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ function onMouseup() {
 }
 
 onUnmounted(() => {
-	playSound('pop.mp3')
+	playSound('pop.mp3', 0.7)
 	window.removeEventListener('mousemove', onMousemove)
 	window.removeEventListener('mouseup',   onMouseup)
 })

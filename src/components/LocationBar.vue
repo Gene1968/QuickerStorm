@@ -162,7 +162,7 @@ function onEditKeydown(e) {
 		<CuboidIcon title="Building (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
 		<ScrollTextIcon title="Scripts (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
 		<button title="Add to landmarks (TO-DO)" class="me-3"><StarIcon class="w-5 h-5 text-gray-400 hover:text-yellow-500" /></button>
-		<button @click="playSound('tick.mp3'); showLocationHistory = !showLocationHistory" title="Location history (TO-DO)" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-white" /></button>
+		<button @click="playSound('tick.mp3', 0.6); showLocationHistory = !showLocationHistory" title="Location history (TO-DO)" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-white" /></button>
 
 	</div>
 	<div v-if="showLocationHistory" class="absolute top-8 right-0 bg-black/50 w-[33.33rem] h-7 translate-x-[-126%] py-1 px-2 text-sm text-white z-10">Location history (TO-DO)</div>

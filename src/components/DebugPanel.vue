@@ -10,8 +10,8 @@ const debug		= useDebugStore()
 const ui		= useUiStore()
 const { playSound } = useAudio()
 
-onMounted(()   => playSound('pop.mp3'))
-onUnmounted(() => playSound('pop.mp3'))
+onMounted(()   => playSound('pop.mp3', 0.7))
+onUnmounted(() => playSound('pop.mp3', 0.7))
 
 const COLOR = {
 	info:	'text-green-600',

@@ -30,14 +30,14 @@ Floaters open/close silently. Teleports give no audio feedback. Both make the UI
 
 ### Feature 1 — Floater Pop Sounds
 
-**Change:** `FloaterWindow.vue` adds `playSound('pop.mp3')` on mount and unmount.
+**Change:** `FloaterWindow.vue` adds `playSound('pop.mp3', 0.7)` on mount and unmount.
 
 ```js
 import { useAudio } from '@/composables/useAudio.js'
 const { playSound } = useAudio()
 
-onMounted(() => playSound('pop.mp3'))
-onUnmounted(() => playSound('pop.mp3'))
+onMounted(() => playSound('pop.mp3', 0.7))
+onUnmounted(() => playSound('pop.mp3', 0.7))
 ```
 
 - Same sound for open and close (symmetric pop).
@@ -98,7 +98,7 @@ This const is the canonical list for tracking TP completion across sessions.
 
 | File | Change |
 |---|---|
-| `src/components/FloaterWindow.vue` | Add `playSound('pop.mp3')` on mount/unmount |
+| `src/components/FloaterWindow.vue` | Add `playSound('pop.mp3', 0.7)` on mount/unmount |
 | `src/composables/useTeleport.js` | **New** — `requestTeleport()`, `TELEPORT_SOURCES` |
 | `src/components/LocationBar.vue` | Replace emit+parent-handler with `useTeleport().requestTeleport()` |
 | Parent component that handled `C.TELEPORT` emit | Remove that handler |

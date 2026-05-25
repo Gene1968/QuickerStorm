@@ -57,7 +57,9 @@
       "Bash(xargs grep -l \"class TerrainPatch\")",
       "Bash(powershell *)",
       "Bash(dotnet tool *)",
-      "Bash(where ildasm *)"
+      "Bash(where ildasm *)",
+      "Bash(python3 -c \"print\\('python available'\\)\")",
+      "Bash(python -c \"print\\('python available'\\)\")"
     ]
   }
 }

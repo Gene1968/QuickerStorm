@@ -17,22 +17,22 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] Log in to various grids — splash page, Home, last location, or any region
 - [x] Others on Firestorm see your avatar appearance and movement normally (outbound AgentUpdate working)
 - [x] You see nearby users listed (and simplified prims for their avies)
-- [x] Same-region teleport from location bar
-- [x] Session resume on network blip (15-second circuit hold)
+- [x] See your region and coordinates in the location bar, and do same-region teleport from there
+- [x] Session resume on network blip (15-second circuit hold).  Proper logout disconnect.
+- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, etc.)
 
 **🟡 Partially working**
-- [~] Movement — your inputs send correctly; you can't yet see yourself or others move in-world. Location bar coordinates stall during walk. World is currently a placeholder scene — region geometry (terrain, prims) not yet rendered.
-- [~] Nearby chat — sending and receiving works; known issues: own message echoes back, blank messages appear when remote user is typing or finishes
+- [~] Movement — 70%; your inputs send correctly; you can move and see your coords in the location bar, but don't really see others move. World is currently a placeholder scene — region geometry (terrain, prims) not yet rendered.
+- [~] Nearby chat — 70%. Sending and receiving works; guess I should add emojis. Transcript, muted transcript, options and search, tear-off, close?
 
 **🔜 Up next**
-- [ ] Inbound movement — render your own and others' position updates in the 3D scene
+- [ ] Inbound movement — render your others' position updates in the 3D scene
 - [ ] Region geometry — even a wireframe or simplified terrain would be a big step up from the placeholder
 - [ ] Avatar appearance — currently capsule placeholders; baked texture download is the hard part
-- [ ] Floater tools (inventory, map, profile, preferences) — shells exist, wiring in progress
-- [ ] Chat: fix echo and typing-indicator bleed
+- [ ] Floater tools (inventory, map, profile, preferences) — shells exist, wiring in progress. Heavy data?
 - [ ] DM / IM chat
 - [ ] Object and avatar context menus
-- [ ] UI sounds (teleport whoosh, floater pop, etc.)
+- [ ] Import/export of assets?
 
 **⚠️ May be tricky**
 - Cross-region teleport — requires tearing down and rebuilding the UDP circuit mid-session
@@ -45,6 +45,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 
 **🔧 Enhancement backlog**
 - [ ] Inventory: find duplicates by UUID
+- [ ] Inventory true export probably not possible from here unless you have console access
 
 ---
 

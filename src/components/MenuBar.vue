@@ -194,7 +194,7 @@ const MENUS = [
 			<button
 				class="mb-label"
 				:class="{ 'mb-label--open': openMenu === menu.id }"
-				@click="playSound('tick.mp3'); toggle(menu.id)"
+				@click="playSound('tick.mp3', 0.6); toggle(menu.id)"
 				@mouseenter="openOnHover(menu.id)"
 			>{{ menu.label }}</button>
 
@@ -206,7 +206,7 @@ const MENUS = [
 
 						<!-- Submenu item (hover to reveal nested dropdown) -->
 						<div v-else-if="item.submenu" class="mb-sub-wrap">
-							<button class="mb-item mb-item--has-sub" @click="playSound('tick.mp3')">
+							<button class="mb-item mb-item--has-sub" @click="playSound('tick.mp3', 0.6)">
 								<span class="mb-item-label">{{ item.label }}</span>
 								<span class="mb-item-arrow">›</span>
 							</button>
@@ -218,7 +218,7 @@ const MENUS = [
 										class="mb-item"
 										:class="{ 'mb-item--disabled': sub.disabled }"
 										:disabled="sub.disabled"
-										@click="playSound('tick.mp3'); sub.action && sub.action()"
+										@click="playSound('tick.mp3', 0.6); sub.action && sub.action()"
 									>
 										<span class="mb-item-label">{{ sub.label }}</span>
 										<span v-if="sub.kbd" class="mb-item-kbd">{{ sub.kbd }}</span>
@@ -233,7 +233,7 @@ const MENUS = [
 							class="mb-item"
 							:class="{ 'mb-item--disabled': item.disabled }"
 							:disabled="item.disabled"
-							@click="playSound('tick.mp3'); item.action && item.action()"
+							@click="playSound('tick.mp3', 0.6); item.action && item.action()"
 						>
 							<span class="mb-item-label">{{ item.label }}</span>
 							<span v-if="item.kbd" class="mb-item-kbd">{{ item.kbd }}</span>

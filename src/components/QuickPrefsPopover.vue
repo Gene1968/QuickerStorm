@@ -30,13 +30,13 @@ function onClickOutside(e) {
 }
 
 onMounted(() => {
-	playSound('pop.mp3')
+	playSound('pop.mp3', 0.7)
 	window.addEventListener('keydown', onKey)
 	// Defer so the opening click doesn't immediately close it
 	setTimeout(() => window.addEventListener('mousedown', onClickOutside), 50)
 })
 onUnmounted(() => {
-	playSound('pop.mp3')
+	playSound('pop.mp3', 0.7)
 	window.removeEventListener('keydown', onKey)
 	window.removeEventListener('mousedown', onClickOutside)
 })

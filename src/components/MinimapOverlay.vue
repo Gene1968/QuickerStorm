@@ -8,8 +8,8 @@ const world = useWorldStore()
 const ui    = useUiStore()
 const { playSound } = useAudio()
 
-onMounted(()   => playSound('pop.mp3'))
-onUnmounted(() => playSound('pop.mp3'))
+onMounted(()   => playSound('pop.mp3', 0.7))
+onUnmounted(() => playSound('pop.mp3', 0.7))
 
 const SIZE   = 128   // viewBox coordinate space
 const REGION = 256   // SL region = 256×256 m
