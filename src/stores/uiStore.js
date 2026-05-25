@@ -20,6 +20,8 @@ export const useUiStore = defineStore('ui', () => {
 	const showSearch         = ref(false)    // search floater (stub)
 	const showSnapshot       = ref(false)    // snapshot/screenshot floater (stub)
 	const showAO             = ref(false)    // animation override floater (stub)
+	const showMovementHelp   = ref(false)    // movement help floater
+	const preferenceActiveTab = ref('appearance') // active tab id in Preferences floater
 	const showProfile        = ref(false)    // profile floater
 	const profileTargetId    = ref(null)     // null = self; UUID string = other user
 	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
@@ -42,6 +44,12 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleSearch()         { showSearch.value         = !showSearch.value }
 	function toggleSnapshot()       { showSnapshot.value       = !showSnapshot.value }
 	function toggleAO()             { showAO.value             = !showAO.value }
+	function toggleMovementHelp()   { showMovementHelp.value   = !showMovementHelp.value }
+	function openPreferencesOnTab(tabId) {
+		preferenceActiveTab.value = tabId
+		showPreferences.value     = true
+		showQuickPrefs.value      = false
+	}
 	function openProfile(id = null) { profileTargetId.value = id; showProfile.value = true }
 	function toggleProfile()        { showProfile.value = !showProfile.value }
 	// WHY: push to top of stack on focus; remove+re-add keeps order clean
@@ -65,12 +73,14 @@ export const useUiStore = defineStore('ui', () => {
 		showPreferences, showQuickPrefs,
 		showVoiceControls, showMoveControls, showCameraControls,
 		showAppearance, showSearch, showSnapshot, showAO,
+		showMovementHelp, preferenceActiveTab,
 		showProfile, profileTargetId,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleSettings, toggleDebug,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,
+		toggleMovementHelp, openPreferencesOnTab,
 		openProfile, toggleProfile,
 		floaterStack, focusFloater,
 		cameraPos, setCameraPos,

@@ -37,3 +37,31 @@ describe('uiStore profile', () => {
 		expect(store.showProfile).toBe(false)
 	})
 })
+
+describe('uiStore — movement help + preferences tab', () => {
+	it('showMovementHelp defaults to false', () => {
+		const store = useUiStore()
+		expect(store.showMovementHelp).toBe(false)
+	})
+
+	it('toggleMovementHelp flips showMovementHelp', () => {
+		const store = useUiStore()
+		store.toggleMovementHelp()
+		expect(store.showMovementHelp).toBe(true)
+		store.toggleMovementHelp()
+		expect(store.showMovementHelp).toBe(false)
+	})
+
+	it('preferenceActiveTab defaults to "appearance"', () => {
+		const store = useUiStore()
+		expect(store.preferenceActiveTab).toBe('appearance')
+	})
+
+	it('openPreferencesOnTab sets tab and shows preferences', () => {
+		const store = useUiStore()
+		store.openPreferencesOnTab('sound')
+		expect(store.showPreferences).toBe(true)
+		expect(store.showQuickPrefs).toBe(false)
+		expect(store.preferenceActiveTab).toBe('sound')
+	})
+})
