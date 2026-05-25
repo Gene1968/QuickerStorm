@@ -466,8 +466,10 @@ export function useWorldEngine(canvasRef) {
 
 		if (isNew) {
 			const isAvatar = obj.pcode === PCODE_AVATAR
+			// WHY: Capsule radius 0.33 (+10% vs old 0.30) for wider silhouette.
+			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
 			const geo = isAvatar
-				? new THREE.CapsuleGeometry(0.3, 1.2, 4, 8)
+				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
 				: new THREE.BoxGeometry(1, 1, 1)
 			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit).
 			// MeshStandardMaterial for avatars caused directional-light flicker: as the avatar
@@ -479,14 +481,33 @@ export function useWorldEngine(canvasRef) {
 			mesh = new THREE.Mesh(geo, mat)
 
 			if (isAvatar) {
-				// WHY: Forward-pointing arm so avatar rotation direction is visually obvious.
-				// Three.js -Z = forward when yaw=0. Orange box pokes out ~0.15m past capsule radius.
-				const armGeo = new THREE.BoxGeometry(0.12, 0.12, 0.35)
-				const armMat = new THREE.MeshBasicMaterial({ color: 0xff6600 })
-				const arm = new THREE.Mesh(armGeo, armMat)
-				arm.position.set(0, 0.1, -0.42)  // -Z = forward direction
-				arm.castShadow = false
-				mesh.add(arm)
+				// ── Face indicator — flat box on front of upper body ─────────────────
+				// WHY: Replaces the old forward-pointing orange "arm" box. Sits on the capsule
+				// front face (~head height) so orbiting to the front reveals which way is forward.
+				// Three.js -Z = forward. Positioned just outside capsule radius (0.33 + 0.03 = 0.36).
+				const faceMat = new THREE.MeshBasicMaterial({ color: 0xffc566 })
+				const faceGeo = new THREE.BoxGeometry(0.22, 0.20, 0.04)
+				const faceMesh = new THREE.Mesh(faceGeo, faceMat)
+				faceMesh.position.set(0, 0.40, -0.36)  // upper-body front, -Z = forward
+				mesh.add(faceMesh)
+
+				// ── Arm tubes — cylinders hanging from shoulder height ───────────────
+				// WHY: Two arms tilted slightly outward give a humanoid silhouette without a
+				// full rigged mesh. Shoulders sit near top of the cylindrical section (y ≈ 0.35).
+				// Arm length 0.55m → center at shoulder_y − 0.275 ≈ 0.08. Tilt 18° outward.
+				const armBodyMat = new THREE.MeshBasicMaterial({ color: 0x0097b5 })
+				const armGeo     = new THREE.CylinderGeometry(0.08, 0.08, 0.55, 7)
+
+				const leftArm = new THREE.Mesh(armGeo, armBodyMat)
+				leftArm.position.set(-(0.33 + 0.12), 0.08, 0)  // left shoulder
+				leftArm.rotation.z = Math.PI / 10               // ~18° outward lean
+
+				const rightArm = new THREE.Mesh(armGeo, armBodyMat)
+				rightArm.position.set( (0.33 + 0.12), 0.08, 0)  // right shoulder
+				rightArm.rotation.z = -Math.PI / 10              // ~18° outward lean
+
+				mesh.add(leftArm)
+				mesh.add(rightArm)
 
 				const div = document.createElement('div')
 				div.style.cssText = 'color:#fff;font-size:0.75rem;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:4px;white-space:nowrap;'
@@ -496,7 +517,7 @@ export function useWorldEngine(canvasRef) {
 				div.textContent = obj.name || worldStore.objects.get(obj.localId)?.name || 'Avatar'
 				mesh.userData.labelDiv = div
 				const label = new CSS2DObject(div)
-				label.position.set(0, 1.2, 0)
+				label.position.set(0, 1.1, 0)  // WHY: slightly lower than old 1.2 to match shorter capsule
 				mesh.add(label)
 			}
 
