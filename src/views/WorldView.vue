@@ -1,10 +1,12 @@
 <script setup>
-import { computed }			from 'vue'
+import { computed, watch }	from 'vue'
 import { useRouter }		from 'vue-router'
 import { use2DFallback }	from '@/composables/use2DFallback'
+import { useProximityVoice }from '@/composables/useProximityVoice.js'
 import { useUiStore }		from '@/stores/uiStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useSessionStore }	from '@/stores/sessionStore'
+import { usePresenceStore }	from '@/stores/presenceStore.js'
 import WorldCanvas			from '@/components/WorldCanvas.vue'
 import SimpleWorldView		from '@/components/SimpleWorldView.vue'
 import LocationBar			from '@/components/LocationBar.vue'
@@ -18,13 +20,17 @@ import InventoryFloater		from '@/components/InventoryFloater.vue'
 import ProfileFloater		from '@/components/ProfileFloater.vue'
 import SettingsFloater		from '@/components/SettingsFloater.vue'
 import DebugPanel			from '@/components/DebugPanel.vue'
+import AudioControlsWidget	from '@/components/AudioControlsWidget.vue'
+import MovementHelpFloater	from '@/components/MovementHelpFloater.vue'
 
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
 const { is2D: autoDetect2D } = use2DFallback()
-const ui      = useUiStore()
-const grid    = useGridStore()
-const session = useSessionStore()
-const router  = useRouter()
+const ui           = useUiStore()
+const grid         = useGridStore()
+const session      = useSessionStore()
+const presenceStore= usePresenceStore()
+const router       = useRouter()
+const voice        = useProximityVoice()
 
 function returnToLogin() {
 	session.clearSession()
@@ -34,6 +40,19 @@ function returnToLogin() {
 
 // Show 2D if auto-detected low-end OR user manually toggled to '2d' in toolbar
 const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
+
+// WHY: Auto-join voice when session connects. isMuted starts true (silent) until user unmutes.
+// Runs immediately in case the session is already connected on mount (e.g. HMR).
+watch(
+	() => session.connected,
+	async (connected) => {
+		if (!connected || voice.isEnabled.value) return
+		const myId     = String(presenceStore.myUserId || 'me')
+		const regionId = session.regionName || 'world'
+		try { await voice.enable(myId, regionId) } catch { /* mic denied — voice.micError has details */ }
+	},
+	{ immediate: true },
+)
 </script>
 
 <template>
@@ -56,10 +75,7 @@ const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
 			<div class="flex shrink-0 align-items-center justify-content-between h-8 bg-black/70 border-b border-brd">
 				<MenuBar />
 				<LocationBar />
-				<!-- Keyboard hint — right side. Temp, potentially Search will wind up here instead -->
-				<div class="hidden md:flex pe-3 text-white/70 text-xs">
-					WASD/↑↓←→ move · A/D turn · Q/E strafe · PgUp/Dn fly · drag to look
-				</div>
+				<AudioControlsWidget class="hidden md:flex" />
 			</div>
 
 			<!-- Middle: canvas area with overlays -->
@@ -75,6 +91,7 @@ const show2D = computed(() => autoDetect2D.value || ui.mode === '2d')
 				<ProfileFloater			v-if="ui.showProfile" />
 				<SettingsFloater		v-if="ui.showSettings" />
 				<DebugPanel				v-if="ui.showDebug" />
+				<MovementHelpFloater	v-if="ui.showMovementHelp" />
 			</div>
 
 			<!-- Bottom toolbar -->
