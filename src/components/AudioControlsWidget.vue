@@ -6,7 +6,7 @@
  * Sound mute button with chevron — hover opens mixer dropdown.
  */
 import { ref } from 'vue'
-import { Mic, MicOff, Volume2, VolumeX, ChevronDown, Settings } from '@lucide/vue'
+import { VideoIcon, MonitorIcon, MusicIcon, TvIcon, Mic, MicOff, Volume2, VolumeX, ChevronDown, Settings } from '@lucide/vue'
 import {
 	useAudio,
 	isAllAudioMuted,
@@ -65,6 +65,15 @@ const stubChannels = [
 		@mouseenter="onEnter"
 		@mouseleave="onLeave"
 	>
+	<div class="flex items-center gap-2 me-5">
+		<div class="mx-3 text-xs text-white/60">X$ 0</div>
+		<div class="mx-3 text-xs text-white/60">23:59PDT</div>
+		<VideoIcon title="Camera presets" class="w-4 h-4 text-white/20" />
+		<MonitorIcon title="Graphics presets" class="w-4 h-4 text-white/20" />
+		<MusicIcon title="Start/stop parcel audio stream" class="w-4 h-4 text-white/20" />
+		<TvIcon title="Start/stop all media (music, video, Web pages)" class="w-4 h-4 text-white/20" />
+	</div>
+
 		<!-- Mic mute button -->
 		<button
 			class="h-7 w-7 flex items-center justify-center rounded hover:bg-white/15 transition-colors"

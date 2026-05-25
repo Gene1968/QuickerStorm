@@ -11,7 +11,7 @@ const ui = useUiStore()
 		id="inventory"
 		title="📦 Inventory"
 		:wrap-style="{ width: '15vw', height: '40vh', resize: 'both' }"
-		:default-pos="{ left: '0.125%', bottom: '4%' }"
+		:default-pos="{ left: '0.125%', bottom: '2.65rem' }"
 		@close="ui.toggleInventory()"
 	>
 		<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1">

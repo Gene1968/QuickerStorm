@@ -60,7 +60,7 @@ export const useWorldStore = defineStore('world', () => {
 	const terrainHeights = ref(new Float32Array(66049))
 
 	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per
-	// TERRAIN_PATCH message). Update only the 17×17 vertices affected by this patch.
+	// TERRAIN_PATCH message). Stores raw 16×16 patch data; seam-fill handled in useWorldEngine.
 	function setTerrainPatch(px, py, heights, patchSize = 16) {
 		const stride = 257  // vertices per row (255 segments + 1)
 		for (let j = 0; j < patchSize; j++) {
