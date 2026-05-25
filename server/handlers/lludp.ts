@@ -13,6 +13,7 @@ import {
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
+import { decodeLayerData } from '../lib/terrain-codec.js'
 
 // Message type codes — verified against packet log + LibOpenMetaverse message.xml
 // WHY: ObjectUpdate (12), ImprovedTerseObjectUpdate (15), StartPingCheck (1), CompletePingCheck (2)
@@ -291,8 +292,18 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `med:${MEDIUM_LAYER_DATA}`) {
-		// TODO: replace with real decode in Task 4
-		slog.info(session.ws, `[terrain] LayerData received — dataOffset=${dataOffset} buf.length=${buf.length}`)
+		const result = decodeLayerData(buf, dataOffset)
+		if (!result || result.patches.length === 0) return
+		for (const patch of result.patches) {
+			session.ws.send(JSON.stringify({
+				type: S.TERRAIN_PATCH,
+				payload: {
+					x: patch.x,
+					y: patch.y,
+					heights: Array.from(patch.heights),  // Float32Array → plain array for JSON
+				},
+			}))
+		}
 		return
 	}
 
