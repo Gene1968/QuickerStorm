@@ -21,7 +21,6 @@ import DogPopup from '@/components/ui/DogPopup.vue'
 import DmFlyout from '@/components/ui/DmFlyout.vue'
 import BreakRoomTV from '@/components/ui/BreakRoomTV.vue'
 import ConferenceHud from '@/components/office/ConferenceHud.vue'
-import SoundConsentModal from '@/components/ui/SoundConsentModal.vue'
 import AnnouncementBanner from '@/components/ui/AnnouncementBanner.vue'
 import CallInviteBanner from '@/components/ui/CallInviteBanner.vue'
 import KnockDialog from '@/components/ui/KnockDialog.vue'
@@ -109,7 +108,6 @@ const officeCanvasRef = ref(null)
 const showAvatarMaker = ref(false)
 const showMetrics = ref(false)
 // showSettings replaced by ui.showPreferences (PreferencesFloater in App.vue)
-const showSoundConsent = ref(true)
 const showAnnouncementModal = ref(false)
 const magazineUrl = ref('')
 const showMagazine = ref(false)
@@ -871,9 +869,6 @@ const roomLabel = computed(() => {
 				<button class="ava-toast-dismiss" @click.stop="dismissEmailToast">&times;</button>
 			</div>
 		</Transition>
-
-		<!-- Sound consent modal (shown once on first load) -->
-		<SoundConsentModal v-if="showSoundConsent" @done="showSoundConsent = false" />
 
 		<!-- Avatar maker modal — root is <Teleport>, which <Transition> can't animate. -->
 		<AvatarMaker v-if="showAvatarMaker" @close="showAvatarMaker = false" @done="onAvatarDone" />
