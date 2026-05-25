@@ -19,7 +19,7 @@ const openIMs = ref([])
 
 const tabs = computed(() => [
 	{ id: 'contacts', label: 'Contacts', icon: '👥' },
-	{ id: 'nearby',   label: 'Nearby',   icon: '📡' },
+	{ id: 'nearby',   label: 'Nearby Chat',   icon: '📡' },
 	...openIMs.value.map(im => ({ id: im.agentId, label: im.agentName, icon: '💬' })),
 ])
 
@@ -50,7 +50,7 @@ async function submitChat() {
 	<FloaterWindow
 		id="conversations"
 		:title="floaterTitle"
-		:wrap-style="{ width: '25vw', height: '33vh', resize: 'both' }"
+		:wrap-style="{ width: '29vw', height: '36vh', resize: 'both' }"
 		:default-pos="{ left: '0.125%', top: '7%' }"
 		@close="ui.toggleChat()"
 	>
@@ -58,7 +58,7 @@ async function submitChat() {
 		<div class="flex flex-1 min-h-0">
 
 			<!-- Vertical tab strip -->
-			<nav class="flex flex-col shrink-0 w-[4.5rem] border-r border-brd overflow-y-auto">
+			<nav class="flex flex-col shrink-0 w-[7rem] border-r border-brd overflow-y-auto">
 				<button
 					v-for="tab in tabs"
 					:key="tab.id"

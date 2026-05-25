@@ -72,7 +72,7 @@ watch(
 		<!-- 2D fallback -->
 		<template v-if="show2D">
 			<!-- Top row: menu bar + location bar -->
-			<div class="flex shrink-0 h-8 bg-black/70 border-b border-brd">
+			<div class="relative flex shrink-0 h-8 bg-black/70 border-b border-brd">
 				<MenuBar />
 				<LocationBar />
 			</div>

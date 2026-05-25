@@ -12,16 +12,18 @@ const movementRows = [
 	{ keys: 'E',           desc: 'Jump (hold to fly)' },
 	{ keys: 'C',           desc: 'Crouch' },
 	{ keys: 'F',           desc: 'Toggle fly/drop' },
-	{ keys: 'Shift+A',     desc: 'Strafe left' },
-	{ keys: 'Shift+D',     desc: 'Strafe right' },
+	{ keys: 'Shift+A',     desc: 'Strafe walk left' },
+	{ keys: 'Shift+D',     desc: 'Strafe walk right' },
 	{ keys: 'PgUp',        desc: 'Fly up' },
 	{ keys: 'PgDn',        desc: 'Fly down' },
-	{ keys: 'Drag',        desc: 'Look around' },
+	{ keys: 'Scrollwheel / Alt+W/↑ / Alt+S/↓',        desc: 'Zoom camera view' },
+	{ keys: 'Drag / Alt+A/← / Alt+D/→',        desc: 'Look around (cam orbit)' },
 ]
 
 const shortcutRows = [
 	{ keys: 'Ctrl+M',      desc: 'Toggle map' },
 	{ keys: 'Ctrl+P',      desc: 'Preferences' },
+	{ keys: 'Ctrl+R',      desc: 'Toggle Run / Walk (TO-DO)' },
 	{ keys: 'Ctrl+Shift+I',      desc: 'Inventory (TO-DO)' },
 	{ keys: 'Ctrl+Shift+4',      desc: 'Debug Panel' },
 	{ keys: 'Ctrl+Alt+R',      desc: 'Rebake avatar textures' },
@@ -33,7 +35,7 @@ const shortcutRows = [
 	<FloaterWindow
 		id="movement-help"
 		title="Movement &amp; Shortcuts"
-		:wrap-style="{ width: '25rem' }"
+		:wrap-style="{ width: '30rem' }"
 		:default-pos="{ left: '28%', top: '5%' }"
 		@close="ui.showMovementHelp = false"
 	>

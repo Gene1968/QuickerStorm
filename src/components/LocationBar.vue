@@ -5,7 +5,8 @@ import { useWorldStore } from '@/stores/worldStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useTeleport } from '@/composables/useTeleport.js'
-import { MicVocalIcon, BirdIcon, SwordIcon, CuboidIcon, ScrollTextIcon, StarIcon } from '@lucide/vue'
+import { useAudio }			from '@/composables/useAudio.js'
+import { MicVocalIcon, BirdIcon, SwordIcon, CuboidIcon, ScrollTextIcon, StarIcon, ChevronDownIcon } from '@lucide/vue'
 
 const session = useSessionStore()
 const world	 = useWorldStore()
@@ -13,12 +14,16 @@ const grid		= useGridStore()
 const { connected } = useRealtimeSocket()
 const { requestTeleport } = useTeleport()
 
+const { playSound } = useAudio()
+const showLocationHistory = ref(false)
+
+
 // ── Maturity rating ───────────────────────────────────────────────────────
 const MATURITY = {
-	'PG': { label: 'General',	color: 'text-green-400' },
-	'G':	{ label: 'General',	color: 'text-green-400' },
-	'M':	{ label: 'Moderate', color: 'text-yellow-400' },
-	'A':	{ label: 'Adult',		color: 'text-red-400' },
+	'PG': { label: 'P.Guidance 👪', color: 'text-green-400'  },
+	'G':  { label: 'General ✅',    color: 'text-green-400'  },
+	'M':  { label: 'Moderate Ⓜ️',   color: 'text-yellow-400' },
+	'A':  { label: 'Adult 🔞',      color: 'text-red-400'    },
 }
 const maturity = computed(() => MATURITY[session.agentAccess] ?? null)
 
@@ -112,9 +117,9 @@ function onEditKeydown(e) {
 </script>
 
 <template>
-	<div class="flex items-center gap-2 bg-white/10 rounded-1 px-3 text-xs text-white select-none min-w-0">
+	<div class="flex items-center gap-2 bg-white/10 rounded-1 ps-3 text-xs text-white select-none min-w-0">
 
-		<span @click="showLocationInfo" title="See more info about the current location" class="me-2 text-base">ℹ️</span>
+		<span @click="showLocationInfo" title="See more info about the current location (TO-DO)" class="me-2 text-base">ℹ️</span>
 
 		<!-- Connection status dot -->
 		<span :class="connected ? 'text-green-400' : 'text-red-400'" class="fs-5 pb-1 shrink-0">
@@ -151,14 +156,16 @@ function onEditKeydown(e) {
 		</template>
 
 		<span class="mx-3"></span>
-		<MicVocalIcon v-if="false" title="Voice" class="w-5 h-5 mx-1 text-gray-400" />
-		<BirdIcon v-if="false" title="Flying" class="w-5 h-5 mx-1 text-gray-400" />
-		<SwordIcon v-if="false" title="Pushing" class="w-5 h-5 mx-1 text-gray-400" />
-		<CuboidIcon title="Building" class="w-5 h-5 mx-1 text-gray-400" />
-		<ScrollTextIcon title="Scripts" class="w-5 h-5 mx-1 text-gray-400" />
-		<StarIcon class="w-5 h-5 mx-3 text-gray-400" />
+		<MicVocalIcon v-if="false" title="Voice (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
+		<BirdIcon v-if="false" title="Flying (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
+		<SwordIcon v-if="false" title="Pushing (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
+		<CuboidIcon title="Building (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
+		<ScrollTextIcon title="Scripts (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
+		<button title="Add to landmarks (TO-DO)" class="me-3"><StarIcon class="w-5 h-5 text-gray-400 hover:text-yellow-500" /></button>
+		<button @click="playSound('tick.mp3'); showLocationHistory = !showLocationHistory" title="Location history (TO-DO)" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-white" /></button>
 
 	</div>
+	<div v-if="showLocationHistory" class="absolute top-8 right-0 bg-black/50 w-[33.33rem] h-7 translate-x-[-126%] py-1 px-2 text-sm text-white z-10">Location history (TO-DO)</div>
 </template>
 
 <style scoped>

@@ -137,7 +137,7 @@ async function submit() {
 				<datalist id="qs-recent-regions">
 					<option v-for="r in recentRegions" :key="r" :value="r" />
 				</datalist>
-				<p class="text-t2 text-xs">Region name as it appears on the grid's map.</p>
+				<p class="text-orange-500 text-xs">Region name as it appears on the grid's map.</p>
 			</div>
 		</div>
 

@@ -66,12 +66,12 @@ const stubChannels = [
 		@mouseleave="onLeave"
 	>
 	<div class="flex items-center gap-2 me-5">
-		<div class="mx-3 text-xs text-white/60">X$ 0</div>
-		<div class="mx-3 text-xs text-white/60">23:59PDT</div>
-		<VideoIcon title="Camera presets" class="w-4 h-4 text-white/20" />
-		<MonitorIcon title="Graphics presets" class="w-4 h-4 text-white/20" />
-		<MusicIcon title="Start/stop parcel audio stream" class="w-4 h-4 text-white/20" />
-		<TvIcon title="Start/stop all media (music, video, Web pages)" class="w-4 h-4 text-white/20" />
+		<div title="Click to refresh your X$ balance (TO-DO)" class="mx-3 text-xs text-white/60">X$ 0</div>
+		<div title="Monday, May 25, 2026 (TO-DO)" class="mx-3 text-xs text-white/60">23:59PDT</div>
+		<VideoIcon title="Camera presets (TO-DO)" class="w-4 h-4 text-white/20" />
+		<MonitorIcon title="Graphics presets (TO-DO)" class="w-4 h-4 text-white/20" />
+		<MusicIcon title="Start/stop parcel audio stream (TO-DO)" class="w-4 h-4 text-white/20" />
+		<TvIcon title="Start/stop all media (music, video, Web pages) (TO-DO)" class="w-4 h-4 text-white/20" />
 	</div>
 
 		<!-- Mic mute button -->

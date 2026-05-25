@@ -42,7 +42,13 @@
       "Bash(node -e *)",
       "Bash(Select-Object -First 120)",
       "Bash(node_modules/.bin/tsc --noEmit)",
-      "Bash(grep -v \"^\\\\s*//\")"
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(node_modules/.bin/tsc *)",
+      "PowerShell($env:PATH; where.exe bun 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\bun.exe\" run build 2>&1 | Select-Object -First 30)",
+      "Bash(xargs grep -l \"LayerType\\\\|LayerData\")",
+      "Bash(xargs grep -l \"enum LayerType\\\\|LayerType.*=\")",
+      "Bash(xargs grep -l \"TerrainPatch\\\\|LayerType\")"
     ]
   }
 }
