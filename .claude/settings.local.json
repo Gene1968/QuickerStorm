@@ -33,7 +33,13 @@
       "PowerShell(cd \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\"; $env:ESLINT_USE_FLAT_CONFIG=\"false\"; npx eslint \"src/components/ProfileFloater.vue\" --fix; Write-Host \"Exit code: $LASTEXITCODE\")",
       "PowerShell(Get-Command *)",
       "Bash(Get-ChildItem *)",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\" -Directory | Where-Object { $_.Name -match '^\\(__\\)?tests?$' } | Select-Object Name)",
+      "Bash(ls C:Usersgene1DownloadsPagesgitQuickerStormserverlib 2 *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(New-Item *)",
+      "Bash(Remove-Item *)",
+      "Bash(node -e *)"
     ]
   }
 }

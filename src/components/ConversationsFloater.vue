@@ -108,7 +108,7 @@ async function submitChat() {
 						<input
 							v-model="chatInput"
 							type="text"
-							placeholder="Say something… (Enter)"
+							placeholder="To nearby chat"
 							class="flex-1 bg-white/10 border border-white/20 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 						/>

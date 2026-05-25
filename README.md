@@ -7,26 +7,32 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 
 ## Current state · May 2026
 
-**✨ Already better than some other clients:**
+**✨ Parts already better than some other clients:**
 - Resumes your grid session after a brief network drop (no re-login)
-- Clean avatar logout — actually works
+- Clean avatar logout — actually works. Takes so 2-way comm but not sure why others never had it.
 
 ---
 
 **🟢 Working now**
 - [x] Log in to various grids — splash page, Home, last location, or any region
-- [x] Others see your avatar normally (your viewer sends full avatar data)
-- [x] Move around: walk, strafe, fly, jump, crouch (WSAD + standard keys)
+- [x] Others on Firestorm see your avatar appearance and movement normally (outbound AgentUpdate working)
+- [x] You see nearby users listed (and simplified prims for their avies)
 - [x] Same-region teleport from location bar
-- [x] Nearby / local chat
 - [x] Session resume on network blip (15-second circuit hold)
 
+**🟡 Partially working**
+- [~] Movement — your inputs send correctly; you can't yet see yourself or others move in-world. Location bar coordinates stall during walk. World is currently a placeholder scene — region geometry (terrain, prims) not yet rendered.
+- [~] Nearby chat — sending and receiving works; known issues: own message echoes back, blank messages appear when remote user is typing or finishes
+
 **🔜 Up next**
-- [ ] Avatar appearance — currently a capsule placeholder; texture download is the hard part
+- [ ] Inbound movement — render your own and others' position updates in the 3D scene
+- [ ] Region geometry — even a wireframe or simplified terrain would be a big step up from the placeholder
+- [ ] Avatar appearance — currently capsule placeholders; baked texture download is the hard part
 - [ ] Floater tools (inventory, map, profile, preferences) — shells exist, wiring in progress
-- [ ] Standard keyboard shortcuts
+- [ ] Chat: fix echo and typing-indicator bleed
 - [ ] DM / IM chat
-- [ ] More on the minimap (but already useful)
+- [ ] Object and avatar context menus
+- [ ] UI sounds (teleport whoosh, floater pop, etc.)
 
 **⚠️ May be tricky**
 - Cross-region teleport — requires tearing down and rebuilding the UDP circuit mid-session
