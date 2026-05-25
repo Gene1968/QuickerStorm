@@ -12,12 +12,14 @@ import { useUiStore }			from '@/stores/uiStore'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
+import { useAudio }			from '@/composables/useAudio.js'
 import { C }					from '@shared/protocol.js'
 
 const ui			= useUiStore()
 const session	= useSessionStore()
 const grid		= useGridStore()
 const router	= useRouter()
+const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
 
 // ── Active menu ───────────────────────────────────────────────────────────
@@ -25,6 +27,9 @@ const openMenu = ref(null)	 // id of open top-level menu, or null
 
 function toggle(id) {
 	openMenu.value = openMenu.value === id ? null : id
+}
+function openOnHover(id) {
+	if (openMenu.value !== null) openMenu.value = id
 }
 function close() {
 	openMenu.value = null
@@ -56,11 +61,13 @@ onUnmounted(() => {
 // ── Actions ───────────────────────────────────────────────────────────────
 function act(fn) {
 	close()
+	playSound('tick.mp3')
 	fn()
 }
 
 function logout() {
 	close()
+	playSound('tick.mp3')
 	// WHY: Send C.LOGOUT before navigating — tells Bun to send LogoutRequest UDP to sim
 	// and deleteSession immediately (cancels the 15s reconnect hold so a fresh login works).
 	emit(C.LOGOUT, {})
@@ -190,6 +197,7 @@ const MENUS = [
 				class="mb-label"
 				:class="{ 'mb-label--open': openMenu === menu.id }"
 				@click="toggle(menu.id)"
+				@mouseenter="openOnHover(menu.id)"
 			>{{ menu.label }}</button>
 
 			<!-- Dropdown — anchors below this wrapper -->
