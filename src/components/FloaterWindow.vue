@@ -16,6 +16,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore.js'
 import { X as XIcon } from '@lucide/vue'
+import { useAudio } from '@/composables/useAudio.js'
+
+const { playSound } = useAudio()
 
 const props = defineProps({
 	id:         { type: String,  required: true },
@@ -42,7 +45,10 @@ const zIndex = computed(() => {
 function focus() { ui.focusFloater(props.id) }
 
 // Auto-focus on open
-onMounted(() => focus())
+onMounted(() => {
+	focus()
+	playSound('pop.mp3')
+})
 
 // ── Drag ─────────────────────────────────────────────────────────────────────
 const el         = ref(null)
@@ -79,6 +85,7 @@ function onMouseup() {
 }
 
 onUnmounted(() => {
+	playSound('pop.mp3')
 	window.removeEventListener('mousemove', onMousemove)
 	window.removeEventListener('mouseup',   onMouseup)
 })
