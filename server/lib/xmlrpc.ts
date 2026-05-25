@@ -18,6 +18,8 @@ export interface LoginResult {
 	seed_capability?: string
 	region_x?: number
 	region_y?: number
+	region_size_x?: number   // var-region width in metres (e.g. 512); absent on standard 256m grids
+	region_size_y?: number   // var-region height in metres
 	region_name?: string
 	start_location?: string   // 'last', 'home', or 'uri:...' echoed back by grid
 	look_at?: string          // "[r0,r0,r0]" viewer orientation hint
@@ -129,6 +131,8 @@ export function parseLoginResponse(xml: string): LoginResult {
 		seed_capability: members['seed_capability'],
 		region_x:        parseIntSafe(members['region_x']),
 		region_y:        parseIntSafe(members['region_y']),
+		region_size_x:   parseIntSafe(members['region_size_x']),
+		region_size_y:   parseIntSafe(members['region_size_y']),
 		region_name:     members['region_name'],
 		start_location:  members['start_location'],
 		look_at:         members['look_at'],

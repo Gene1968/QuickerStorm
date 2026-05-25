@@ -45,30 +45,40 @@ export const useWorldStore = defineStore('world', () => {
 	// WHY: Sim-authoritative avatar position in SL coords (X=east, Y=north, Z=height).
 	// Updated from ObjectUpdate and TerseUpdate for own avatar in useWorldEngine.
 	// LocationBar reads this instead of camera position so scroll/explore don't affect display.
+	// WHY no 256 clamp: var regions up to 512×512 are valid; useWorldEngine applies its own
+	// region-size-aware clamps for dead-reckoning. Coord display handles any positive value.
 	const avatarPos = ref({ x: 128, y: 128, z: 25 })
 	function setAvatarPos(slX, slY, slZ) {
 		avatarPos.value = {
-			x: Math.max(0, Math.min(256, slX)),
-			y: Math.max(0, Math.min(256, slY)),
+			x: Math.max(0, slX),
+			y: Math.max(0, slY),
 			z: Math.max(0, slZ),
 		}
 	}
 
+	// WHY: spawnPos = raw unclamped AgentMovementComplete position, stored at app-root level
+	// so it survives the race between AGENT_SPAWN_POS arriving and WorldCanvas mounting.
+	// App.vue registers the handler (always-live); useWorldEngine consumes on mount.
+	const spawnPos = ref(null)  // null | [slX, slY, slZ]
+	function setSpawnPos(x, y, z) { spawnPos.value = [x, y, z] }
+
 	// WHY: Terrain heights survive remount (HMR, navigation away/back).
-	// 257×257 = 66,049 vertices: 256×256 metre region, 1 vertex per metre, +1 for overlap.
-	// useWorldEngine rebuilds geometry from this on mount without needing a new LoginLayerData burst.
-	const terrainHeights = ref(new Float32Array(66049))
+	// 513×513 = 263,169 floats — supports var regions up to 512×512m as well as standard 256×256.
+	// Heights stored with stride=513; useWorldEngine reads only regionSizeX+1 × regionSizeY+1
+	// vertices when rebuilding geometry from this array.
+	const TERRAIN_STRIDE = 513
+	const terrainHeights = ref(new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE))
 
 	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per
 	// TERRAIN_PATCH message). Stores raw 16×16 patch data; seam-fill handled in useWorldEngine.
+	// stride=TERRAIN_STRIDE supports up to 512m wide region.
 	function setTerrainPatch(px, py, heights, patchSize = 16) {
-		const stride = 257  // vertices per row (255 segments + 1)
 		for (let j = 0; j < patchSize; j++) {
 			for (let i = 0; i < patchSize; i++) {
 				const slX = px * patchSize + i  // SL X coord (column)
 				const slY = py * patchSize + j  // SL Y coord (row)
-				if (slX > 256 || slY > 256) continue
-				terrainHeights.value[slY * stride + slX] = heights[j * patchSize + i]
+				if (slX >= 512 || slY >= 512) continue  // max var-region bound
+				terrainHeights.value[slY * TERRAIN_STRIDE + slX] = heights[j * patchSize + i]
 			}
 		}
 	}
@@ -79,6 +89,7 @@ export const useWorldStore = defineStore('world', () => {
 		objects, avatars, prims,
 		upsertObject, updateObjectPos, removeObject, clearAll,
 		avatarPos, setAvatarPos,
-		terrainHeights, setTerrainPatch, clearTerrain,
+		spawnPos, setSpawnPos,
+		terrainHeights, TERRAIN_STRIDE, setTerrainPatch, clearTerrain,
 	}
 })

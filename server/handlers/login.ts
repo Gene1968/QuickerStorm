@@ -95,8 +95,13 @@ export async function handleLogin(
 	// WHY: regionHandle is U64 = (regionY << 32) | regionX. Both values are global
 	// meter coordinates from XML-RPC login. Updated from AgentMovementComplete once circuit
 	// is live. Pre-seeded here so TeleportLocationRequest can be sent immediately after login.
-	const regionX = loginResult.region_x ?? 0
-	const regionY = loginResult.region_y ?? 0
+	const regionX     = loginResult.region_x ?? 0
+	const regionY     = loginResult.region_y ?? 0
+	// WHY: region_size_x/y present on OpenSim var-region grids (e.g. 512 for 512×512m).
+	// Absent on standard 256×256 grids — default to 256. Forwarded to browser so terrain
+	// geometry, dead-reckoning clamps, and coordinate display all scale to region dimensions.
+	const regionSizeX = loginResult.region_size_x ?? 256
+	const regionSizeY = loginResult.region_size_y ?? 256
 
 	// Cache the full LOGIN_OK payload for session resume (reconnect within hold window)
 	const cachedLoginOk = {
@@ -108,6 +113,8 @@ export async function handleLogin(
 		regionName:    loginResult.region_name ?? '',
 		regionX,
 		regionY,
+		regionSizeX,
+		regionSizeY,
 		startLocation: loginResult.start_location ?? start,
 		agentAccess:   loginResult.agent_access ?? '',
 	}
@@ -263,6 +270,8 @@ export async function handleLogin(
 				regionName:    loginResult.region_name ?? '',
 				regionX:       loginResult.region_x ?? 0,
 				regionY:       loginResult.region_y ?? 0,
+				regionSizeX,
+				regionSizeY,
 				startLocation: loginResult.start_location ?? start,
 				agentAccess:   loginResult.agent_access ?? '',
 			},

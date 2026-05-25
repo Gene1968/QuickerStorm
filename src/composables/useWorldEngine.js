@@ -332,14 +332,20 @@ export function useWorldEngine(canvasRef) {
 	// appears without waiting for another LayerData burst from the sim.
 	function rebuildTerrainFromStore() {
 		if (!terrainMesh) return
-		const pos    = terrainMesh.geometry.attributes.position
-		const col    = terrainMesh.geometry.attributes.color
-		const stride = 257
+		const pos     = terrainMesh.geometry.attributes.position
+		const col     = terrainMesh.geometry.attributes.color
+		const rx      = sessionStore.regionSizeX
+		const ry      = sessionStore.regionSizeY
+		// WHY: hStride=TERRAIN_STRIDE (513) matches worldStore.terrainHeights layout.
+		// vStride=rx+1 matches the terrain geometry vertex layout (rx segments → rx+1 vertices/row).
+		const hStride = worldStore.TERRAIN_STRIDE  // 513 — heights array row width
+		const vStride = rx + 1                     // geometry vertex row width
 		let anyNonZero = false
-		for (let slY = 0; slY <= 256; slY++) {
-			for (let slX = 0; slX <= 256; slX++) {
-				const vi = slY * stride + slX
-				const h  = worldStore.terrainHeights[vi]
+		for (let slY = 0; slY <= ry; slY++) {
+			for (let slX = 0; slX <= rx; slX++) {
+				const hIdx = slY * hStride + slX
+				const vi   = slY * vStride + slX
+				const h    = worldStore.terrainHeights[hIdx]
 				if (h !== 0) anyNonZero = true
 				pos.setY(vi, h)
 				applyHeightColor(col, vi, h)
@@ -358,7 +364,9 @@ export function useWorldEngine(canvasRef) {
 		scene.background = new THREE.Color(0x87ceeb)
 		scene.fog = new THREE.FogExp2(0x87ceeb, 0.002)
 
-		camera = new THREE.PerspectiveCamera(70, 1, 0.1, 512)
+		// WHY far=1024: diagonal of 512×512 var-region is ~724m; 512 clips objects at far corners.
+		// 1024 covers any standard or var-region without aggressive fog truncation.
+		camera = new THREE.PerspectiveCamera(70, 1, 0.1, 1024)
 		// WHY: Start at SL z=25 (Three.js y=25) — matches heartbeat camCenter default so
 		// the sim receives a sensible above-ground camera while waiting for first TerseUpdate.
 		// TerseUpdate snap corrects to real avatar position once sim responds.
@@ -379,12 +387,15 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;'
 		canvasRef.value.parentElement.appendChild(labelRenderer.domElement)
 
-		// WHY: 256 segments = 257 vertices per axis — matches Float32Array(66049) = 257×257 in worldStore.
-		// rotateX(-π/2) lays the plane flat. translate(128,0,-128) centres the region at Three.js
-		// origin matching slToThree(128,128,0). Vertex Y positions updated per TERRAIN_PATCH message.
-		const terrainGeo = new THREE.PlaneGeometry(256, 256, 256, 256)
+		// WHY: Region size from sessionStore (256 standard, 512 var-region). PlaneGeometry segments
+		// = regionSize so there's one vertex per metre in each axis — matches terrainHeights stride.
+		// rotateX(-π/2) lays the plane flat. translate(rx/2, 0, -ry/2) centres the region at
+		// Three.js origin matching slToThree(rx/2, ry/2, 0). Vertex Y updated per TERRAIN_PATCH.
+		const rx = sessionStore.regionSizeX
+		const ry = sessionStore.regionSizeY
+		const terrainGeo = new THREE.PlaneGeometry(rx, ry, rx, ry)
 		terrainGeo.rotateX(-Math.PI / 2)
-		terrainGeo.translate(128, 0, -128)
+		terrainGeo.translate(rx / 2, 0, -ry / 2)
 
 		// Add vertex color attribute — updated per patch in onTerrainPatch
 		const vtxColors = new Float32Array(terrainGeo.attributes.position.count * 3)
@@ -402,9 +413,10 @@ export function useWorldEngine(canvasRef) {
 		)
 		scene.add(terrainMesh)
 
-		// Water plane at SL z=20 (Three.js y=20)
+		// WHY: Water plane sized to region + 4m margin on each side to avoid visible seam.
+		// Centred at region midpoint (rx/2, ry/2 in SL) = Three.js (rx/2, 20, -ry/2).
 		waterMesh = new THREE.Mesh(
-			new THREE.PlaneGeometry(260, 260),
+			new THREE.PlaneGeometry(rx + 8, ry + 8),
 			new THREE.MeshBasicMaterial({
 				color: 0x2266aa,
 				transparent: true,
@@ -413,7 +425,7 @@ export function useWorldEngine(canvasRef) {
 			}),
 		)
 		waterMesh.rotation.x = -Math.PI / 2
-		waterMesh.position.set(128, 20, -128)
+		waterMesh.position.set(rx / 2, 20, -ry / 2)
 		scene.add(waterMesh)
 
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
@@ -551,25 +563,33 @@ export function useWorldEngine(canvasRef) {
 			// drive the third-person follow camera via avatarSLPos.
 			// WHY: bytesToUuid() returns lowercase; login XML may return uppercase agentId.
 			// Case-insensitive compare prevents ownAvatarLocalId from staying null.
-			if (obj.pcode === PCODE_AVATAR &&
-				obj.fullId.toLowerCase() === sessionStore.agentId.toLowerCase()) {
-				ownAvatarLocalId = obj.localId
-				// WHY: Recolor own avatar to green so it's visually distinct from other cyan avatars.
-				// Material is set after mesh creation so this works whether mesh was just created
-				// or already existed (e.g., duplicate ObjectUpdate).
-				const ownMesh = meshMap.get(obj.localId)
-				if (ownMesh) ownMesh.material.color.setHex(0x00e676)
-				const p = obj.pos
-				debugStore.push('info', `[3D] Own avatar localId=${obj.localId} pos=${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
-				if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
-					avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates avatarSLPos in-place
-					worldStore.setAvatarPos(p[0], p[1], p[2])
-					// WHY: Edge positions (< 10 or > 246 in X/Y) indicate a region boundary.
-					// Avatars stuck near edges cannot move — likely a stale sim state from
-					// a previous session that ended without proper logout.
-					if (p[0] < 10 || p[0] > 246 || p[1] < 10 || p[1] > 246) {
-						debugStore.push('warn', `[3D] Avatar near region edge (${p[0].toFixed(0)},${p[1].toFixed(0)},${p[2].toFixed(0)}) — movement may be blocked. Re-login with "home" or teleport to 128,128.`)
+			if (obj.pcode === PCODE_AVATAR) {
+				// WHY: log fullId comparison even on mismatch so we can detect UUID format bugs
+				const objId = obj.fullId?.toLowerCase() ?? ''
+				const myId  = sessionStore.agentId?.toLowerCase() ?? ''
+				if (myId && objId !== myId) {
+					// Other avatar — not our own; no action needed
+				} else if (objId === myId && myId) {
+					ownAvatarLocalId = obj.localId
+					// WHY: Recolor own avatar to green so it's visually distinct from other cyan avatars.
+					// Material is set after mesh creation so this works whether mesh was just created
+					// or already existed (e.g., duplicate ObjectUpdate).
+					const ownMesh = meshMap.get(obj.localId)
+					if (ownMesh) ownMesh.material.color.setHex(0x00e676)
+					const p = obj.pos
+					debugStore.push('info', `[3D] Own avatar id=${obj.localId} fullId=${objId.slice(0,8)} pos=${p?.[0]?.toFixed(1) ?? '?'},${p?.[1]?.toFixed(1) ?? '?'},${p?.[2]?.toFixed(1) ?? '?'}`)
+					if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+						avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates avatarSLPos in-place
+						worldStore.setAvatarPos(p[0], p[1], p[2])
+						worldStore.setSpawnPos(p[0], p[1], p[2])
+						const rx = sessionStore.regionSizeX, ry = sessionStore.regionSizeY
+						if (p[0] < 10 || p[0] > rx - 10 || p[1] < 10 || p[1] > ry - 10) {
+							debugStore.push('warn', `[3D] Avatar near region edge (${p[0].toFixed(0)},${p[1].toFixed(0)},${p[2].toFixed(0)}) — movement may be blocked. Teleport to region centre.`)
+						}
 					}
+				} else {
+					// myId is empty — agentId not yet set (shouldn't happen, but log it)
+					debugStore.push('warn', `[3D] pcode=47 received but sessionStore.agentId empty — can't identify own avatar`)
 				}
 			}
 		}
@@ -642,9 +662,11 @@ export function useWorldEngine(canvasRef) {
 		if (x === 0 && y === 0 && z === 0) return
 		avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates in-place
 		worldStore.setAvatarPos(x, y, z)
+		worldStore.setSpawnPos(x, y, z)  // also update persistent store for future remounts
 		cameraSnapRequested = true  // snap camera to new position immediately
-		debugStore.push('info', `[3D] AgentMovementComplete spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)}`)
-		if (x < 10 || x > 246 || y < 10 || y > 246) {
+		debugStore.push('info', `[3D] AgentMovementComplete spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} (regionSize=${sessionStore.regionSizeX}×${sessionStore.regionSizeY})`)
+		const rx = sessionStore.regionSizeX, ry = sessionStore.regionSizeY
+		if (x < 10 || x > rx - 10 || y < 10 || y > ry - 10) {
 			debugStore.push('warn', `[3D] Spawn near region edge — movement may be blocked`)
 		}
 	}
@@ -673,9 +695,12 @@ export function useWorldEngine(canvasRef) {
 		const { layerType, patchSize = 16, patches } = payload
 		if (layerType === 'WATER') return  // water plane height fixed at 20 for Phase 1
 
-		const pos    = terrainMesh.geometry.attributes.position
-		const col    = terrainMesh.geometry.attributes.color
-		const stride = 257  // vertices per row
+		const pos     = terrainMesh.geometry.attributes.position
+		const col     = terrainMesh.geometry.attributes.color
+		const rx      = sessionStore.regionSizeX
+		const ry      = sessionStore.regionSizeY
+		// WHY: vStride=rx+1 matches terrain geometry vertex layout (rx segments → rx+1 verts/row).
+		const vStride = rx + 1
 
 		for (const { x: px, y: py, heights } of patches) {
 			// Store in worldStore for remount persistence
@@ -687,8 +712,8 @@ export function useWorldEngine(canvasRef) {
 				for (let i = 0; i <= patchSize; i++) {
 					const slX = px * patchSize + i
 					const slY = py * patchSize + j
-					if (slX > 255 || slY > 255) continue
-					const vi = slY * stride + slX
+					if (slX > rx || slY > ry) continue
+					const vi = slY * vStride + slX
 					const hIdx = Math.min(j, patchSize - 1) * patchSize + Math.min(i, patchSize - 1)
 					const h = heights[hIdx]
 					pos.setY(vi, h)
@@ -771,8 +796,10 @@ export function useWorldEngine(canvasRef) {
 				if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
 				if (cf & CTRL_UP_POS)   avatarSLPos[2] += CAM_FLY_SPEED * dt
 				if (cf & CTRL_UP_NEG)   avatarSLPos[2] -= CAM_FLY_SPEED * dt
-				avatarSLPos[0] = Math.max(1, Math.min(255, avatarSLPos[0]))
-				avatarSLPos[1] = Math.max(1, Math.min(255, avatarSLPos[1]))
+				// WHY: clamp to [1, regionSize-1] — prevents walking off the sim edge.
+				// Uses sessionStore.regionSizeX/Y so var regions (e.g. 512×512) work correctly.
+				avatarSLPos[0] = Math.max(1, Math.min(sessionStore.regionSizeX - 1, avatarSLPos[0]))
+				avatarSLPos[1] = Math.max(1, Math.min(sessionStore.regionSizeY - 1, avatarSLPos[1]))
 				avatarSLPos[2] = Math.max(0, avatarSLPos[2])
 				// Move own avatar mesh to predicted position
 				const ownMesh = meshMap.get(ownAvatarLocalId)
@@ -795,15 +822,21 @@ export function useWorldEngine(canvasRef) {
 		debugStore.push('info', '[3D] World engine mounted — 3D mode active')
 
 		// WHY: avatarSLPos is composable-local (let variable) — resets to null on any remount
-		// (HMR, navigation away/back). worldStore.avatarPos is Pinia and survives remount.
-		// Restore here so dead reckoning and camera work immediately without waiting for
-		// the next AGENT_SPAWN_POS or ObjectUpdate. Even restoring the default (128,128,25)
-		// is better than null: explore-mode camera has no avatar anchor, so A/D rotation
-		// produces no visible reference when the scene has objects at real positions.
-		const wp = worldStore.avatarPos
-		avatarSLPos = [wp.x, wp.y, wp.z]
+		// (HMR, navigation away/back). Restore from worldStore.spawnPos (preferred — unclamped
+		// sim-authoritative spawn position set by App.vue's always-live AGENT_SPAWN_POS handler)
+		// or worldStore.avatarPos (last known position from prior session). This eliminates the
+		// race condition where AGENT_SPAWN_POS arrives before WorldCanvas onMounted.
+		const sp = worldStore.spawnPos
+		if (sp && (sp[0] !== 0 || sp[1] !== 0 || sp[2] !== 0)) {
+			avatarSLPos = [...sp]
+			worldStore.setAvatarPos(sp[0], sp[1], sp[2])
+			debugStore.push('info', `[3D] avatarSLPos init from spawnPos: ${sp[0].toFixed(1)},${sp[1].toFixed(1)},${sp[2].toFixed(1)}`)
+		} else {
+			const wp = worldStore.avatarPos
+			avatarSLPos = [wp.x, wp.y, wp.z]
+			debugStore.push('info', `[3D] avatarSLPos init from worldStore: ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}`)
+		}
 		cameraSnapRequested = true
-		debugStore.push('info', `[3D] avatarSLPos init from worldStore: ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}`)
 		// WHY: Also try to restore ownAvatarLocalId from worldStore.objects so TerseUpdate
 		// attribution works across remounts.
 		const agId = sessionStore.agentId

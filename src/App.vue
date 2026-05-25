@@ -6,15 +6,17 @@ import { useDebugStore } from '@/stores/debugStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useWorldStore } from '@/stores/worldStore'
 import { S } from '@shared/protocol.js'
 import PreferencesFloater from '@/components/PreferencesFloater.vue'
 
 const { on, off } = useRealtimeSocket()
-const debug   = useDebugStore()
-const session = useSessionStore()
-const grid    = useGridStore()
-const ui      = useUiStore()
-const router  = useRouter()
+const debug      = useDebugStore()
+const session    = useSessionStore()
+const grid       = useGridStore()
+const ui         = useUiStore()
+const worldStore = useWorldStore()
+const router     = useRouter()
 
 // WHY: Register handlers at app root so messages are captured regardless of which
 // view is currently mounted.
@@ -39,6 +41,19 @@ function onDisconnected(d) {
 	grid.setDisconnected(reason)
 }
 
+function onAgentSpawnPosRoot(d) {
+	// WHY: Register AGENT_SPAWN_POS at app root (always mounted, registered before any route
+	// component). This eliminates the race condition where AGENT_SPAWN_POS arrives between
+	// LOGIN_OK (which triggers router.push('/world')) and WorldCanvas onMounted completing.
+	// Stores the raw unclamped spawn position in worldStore so useWorldEngine can apply it
+	// on mount — even if the message arrived before WorldCanvas was mounted.
+	const [x, y, z] = d?.pos ?? []
+	if (x != null && y != null && z != null && (x !== 0 || y !== 0 || z !== 0)) {
+		worldStore.setSpawnPos(x, y, z)
+		debug.push('info', `[App] AGENT_SPAWN_POS stored: ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)}`)
+	}
+}
+
 // WHY: Ctrl+P opens Preferences globally — works pre-login and post-login.
 // BottomToolbar also handles it post-login but this covers all routes.
 function onKeyDown(e) {
@@ -53,12 +68,14 @@ onMounted(() => {
 	on(S.DEBUG, onDebug)
 	on(S.REGION_INFO, onRegionInfo)
 	on(S.DISCONNECTED, onDisconnected)
+	on(S.AGENT_SPAWN_POS, onAgentSpawnPosRoot)
 	window.addEventListener('keydown', onKeyDown)
 })
 onUnmounted(() => {
 	off(S.DEBUG, onDebug)
 	off(S.REGION_INFO, onRegionInfo)
 	off(S.DISCONNECTED, onDisconnected)
+	off(S.AGENT_SPAWN_POS, onAgentSpawnPosRoot)
 	window.removeEventListener('keydown', onKeyDown)
 })
 </script>
