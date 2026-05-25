@@ -7,10 +7,15 @@
  * OK:     commits any pending changes and closes.
  * Cancel: reverts live-preview changes (theme) and closes.
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme.js'
 import { useAvatarStore } from '@/stores/avatarStore.js'
 import { useUiStore } from '@/stores/uiStore.js'
+import {
+	isAllAudioMuted, toggleAllAudioMute,
+	masterVolume, interfaceVolume, interfaceMuted,
+} from '@/composables/useAudio.js'
+import { useProximityVoice } from '@/composables/useProximityVoice.js'
 import { Search as SearchIcon } from '@lucide/vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 
@@ -19,8 +24,44 @@ const theme       = useTheme()
 const avatarStore = useAvatarStore()
 
 // ── State ─────────────────────────────────────────────────────────────────
-const search       = ref('')
-const activeTab    = ref('appearance')
+const search    = ref('')
+const activeTab = computed({
+	get: () => ui.preferenceActiveTab,
+	set: (v) => { ui.preferenceActiveTab = v },
+})
+
+// ── Sound & Media sub-tabs ────────────────────────────────────────────────
+const activeSoundTab = ref('sounds')
+
+const soundSubTabs = [
+	{ id: 'sounds', label: 'Sounds' },
+	{ id: 'music',  label: 'Music'  },
+	{ id: 'media',  label: 'Media'  },
+	{ id: 'voice',  label: 'Voice'  },
+]
+
+const soundStubRows = [
+	{ label: 'Ambient', hint: 'Environment sounds — wind, water.' },
+	{ label: 'Sounds',  hint: 'In-world object sounds.' },
+	{ label: 'Music',   hint: 'Parcel music stream.' },
+	{ label: 'Media',   hint: 'In-world video / stream.' },
+	{ label: 'Voice',   hint: 'Voice chat output.' },
+]
+
+const voice      = useProximityVoice()
+const micDevices = computed(() => voice.audioDevices.value.filter(d => d.kind === 'audioinput'))
+const spkDevices = computed(() => voice.audioDevices.value.filter(d => d.kind === 'audiooutput'))
+const canSetSink = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
+
+function toSlider(vol)         { return Math.round(vol.value * 100) }
+function fromSlider(e, volRef) { volRef.value = e.target.valueAsNumber / 100 }
+
+// Load device list when Sound tab opened
+watch(activeTab, async (tab) => {
+	if (tab === 'sound' && voice.loadDevices) {
+		try { await voice.loadDevices() } catch {}
+	}
+})
 
 // Track theme at open so Cancel can revert
 const originalDark = ref(theme.isDark.value)
@@ -31,7 +72,7 @@ const ALL_TABS = [
 	{ id: 'appearance',    icon: '🎨',  label: 'Appearance',    disabled: false, soon: false },
 	{ id: 'chat',          icon: '💬',  label: 'Chat',          disabled: false, soon: true  },
 	{ id: 'graphics',      icon: '🖥️',  label: 'Graphics',      disabled: false, soon: true  },
-	{ id: 'sound',         icon: '🔊',  label: 'Sound & Media', disabled: false, soon: true  },
+	{ id: 'sound',         icon: '🔊',  label: 'Sound & Media', disabled: false, soon: false },
 	{ id: 'move',          icon: '🎮',  label: 'Move & View',   disabled: true,  soon: false },
 	{ id: 'notifications', icon: '🔔',  label: 'Notifications', disabled: true,  soon: false },
 	{ id: 'privacy',       icon: '🔒',  label: 'Privacy',       disabled: true,  soon: false },
@@ -221,19 +262,154 @@ onUnmounted(() => {
 						</div>
 					</template>
 
-					<!-- ── SOUND & MEDIA (soon) ── -->
+					<!-- ── SOUND & MEDIA ── -->
 					<template v-else-if="activeTab === 'sound'">
 						<h2 class="pf-section-heading">Sound &amp; Media</h2>
-						<div class="pf-soon-block">
-							<span class="pf-soon-icon">🔊</span>
-							<p>Sound &amp; Media settings coming in a future update.</p>
-							<ul class="pf-soon-list">
-								<li>Master volume</li>
-								<li>Voice volume</li>
-								<li>UI sound effects</li>
-								<li>Parcel music / stream</li>
-							</ul>
+
+						<!-- Horizontal sub-tabs -->
+						<div class="flex gap-1 mb-4 border-b border-brd pb-2">
+							<button
+								v-for="st in soundSubTabs" :key="st.id"
+								class="px-3 py-1 text-xs rounded-t font-semibold transition-colors"
+								:class="activeSoundTab === st.id
+									? 'bg-card2 text-accent border border-brd border-b-card2 -mb-px'
+									: 'text-tm hover:text-t2'"
+								@click="activeSoundTab = st.id"
+							>{{ st.label }}</button>
 						</div>
+
+						<!-- Sounds sub-tab -->
+						<template v-if="activeSoundTab === 'sounds'">
+
+							<!-- Volume mixer -->
+							<div class="flex flex-col gap-3 mb-6">
+								<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm">Volume</h3>
+
+								<!-- Master (wired) -->
+								<div class="pf-row">
+									<div class="pf-row-info">
+										<span class="pf-row-label">Master</span>
+										<span class="pf-row-hint">Overall volume for all sounds.</span>
+									</div>
+									<div class="flex items-center gap-2">
+										<input type="range" min="0" max="100"
+											:value="toSlider(masterVolume)"
+											@input="fromSlider($event, masterVolume)"
+											class="w-28 accent-accent" />
+										<button
+											class="text-xs w-6 h-6 flex items-center justify-center rounded hover:bg-white/10"
+											:class="isAllAudioMuted ? 'text-red-400' : 'text-t2'"
+											@click="toggleAllAudioMute"
+											:title="isAllAudioMuted ? 'Unmute' : 'Mute'"
+										>{{ isAllAudioMuted ? '🔇' : '🔊' }}</button>
+									</div>
+								</div>
+
+								<!-- Interface (wired) -->
+								<div class="pf-row">
+									<div class="pf-row-info">
+										<span class="pf-row-label">Interface</span>
+										<span class="pf-row-hint">UI sounds — pops, notifications, teleport.</span>
+									</div>
+									<div class="flex items-center gap-2">
+										<input type="range" min="0" max="100"
+											:value="toSlider(interfaceVolume)"
+											@input="fromSlider($event, interfaceVolume)"
+											class="w-28 accent-accent" />
+										<button
+											class="text-xs w-6 h-6 flex items-center justify-center rounded hover:bg-white/10"
+											:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
+											@click="interfaceMuted.value = !interfaceMuted.value"
+											:title="interfaceMuted ? 'Unmute' : 'Mute'"
+										>{{ interfaceMuted ? '🔇' : '🔊' }}</button>
+									</div>
+								</div>
+
+								<!-- Stub rows -->
+								<div v-for="row in soundStubRows" :key="row.label" class="pf-row opacity-50">
+									<div class="pf-row-info">
+										<span class="pf-row-label">{{ row.label }}</span>
+										<span class="pf-row-hint">{{ row.hint }}</span>
+									</div>
+									<div class="flex items-center gap-2">
+										<input type="range" min="0" max="100" value="75" disabled class="w-28" />
+										<span class="pf-chip-soon">soon</span>
+									</div>
+								</div>
+							</div>
+
+							<!-- Audio devices -->
+							<div class="flex flex-col gap-3">
+								<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm">Devices</h3>
+
+								<p v-if="!micDevices.length && !spkDevices.length" class="text-xs text-tm">
+									Open voice to enumerate devices.
+								</p>
+
+								<div v-if="micDevices.length" class="pf-row">
+									<div class="pf-row-info">
+										<span class="pf-row-label">Microphone</span>
+										<span class="pf-row-hint">Input device for voice chat.</span>
+									</div>
+									<select
+										class="bg-card2 border border-brd2 rounded text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-none focus:border-accent"
+										:value="voice.selectedMicId.value"
+										@change="voice.setMicDevice?.($event.target.value)"
+									>
+										<option v-for="d in micDevices" :key="d.deviceId" :value="d.deviceId">
+											{{ d.label || `Microphone ${d.deviceId.slice(0,6)}` }}
+										</option>
+									</select>
+								</div>
+
+								<div v-if="spkDevices.length" class="pf-row">
+									<div class="pf-row-info">
+										<span class="pf-row-label">Speaker</span>
+										<span class="pf-row-hint">
+											Output device for voice.
+											<span v-if="!canSetSink" class="text-yellow-500/70">Use system audio settings.</span>
+										</span>
+									</div>
+									<select
+										class="bg-card2 border border-brd2 rounded text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-none focus:border-accent"
+										:value="voice.selectedSpkId.value"
+										@change="voice.setSpeakerDevice?.($event.target.value)"
+										:disabled="!canSetSink"
+										:class="{ 'opacity-40 cursor-not-allowed': !canSetSink }"
+									>
+										<option v-for="d in spkDevices" :key="d.deviceId" :value="d.deviceId">
+											{{ d.label || `Speaker ${d.deviceId.slice(0,6)}` }}
+										</option>
+									</select>
+								</div>
+							</div>
+
+						</template>
+
+						<!-- Music stub -->
+						<template v-else-if="activeSoundTab === 'music'">
+							<div class="pf-soon-block">
+								<span class="pf-soon-icon">🎵</span>
+								<p>Parcel music streaming coming in a future update.</p>
+							</div>
+						</template>
+
+						<!-- Media stub -->
+						<template v-else-if="activeSoundTab === 'media'">
+							<div class="pf-soon-block">
+								<span class="pf-soon-icon">📺</span>
+								<p>In-world media (video streams) coming in a future update.</p>
+							</div>
+						</template>
+
+						<!-- Voice stub -->
+						<template v-else-if="activeSoundTab === 'voice'">
+							<div class="pf-soon-block">
+								<span class="pf-soon-icon">🎙️</span>
+								<p>Voice device settings are in the <strong>Sounds</strong> tab above.</p>
+							</div>
+						</template>
+
 					</template>
 
 					<!-- ── OPENSIM (soon) ── -->
