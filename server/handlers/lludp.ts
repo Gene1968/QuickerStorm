@@ -294,16 +294,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (type === `med:${MEDIUM_LAYER_DATA}`) {
 		const result = decodeLayerData(buf, dataOffset)
 		if (!result || result.patches.length === 0) return
-		for (const patch of result.patches) {
-			session.ws.send(JSON.stringify({
-				type: S.TERRAIN_PATCH,
-				payload: {
-					x: patch.x,
-					y: patch.y,
-					heights: Array.from(patch.heights),  // Float32Array → plain array for JSON
-				},
-			}))
-		}
+		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length}`)
+		session.ws.send(JSON.stringify({
+			t: S.TERRAIN_PATCH,
+			d: {
+				layerType: result.type,
+				patchSize: result.patchSize,
+				patches: result.patches.map(p => ({
+					x: p.x,
+					y: p.y,
+					heights: Array.from(p.heights),
+				})),
+			},
+		}))
 		return
 	}
 
