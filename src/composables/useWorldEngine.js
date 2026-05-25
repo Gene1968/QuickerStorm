@@ -327,11 +327,11 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 		applyHeightColor(terrainMesh.geometry, worldStore.terrainHeights, 20)
-		if (anyNonZero) {
-			pos.needsUpdate = true
-			col.needsUpdate = true
-			terrainMesh.geometry.computeVertexNormals()
-		}
+		// WHY: always mark dirty — even an all-zero heights write (clearTerrain + rebuild)
+		// must flush stale GPU data. computeVertexNormals only needed when heights change.
+		pos.needsUpdate = true
+		col.needsUpdate = true
+		if (anyNonZero) terrainMesh.geometry.computeVertexNormals()
 	}
 
 	// ── Scene setup ──────────────────────────────────────────────────────────
