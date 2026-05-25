@@ -31,7 +31,9 @@
       "Bash(npx vitest *)",
       "PowerShell(cd \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\"; $env:ESLINT_USE_FLAT_CONFIG=\"false\"; npx eslint \"src/components/ProfileFloater.vue\" --fix 2>&1)",
       "PowerShell(cd \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\"; $env:ESLINT_USE_FLAT_CONFIG=\"false\"; npx eslint \"src/components/ProfileFloater.vue\" --fix; Write-Host \"Exit code: $LASTEXITCODE\")",
-      "PowerShell(Get-Command *)"
+      "PowerShell(Get-Command *)",
+      "Bash(Get-ChildItem *)",
+      "Bash(Select-Object Name)"
     ]
   }
 }
