@@ -4,10 +4,9 @@
  *
  * Mic mute button (disabled when voice not enabled).
  * Sound mute button with chevron — hover opens mixer dropdown.
- * Help button → toggleMovementHelp().
  */
 import { ref } from 'vue'
-import { Mic, MicOff, Volume2, VolumeX, ChevronDown, Settings, HelpCircle } from '@lucide/vue'
+import { Mic, MicOff, Volume2, VolumeX, ChevronDown, Settings } from '@lucide/vue'
 import {
 	useAudio,
 	isAllAudioMuted,
@@ -89,15 +88,6 @@ const stubChannels = [
 			<VolumeX v-if="isAllAudioMuted" :size="15" />
 			<Volume2 v-else                  :size="15" />
 			<ChevronDown :size="10" class="opacity-60" />
-		</button>
-
-		<!-- Help button -->
-		<button
-			class="h-7 w-7 flex items-center justify-center rounded hover:bg-white/15 transition-colors text-white/60 hover:text-white/90"
-			title="Movement &amp; shortcuts"
-			@click="ui.toggleMovementHelp()"
-		>
-			<HelpCircle :size="14" />
 		</button>
 
 		<!-- Hover dropdown mixer -->

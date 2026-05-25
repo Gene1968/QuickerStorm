@@ -160,6 +160,8 @@ const MENUS = [
 	{
 		id: 'help', label: 'Help',
 		items: [
+			{ label: 'Movement & Shortcuts', action: () => ui.toggleMovementHelp() },
+			{ sep: true },
 			{ label: 'quickerSTORM Wiki',	disabled: true },
 			{ label: 'Report Issue',			 disabled: true },
 			{ sep: true },
