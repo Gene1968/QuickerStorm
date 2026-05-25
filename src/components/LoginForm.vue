@@ -12,20 +12,35 @@ const destType		= ref('last')// 'last' | 'home' | 'region'
 const destRegion	= ref('')	// region name when destType === 'region'
 const error			= ref('')
 
-// ── Remember Me ──────────────────────────────────────────────────────────
-const AUTOLOGIN_KEY = 'qs_autologin'
+// ── Remember Me — per-grid credential storage ─────────────────────────────
+// WHY: Each grid is a separate service with separate accounts. Storing under
+// one flat key would clobber credentials when the user switches grids.
+const AUTOLOGIN_PREFIX = 'qs_autologin_'
+function autologinKey() { return `${AUTOLOGIN_PREFIX}${gridStore.selectedNick}` }
 
-// WHY: Pre-fill from stored creds so after auto-reconnect failure user can
-// retry with one click instead of re-typing credentials.
-onMounted(() => {
+// WHY: Pre-fill from stored creds for the active grid. Called on mount and
+// whenever the user switches grids so the form always shows the right creds.
+function loadCredsForGrid() {
 	try {
-		const stored = JSON.parse(localStorage.getItem(AUTOLOGIN_KEY))
-		if (stored?.username) username.value = stored.username
-		if (stored?.password) password.value = stored.password
-	} catch {}
-})
+		const stored = JSON.parse(localStorage.getItem(autologinKey()))
+		username.value   = stored?.username ?? ''
+		password.value   = stored?.password ?? ''
+		// WHY: If this grid has stored creds, keep rememberMe on so a one-click
+		// retry works after auto-reconnect failure.
+		rememberMe.value = !!(stored?.username && stored?.password)
+	} catch {
+		username.value = ''
+		password.value = ''
+	}
+}
+
+onMounted(loadCredsForGrid)
+// WHY: Reload credentials immediately when user picks a different grid from
+// the dropdown — not just on next submit — so the form is always in sync.
+watch(() => gridStore.selectedNick, loadCredsForGrid)
+
 // WHY: Default true — auto-reconnect on reload is expected behaviour for a viewer.
-// User can uncheck to opt out. Persists their preference via localStorage presence.
+// User can uncheck to opt out. loadCredsForGrid overrides this based on stored state.
 const rememberMe = ref(true)
 
 // ── Recent region destinations ────────────────────────────────────────────
@@ -60,15 +75,16 @@ async function submit() {
 	// WHY: Save creds BEFORE login() resolves — login() calls router.push() then resolves,
 	// and the router navigation can unmount this component before the post-await line runs.
 	// Saving first is safe: on failure we clear them so no stale creds persist.
+	const key = autologinKey()
 	if (rememberMe.value) {
-		localStorage.setItem(AUTOLOGIN_KEY, JSON.stringify({ username: username.value, password: password.value }))
+		localStorage.setItem(key, JSON.stringify({ username: username.value, password: password.value }))
 	} else {
-		localStorage.removeItem(AUTOLOGIN_KEY)
+		localStorage.removeItem(key)
 	}
 	try {
 		await login(username.value, password.value, destination.value)
 	} catch (e) {
-		localStorage.removeItem(AUTOLOGIN_KEY)  // don't persist bad creds
+		localStorage.removeItem(key)  // don't persist bad creds
 		error.value = e.message
 	}
 }
@@ -131,6 +147,8 @@ async function submit() {
 			Remember me
 		</label>
 
+		<p v-if="error" class="text-red-300 text-sm break-words">{{ error }}</p>
+
 		<button
 			type="submit"
 			class="px-4 py-2 rounded bg-accent2 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
@@ -139,6 +157,5 @@ async function submit() {
 			{{ gridStore.loginState === 'loading' ? 'Connecting…' : 'Log In' }}
 		</button>
 
-		<p v-if="error" class="text-red-400 text-sm break-words">{{ error }}</p>
 	</form>
 </template>

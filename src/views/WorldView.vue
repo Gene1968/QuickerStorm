@@ -33,6 +33,10 @@ const router       = useRouter()
 const voice        = useProximityVoice()
 
 function returnToLogin() {
+	// WHY: Remove the session timestamp so LandingView does NOT auto-reconnect.
+	// Explicit logout means the user (or an external viewer) intentionally ended
+	// the session — auto-reconnect would fight with it (e.g. Firestorm "new login detected").
+	try { sessionStorage.removeItem('qs_last_login_ms') } catch {}
 	session.clearSession()
 	grid.setLoginState('idle')
 	router.push('/landing')

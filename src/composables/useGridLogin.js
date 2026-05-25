@@ -62,6 +62,10 @@ export function useGridLogin() {
 				clearTimeout(timeout)
 				off(S.LOGIN_OK,   onOk)
 				off(S.LOGIN_FAIL, onFail)
+				// WHY: Stamp session time so LandingView can guard auto-reconnect to a
+				// short window (brief page reload). Without this, stored creds trigger
+				// reconnect the next day, conflicting with external viewers.
+				try { sessionStorage.setItem('qs_last_login_ms', Date.now().toString()) } catch {}
 				sessionStore.setSession(d)
 				gridStore.setLoginState('connected')
 				router.push('/world')

@@ -14,26 +14,38 @@ const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 
 // ── Auto-reconnect on reload ──────────────────────────────────────────────
 // WHY: Session state (Pinia) is in-memory only — clears on page reload.
-// If "Remember me" was used, credentials are in localStorage. Check synchronously
-// before first render so the spinner shows immediately (not 1 frame later).
+// If "Remember me" was used, credentials are in localStorage (per-grid key).
+// Check synchronously before first render so the spinner shows immediately.
 // On success, useGridLogin sets session + navigates to /world automatically.
-// On failure, clear stored creds and show normal login form.
-const AUTOLOGIN_KEY = 'qs_autologin'
+// On failure, leave creds for one-click retry — grid may need time to release old circuit.
+const AUTOLOGIN_PREFIX  = 'qs_autologin_'
+const SESSION_TS_KEY    = 'qs_last_login_ms'
+// WHY: 90s window — generous enough for a slow page reload, strict enough that
+// "coming back the next day" (sessionStorage gone, or >90s) never triggers reconnect.
+const RECONNECT_WINDOW_MS = 90_000
+
+const autologinKey = `${AUTOLOGIN_PREFIX}${gridStore.selectedNick}`
 
 let _stored = null
-try { _stored = JSON.parse(localStorage.getItem(AUTOLOGIN_KEY)) } catch {}
+try { _stored = JSON.parse(localStorage.getItem(autologinKey)) } catch {}
 const hasStoredCreds = !!(_stored?.username && _stored?.password)
 
-const reconnecting   = ref(hasStoredCreds)   // true → shows spinner on first render
+// WHY: Guard auto-reconnect to the brief-interruption window only.
+// sessionStorage.qs_last_login_ms is set by useGridLogin on LOGIN_OK and cleared
+// by "Return to Login" (WorldView.returnToLogin). This prevents:
+//   • Reconnect when user returns the next day — sessionStorage won't have the key
+//   • Reconnect after explicit logout or external viewer (FS) takeover — key cleared
+const lastLoginMs     = parseInt(sessionStorage.getItem(SESSION_TS_KEY) || '0', 10)
+const isRecentSession = hasStoredCreds && (Date.now() - lastLoginMs < RECONNECT_WINDOW_MS)
+
+const reconnecting   = ref(isRecentSession)  // true → shows spinner on first render
 const reconnectError = ref('')               // '' = none; string = error message to show
 
 onMounted(async () => {
-	if (!hasStoredCreds) return
+	if (!isRecentSession) return
 	try {
 		await login(_stored.username, _stored.password, 'last')
 	} catch (e) {
-		// WHY: Don't clear creds — grid may need time to release old circuit.
-		// Pre-filled form lets user retry with one click without re-typing.
 		reconnecting.value   = false
 		reconnectError.value = e?.message || 'Auto-reconnect failed — please log in again.'
 	}
@@ -101,7 +113,7 @@ onMounted(async () => {
 					<div class="flex flex-col gap-3 w-full">
 						<p
 							v-if="reconnectError"
-							class="text-yellow-400 text-xs"
+							class="text-yellow-400 text-sm"
 						>{{ reconnectError }}</p>
 						<div>
 							<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
