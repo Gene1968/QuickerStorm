@@ -61,13 +61,11 @@ onUnmounted(() => {
 // ── Actions ───────────────────────────────────────────────────────────────
 function act(fn) {
 	close()
-	playSound('tick.mp3')
 	fn()
 }
 
 function logout() {
 	close()
-	playSound('tick.mp3')
 	// WHY: Send C.LOGOUT before navigating — tells Bun to send LogoutRequest UDP to sim
 	// and deleteSession immediately (cancels the 15s reconnect hold so a fresh login works).
 	emit(C.LOGOUT, {})
@@ -196,7 +194,7 @@ const MENUS = [
 			<button
 				class="mb-label"
 				:class="{ 'mb-label--open': openMenu === menu.id }"
-				@click="toggle(menu.id)"
+				@click="playSound('tick.mp3'); toggle(menu.id)"
 				@mouseenter="openOnHover(menu.id)"
 			>{{ menu.label }}</button>
 
@@ -208,7 +206,7 @@ const MENUS = [
 
 						<!-- Submenu item (hover to reveal nested dropdown) -->
 						<div v-else-if="item.submenu" class="mb-sub-wrap">
-							<button class="mb-item mb-item--has-sub">
+							<button class="mb-item mb-item--has-sub" @click="playSound('tick.mp3')">
 								<span class="mb-item-label">{{ item.label }}</span>
 								<span class="mb-item-arrow">›</span>
 							</button>
@@ -220,7 +218,7 @@ const MENUS = [
 										class="mb-item"
 										:class="{ 'mb-item--disabled': sub.disabled }"
 										:disabled="sub.disabled"
-										@click="sub.action && sub.action()"
+										@click="playSound('tick.mp3'); sub.action && sub.action()"
 									>
 										<span class="mb-item-label">{{ sub.label }}</span>
 										<span v-if="sub.kbd" class="mb-item-kbd">{{ sub.kbd }}</span>
@@ -235,7 +233,7 @@ const MENUS = [
 							class="mb-item"
 							:class="{ 'mb-item--disabled': item.disabled }"
 							:disabled="item.disabled"
-							@click="item.action && item.action()"
+							@click="playSound('tick.mp3'); item.action && item.action()"
 						>
 							<span class="mb-item-label">{{ item.label }}</span>
 							<span v-if="item.kbd" class="mb-item-kbd">{{ item.kbd }}</span>

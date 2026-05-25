@@ -51,13 +51,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-	<div class="flex items-center justify-evenly gap-1 px-2 h-10 bg-black/80 border-t border-brd shrink-0 select-none">
+	<div class="flex flex-row items-center justify-evenly gap-1 px-1 h-10 bg-black/80 border-t border-brd shrink-0 select-none">
 
 		<!-- Tool buttons -->
 		<button
 			v-for="t in tools"
 			:key="t.id"
-			class="flex grow flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
 			:class="t.disabled
 				? 'opacity-40 cursor-not-allowed text-white/50'
 				: t.active()
@@ -73,7 +73,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 		<!-- 2D / 3D toggle -->
 		<button
-			class="flex grow flex-col items-center justify-center h-8 rounded text-2xs transition-colors text-white/70 hover:bg-white/10 hover:text-white"
+			class="flex flex-1 flex-col items-center justify-center h-8 rounded text-2xs transition-colors text-white/70 hover:bg-white/10 hover:text-white"
 			:title="ui.mode === '3d' ? 'Switch to 2D view' : 'Switch to 3D view'"
 			@click="ui.toggleMode()"
 		>
@@ -83,7 +83,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 		<!-- Debug panel toggle (Ctrl+Shift+4) -->
 		<button
-			class="flex grow flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
 			:class="ui.showDebug ? 'bg-white/5 text-accent3' : 'text-white/40 hover:bg-white/10 hover:text-white'"
 			title="Debug Panel (Ctrl+Shift+4)"
 			@click="ui.toggleDebug()"
@@ -104,7 +104,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<!-- Quick Prefs (last btn, right edge) -->
 		<button
 			data-quick-prefs-trigger
-			class="flex grow flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
 			:class="ui.showQuickPrefs ? 'bg-white/5 text-accent3' : 'text-white/70 hover:bg-white/10 hover:text-white'"
 			title="Quick Preferences"
 			@click="ui.toggleQuickPrefs()"
