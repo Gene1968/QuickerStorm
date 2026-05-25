@@ -19,8 +19,9 @@ export default mergeConfig(
 		},
 		test: {
 			environment: 'jsdom',
-			// WHY: server/__tests__ use bun:test — run with `bun test` instead
-			include: ['src/**/*.{test,spec}.{js,ts}'],
+			// WHY: server/__tests__ use bun:test — run with `bun test` instead.
+			// tests/server/ uses vitest (no bun runtime dependency).
+			include: ['src/**/*.{test,spec}.{js,ts}', 'tests/server/**/*.{test,spec}.ts'],
 			exclude: [...configDefaults.exclude, 'e2e/*', 'server/**'],
 			root: fileURLToPath(new URL('./', import.meta.url)),
 		},
