@@ -27,7 +27,7 @@ const tools = [
 	{ id: 'voice',      icon: '🔊', label: 'Voice',     title: 'Voice Controls',     action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'walk',       icon: '🚶', label: 'Walk',      title: 'Movement Controls',  action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'camera',     icon: '🎥', label: 'Camera',    title: 'Camera Controls',    action: () => {},                    active: () => false,                disabled: true },
-	{ id: 'appearance', icon: '🪞', label: 'Appearance',    title: 'Avatar Appearance',  action: () => {},                    active: () => false,                disabled: true },
+	{ id: 'appearance', icon: '🪞', label: 'Appearance',    title: 'Avatar Appearance',  action: () => ui.toggleAppearance(), active: () => ui.showAppearance },
 	{ id: 'search',     icon: '🔍', label: 'Search',    title: 'Search',             action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'map',        icon: '🗺', label: 'Map',       title: 'Map (Ctrl+M)',       action: () => ui.toggleMap(),        active: () => ui.showMap },
 	{ id: 'minimap',    icon: '◈',  label: 'Mini-Map',  title: 'Mini-Map',           action: () => ui.toggleMinimap(),    active: () => ui.showMinimap },
