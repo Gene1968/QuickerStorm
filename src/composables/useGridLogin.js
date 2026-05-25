@@ -14,6 +14,42 @@ export function useGridLogin() {
 	const sessionStore = useSessionStore()
 	const router       = useRouter()
 
+	// WHY: Ask server whether a live circuit exists for this user WITHOUT triggering login.
+	// Returns true if the server still holds the circuit (within 15s hold window after WS drop).
+	// LandingView calls this before auto-reconnect so it never forces a fresh XML-RPC login
+	// when the circuit has already expired (e.g. user was away >15s, or Firestorm took over).
+	async function checkCircuit(grid, username) {
+		connect()  // idempotent
+
+		if (!connected.value) {
+			try {
+				await new Promise((resolve, reject) => {
+					const timeout = setTimeout(() => { off('_open', onOpen); reject() }, WS_CONNECT_MS)
+					function onOpen() { clearTimeout(timeout); off('_open', onOpen); resolve() }
+					on('_open', onOpen)
+				})
+			} catch {
+				return false  // can't reach server → treat as not alive
+			}
+		}
+
+		emit(C.CHECK_CIRCUIT, { grid, username })
+
+		return new Promise((resolve) => {
+			const timeout = setTimeout(() => {
+				off(S.CIRCUIT_STATUS, onStatus)
+				resolve(false)  // no response in 5s → treat as not alive
+			}, 5_000)
+
+			function onStatus(d) {
+				clearTimeout(timeout)
+				off(S.CIRCUIT_STATUS, onStatus)
+				resolve(!!d?.alive)
+			}
+			on(S.CIRCUIT_STATUS, onStatus)
+		})
+	}
+
 	async function login(username, password, destination = 'last') {
 		gridStore.setLoginState('loading')
 
@@ -62,10 +98,6 @@ export function useGridLogin() {
 				clearTimeout(timeout)
 				off(S.LOGIN_OK,   onOk)
 				off(S.LOGIN_FAIL, onFail)
-				// WHY: Stamp session time so LandingView can guard auto-reconnect to a
-				// short window (brief page reload). Without this, stored creds trigger
-				// reconnect the next day, conflicting with external viewers.
-				try { sessionStorage.setItem('qs_last_login_ms', Date.now().toString()) } catch {}
 				sessionStore.setSession(d)
 				gridStore.setLoginState('connected')
 				router.push('/world')
@@ -83,5 +115,5 @@ export function useGridLogin() {
 		})
 	}
 
-	return { login }
+	return { login, checkCircuit }
 }

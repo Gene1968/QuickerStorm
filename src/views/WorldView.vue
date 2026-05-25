@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch }	from 'vue'
+import { computed, onMounted, watch }	from 'vue'
 import { useRouter }		from 'vue-router'
 import { use2DFallback }	from '@/composables/use2DFallback'
 import { useProximityVoice }from '@/composables/useProximityVoice.js'
@@ -32,11 +32,18 @@ const presenceStore= usePresenceStore()
 const router       = useRouter()
 const voice        = useProximityVoice()
 
+// WHY: Mark this tab as "in world" so LandingView gate 1 passes on page reload.
+// sessionStorage persists across reloads within the same tab session but clears
+// when the tab closes — a fresh open the next day finds no flag.
+onMounted(() => {
+	try { sessionStorage.setItem('qs_in_world', '1') } catch {}
+})
+
 function returnToLogin() {
-	// WHY: Remove the session timestamp so LandingView does NOT auto-reconnect.
-	// Explicit logout means the user (or an external viewer) intentionally ended
-	// the session — auto-reconnect would fight with it (e.g. Firestorm "new login detected").
-	try { sessionStorage.removeItem('qs_last_login_ms') } catch {}
+	// WHY: Clear the in-world flag so LandingView gate 1 fails and auto-reconnect
+	// is suppressed. Explicit return-to-login means the user (or an external viewer
+	// like Firestorm) ended the session on purpose.
+	try { sessionStorage.removeItem('qs_in_world') } catch {}
 	session.clearSession()
 	grid.setLoginState('idle')
 	router.push('/landing')

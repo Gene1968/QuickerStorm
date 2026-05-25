@@ -8,21 +8,26 @@ import { useGridLogin }			from '@/composables/useGridLogin'
 
 const { isDark, toggle } = useTheme()
 const gridStore = useGridStore()
-const { login } = useGridLogin()
+const { login, checkCircuit } = useGridLogin()
 
 const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 
 // ── Auto-reconnect on reload ──────────────────────────────────────────────
 // WHY: Session state (Pinia) is in-memory only — clears on page reload.
 // If "Remember me" was used, credentials are in localStorage (per-grid key).
-// Check synchronously before first render so the spinner shows immediately.
-// On success, useGridLogin sets session + navigates to /world automatically.
-// On failure, leave creds for one-click retry — grid may need time to release old circuit.
-const AUTOLOGIN_PREFIX  = 'qs_autologin_'
-const SESSION_TS_KEY    = 'qs_last_login_ms'
-// WHY: 90s window — generous enough for a slow page reload, strict enough that
-// "coming back the next day" (sessionStorage gone, or >90s) never triggers reconnect.
-const RECONNECT_WINDOW_MS = 90_000
+// Two gates must pass before auto-reconnect fires:
+//
+//   Gate 1 — sessionStorage.qs_in_world: was this tab actively in-world when
+//   the page reloaded? Set by WorldView on mount, cleared by returnToLogin().
+//   sessionStorage is tab-scoped and clears when the tab is closed, so a fresh
+//   open the next day never has this flag.
+//
+//   Gate 2 — server CHECK_CIRCUIT: does the server still hold a live circuit?
+//   If the hold expired (>15s since WS drop) or another viewer took over, the
+//   server returns alive=false → we show the login form instead of forcing a
+//   fresh XML-RPC login the user didn't ask for.
+const AUTOLOGIN_PREFIX = 'qs_autologin_'
+const IN_WORLD_KEY     = 'qs_in_world'
 
 const autologinKey = `${AUTOLOGIN_PREFIX}${gridStore.selectedNick}`
 
@@ -30,19 +35,25 @@ let _stored = null
 try { _stored = JSON.parse(localStorage.getItem(autologinKey)) } catch {}
 const hasStoredCreds = !!(_stored?.username && _stored?.password)
 
-// WHY: Guard auto-reconnect to the brief-interruption window only.
-// sessionStorage.qs_last_login_ms is set by useGridLogin on LOGIN_OK and cleared
-// by "Return to Login" (WorldView.returnToLogin). This prevents:
-//   • Reconnect when user returns the next day — sessionStorage won't have the key
-//   • Reconnect after explicit logout or external viewer (FS) takeover — key cleared
-const lastLoginMs     = parseInt(sessionStorage.getItem(SESSION_TS_KEY) || '0', 10)
-const isRecentSession = hasStoredCreds && (Date.now() - lastLoginMs < RECONNECT_WINDOW_MS)
+// Gate 1 evaluated synchronously — drives initial spinner render
+const wasInWorld     = sessionStorage.getItem(IN_WORLD_KEY) === '1'
+const mayReconnect   = hasStoredCreds && wasInWorld
 
-const reconnecting   = ref(isRecentSession)  // true → shows spinner on first render
-const reconnectError = ref('')               // '' = none; string = error message to show
+const reconnecting   = ref(mayReconnect)  // true → shows spinner; gate 2 may clear it
+const reconnectError = ref('')
 
 onMounted(async () => {
-	if (!isRecentSession) return
+	if (!mayReconnect) return
+
+	// Gate 2 — ask server if circuit is still alive
+	const alive = await checkCircuit(gridStore.selectedNick, _stored.username)
+	if (!alive) {
+		// WHY: Circuit expired or taken by external viewer. Show form so user
+		// can choose to log in again (or pick a different grid/account).
+		reconnecting.value = false
+		return
+	}
+
 	try {
 		await login(_stored.username, _stored.password, 'last')
 	} catch (e) {
@@ -128,7 +139,7 @@ onMounted(async () => {
 							quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
 						</p>
 						<p class="mt-2">
-							Credentials are used for grid login only. With <em>Remember me</em>, your username and password are stored in your browser's local storage for auto-reconnect.
+							Credentials are used for grid login only and are never saved. Only with <em>Remember me</em> option are they stored in your own browser for next time.
 						</p>
 						<p class="mt-3 opacity-60">
 							Inspired by Firestorm Viewer &amp; SpeedLight

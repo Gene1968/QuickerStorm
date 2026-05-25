@@ -6,13 +6,14 @@
 
 // ── Client → Server ─────────────────────────────────────────────────────
 export const C = {
-	LOGIN:        'login',      // { grid, username, password }
-	LOGOUT:       'logout',     // {}
-	MOVE:         'move',       // { controlFlags, bodyRot, headRot, camCenter, camAt, camLeft, camUp, far }
-	CHAT:         'chat',       // { message, type, channel }
-	CAPS_FETCH:   'caps_fetch', // { url, method, body? } — CORS proxy
-	TELEPORT:     'teleport',  // { x, y, z } — same-region teleport via LocationBar coord edit
-	REBAKE:       'rebake',   // {} — trigger RebakeAvatarTextures cap (Avatar Health → Force Appearance Update)
+	LOGIN:         'login',         // { grid, username, password }
+	LOGOUT:        'logout',        // {}
+	MOVE:          'move',          // { controlFlags, bodyRot, headRot, camCenter, camAt, camLeft, camUp, far }
+	CHAT:          'chat',          // { message, type, channel }
+	CAPS_FETCH:    'caps_fetch',    // { url, method, body? } — CORS proxy
+	TELEPORT:      'teleport',      // { x, y, z } — same-region teleport via LocationBar coord edit
+	REBAKE:        'rebake',        // {} — trigger RebakeAvatarTextures cap (Avatar Health → Force Appearance Update)
+	CHECK_CIRCUIT: 'check_circuit', // { grid, username } — is my circuit still alive on server?
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -28,10 +29,11 @@ export const S = {
 	CAPS_RESULT:  'caps_result',// { id, status, body }
 	ERROR:        'error',      // { code, message }
 	DEBUG:        'debug',      // { level:'info'|'warn'|'error', msg: string } — server log forwarded to browser
-	DISCONNECTED:    'disconnected',  // { reason: string } — sim killed the circuit
-	AGENT_SPAWN_POS: 'spawn_pos',    // { pos: [slX, slY, slZ] } — AgentMovementComplete confirmed position
-	KILL_OBJECT:     'kill_obj',     // { ids: number[] } — sim removed these localIds from scene
-	TERRAIN_PATCH:   'terrain_patch',  // { layerType:'LAND'|'WATER', patchSize:16, patches:[{x,y,heights:number[]}] }
+	DISCONNECTED:    'disconnected',   // { reason: string } — sim killed the circuit
+	AGENT_SPAWN_POS: 'spawn_pos',     // { pos: [slX, slY, slZ] } — AgentMovementComplete confirmed position
+	KILL_OBJECT:     'kill_obj',      // { ids: number[] } — sim removed these localIds from scene
+	TERRAIN_PATCH:   'terrain_patch', // { layerType:'LAND'|'WATER', patchSize:16, patches:[{x,y,heights:number[]}] }
+	CIRCUIT_STATUS:  'circuit_status',// { alive: boolean } — response to CHECK_CIRCUIT
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

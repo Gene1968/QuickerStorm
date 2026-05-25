@@ -10,8 +10,8 @@ import { join, normalize, extname } from 'path'
 import { handleLogin, handleLogout } from './handlers/login'
 import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
-import { deleteSession, resolveCircuitId, attachWs, detachWs, scheduleExpire } from './state/sessions'
-import { C } from '../shared/protocol.js'
+import { deleteSession, resolveCircuitId, attachWs, detachWs, scheduleExpire, findCircuitByUser } from './state/sessions'
+import { C, S } from '../shared/protocol.js'
 import type { ServerWebSocket } from 'bun'
 import * as dgram from 'dgram'
 
@@ -201,6 +201,17 @@ const server = Bun.serve<WSData>({
 				case C.LOGOUT:
 					handleLogout(ws, circuitId)
 					break
+				case C.CHECK_CIRCUIT: {
+					// WHY: Lets the client ask "is my circuit still alive?" before deciding
+					// to auto-reconnect. findCircuitByUser checks the in-memory hold — if the
+					// circuit is gone (>15s since last WS drop) it returns undefined → alive=false.
+					// Client shows login form instead of forcing a fresh XML-RPC login.
+					const cd = msg.d as { grid: string; username: string }
+					const userKey = `${cd.grid}:${cd.username.trim().toLowerCase()}`
+					const existing = findCircuitByUser(userKey)
+					ws.send(JSON.stringify({ t: S.CIRCUIT_STATUS, d: { alive: !!existing } }))
+					break
+				}
 				case C.CAPS_FETCH: {
 					const d = msg.d as { id: string; url: string; method?: string; body?: string }
 					handleCapsFetch(ws, d.id, d.url, d.method, d.body)
