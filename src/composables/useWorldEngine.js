@@ -47,6 +47,8 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
+	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
+	let waterMesh   = null  // flat blue plane at y=20
 
 	// ── Own avatar tracking ───────────────────────────────────────────────────
 	// Set from first ObjectUpdate where fullId == agentId
@@ -303,6 +305,35 @@ export function useWorldEngine(canvasRef) {
 	// WHY: Camera position reporting replaced by worldStore.setAvatarPos() calls
 	// in onObjectUpdate/onTerseUpdate. LocationBar reads worldStore.avatarPos directly.
 
+	// WHY: Placeholder — full implementation in Task 7 (onTerrainPatch).
+	// Called here to avoid undefined reference in rebuildTerrainFromStore.
+	function applyHeightColor(_col, _vi, _h) { /* implemented in Task 7 */ }
+
+	// WHY: HMR and navigation away/back trigger onUnmounted+onMounted. worldStore.terrainHeights
+	// persists across remounts (Pinia ref). Rebuild geometry immediately on mount so terrain
+	// appears without waiting for another LayerData burst from the sim.
+	function rebuildTerrainFromStore() {
+		if (!terrainMesh) return
+		const pos    = terrainMesh.geometry.attributes.position
+		const col    = terrainMesh.geometry.attributes.color
+		const stride = 257
+		let anyNonZero = false
+		for (let slY = 0; slY <= 255; slY++) {
+			for (let slX = 0; slX <= 255; slX++) {
+				const vi = slY * stride + slX
+				const h  = worldStore.terrainHeights[vi]
+				if (h !== 0) anyNonZero = true
+				pos.setY(vi, h)
+				applyHeightColor(col, vi, h)
+			}
+		}
+		if (anyNonZero) {
+			pos.needsUpdate = true
+			col.needsUpdate = true
+			terrainMesh.geometry.computeVertexNormals()
+		}
+	}
+
 	// ── Scene setup ──────────────────────────────────────────────────────────
 	function initScene() {
 		scene = new THREE.Scene()
@@ -330,20 +361,42 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;'
 		canvasRef.value.parentElement.appendChild(labelRenderer.domElement)
 
-		// Terrain placeholder
-		// WHY: MeshBasicMaterial — terrain is placeholder geometry. Unlit = no dark-face artefacts,
-		// consistent flat colour regardless of camera angle.
-		const terrain = new THREE.Mesh(
-			new THREE.PlaneGeometry(256, 256, 64, 64),
-			new THREE.MeshBasicMaterial({ color: 0x4a7c59 }),
+		// WHY: 255 segments × 255 segments = 256×256 cells = 257×257 vertices (1 vertex per SL metre).
+		// rotateX(-π/2) lays the plane flat. translate(128,0,-128) centres the region at Three.js
+		// origin matching slToThree(128,128,0). Vertex Y positions updated per TERRAIN_PATCH message.
+		const terrainGeo = new THREE.PlaneGeometry(256, 256, 255, 255)
+		terrainGeo.rotateX(-Math.PI / 2)
+		terrainGeo.translate(128, 0, -128)
+
+		// Add vertex color attribute — updated per patch in onTerrainPatch
+		const vtxColors = new Float32Array(terrainGeo.attributes.position.count * 3)
+		// Initial fill: mid-green (r=0.29, g=0.49, b=0.35)
+		for (let i = 0; i < vtxColors.length; i += 3) {
+			vtxColors[i]     = 0.29  // r
+			vtxColors[i + 1] = 0.49  // g
+			vtxColors[i + 2] = 0.35  // b
+		}
+		terrainGeo.setAttribute('color', new THREE.BufferAttribute(vtxColors, 3))
+
+		terrainMesh = new THREE.Mesh(
+			terrainGeo,
+			new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide }),
 		)
-		terrain.rotation.x = -Math.PI / 2
-		// WHY: SL region occupies SL X:[0,256], Y:[0,256]. Three.js coord:
-		// SL(x,y,z) → Three.js(x, z, -y). Region center SL(128,128,0)
-		// → Three.js(128, 0, -128). Without this the terrain is at (0,0,0)
-		// and sits behind the camera when the avatar spawns at SL Y>128.
-		terrain.position.set(128, 0, -128)
-		scene.add(terrain)
+		scene.add(terrainMesh)
+
+		// Water plane at SL z=20 (Three.js y=20)
+		waterMesh = new THREE.Mesh(
+			new THREE.PlaneGeometry(260, 260),
+			new THREE.MeshBasicMaterial({
+				color: 0x1a6fb5,
+				transparent: true,
+				opacity: 0.72,
+				side: THREE.FrontSide,
+			}),
+		)
+		waterMesh.rotation.x = -Math.PI / 2
+		waterMesh.position.set(128, 20, -128)
+		scene.add(waterMesh)
 
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
 		// Prims now use MeshBasicMaterial (unlit) so lighting doesn't affect them at all.
@@ -362,6 +415,8 @@ export function useWorldEngine(canvasRef) {
 		ro = new ResizeObserver(onResize)
 		ro.observe(canvasRef.value.parentElement)
 		onResize()
+
+		rebuildTerrainFromStore()
 	}
 
 	function onResize() {
@@ -489,7 +544,7 @@ export function useWorldEngine(canvasRef) {
 				const p = obj.pos
 				debugStore.push('info', `[3D] Own avatar localId=${obj.localId} pos=${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
 				if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
-					avatarSLPos = p
+					avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates avatarSLPos in-place
 					worldStore.setAvatarPos(p[0], p[1], p[2])
 					// WHY: Edge positions (< 10 or > 246 in X/Y) indicate a region boundary.
 					// Avatars stuck near edges cannot move — likely a stale sim state from
@@ -534,15 +589,24 @@ export function useWorldEngine(canvasRef) {
 				}
 			}
 			// WHY: avatarSLPos drives third-person follow camera in animate().
-			// Updated here (inside WS callback) — lerp in animate() smooths any jitter.
-			// Zero-pos guard: occasional malformed TerseUpdates send [0,0,0] — don't snap camera
-			// to region corner for one frame (would show a brief blue sky flash).
+			// WHY blend not snap: dead reckoning in animate() keeps avatarSLPos moving between
+			// TerseUpdates. Snapping to sim pos would cause visible jerk. Blend smoothly corrects
+			// accumulated dead-reckoning drift. Large corrections (>5m = teleport or big physics
+			// correction) snap immediately so the camera doesn't lag across the region.
 			const p = obj.pos
 			if (obj.localId === ownAvatarLocalId && p &&
 				(p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
 				const firstUpdate = !avatarSLPos
-				avatarSLPos = p
-				worldStore.setAvatarPos(p[0], p[1], p[2])
+				if (!avatarSLPos) {
+					avatarSLPos = [...p]
+				} else {
+					const d = Math.hypot(p[0] - avatarSLPos[0], p[1] - avatarSLPos[1], p[2] - avatarSLPos[2])
+					const blend = d > 5 ? 1.0 : 0.4
+					avatarSLPos[0] += (p[0] - avatarSLPos[0]) * blend
+					avatarSLPos[1] += (p[1] - avatarSLPos[1]) * blend
+					avatarSLPos[2] += (p[2] - avatarSLPos[2]) * blend
+				}
+				worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 				if (firstUpdate) {
 					debugStore.push('info', `[3D] First TerseUpdate own avatar → ${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`)
 				}
@@ -558,7 +622,7 @@ export function useWorldEngine(canvasRef) {
 		if (!p || p.length < 3) return
 		const [x, y, z] = p
 		if (x === 0 && y === 0 && z === 0) return
-		avatarSLPos = p
+		avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates in-place
 		worldStore.setAvatarPos(x, y, z)
 		cameraSnapRequested = true  // snap camera to new position immediately
 		debugStore.push('info', `[3D] AgentMovementComplete spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)}`)
@@ -632,10 +696,42 @@ export function useWorldEngine(canvasRef) {
 		}
 
 		maybeAgentUpdate(dt, cf ?? 0)
-		// WHY: Dead reckoning REMOVED. Now that OpenSim physics works (STAND_UP fix),
-		// sim sends TerseUpdates for own avatar as it moves. Dead reckoning fought those
-		// corrections each frame, causing visible position oscillation → flickering camera.
-		// Camera follows TerseUpdate positions via lerp — smooth at 10Hz TerseUpdate rate.
+
+		// ── Dead reckoning: predict own avatar position from control flags ───────
+		// WHY: OSGrid and NeverWorld do not relay TerseUpdates back to the sending avatar
+		// during normal movement. Without this block, avatarSLPos never updates while walking
+		// → camera frozen, LocationBar coords stall. When TerseUpdates do arrive (physics
+		// corrections, other grids), onTerseUpdate blends them in softly rather than snapping,
+		// preventing the position oscillation that caused the previous removal of dead reckoning.
+		if (avatarSLPos && ownAvatarLocalId && cf) {
+			const hasFwd  = cf & (CTRL_AT_POS | CTRL_AT_NEG)
+			const hasLat  = cf & (CTRL_LEFT_POS | CTRL_LEFT_NEG)
+			const hasVert = cf & (CTRL_UP_POS | CTRL_UP_NEG)
+			if (hasFwd || hasLat || hasVert) {
+				const spd  = (cf & CTRL_FAST_AT)   ? CAM_RUN_SPEED : CAM_SPEED
+				const lspd = (cf & CTRL_FAST_LEFT)  ? CAM_RUN_SPEED : CAM_SPEED
+				// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
+				const fX = -Math.sin(yaw), fY = Math.cos(yaw)
+				const rX =  Math.cos(yaw), rY = Math.sin(yaw)
+				if (cf & CTRL_AT_POS)   { avatarSLPos[0] += fX * spd  * dt; avatarSLPos[1] += fY * spd  * dt }
+				if (cf & CTRL_AT_NEG)   { avatarSLPos[0] -= fX * spd  * dt; avatarSLPos[1] -= fY * spd  * dt }
+				if (cf & CTRL_LEFT_POS) { avatarSLPos[0] -= rX * lspd * dt; avatarSLPos[1] -= rY * lspd * dt }
+				if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
+				if (cf & CTRL_UP_POS)   avatarSLPos[2] += CAM_FLY_SPEED * dt
+				if (cf & CTRL_UP_NEG)   avatarSLPos[2] -= CAM_FLY_SPEED * dt
+				avatarSLPos[0] = Math.max(1, Math.min(255, avatarSLPos[0]))
+				avatarSLPos[1] = Math.max(1, Math.min(255, avatarSLPos[1]))
+				avatarSLPos[2] = Math.max(0, avatarSLPos[2])
+				// Move own avatar mesh to predicted position
+				const ownMesh = meshMap.get(ownAvatarLocalId)
+				if (ownMesh) {
+					const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+					gsap.to(ownMesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.08, overwrite: true })
+				}
+				// Update store so LocationBar stays current
+				worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			}
+		}
 
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
