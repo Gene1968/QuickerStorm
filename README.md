@@ -22,8 +22,8 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, etc.)
 
 **🟡 Partially working**
-- [~] Movement — 70%; your inputs send correctly; you can move and see your coords in the location bar, but don't really see others move. World is currently a placeholder scene — region geometry (terrain, prims) not yet rendered.
-- [~] Nearby chat — 70%. Sending and receiving works; guess I should add emojis. Transcript, muted transcript, options and search, tear-off, close?
+- [~] Movement — 70%.  Your inputs send correctly; you can move and see your coords in the location bar, but don't really see others move. World is currently a placeholder scene — region geometry (terrain, prims) not yet rendered.
+- [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating needs for: transcript, muted transcript, options and search, tear-off, close
 
 **🔜 Up next**
 - [ ] Inbound movement — render your others' position updates in the 3D scene

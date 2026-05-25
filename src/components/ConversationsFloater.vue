@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { useLocalChat }  from '@/composables/useLocalChat'
 import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
 import { playSound } from '@/composables/useAudio'
+import { ChevronDownIcon } from '@lucide/vue'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
+import 'emoji-picker-element'
 
 const avatar = useAvatarStore()
 const ui     = useUiStore()
@@ -14,6 +16,7 @@ const activeTab  = ref('nearby')
 const chatInput  = ref('')
 const msgEl      = ref(null)
 const inputEl    = ref(null)
+const showEmoji  = ref(false)
 
 // TODO: openIMs — populated by incoming IM events; shape: { agentId, agentName, messages[] }
 // Switching to a new IM from WorldView should push here + set activeTab = agentId
@@ -50,6 +53,38 @@ async function selectTab(id) {
 function focusInput() {
 	inputEl.value?.focus()
 }
+
+function toggleEmoji(e) {
+	e.stopPropagation()
+	showEmoji.value = !showEmoji.value
+}
+
+function closeEmoji() {
+	showEmoji.value = false
+}
+
+function onEmojiClick(e) {
+	const emoji = e.detail.unicode
+	const el    = inputEl.value
+	if (el) {
+		const start = el.selectionStart ?? chatInput.value.length
+		const end   = el.selectionEnd   ?? chatInput.value.length
+		chatInput.value = chatInput.value.slice(0, start) + emoji + chatInput.value.slice(end)
+		nextTick(() => {
+			const pos = start + [...emoji].length  // WHY: emoji may be multi-codepoint
+			el.setSelectionRange(pos, pos)
+			el.focus()
+		})
+	} else {
+		chatInput.value += emoji
+	}
+	showEmoji.value = false
+}
+
+// Close picker on any outside click
+watch(showEmoji, (val) => {
+	if (val) setTimeout(() => document.addEventListener('click', closeEmoji, { once: true }), 0)
+})
 
 async function submitChat() {
 	const msg = chatInput.value.trim()
@@ -116,7 +151,7 @@ async function submitChat() {
 							<span class="text-accent font-medium">{{ m.fromName }}:</span>
 							{{ m.message }}
 						</div>
-						<div v-if="!messages.length" class="text-white/30 text-xs italic">
+						<div v-if="!messages.length" class="py-4 text-white/30 text-xs italic">
 							No messages yet.
 						</div>
 					</div>
@@ -129,13 +164,30 @@ async function submitChat() {
 							v-model="chatInput"
 							type="text"
 							placeholder="To nearby chat"
-							class="flex-1 bg-white/10 border border-white/20 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 							@input="onInput"
 						/>
+						<div class="relative shrink-0">
+							<button
+								title="Show emoji panel"
+								class="flex items-center px-2 py-0.5 bg-accent text-white rounded text-base hover:opacity-80"
+								@click="toggleEmoji"
+							>
+								<span class="text-base leading-none">🙂</span>
+								<ChevronDownIcon class="w-3.5 h-3.5 ml-0.5" />
+							</button>
+							<div
+								v-if="showEmoji"
+								class="absolute bottom-full right-0 mb-1 z-50"
+								@click.stop
+							>
+								<emoji-picker class="dark" @emoji-click="onEmojiClick" />
+							</div>
+						</div>
 						<button
 							type="submit"
-							class="px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="hidden px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>
@@ -151,3 +203,23 @@ async function submitChat() {
 		</div>
 	</FloaterWindow>
 </template>
+
+<style>
+/* WHY: emoji-picker-element uses shadow DOM — CSS vars cross the boundary, scoped attrs don't */
+emoji-picker {
+	--background:               #16161e;
+	--border-color:             rgba(255,255,255,0.12);
+	--indicator-color:          var(--color-accent, #7c3aed);
+	--input-border-color:       rgba(255,255,255,0.2);
+	--input-font-color:         #e2e2e2;
+	--input-placeholder-color:  rgba(255,255,255,0.35);
+	--outline-color:            transparent;
+	--category-font-color:      rgba(255,255,255,0.45);
+	--emoji-size:               1.35rem;
+	--num-columns:              8;
+	width:  352px;
+	height: 300px;
+	border-radius: 0.375rem;
+	box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+</style>

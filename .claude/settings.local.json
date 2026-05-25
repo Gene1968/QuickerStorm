@@ -59,7 +59,16 @@
       "Bash(dotnet tool *)",
       "Bash(where ildasm *)",
       "Bash(python3 -c \"print\\('python available'\\)\")",
-      "Bash(python -c \"print\\('python available'\\)\")"
+      "Bash(python -c \"print\\('python available'\\)\")",
+      "Bash(Get-Item \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\opensim\\\\OpenSim\\\\Region\\\\ClientStack\\\\Linden\\\\UDP\\\\LLClientView.cs\")",
+      "Bash(Select-Object Length, LastWriteTime)",
+      "Bash(xargs grep -l \"class TerrainPatch\\\\|struct TerrainPatch\")",
+      "Bash(xargs grep -l \"LayerType\\\\.\")",
+      "Bash(xargs grep -l \"MSG_RELIABLE\\\\s*=\")",
+      "Bash(dotnet ildasm *)",
+      "Bash(ilspycmd \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\opensim\\\\bin\\\\OpenMetaverse.dll\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python -c ' *)"
     ]
   }
 }
