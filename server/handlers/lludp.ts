@@ -316,11 +316,13 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			slog.warn(session.ws, `[terrain] ${result.type} decoded but 0 patches (patchSize=${result.patchSize})`)
 			return
 		}
-		// WHY: Log first patch's patchX/Y and first height to confirm IDCT output is in plausible range.
-		// Heights in 0-200m = valid terrain. NaN/Inf/huge = decode logic bug.
+		// WHY: Log first patch coords/height to confirm IDCT output is plausible.
+		// dcOffset should be ~20-100m for normal sims. range typically 0-256m.
+		// Heights in 0-300m = valid. NaN/Inf/huge = decode bug.
 		const p0 = result.patches[0]
 		const h0 = p0.heights[0].toFixed(2)
-		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m`)
+		const hN = p0.heights[p0.heights.length - 1].toFixed(2)
+		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m hN=${hN}m`)
 		session.ws.send(JSON.stringify({
 			t: S.TERRAIN_PATCH,
 			d: {

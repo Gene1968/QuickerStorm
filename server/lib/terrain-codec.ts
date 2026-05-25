@@ -52,12 +52,25 @@ export class BitReader {
 		return result >>> 0  // force unsigned
 	}
 
-	// Read 32 bits and interpret as IEEE 754 float (big-endian bit order)
-	readFloat32(): number {
-		const bits = this.readBits(32)
+	// Read 32-bit IEEE 754 float, little-endian byte order.
+	// WHY: firestorm patch_code.cpp decode_patch_header uses bitUnpack((U8*)&retvalu32, 32).
+	// On LE (x86) this puts the first 8 bits from the stream into the LSByte of the float,
+	// so the float is stored LSByte-first in the bitstream. OpenSim servers are x86/LE.
+	readFloat32LE(): number {
+		const b0 = this.readBits(8)   // LSByte
+		const b1 = this.readBits(8)
+		const b2 = this.readBits(8)
+		const b3 = this.readBits(8)   // MSByte
 		const tmp = Buffer.allocUnsafe(4)
-		tmp.writeUInt32BE(bits, 0)
-		return tmp.readFloatBE(0)
+		tmp[0] = b0; tmp[1] = b1; tmp[2] = b2; tmp[3] = b3
+		return tmp.readFloatLE(0)
+	}
+
+	// Read 16-bit LE unsigned int (LSByte first in bitstream — same LE convention as float).
+	readU16LE(): number {
+		const lo = this.readBits(8)   // LSByte
+		const hi = this.readBits(8)   // MSByte
+		return (lo | (hi << 8)) >>> 0
 	}
 
 	readU16(): number { return this.readBits(16) }
@@ -77,14 +90,22 @@ function readGroupHeader(data: Buffer, offset: number): { hdr: GroupHeader; next
 }
 
 // ── Patch header — bit-packed, read via BitReader ────────────────────────────
+// WHY: Field ORDER matters. firestorm patch_code.cpp decode_patch_header reads:
+//   1. quant_wbits (8 bits) — FIRST; check END_OF_PATCHES before reading other fields
+//   2. dc_offset   (32 bits, LE float)
+//   3. range       (16 bits, LE U16)
+//   4. patchids    (10 bits, MSB-first)
+// Original codec had dcOffset→range→quantWbits which shifted the field window by 48 bits,
+// causing range=16000+ (should be ≤1023), heights in thousands of metres, and 500+ "patches"
+// because END_OF_PATCHES sentinel was never hit at the correct bit position.
 function readPatchHeader(reader: BitReader): PatchHeader | null {
-	const dcOffset   = reader.readFloat32()
-	const range      = reader.readU16()
 	const quantWbits = reader.readU8()
 	if (quantWbits === END_OF_PATCHES) return null  // sentinel: no more patches
-	const patchIds   = reader.readBits(10)           // 5 bits x, 5 bits y
+	const dcOffset   = reader.readFloat32LE()        // LE float (LSByte first in stream)
+	const range      = reader.readU16LE()             // LE U16  (LSByte first in stream)
+	const patchIds   = reader.readBits(10)            // 5 bits x (upper), 5 bits y (lower)
 	// WHY: patchIds upper 5 bits = x (column), lower 5 bits = y (row).
-	// See libopenmetaverse DecodePatchHeader and firestorm LLPatchHeader::decompress.
+	// See libopenmetaverse DecodePatchHeader and firestorm decode_patch_header.
 	const patchX = (patchIds >> 5) & 0x1f
 	const patchY = patchIds & 0x1f
 	return { dcOffset, range, quantWbits, patchX, patchY }
