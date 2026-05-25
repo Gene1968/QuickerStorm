@@ -294,8 +294,12 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (type === `med:${MEDIUM_LAYER_DATA}`) {
 		// WHY: Always log receipt so we can distinguish "no packets arrive" from "decode fails".
 		// Without this, a silent null return from decodeLayerData looks identical to packet loss.
+		// hex12: first 12 body bytes reveal: [TypeByte blockCount? dataLen(2b) groupHdr(4b) patchHdrStart]
+		// This lets us verify byte-layout assumptions without a packet capture tool.
 		const typeB = dataOffset < buf.length ? `0x${buf[dataOffset].toString(16).padStart(2,'0')}` : '??'
-		slog.info(session.ws, `[terrain] med:6 rx size=${rawBuf.length}b typeB=${typeB}`)
+		const hex12 = Array.from(buf.slice(dataOffset, Math.min(dataOffset + 12, buf.length)))
+			.map(b => b.toString(16).padStart(2, '0')).join(' ')
+		slog.info(session.ws, `[terrain] med:6 rx size=${rawBuf.length}b typeB=${typeB} body12=[${hex12}]`)
 		const result = decodeLayerData(buf, dataOffset, session.ws)
 		if (!result) {
 			slog.warn(session.ws, `[terrain] decode returned null for typeB=${typeB}`)
@@ -305,7 +309,11 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			slog.warn(session.ws, `[terrain] ${result.type} decoded but 0 patches (patchSize=${result.patchSize})`)
 			return
 		}
-		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize}`)
+		// WHY: Log first patch's patchX/Y and first height to confirm IDCT output is in plausible range.
+		// Heights in 0-200m = valid terrain. NaN/Inf/huge = decode logic bug.
+		const p0 = result.patches[0]
+		const h0 = p0.heights[0].toFixed(2)
+		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m`)
 		session.ws.send(JSON.stringify({
 			t: S.TERRAIN_PATCH,
 			d: {
