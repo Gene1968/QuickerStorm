@@ -244,14 +244,22 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 
 		if (dataStart + dataLen > buf.length) { dbg(`dataLen=${dataLen} overruns buf (dataStart=${dataStart} bufLen=${buf.length})`); return null }
 
-		// WHY: SL/OpenSim layer type bytes (from llviewerregion.cpp):
-		//   0x4C ('L') = LAND, 0x57 ('W') = WIND, 0x43 ('C') = CLOUD, 0x38 ('8') = WATER
-		// We only decode LAND. WIND (0x57) is often mislabelled WATER in docs — be explicit.
-		const type = layerTypeByte === 0x4C ? 'LAND' : null
+		// WHY: SL/OpenSim layer type bytes come in two encodings:
+		//   ASCII (classic SL): 0x4C ('L')=LAND, 0x57 ('W')=WIND, 0x43 ('C')=CLOUD, 0x38 ('8')=WATER
+		//   Integer enum (newer OpenSim, e.g. OSGrid 0.9+): 6=LAND, 55=WIND, 3=CLOUD, 4=WATER, 7=LandExtended
+		// WIND (0x57) is often mislabelled WATER in older docs — be explicit.
+		// 0x37 (LandExtended=55) used by OpenSim var-regions (512×512, 1024×1024) — patchSize=32.
+		const isLand = layerTypeByte === 0x4C   // ASCII 'L' — classic SL
+		            || layerTypeByte === 0x06    // integer 6 — newer OpenSim (OSGrid 0.9+)
+		const type = isLand ? 'LAND' : null
 		if (!type) {
-			const label = layerTypeByte === 0x57 ? 'WIND'
-			            : layerTypeByte === 0x43 ? 'CLOUD'
-			            : layerTypeByte === 0x38 ? 'WATER'
+			const label = layerTypeByte === 0x57 ? 'WIND(ASCII)'
+			            : layerTypeByte === 0x43 ? 'CLOUD(ASCII)'
+			            : layerTypeByte === 0x38 ? 'WATER(ASCII)'
+			            : layerTypeByte === 0x37 ? 'LandExtended(0x37/var-region)'
+			            : layerTypeByte === 55   ? 'WIND(int)'
+			            : layerTypeByte === 3    ? 'CLOUD(int)'
+			            : layerTypeByte === 4    ? 'WATER(int)'
 			            : `unknown(0x${layerTypeByte.toString(16)})`
 			dbg(`skipping non-LAND layer type=${label}`)
 			return null
