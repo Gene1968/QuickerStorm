@@ -47,7 +47,11 @@ export function decodeZeroCoded(buf: Buffer): Buffer {
   for (let i = 0; i < buf.length; i++) {
     if (buf[i] === 0x00) {
       const count = buf[++i] ?? 1
-      for (let z = 0; z < count; z++) out.push(0x00)
+      // WHY: count=0 means 256 zeros per LLUDP spec (LibOpenMetaverse ZeroDecode).
+      // Without this, 00 00 produces 0 zeros instead of 256, truncating the decoded
+      // buffer and causing OOB errors in ObjectUpdate trailing fields (ExtraParams, Sound, etc.).
+      const zeros = count === 0 ? 256 : count
+      for (let z = 0; z < zeros; z++) out.push(0x00)
     } else {
       out.push(buf[i])
     }
@@ -432,7 +436,10 @@ export function decodeObjectUpdate(
       // `continue` because off would be corrupted after the failed TE variable-field skip.
       // avatarSLPos and ownAvatarLocalId survive any avatar-packet loss via worldStore
       // restore in onMounted (see useWorldEngine.js).
-      if (pcode === 3 || pcode === 95 || pcode === 255) break
+      // WHY pcode=0: OpenSim emits pcode=0 objects with garbage scale and CRC=0 in some
+      // multi-object packets. These are not standard LLUDP prims/avatars and decode to
+      // absurd ObjectData lengths (235+), pushing @TE OOB. Silently skip.
+      if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) break
       off += 2   // material, clickAction
       const sx = buf.readFloatLE(off); off += 4  // Scale
       const sy = buf.readFloatLE(off); off += 4
