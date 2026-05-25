@@ -5,7 +5,7 @@
  * Volume channels: Master (isAllAudioMuted / masterVolume) and Interface are wired.
  * Ambient / Sounds / Music / Media / Voice channels are stubbed (state only, no routing yet).
  */
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 const _sfx = import.meta.glob('../assets/audio/*.mp3', { eager: true, query: '?url', import: 'default' })
 
@@ -58,6 +58,11 @@ export function toggleAllAudioMute() {
 // ── Interface channel — UI pops, notifications, woosh, etc. ──────────────────
 export const interfaceVolume = ref(typeof window !== 'undefined' ? _readFloat(LS_VOL_INTERFACE, 1) : 1)
 export const interfaceMuted  = ref(typeof window !== 'undefined' ? _readBool(LS_MUTE_INTERFACE, false) : false)
+
+// Persist volume/mute changes to localStorage
+watch(masterVolume,    v => _writeFloat(LS_VOL_MASTER,    v))
+watch(interfaceVolume, v => _writeFloat(LS_VOL_INTERFACE, v))
+watch(interfaceMuted,  v => _writeBool(LS_MUTE_INTERFACE, v))
 
 // ── Stub channels (state + persistence; no routing yet) ──────────────────────
 export const ambientVolume = ref(1); export const ambientMuted = ref(false)
