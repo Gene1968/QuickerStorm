@@ -102,7 +102,7 @@ const MENUS = [
 	{
 		id: 'comm', label: 'Comm',
 		items: [
-			{ label: 'Conversations',								action: () => act(() => ui.toggleChat()) },
+			{ label: 'Conversations',						action: () => act(() => ui.toggleChat()) },
 			{ sep: true },
 			{ label: 'Friends',				disabled: true },
 			{ label: 'Groups',				disabled: true },
@@ -160,7 +160,7 @@ const MENUS = [
 	{
 		id: 'help', label: 'Help',
 		items: [
-			{ label: 'Movement & Shortcuts', action: () => ui.toggleMovementHelp() },
+			{ label: 'Movement & Shortcuts', action: () => act(() => { ui.showMovementHelp = true }) },
 			{ sep: true },
 			{ label: 'quickerSTORM Wiki',	disabled: true },
 			{ label: 'Report Issue',			 disabled: true },
