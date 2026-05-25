@@ -17,6 +17,7 @@ const MSG_ID = {
   UseCircuitCode:            Buffer.from([0xFF, 0xFF, 0x00, 0x03]),   // Low #3
   CompleteAgentMovement:     Buffer.from([0xFF, 0xFF, 0x00, 0xF9]),   // Low #249
   AgentThrottle:             Buffer.from([0xFF, 0xFF, 0x00, 0x51]),   // Low #81
+  AgentHeightWidth:          Buffer.from([0xFF, 0xFF, 0x00, 0x18]),   // Low #24
   LogoutRequest:             Buffer.from([0xFF, 0xFF, 0x00, 0xFC]),   // Low #252
   PacketAck:                 Buffer.from([0xFF, 0xFF, 0xFF, 0xFB]),   // Fixed #251
   StartPingCheck:            Buffer.from([0x01]),                     // High #1 (received from sim)
@@ -187,6 +188,24 @@ export function encodeAgentThrottle(p: { agentId: string; sessionId: string; cir
   body[off++] = 28  // Variable1 length prefix for Throttle field
   throttleBuf.copy(body, off)
   return Buffer.concat([hdr, MSG_ID.AgentThrottle, body])
+}
+
+/** AgentHeightWidth — tell sim viewport dimensions so it knows our field of view.
+ *  WHY: Sent by all real viewers after CompleteAgentMovement. Some OpenSim builds gate
+ *  SendInitialDataToMe (which sends terrain) until this is received.
+ *  Firestorm-typical values: 1024 × 768. GenCounter = 0 for initial send.
+ */
+export function encodeAgentHeightWidth(p: { agentId: string; sessionId: string; circuitCode: number; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: false, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 2 + 2)  // 44 bytes
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);    off += 16
+  uuidToBytes(p.sessionId).copy(body, off);  off += 16
+  body.writeUInt32LE(p.circuitCode, off);    off += 4
+  body.writeUInt32LE(0, off);                off += 4   // GenCounter = 0
+  body.writeUInt16LE(768, off);              off += 2   // Height
+  body.writeUInt16LE(1024, off)                         // Width
+  return Buffer.concat([hdr, MSG_ID.AgentHeightWidth, body])
 }
 
 export function encodePacketAck(ackIds: number[], seq: number): Buffer {

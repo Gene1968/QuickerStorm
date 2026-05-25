@@ -3,7 +3,7 @@ import * as dgram from 'dgram'
 import type { ServerWebSocket } from 'bun'
 import { getGrid } from '../lib/grids'
 import { hashPassword, buildLoginXml, parseLoginResponse, xmlRpcPost } from '../lib/xmlrpc'
-import { encodeUseCircuitCode, encodeCompleteAgentMovement, encodeAgentThrottle, encodeLogoutRequest } from '../lib/lludp-codec'
+import { encodeUseCircuitCode, encodeCompleteAgentMovement, encodeAgentThrottle, encodeAgentHeightWidth, encodeLogoutRequest } from '../lib/lludp-codec'
 import { nextSeq, trackReliable } from '../lib/circuit'
 import { createSession, deleteSession, getSession, findCircuitByUser, attachWs, cancelExpire } from '../state/sessions'
 import { handleUdpMessage, startCircuitTimers } from './lludp'
@@ -207,6 +207,21 @@ export async function handleLogin(
 		udpSocket.send(throttlePkt, circuit.simPort, circuit.simIp, (err) => {
 			if (err) slog.error(ws, `AgentThrottle send error: ${err.message}`)
 			else     slog.info(ws, `→ AgentThrottle sent (seq=${seq3}) — physics movement enabled`)
+		})
+
+		// WHY: AgentHeightWidth — tells sim our viewport dimensions (1024×768 typical).
+		// Some OpenSim builds gate SendInitialDataToMe (terrain) until this is received.
+		// Firestorm sends it immediately after CompleteAgentMovement + AgentThrottle.
+		const seq4 = nextSeq(circuit)
+		const heightWidthPkt = encodeAgentHeightWidth({
+			agentId:     circuit.agentId,
+			sessionId:   circuit.sessionId,
+			circuitCode: circuit.circuitCode,
+			seq:         seq4,
+		})
+		udpSocket.send(heightWidthPkt, circuit.simPort, circuit.simIp, (err) => {
+			if (err) slog.error(ws, `AgentHeightWidth send error: ${err.message}`)
+			else     slog.info(ws, `→ AgentHeightWidth sent (seq=${seq4}) — viewport 1024×768`)
 		})
 
 		// WHY: OpenSim's NeedInitialData counter (ScenePresence.cs) waits for

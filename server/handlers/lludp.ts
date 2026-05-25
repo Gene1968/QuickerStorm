@@ -292,9 +292,20 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `med:${MEDIUM_LAYER_DATA}`) {
-		const result = decodeLayerData(buf, dataOffset)
-		if (!result || result.patches.length === 0) return
-		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length}`)
+		// WHY: Always log receipt so we can distinguish "no packets arrive" from "decode fails".
+		// Without this, a silent null return from decodeLayerData looks identical to packet loss.
+		const typeB = dataOffset < buf.length ? `0x${buf[dataOffset].toString(16).padStart(2,'0')}` : '??'
+		slog.info(session.ws, `[terrain] med:6 rx size=${rawBuf.length}b typeB=${typeB}`)
+		const result = decodeLayerData(buf, dataOffset, session.ws)
+		if (!result) {
+			slog.warn(session.ws, `[terrain] decode returned null for typeB=${typeB}`)
+			return
+		}
+		if (result.patches.length === 0) {
+			slog.warn(session.ws, `[terrain] ${result.type} decoded but 0 patches (patchSize=${result.patchSize})`)
+			return
+		}
+		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize}`)
 		session.ws.send(JSON.stringify({
 			t: S.TERRAIN_PATCH,
 			d: {

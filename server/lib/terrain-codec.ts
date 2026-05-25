@@ -12,7 +12,7 @@ export interface TerrainPatch {
 }
 
 export interface LayerDataResult {
-	type: 'LAND' | 'WATER'
+	type: 'LAND'
 	patchSize: number
 	patches: TerrainPatch[]
 }
@@ -229,31 +229,44 @@ function decodePatch(reader: BitReader, hdr: PatchHeader): Float32Array {
 // Takes the full decoded LLUDP packet buffer + dataOffset (where body starts).
 // LayerData body: U8 type | U16LE dataLen | U8[dataLen] data
 // data: U16LE stride | U8 patchSize | U8 layerType | bit-packed patches...
-export function decodeLayerData(buf: Buffer, dataOffset: number): LayerDataResult | null {
+// ws is optional — used for diagnostic logging only.
+export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: string): void }): LayerDataResult | null {
+	const dbg = (msg: string) => {
+		if (ws) ws.send(JSON.stringify({ t: 'debug', d: { level: 'warn', msg: `[terrain-codec] ${msg}` } }))
+		else    console.warn(`[terrain-codec] ${msg}`)
+	}
 	try {
-		if (dataOffset + 3 > buf.length) return null
+		if (dataOffset + 3 > buf.length) { dbg(`buf too short: ${buf.length} < dataOffset+3=${dataOffset+3}`); return null }
 
 		const layerTypeByte = buf[dataOffset]
 		const dataLen       = buf.readUInt16LE(dataOffset + 1)
 		const dataStart     = dataOffset + 3
 
-		if (dataStart + dataLen > buf.length) return null
+		if (dataStart + dataLen > buf.length) { dbg(`dataLen=${dataLen} overruns buf (dataStart=${dataStart} bufLen=${buf.length})`); return null }
 
-		// Only handle LAND and WATER layers
-		const type = layerTypeByte === 0x4C ? 'LAND'
-		           : layerTypeByte === 0x57 ? 'WATER'
-		           : null
-		if (!type) return null
+		// WHY: SL/OpenSim layer type bytes (from llviewerregion.cpp):
+		//   0x4C ('L') = LAND, 0x57 ('W') = WIND, 0x43 ('C') = CLOUD, 0x38 ('8') = WATER
+		// We only decode LAND. WIND (0x57) is often mislabelled WATER in docs — be explicit.
+		const type = layerTypeByte === 0x4C ? 'LAND' : null
+		if (!type) {
+			const label = layerTypeByte === 0x57 ? 'WIND'
+			            : layerTypeByte === 0x43 ? 'CLOUD'
+			            : layerTypeByte === 0x38 ? 'WATER'
+			            : `unknown(0x${layerTypeByte.toString(16)})`
+			dbg(`skipping non-LAND layer type=${label}`)
+			return null
+		}
 
 		const data = buf.slice(dataStart, dataStart + dataLen)
 
 		// Group header (4 plain bytes)
-		if (data.length < 4) return null
+		if (data.length < 4) { dbg('data too short for group header'); return null }
 		const { hdr: groupHdr, next: patchDataOffset } = readGroupHeader(data, 0)
 
 		if (groupHdr.patchSize !== PATCH_SIZE) {
-			// Large patches (32×32) not implemented in Phase 1
-			console.warn(`[terrain] Unsupported patch_size=${groupHdr.patchSize} — skipping`)
+			// WHY: Var-regions (512×512, 1024×1024) use 32×32 patches; standard regions use 16×16.
+			// 32×32 IDCT not yet implemented. Log patchSize so we can verify and add support.
+			dbg(`unsupported patchSize=${groupHdr.patchSize} (expected ${PATCH_SIZE}) — var-region?`)
 			return null
 		}
 
@@ -264,13 +277,14 @@ export function decodeLayerData(buf: Buffer, dataOffset: number): LayerDataResul
 		for (let attempt = 0; attempt < 512; attempt++) {
 			const ph = readPatchHeader(reader)
 			if (!ph) break  // END_OF_PATCHES sentinel
-			if (ph.patchX > 15 || ph.patchY > 15) continue  // out of range, skip
+			if (ph.patchX > 15 || ph.patchY > 15) { dbg(`patchX=${ph.patchX} patchY=${ph.patchY} out of 16×16 grid — skipping`); continue }
 			const heights = decodePatch(reader, ph)
 			patches.push({ x: ph.patchX, y: ph.patchY, heights })
 		}
 
-		return { type: type as 'LAND' | 'WATER', patchSize: groupHdr.patchSize, patches }
-	} catch {
-		return null  // malformed packet — never crash the server
+		return { type: 'LAND', patchSize: groupHdr.patchSize, patches }
+	} catch (e) {
+		dbg(`exception: ${(e as Error).message}`)
+		return null
 	}
 }

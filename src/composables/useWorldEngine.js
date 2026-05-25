@@ -469,20 +469,20 @@ export function useWorldEngine(canvasRef) {
 			const geo = isAvatar
 				? new THREE.CapsuleGeometry(0.3, 1.2, 4, 8)
 				: new THREE.BoxGeometry(1, 1, 1)
-			// WHY: Avatars = MeshStandardMaterial so the capsule shows 3D volume under lighting.
-			// Prims = MeshBasicMaterial (unlit) — placeholder boxes don't benefit from PBR and
-			// their shadow faces (facing away from sun) produced the dark-artefact flicker.
-			// MeshBasicMaterial ignores all lights; all faces render at full material colour.
-			const mat = isAvatar
-				? new THREE.MeshStandardMaterial({ color: 0x00b4d8 })
-				: new THREE.MeshBasicMaterial({ color: 0xcccccc })
+			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit).
+			// MeshStandardMaterial for avatars caused directional-light flicker: as the avatar
+			// capsule rotates with yaw each frame, the bright/dark face boundary sweeps around the
+			// surface and produces visible brightness oscillation (same "dark-artefact" bug as prims).
+			// MeshBasicMaterial ignores all lights — flat colour, no per-face shading — eliminates
+			// the rotation-induced flicker entirely. Revisit when we have proper avatar mesh geometry.
+			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : 0xcccccc })
 			mesh = new THREE.Mesh(geo, mat)
 
 			if (isAvatar) {
 				// WHY: Forward-pointing arm so avatar rotation direction is visually obvious.
 				// Three.js -Z = forward when yaw=0. Orange box pokes out ~0.15m past capsule radius.
 				const armGeo = new THREE.BoxGeometry(0.12, 0.12, 0.35)
-				const armMat = new THREE.MeshStandardMaterial({ color: 0xff6600 })
+				const armMat = new THREE.MeshBasicMaterial({ color: 0xff6600 })
 				const arm = new THREE.Mesh(armGeo, armMat)
 				arm.position.set(0, 0.1, -0.42)  // -Z = forward direction
 				arm.castShadow = false
@@ -801,11 +801,14 @@ export function useWorldEngine(canvasRef) {
 				avatarSLPos[0] = Math.max(1, Math.min(sessionStore.regionSizeX - 1, avatarSLPos[0]))
 				avatarSLPos[1] = Math.max(1, Math.min(sessionStore.regionSizeY - 1, avatarSLPos[1]))
 				avatarSLPos[2] = Math.max(0, avatarSLPos[2])
-				// Move own avatar mesh to predicted position
+				// Move own avatar mesh to predicted position directly (no GSAP tween).
+				// WHY: Dead reckoning runs every animation frame at 60fps. Starting a GSAP
+				// tween with overwrite:true 60×/sec adds tween overhead and can cause micro-stutter.
+				// Direct set is sufficient — the camera lerp already provides smooth visual motion.
 				const ownMesh = meshMap.get(ownAvatarLocalId)
 				if (ownMesh) {
 					const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
-					gsap.to(ownMesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.08, overwrite: true })
+					ownMesh.position.set(t.x, t.y, t.z)
 				}
 				// Update store so LocationBar stays current
 				worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
