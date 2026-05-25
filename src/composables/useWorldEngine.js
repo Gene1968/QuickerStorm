@@ -307,7 +307,7 @@ export function useWorldEngine(canvasRef) {
 
 	// WHY: Placeholder — full implementation in Task 7 (onTerrainPatch).
 	// Called here to avoid undefined reference in rebuildTerrainFromStore.
-	function applyHeightColor(_col, _vi, _h) { /* implemented in Task 7 */ }
+	function applyHeightColor(geometry, heights, waterY) { /* TODO Task 7: height-based topo coloring */ }
 
 	// WHY: HMR and navigation away/back trigger onUnmounted+onMounted. worldStore.terrainHeights
 	// persists across remounts (Pinia ref). Rebuild geometry immediately on mount so terrain
@@ -318,15 +318,15 @@ export function useWorldEngine(canvasRef) {
 		const col    = terrainMesh.geometry.attributes.color
 		const stride = 257
 		let anyNonZero = false
-		for (let slY = 0; slY <= 255; slY++) {
-			for (let slX = 0; slX <= 255; slX++) {
+		for (let slY = 0; slY <= 256; slY++) {
+			for (let slX = 0; slX <= 256; slX++) {
 				const vi = slY * stride + slX
 				const h  = worldStore.terrainHeights[vi]
 				if (h !== 0) anyNonZero = true
 				pos.setY(vi, h)
-				applyHeightColor(col, vi, h)
 			}
 		}
+		applyHeightColor(terrainMesh.geometry, worldStore.terrainHeights, 20)
 		if (anyNonZero) {
 			pos.needsUpdate = true
 			col.needsUpdate = true
@@ -361,10 +361,10 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;'
 		canvasRef.value.parentElement.appendChild(labelRenderer.domElement)
 
-		// WHY: 255 segments × 255 segments = 256×256 cells = 257×257 vertices (1 vertex per SL metre).
+		// WHY: 256 segments = 257 vertices per axis — matches Float32Array(66049) = 257×257 in worldStore.
 		// rotateX(-π/2) lays the plane flat. translate(128,0,-128) centres the region at Three.js
 		// origin matching slToThree(128,128,0). Vertex Y positions updated per TERRAIN_PATCH message.
-		const terrainGeo = new THREE.PlaneGeometry(256, 256, 255, 255)
+		const terrainGeo = new THREE.PlaneGeometry(256, 256, 256, 256)
 		terrainGeo.rotateX(-Math.PI / 2)
 		terrainGeo.translate(128, 0, -128)
 
@@ -388,7 +388,7 @@ export function useWorldEngine(canvasRef) {
 		waterMesh = new THREE.Mesh(
 			new THREE.PlaneGeometry(260, 260),
 			new THREE.MeshBasicMaterial({
-				color: 0x1a6fb5,
+				color: 0x2266aa,
 				transparent: true,
 				opacity: 0.72,
 				side: THREE.FrontSide,
