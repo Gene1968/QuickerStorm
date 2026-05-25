@@ -53,7 +53,7 @@ const micDevices = computed(() => voice.audioDevices.value.filter(d => d.kind ==
 const spkDevices = computed(() => voice.audioDevices.value.filter(d => d.kind === 'audiooutput'))
 const canSetSink = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
 
-function toSlider(vol)         { return Math.round(vol.value * 100) }
+function toSlider(vol)         { return Math.round(vol * 100) }
 function fromSlider(e, volRef) { volRef.value = e.target.valueAsNumber / 100 }
 
 // Load device list when Sound tab opened
@@ -319,7 +319,7 @@ onUnmounted(() => {
 										<button
 											class="text-xs w-6 h-6 flex items-center justify-center rounded hover:bg-white/10"
 											:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
-											@click="interfaceMuted.value = !interfaceMuted.value"
+											@click="interfaceMuted = !interfaceMuted"
 											:title="interfaceMuted ? 'Unmute' : 'Mute'"
 										>{{ interfaceMuted ? '🔇' : '🔊' }}</button>
 									</div>

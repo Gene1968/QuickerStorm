@@ -142,11 +142,11 @@ const stubChannels = [
 						/>
 						<button
 							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded hover:bg-white/10 transition-colors"
-							:class="interfaceMuted.value ? 'text-red-400' : 'text-t2'"
-							@click="interfaceMuted.value = !interfaceMuted.value"
+							:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
+							@click="interfaceMuted = !interfaceMuted"
 						>
-							<VolumeX v-if="interfaceMuted.value" :size="11" />
-							<Volume2 v-else                       :size="11" />
+							<VolumeX v-if="interfaceMuted" :size="11" />
+							<Volume2 v-else                :size="11" />
 						</button>
 					</div>
 
