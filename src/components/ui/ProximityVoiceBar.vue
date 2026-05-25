@@ -3,27 +3,20 @@
  * ProximityVoiceBar — fixed bottom bar for proximity voice chat.
  * Zoom-style: muted by default, click mic to toggle, hold SPACE/button to talk while muted.
  */
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useProximityVoice, connectedPeerIds, roomLocked } from '@/composables/useProximityVoice.js'
 import { useAudio }          from '@/composables/useAudio.js'
 import { useAvatarStore }    from '@/stores/avatarStore.js'
 import { usePresenceStore }  from '@/stores/presenceStore.js'
-import { useOfficeStore }    from '@/stores/officeStore.js'
 import { Mic as MicrophoneIcon, Lock as LockClosedIcon } from '@lucide/vue'
 
 const voice       = useProximityVoice()
 const { isAllAudioMuted, toggleAllAudioMute } = useAudio()
 const avatarStore = useAvatarStore()
 const presenceStore = usePresenceStore()
-const officeStore = useOfficeStore()
 
 const showBar    = ref(false)
 const showDevices = ref(false)
-
-const LS_AUTOJOIN = 'ava_voice_autojoin'
-
-const isDev = import.meta.env.DEV
-const devVoiceHint = isDev ? 'Requires localhost + `npm run signal` on port 8787' : null
 
 // ── Space-to-talk + Shift+Alt+A mute toggle ──────────────────────────
 function onKeyDown(e) {
@@ -36,72 +29,18 @@ function onKeyDown(e) {
 }
 
 onMounted(async () => {
-	window.addEventListener('ava-ptt-start', onPTTStart)
-	window.addEventListener('ava-ptt-stop',  onPTTStop)
 	window.addEventListener('keydown', onKeyDown)
 	document.addEventListener('pointerdown', onDocClick)
-
-	if (localStorage.getItem(LS_AUTOJOIN) === '1') {
-		_tryAutoJoin()
-	}
 })
 onUnmounted(() => {
-	window.removeEventListener('ava-ptt-start', onPTTStart)
-	window.removeEventListener('ava-ptt-stop',  onPTTStop)
 	window.removeEventListener('keydown', onKeyDown)
 	document.removeEventListener('pointerdown', onDocClick)
 })
 
-function onPTTStart() { if (voice.isEnabled.value && voice.isMuted.value) voice.startTalking() }
-function onPTTStop()  { if (voice.isTalking.value) voice.stopTalking() }
-
-// ── Auto-rejoin: wait for presence to resolve myUserId ───────────────
-let _autoJoinTimer = null
-function _tryAutoJoin () {
-	// If presence already resolved, join immediately
-	if (presenceStore.myUserId) {
-		_doAutoJoin()
-		return
-	}
-	// Otherwise wait for myUserId to be set (presence.start() runs in parent onMounted)
-	const stop = watch(() => presenceStore.myUserId, (id) => {
-		if (!id) return
-		stop()
-		clearTimeout(_autoJoinTimer)
-		_doAutoJoin()
-	})
-	// Safety timeout — don't wait forever if presence fails
-	_autoJoinTimer = setTimeout(() => {
-		stop()
-		console.warn('[voice] auto-rejoin timed out waiting for presenceStore.myUserId')
-	}, 10_000)
-}
-async function _doAutoJoin () {
-	try {
-		const perm = await navigator.permissions.query({ name: 'microphone' }).catch(() => null)
-		if (!perm || perm.state === 'granted') await enableVoice()
-	} catch { /* ignore */ }
-}
-
 // ── Join / leave ─────────────────────────────────────────────────────
-async function enableVoice() {
-	const myId = String(presenceStore.myUserId || avatarStore.authUserId || 'me')
-	// Join the voice channel that matches our current office room, not a
-	// hard-coded lobby. Critical for knock-admitted users: they're physically
-	// in roomX, so their voice must also join roomX (useProximityVoice passes
-	// admitted=true on join when we were just admitted to this room).
-	const roomId = officeStore.currentRoomId || 'lobby'
-	await voice.enable(myId, roomId)
-	if (!voice.micError.value) {
-		localStorage.setItem(LS_AUTOJOIN, '1')
-		showBar.value = true
-	}
-}
-
 function leaveVoice() {
-	localStorage.removeItem(LS_AUTOJOIN)
 	voice.disable()
-	showBar.value  = false
+	showBar.value     = false
 	showDevices.value = false
 }
 
@@ -155,33 +94,9 @@ function barActive(i) {
 	return !voice.isMuted.value && voice.audioLevel.value >= BAR_THRESHOLDS[i]
 }
 
-function onTalkDown(e) {
-	e.currentTarget.setPointerCapture(e.pointerId)
-	voice.startTalking()
-}
 </script>
 
 <template>
-	<!-- Join button + mute toggle (pre-voice) -->
-	<div v-if="!voice.isEnabled.value" class="voice-pre-bar">
-		<div
-			class="voice-enable-btn hud-btn"
-			:title="devVoiceHint"
-			@click="enableVoice"
-		>
-			<MicrophoneIcon style="width:14px;height:14px" />
-			Join Voice
-		</div>
-		<button
-			class="pre-mute-btn vb-ctrl text-lg px-1 xl:px-3"
-			:title="(isAllAudioMuted ? 'Unmute' : 'Mute') + ' all sound'"
-			@click="toggleAllAudioMute"
-		>
-			<div class="sound-wrap" :class="{ muted: isAllAudioMuted }">🔊</div>
-		</button>
-		<p class="bg-danger text-white fw-bold p-2 pxx-4 rounded-5">👈 You can't participate in audio conversations until you join.</p>
-	</div>
-
 	<!-- Active voice bar -->
 	<Transition name="slide-up">
 		<div v-if="voice.isEnabled.value" class="voice-bar flex align-items-center justify-between">
@@ -218,25 +133,6 @@ function onTalkDown(e) {
 				</div>
 			</div>
 
-
-			<div class="flex align-items-center justify-center col hidden lg:block">
-				<div class="flex align-items-center text-nowrap text-xs text-gray-700">
-					<span v-if="voice.isMuted.value">Hold<kbd class="mx-1">SPACEBAR</kbd>or</span>
-					<button
-						class="talk-btn mx-1 lh-sm"
-						:class="{ active: voice.isTalking.value }"
-						@pointerdown.prevent="onTalkDown"
-						@pointerup="voice.stopTalking"
-						@touchstart.prevent="voice.startTalking"
-						@touchend.prevent="voice.stopTalking"
-					>
-						<MicrophoneIcon style="width:13px;height:13px" />
-						{{ voice.isTalking.value ? 'Talking' : 'Press here' }}
-					</button>
-					<span v-if="!voice.isTalking.value">to briefly unmute</span>
-					<span v-else> / unmuted</span>
-				</div>
-			</div>
 
 			<!-- Who can hear me — button + popup -->
 			<div class="listeners-wrap" ref="listenersPanelRef">
@@ -334,25 +230,6 @@ function onTalkDown(e) {
 </template>
 
 <style scoped>
-.voice-pre-bar {
-	position: fixed;
-	bottom: 1rem;
-	left: calc(var(--canvas-left) + 1rem);
-	z-index: 50;
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-}
-
-.voice-enable-btn {
-	cursor: pointer;
-}
-
-.pre-mute-btn {
-	font-size: 0.875rem;
-	padding: 0.25rem 0.4375rem;
-}
-
 /* ── Bar ── */
 .voice-bar {
 	position: fixed;
@@ -470,31 +347,6 @@ kbd {
 	font-family: inherit;
 	color: var(--color-t2);
 }
-
-/* ── Hold to talk button ── */
-.talk-btn {
-	display: flex;
-	align-items: center;
-	gap: 0.375rem;
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
-	border-radius: 1.25rem;
-	color: var(--color-t2);
-	font-size: 0.75rem;
-	font-weight: 700;
-	padding: 0.375rem 0.6rem;
-	cursor: pointer;
-	user-select: none;
-	transition: background 0.15s, border-color 0.15s, color 0.15s;
-	white-space: nowrap;
-}
-.talk-btn:hover { background: rgba(255,255,255,0.06); color: var(--color-t1); }
-.talk-btn.active {
-	background: rgba(0, 200, 83, 0.2);
-	border-color: var(--color-green);
-	color: var(--color-green);
-}
-
 
 .vb-ctrl {
 	background: none;
