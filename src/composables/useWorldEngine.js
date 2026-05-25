@@ -854,6 +854,7 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer?.domElement.remove()
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
+		worldStore.clearTerrain()
 		worldStore.clearAll()
 	})
 

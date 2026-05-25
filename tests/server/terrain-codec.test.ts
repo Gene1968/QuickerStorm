@@ -97,6 +97,30 @@ describe('decodeLayerData — IDCT path (non-zero range)', () => {
   })
 })
 
+describe('decodeLayerData — error cases', () => {
+  it('returns null for buffer too short', () => {
+    expect(decodeLayerData(Buffer.alloc(8), 8)).toBeNull()
+  })
+
+  it('returns null for non-LAND/WATER type', () => {
+    const buf = Buffer.alloc(12)
+    buf[8] = 0x37  // wind layer type
+    buf.writeUInt16LE(0, 9)
+    expect(decodeLayerData(buf, 8)).toBeNull()
+  })
+
+  it('returns null for large patch_size (32)', () => {
+    // Group header at data[0]: stride=LE U16, patchSize=32, type=0x4C
+    const groupHdr = Buffer.from([0x08, 0x01, 32, 0x4C])
+    const body = Buffer.allocUnsafe(3 + groupHdr.length)
+    body[0] = 0x4C
+    body.writeUInt16LE(groupHdr.length, 1)
+    groupHdr.copy(body, 3)
+    const pkt = Buffer.concat([Buffer.alloc(8), body])
+    expect(decodeLayerData(pkt, 8)).toBeNull()
+  })
+})
+
 describe('decodeLayerData — zero-range patch', () => {
   it('returns flat terrain at dc_offset when range=0', () => {
     // Build a minimal LayerData packet for a flat patch at height=25.5
