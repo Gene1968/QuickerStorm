@@ -39,7 +39,10 @@
       "PowerShell(Get-ChildItem *)",
       "PowerShell(New-Item *)",
       "Bash(Remove-Item *)",
-      "Bash(node -e *)"
+      "Bash(node -e *)",
+      "Bash(Select-Object -First 120)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(grep -v \"^\\\\s*//\")"
     ]
   }
 }

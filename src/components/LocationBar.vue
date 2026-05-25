@@ -5,6 +5,7 @@ import { useWorldStore } from '@/stores/worldStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { C } from '@shared/protocol.js'
+import { MicVocalIcon, BirdIcon, SwordIcon, CuboidIcon, ScrollTextIcon, StarIcon } from '@lucide/vue'
 
 const session = useSessionStore()
 const world	 = useWorldStore()
@@ -69,6 +70,10 @@ const hopUrl = computed(() => {
 	return `secondlife://${encodeURIComponent(r)}/${x}/${y}/${z}`
 })
 
+function showLocationInfo() {
+	console.log(`To do: [LocationBar] open location About info for ${region.value}`)
+}
+
 function startEdit() {
 	editVal.value = hopUrl.value
 	editing.value = true
@@ -109,9 +114,9 @@ function onEditKeydown(e) {
 </script>
 
 <template>
-	<div class="flex items-center gap-2 px-3 text-xs text-white select-none min-w-0">
+	<div class="flex items-center gap-2 bg-white/10 rounded-1 px-3 text-xs text-white select-none min-w-0">
 
-		<span class="me-2">ℹ️</span>
+		<span @click="showLocationInfo" title="See more info about the current location" class="me-2 text-base">ℹ️</span>
 
 		<!-- Connection status dot -->
 		<span :class="connected ? 'text-green-400' : 'text-red-400'" class="fs-5 pb-1 shrink-0">
@@ -126,7 +131,7 @@ function onEditKeydown(e) {
 				@click="startEdit"
 			>
 				<!-- Region + coords -->
-				<span class="font-medium truncate max-w-[240px]">{{ region }}</span>
+				<span class="font-medium truncate max-w-[15rem]">{{ region }}</span>
 				<span class="text-white/60 font-montserrat shrink-0">({{ coords }})</span>
 				<!-- Maturity badge -->
 				<span v-if="maturity" :class="['shrink-0 ml-0.5', maturity.color]">
@@ -140,12 +145,24 @@ function onEditKeydown(e) {
 			<input
 				ref="editInput"
 				v-model="editVal"
-				class="flex-1 bg-white/10 border border-accent/50 rounded px-2 py-0.5 min-w-[30rem] text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-accent"
+				class="flex-1 bg-white/10 border border-accent/50 rounded px-2 py-0.5 min-w-[35rem] text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-accent"
 				@keydown="onEditKeydown"
 				@blur="cancelEdit"
 			/>
-			<span class="text-white text-xs shrink-0">Esc cancel · Enter go</span>
+			<span class="text-white text-xs shrink-0">Esc or Enter</span>
 		</template>
+
+		<span class="mx-3"></span>
+		<MicVocalIcon v-if="false" title="Voice" class="w-5 h-5 mx-1 text-gray-400" />
+		<BirdIcon v-if="false" title="Flying" class="w-5 h-5 mx-1 text-gray-400" />
+		<SwordIcon v-if="false" title="Pushing" class="w-5 h-5 mx-1 text-gray-400" />
+		<CuboidIcon title="Building" class="w-5 h-5 mx-1 text-gray-400" />
+		<ScrollTextIcon title="Scripts" class="w-5 h-5 mx-1 text-gray-400" />
+		<StarIcon class="w-5 h-5 mx-3 text-gray-400" />
 
 	</div>
 </template>
+
+<style scoped>
+
+</style>

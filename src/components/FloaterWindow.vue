@@ -117,7 +117,7 @@ const outerStyle = computed(() => ({
 			<span class="text-sm font-semibold text-t1">{{ title }}</span>
 			<button
 				@click.stop="$emit('close')"
-				class="p-1 rounded text-t1/60 hover:text-t1 hover:bg-white/10 transition-colors"
+				class="p-1 rounded text-tm hover:text-t1 hover:bg-white/10 transition-colors"
 				aria-label="Close"
 			>
 				<XIcon :size="14" />

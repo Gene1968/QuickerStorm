@@ -94,7 +94,7 @@ const stubChannels = [
 		<Transition name="dd">
 			<div
 				v-if="showDropdown"
-				class="absolute right-0 top-full mt-1 w-56 bg-card border border-brd rounded-lg shadow-2xl p-3 z-[600]"
+				class="absolute right-0 top-full mt-1 w-64 bg-card border border-brd rounded-lg shadow-2xl me-1 p-3 z-[600]"
 				@mouseenter="onEnter"
 				@mouseleave="onLeave"
 			>
@@ -114,8 +114,8 @@ const stubChannels = [
 							:class="isAllAudioMuted ? 'text-red-400' : 'text-t2'"
 							@click="toggleAllAudioMute"
 						>
-							<VolumeX v-if="isAllAudioMuted" :size="11" />
-							<Volume2 v-else                  :size="11" />
+							<VolumeX v-if="isAllAudioMuted" :size="16" />
+							<Volume2 v-else                  :size="16" />
 						</button>
 					</div>
 
@@ -135,8 +135,8 @@ const stubChannels = [
 							:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
 							@click="interfaceMuted = !interfaceMuted"
 						>
-							<VolumeX v-if="interfaceMuted" :size="11" />
-							<Volume2 v-else                :size="11" />
+							<VolumeX v-if="interfaceMuted" :size="16" />
+							<Volume2 v-else                :size="16" />
 						</button>
 					</div>
 
@@ -164,7 +164,7 @@ const stubChannels = [
 						class="flex items-center gap-1 text-xs text-tm hover:text-t1 transition-colors"
 						@click="openSoundPrefs"
 					>
-						<Settings :size="11" />
+						<Settings :size="16" />
 						Settings
 					</button>
 				</div>
@@ -177,4 +177,7 @@ const stubChannels = [
 .dd-enter-active { transition: opacity 0.12s, transform 0.12s; }
 .dd-leave-active { transition: opacity 0.08s, transform 0.08s; }
 .dd-enter-from, .dd-leave-to { opacity: 0; transform: translateY(-0.25rem); }
+input[type="range"] {
+	width: 5rem;
+}
 </style>
