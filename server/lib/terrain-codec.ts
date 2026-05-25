@@ -134,31 +134,37 @@ const DEQUANT      = buildDequantTable()
 const COS_TABLE    = buildCosTable()
 const OO_SQRT2     = 1 / Math.SQRT2  // 1/√2 ≈ 0.7071
 
-// ── 1D IDCT — Type-III, matches firestorm idct_line() ────────────────────────
+// ── 1D IDCT — Type-III, matches firestorm idct_column() (no outer scale) ─────
+// WHY: firestorm applies outer scale (oosob=2/N) only in idct_line, not idct_column.
+// We use this base function for both passes; oosob is applied separately in idct2D.
 function idct1D(inp: Float32Array, out: Float32Array): void {
 	for (let n = 0; n < PATCH_SIZE; n++) {
 		let sum = inp[0] * OO_SQRT2
 		for (let k = 1; k < PATCH_SIZE; k++) sum += inp[k] * COS_TABLE[k][n]
-		out[n] = sum * OO_SQRT2
+		out[n] = sum
 	}
 }
 
-// ── 2D IDCT — separable: IDCT each row, then each column ─────────────────────
+// ── 2D IDCT — separable: IDCT rows (no scale), then columns (× oosob=2/N) ────
+// WHY: Matches firestorm idct_patch order — idct_column (no scale) then idct_line
+// (× 2/size). Separability means row-then-column ≡ column-then-row; oosob applied
+// once to the second pass exactly matches firestorm's combined scale of 2/N.
 function idct2D(block: Float32Array): void {
 	const tmp = new Float32Array(PATCH_SIZE * PATCH_SIZE)
 	const lineIn  = new Float32Array(PATCH_SIZE)
 	const lineOut = new Float32Array(PATCH_SIZE)
-	// Rows
+	const oosob   = 2.0 / PATCH_SIZE  // = 0.125; firestorm: 2.f/size in idct_line
+	// Rows (no outer scale — matches firestorm idct_column)
 	for (let row = 0; row < PATCH_SIZE; row++) {
 		for (let k = 0; k < PATCH_SIZE; k++) lineIn[k] = block[row * PATCH_SIZE + k]
 		idct1D(lineIn, lineOut)
 		for (let n = 0; n < PATCH_SIZE; n++) tmp[row * PATCH_SIZE + n] = lineOut[n]
 	}
-	// Columns
+	// Columns (with oosob — matches firestorm idct_line)
 	for (let col = 0; col < PATCH_SIZE; col++) {
 		for (let k = 0; k < PATCH_SIZE; k++) lineIn[k] = tmp[k * PATCH_SIZE + col]
 		idct1D(lineIn, lineOut)
-		for (let n = 0; n < PATCH_SIZE; n++) block[n * PATCH_SIZE + col] = lineOut[n]
+		for (let n = 0; n < PATCH_SIZE; n++) block[n * PATCH_SIZE + col] = lineOut[n] * oosob
 	}
 }
 

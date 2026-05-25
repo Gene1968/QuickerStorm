@@ -33,6 +33,70 @@ describe('BitReader', () => {
 	})
 })
 
+describe('decodeLayerData — IDCT path (non-zero range)', () => {
+  it('decodes DC-only coefficient to expected height', () => {
+    // Exercises the full IDCT pipeline (range ≠ 0).
+    // rawCoeffs[0] = 16, wbits=5 (quantWbits=0x03), range=4, dcOffset=0
+    // Expected: block[i] = rawCoeffs[0]/PATCH_SIZE = 16/16 = 1.0 (IDCT of pure DC)
+    // mult = range/quantize = 4/(1<<2) = 1.0
+    // addval = mult*(1<<(prequant-1)) + dcOffset = 1*2 + 0 = 2.0
+    // height = 1.0 * 1.0 + 2.0 = 3.0 for all 256 positions
+    // WHY: If idct1D applies OO_SQRT2 twice or oosob is missing, the DC-only block
+    // produces 0.25*D or 0.5*D instead of D/N, and heights come out wrong.
+    const bitBuf2: number[] = []
+    let totalBits2 = 0
+    function writeBits2(val: number, n: number) {
+      for (let i = n - 1; i >= 0; i--) {
+        const byteIdx = (totalBits2 / 8) | 0
+        const bitIdx  = 7 - (totalBits2 % 8)
+        if (bitIdx === 7) bitBuf2.push(0)
+        if ((val >> i) & 1) bitBuf2[byteIdx] |= (1 << bitIdx)
+        totalBits2++
+      }
+    }
+    function writeFloat32b(v: number) {
+      const tmp = Buffer.allocUnsafe(4)
+      tmp.writeFloatBE(v, 0)
+      writeBits2(tmp.readUInt32BE(0), 32)
+    }
+
+    // Patch: dcOffset=0, range=4, quantWbits=0x03, patchIds=0
+    writeFloat32b(0.0)   // dcOffset
+    writeBits2(4, 16)    // range = 4
+    writeBits2(0x03, 8)  // quantWbits → wbits=(0x03&0x0f)+2=5, prequant=2, quantize=4
+    writeBits2(0, 10)    // patchIds: x=0, y=0
+
+    // Coefficients: rawCoeffs[0]=16, sign=positive, then sentinel endMark=31
+    writeBits2(16, 5)    // value = 16 (5 bits, not sentinel=31)
+    writeBits2(0, 1)     // sign = positive
+    writeBits2(31, 5)    // endMark → break
+
+    // Sentinel patch: dcOffset=0, range=0, quantWbits=97
+    writeFloat32b(0.0)
+    writeBits2(0, 16)
+    writeBits2(97, 8)
+
+    while (totalBits2 % 8 !== 0) writeBits2(0, 1)
+
+    const patchBytes = Buffer.from(bitBuf2)
+    const groupHdr   = Buffer.from([0x08, 0x01, 16, 0x4C])
+    const data       = Buffer.concat([groupHdr, patchBytes])
+    const body = Buffer.allocUnsafe(3 + data.length)
+    body[0] = 0x4C
+    body.writeUInt16LE(data.length, 1)
+    data.copy(body, 3)
+    const pkt = Buffer.concat([Buffer.alloc(8), body])
+
+    const result = decodeLayerData(pkt, 8)
+    expect(result).not.toBeNull()
+    expect(result!.patches).toHaveLength(1)
+    const h = result!.patches[0].heights
+    for (let i = 0; i < 256; i++) {
+      expect(h[i]).toBeCloseTo(3.0, 1)  // DC-only patch → uniform height
+    }
+  })
+})
+
 describe('decodeLayerData — zero-range patch', () => {
   it('returns flat terrain at dc_offset when range=0', () => {
     // Build a minimal LayerData packet for a flat patch at height=25.5
