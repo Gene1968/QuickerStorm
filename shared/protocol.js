@@ -31,6 +31,7 @@ export const S = {
 	DISCONNECTED:    'disconnected',  // { reason: string } — sim killed the circuit
 	AGENT_SPAWN_POS: 'spawn_pos',    // { pos: [slX, slY, slZ] } — AgentMovementComplete confirmed position
 	KILL_OBJECT:     'kill_obj',     // { ids: number[] } — sim removed these localIds from scene
+	TERRAIN_PATCH:   'terrain_patch',  // { layerType:'LAND'|'WATER', patchSize:16, patches:[{x,y,heights:number[]}] }
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

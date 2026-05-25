@@ -31,6 +31,7 @@ const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
 const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
+const MEDIUM_LAYER_DATA       = 6     // LayerData (terrain patches) — Medium frequency, msg ID 6
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
@@ -286,6 +287,12 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids } }))
 			}
 		} catch (e) { slog.warn(session.ws, `KillObject decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `med:${MEDIUM_LAYER_DATA}`) {
+		// TODO: replace with real decode in Task 4
+		slog.info(session.ws, `[terrain] LayerData received — dataOffset=${dataOffset} buf.length=${buf.length}`)
 		return
 	}
 
