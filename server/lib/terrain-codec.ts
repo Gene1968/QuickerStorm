@@ -76,7 +76,8 @@ export class BitReader {
 	readU16(): number { return this.readBits(16) }
 	readU8():  number { return this.readBits(8)  }
 
-	get bytesRead(): number { return Math.ceil(this.bitPos / 8) }
+	get bytesRead():        number  { return Math.ceil(this.bitPos / 8) }
+	get bitsRemaining():    number  { return Math.max(0, this.buf.length * 8 - this.bitPos) }
 }
 
 // ── Group header — 4 plain bytes at start of LayerData.Data ──────────────────
@@ -320,11 +321,22 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		// Decode patches via bit reader
 		const reader  = new BitReader(data.slice(patchDataOffset))
 		const patches: TerrainPatch[] = []
+		// WHY: minimum header size = 8+32+16+10 = 66 bits; bail before buffer exhaustion to
+		// prevent readBits returning 0 for all fields (quantWbits=0 ≠ END_OF_PATCHES=97 → infinite fake [0,0] patches).
+		const MIN_HEADER_BITS = 66
 
 		for (let attempt = 0; attempt < 512; attempt++) {
+			if (reader.bitsRemaining < MIN_HEADER_BITS) break  // buffer exhausted before sentinel
 			const ph = readPatchHeader(reader)
-			if (!ph) break  // END_OF_PATCHES sentinel
-			if (ph.patchX > 15 || ph.patchY > 15) { dbg(`patchX=${ph.patchX} patchY=${ph.patchY} out of 16×16 grid — skipping`); continue }
+			if (!ph) break  // END_OF_PATCHES sentinel (quantWbits=97)
+			if (ph.patchX > 15 || ph.patchY > 15) {
+				// WHY: MUST drain coefficient bits for out-of-range patches even though we discard results.
+				// Without draining, the next readPatchHeader starts from coefficient data instead of the
+				// next patch header → wrong quantWbits/dcOffset/range → garbage coords and heights for
+				// all subsequent patches, 500+ "patches" reported, heights in thousands of metres.
+				if (ph.range > 0) readCoefficients(reader, ph.quantWbits)
+				continue
+			}
 			const heights = decodePatch(reader, ph)
 			patches.push({ x: ph.patchX, y: ph.patchY, heights })
 		}
