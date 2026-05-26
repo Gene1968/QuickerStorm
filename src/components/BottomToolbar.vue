@@ -25,7 +25,7 @@ const tools = [
 	{ id: 'chat',       icon: '💬', label: 'Chat',      title: 'Nearby Chat',        action: () => ui.toggleChat(),       active: () => ui.showChat },
 	{ id: 'speak',      icon: '🎤', label: 'Speak',     title: 'Toggle Mic',         action: () => voice.toggleMute(),    active: () => voice.isEnabled.value && !voice.isMuted.value },
 	{ id: 'voice',      icon: '🔊', label: 'Voice',     title: 'Voice Controls',     action: () => {},                    active: () => false,                disabled: true },
-	{ id: 'walk',       icon: '🚶', label: 'Walk',      title: 'Movement Controls',  action: () => {},                    active: () => false,                disabled: true },
+	{ id: 'walk',       icon: '🚶', label: 'Walk / Run / Fly',      title: 'Movement Controls',  action: () => ui.toggleMoveControls(), active: () => ui.showMoveControls },
 	{ id: 'camera',     icon: '🎥', label: 'Camera',    title: 'Camera Controls',    action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'appearance', icon: '🪞', label: 'Appearance',    title: 'Avatar Appearance',  action: () => ui.toggleAppearance(), active: () => ui.showAppearance },
 	{ id: 'search',     icon: '🔍', label: 'Search',    title: 'Search',             action: () => {},                    active: () => false,                disabled: true },

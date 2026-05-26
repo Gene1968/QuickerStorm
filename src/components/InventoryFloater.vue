@@ -11,7 +11,7 @@ const ui = useUiStore()
 		id="inventory"
 		title="📦 Inventory"
 		:wrap-style="{ width: '16.5vw', height: '48vh', resize: 'both' }"
-		:default-pos="{ left: '0.125%', bottom: '2.65rem' }"
+		:default-pos="{ left: '0.125vw', bottom: '2.65rem' }"
 		@close="ui.toggleInventory()"
 	>
 		<div class="flex p-1"><input class="inv-search rounded-5 bg-brd2 w-full px-3 text-t1" placeholder="Filter Inventory (TO-DO)" type="search" /></div>

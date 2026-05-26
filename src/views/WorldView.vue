@@ -18,6 +18,7 @@ import BottomToolbar		from '@/components/BottomToolbar.vue'
 import MapFloater			from '@/components/MapFloater.vue'
 import InventoryFloater		from '@/components/InventoryFloater.vue'
 import AppearanceFloater	from '@/components/AppearanceFloater.vue'
+import MoveControlsFloater	from '@/components/MoveControlsFloater.vue'
 import ProfileFloater		from '@/components/ProfileFloater.vue'
 import SettingsFloater		from '@/components/SettingsFloater.vue'
 import DebugPanel			from '@/components/DebugPanel.vue'
@@ -100,6 +101,7 @@ watch(
 				<ConversationsFloater	v-if="ui.showChat" />
 				<InventoryFloater		v-if="ui.showInventory" />
 				<AppearanceFloater		v-if="ui.showAppearance" />
+				<MoveControlsFloater	v-if="ui.showMoveControls" />
 				<MapFloater				v-if="ui.showMap" />
 				<ProfileFloater			v-if="ui.showProfile" />
 				<SettingsFloater		v-if="ui.showSettings" />
