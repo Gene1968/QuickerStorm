@@ -19,6 +19,7 @@ import MapFloater			from '@/components/MapFloater.vue'
 import InventoryFloater		from '@/components/InventoryFloater.vue'
 import AppearanceFloater	from '@/components/AppearanceFloater.vue'
 import MoveControlsFloater	from '@/components/MoveControlsFloater.vue'
+import CameraControlsFloater	from '@/components/CameraControlsFloater.vue'
 import ProfileFloater		from '@/components/ProfileFloater.vue'
 import SettingsFloater		from '@/components/SettingsFloater.vue'
 import DebugPanel			from '@/components/DebugPanel.vue'
@@ -102,6 +103,7 @@ watch(
 				<InventoryFloater		v-if="ui.showInventory" />
 				<AppearanceFloater		v-if="ui.showAppearance" />
 				<MoveControlsFloater	v-if="ui.showMoveControls" />
+				<CameraControlsFloater	v-if="ui.showCameraControls" />
 				<MapFloater				v-if="ui.showMap" />
 				<ProfileFloater			v-if="ui.showProfile" />
 				<SettingsFloater		v-if="ui.showSettings" />
