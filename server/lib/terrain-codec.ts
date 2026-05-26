@@ -202,8 +202,15 @@ function readCoefficients(reader: BitReader, quantWbits: number): Int32Array {
 	for (let i = 0; i < PATCH_SIZE * PATCH_SIZE; i++) {
 		const val = reader.readBits(wbits)
 		if (val === endMark) break  // end of non-zero coefficients
-		const sign = reader.readBits(1)
-		coeffs[i] = sign ? -val : val
+		if (val === 0) {
+			coeffs[i] = 0  // WHY: encoder (firestorm patch_code.cpp, OpenMetaverse TerrainCompressor.cs)
+			               // writes sign bit only for non-zero values: `if (temp != 0) writeBit(sign)`.
+			               // Reading a sign bit for zero drifts the bitstream by 1 bit per zero, causing
+			               // garbage coefficients and extreme heights (hundreds of metres off).
+		} else {
+			const sign = reader.readBits(1)
+			coeffs[i] = sign ? -val : val
+		}
 	}
 	return coeffs
 }
