@@ -44,7 +44,7 @@ function stopZoom() { clearInterval(_zoomTimer); _zoomTimer = null }
 const PRESETS = [
 	{ id: 'front',     label: '⬆', title: 'Front View — Phase 2',          wired: false },
 	{ id: 'side',      label: '➡', title: 'Side View — Phase 2',           wired: false },
-	{ id: 'rear',      label: '⬇', title: 'Rear View — Phase 2',           wired: false },
+	{ id: 'rear',      label: '⬇', title: 'Rear View (default)',           wired: true },
 	{ id: 'tpp',       label: '👁', title: 'Third-Person View — Phase 2',   wired: false },
 	{ id: 'mouselook', label: '🎯', title: 'Mouselook — Phase 2',           wired: false },
 	{ id: 'reset',     label: '↩', title: 'Reset camera view (Esc)',        wired: true  },

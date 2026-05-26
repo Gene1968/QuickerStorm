@@ -74,7 +74,10 @@
       "Bash(xargs grep -B 2 -A 8 \"struct.*LLGroupHeader\\\\|class.*LLGroupHeader\")",
       "Bash(Select-Object -First 20)",
       "Bash(grep -n \"^{$\" \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\phoenix-firestorm\\\\scripts\\\\messages\\\\message_template.msg\")",
-      "Bash(grep -A 20 \"^{$\" \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\phoenix-firestorm\\\\scripts\\\\messages\\\\message_template.msg\")"
+      "Bash(grep -A 20 \"^{$\" \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\phoenix-firestorm\\\\scripts\\\\messages\\\\message_template.msg\")",
+      "Bash(bun server/lib/terrain-codec.ts)",
+      "PowerShell($env:PATH -split ';' | Where-Object { $_ -match 'bun|node|npm' })",
+      "Bash(node test-sign-fix.mjs)"
     ]
   }
 }

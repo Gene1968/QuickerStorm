@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useGridLogin } from '@/composables/useGridLogin'
 import { useGridStore } from '@/stores/gridStore'
 
@@ -55,6 +55,28 @@ function saveRecent(grid, region) {
 	try { localStorage.setItem(RECENT_KEY, JSON.stringify(all)) } catch {}
 }
 const recentRegions = computed(() => loadRecent()[gridStore.selectedNick] ?? [])
+
+// WHY: Native <datalist> can't be styled and mispositions inside scrollable
+// panels (LandingView login strip). Custom list anchors to the input instead.
+const regionInputRef = ref(null)
+const showRegionSuggestions = ref(false)
+const filteredRegions = computed(() => {
+	const q = destRegion.value.trim().toLowerCase()
+	const list = recentRegions.value
+	return q ? list.filter(r => r.toLowerCase().includes(q)) : list
+})
+
+function openRegionSuggestions() {
+	if (recentRegions.value.length) showRegionSuggestions.value = true
+}
+function closeRegionSuggestions() {
+	showRegionSuggestions.value = false
+}
+function pickRegion(name) {
+	destRegion.value = name
+	closeRegionSuggestions()
+	nextTick(() => regionInputRef.value?.focus())
+}
 
 // Build the start string the server/grid expects
 const destination = computed(() => {
@@ -127,16 +149,32 @@ async function submit() {
 
 			<!-- Region name input -->
 			<div v-if="destType === 'region'" class="flex flex-col gap-1">
-				<input
-					v-model="destRegion"
-					type="text"
-					placeholder="Region name"
-					list="qs-recent-regions"
-					class="px-3 py-1.5 rounded bg-card border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-				/>
-				<datalist id="qs-recent-regions">
-					<option v-for="r in recentRegions" :key="r" :value="r" />
-				</datalist>
+				<div class="relative">
+					<input
+						ref="regionInputRef"
+						v-model="destRegion"
+						type="text"
+						placeholder="Region name"
+						autocomplete="off"
+						class="w-full px-3 py-1.5 rounded bg-card border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+						@focus="openRegionSuggestions"
+						@input="openRegionSuggestions"
+						@blur="closeRegionSuggestions"
+						@keydown.escape="closeRegionSuggestions"
+					/>
+					<ul
+						v-if="showRegionSuggestions && filteredRegions.length"
+						class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
+						@mousedown.prevent
+					>
+						<li
+							v-for="r in filteredRegions"
+							:key="r"
+							class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
+							@click="pickRegion(r)"
+						>{{ r }}</li>
+					</ul>
+				</div>
 				<p class="text-orange-500 text-xs">Region name as it appears on the grid's map.</p>
 			</div>
 		</div>

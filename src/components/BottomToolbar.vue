@@ -23,8 +23,8 @@ function logout() {
 // disabled: true → stub not yet implemented; renders with opacity-40 cursor-not-allowed
 const tools = [
 	{ id: 'chat',       icon: '💬', label: 'Chat',      title: 'Nearby Chat',        action: () => ui.toggleChat(),       active: () => ui.showChat },
-	{ id: 'speak',      icon: '🎤', label: 'Speak',     title: 'Toggle Mic',         action: () => voice.toggleMute(),    active: () => voice.isEnabled.value && !voice.isMuted.value },
-	{ id: 'voice',      icon: '🔊', label: 'Voice',     title: 'Voice Controls',     action: () => {},                    active: () => false,                disabled: true },
+	{ id: 'speak',      icon: '🎙️', label: 'Speak',     title: 'Toggle Mic',         action: () => voice.toggleMute(),    active: () => voice.isEnabled.value && !voice.isMuted.value },
+	{ id: 'voice',      icon: '🎧', label: 'Nearby Voice',     title: 'Voice Controls',     action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'walk',       icon: '🚶', label: 'Walk / Run / Fly',      title: 'Movement Controls',  action: () => ui.toggleMoveControls(), active: () => ui.showMoveControls },
 	{ id: 'camera',     icon: '🎥', label: 'Camera',    title: 'Camera Controls',    action: () => ui.toggleCameraControls(), active: () => ui.showCameraControls },
 	{ id: 'appearance', icon: '🪞', label: 'Appearance',    title: 'Avatar Appearance',  action: () => ui.toggleAppearance(), active: () => ui.showAppearance },
@@ -84,7 +84,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<!-- Debug panel toggle (Ctrl+Shift+4) -->
 		<button
 			class="flex flex-1 flex-col items-center justify-center h-8 rounded text-2xs transition-colors"
-			:class="ui.showDebug ? 'bg-white/5 text-accent3' : 'text-white/40 hover:bg-white/10 hover:text-white'"
+			:class="ui.showDebug ? 'bg-white/5 text-accent3' : 'text-white/70 hover:bg-white/10 hover:text-white'"
 			title="Debug Panel (Ctrl+Shift+4)"
 			@click="ui.toggleDebug()"
 		>
