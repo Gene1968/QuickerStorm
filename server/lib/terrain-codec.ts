@@ -104,11 +104,13 @@ function readPatchHeader(reader: BitReader): PatchHeader | null {
 	if (quantWbits === END_OF_PATCHES) return null  // sentinel: no more patches
 	const dcOffset   = reader.readFloat32LE()        // LE float (LSByte first in stream)
 	const range      = reader.readU16LE()             // LE U16  (LSByte first in stream)
-	const patchIds   = reader.readBits(10)            // 5 bits x (upper), 5 bits y (lower)
-	// WHY: patchIds upper 5 bits = x (column), lower 5 bits = y (row).
-	// See libopenmetaverse DecodePatchHeader and firestorm decode_patch_header.
-	const patchX = (patchIds >> 5) & 0x1f
-	const patchY = patchIds & 0x1f
+	const patchIds   = reader.readBits(10)            // 10-bit patch grid ID
+	// WHY: firestorm encodes patchids = x | (y << 5), so lower 5 bits = X (column),
+	// upper 5 bits = Y (row). See firestorm patch_code.cpp decode_patch_header and
+	// libopenmetaverse DecodePatchHeader. Previous code had X and Y swapped, placing
+	// each patch at the transposed grid position (column→row, row→column).
+	const patchX = patchIds & 0x1f          // lower 5 bits = X (column, 0-15)
+	const patchY = (patchIds >> 5) & 0x1f   // upper 5 bits = Y (row,    0-15)
 	return { dcOffset, range, quantWbits, patchX, patchY }
 }
 
@@ -219,13 +221,20 @@ function readCoefficients(reader: BitReader, quantWbits: number): Int32Array {
 function decodePatch(reader: BitReader, hdr: PatchHeader): Float32Array {
 	const heights = new Float32Array(PATCH_SIZE * PATCH_SIZE)
 
-	// Zero-range shortcut: flat area, skip IDCT
+	// WHY: readCoefficients MUST be called before the range=0 early return.
+	// Firestorm always encodes coefficient bits for every patch regardless of range
+	// (for range=0 patches, all quantized coefficients are 0, so the encoder writes
+	// 255 zeros × wbits + endMark × wbits). Returning early without reading these
+	// bits leaves the BitReader misaligned, causing subsequent patch headers to be
+	// read from inside the coefficient data → garbage dcOffset/range/patchIds for
+	// every patch that follows in the same packet (h0=−3.575e13, h0=5116m, etc.).
+	const rawCoeffs = readCoefficients(reader, hdr.quantWbits)
+
+	// Zero-range shortcut: flat area, skip IDCT (coefficients already consumed above)
 	if (hdr.range === 0) {
 		heights.fill(hdr.dcOffset)
 		return heights
 	}
-
-	const rawCoeffs = readCoefficients(reader, hdr.quantWbits)
 
 	// Dequantize into block array at zigzag-mapped positions
 	const block = new Float32Array(PATCH_SIZE * PATCH_SIZE)
@@ -293,15 +302,19 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		}
 
 		// WHY: LayerData type byte (LayerID.Type) uses ASCII values derived from message_template.msg:
-		//   0x4C ('L') = LAND       — classic SL and standard OpenSim
+		//   0x4C ('L') = LAND         — classic SL and standard OpenSim
 		//   0x4D ('M') = LandExtended — var-region terrain (512×512, 1024×1024), patchSize=32
-		//   0x57 ('W') = WIND       — wind field (not terrain, skip)
-		//   0x43 ('C') = CLOUD      — cloud field (not terrain, skip)
-		//   0x38 ('8') = WATER      — water field (not terrain, skip)
+		//   0x37 ('7') = OSGrid water-floor terrain — observed on OSGrid, same binary format as LAND,
+		//                dcOffset near 0m (sea-floor depth). Decoded and applied; vertices end up below
+		//                y=20 water plane so they are hidden but correct for transition zones.
+		//   0x57 ('W') = WIND  — wind field (not terrain, skip)
+		//   0x43 ('C') = CLOUD — cloud field (not terrain, skip)
+		//   0x38 ('8') = WATER — water field (not terrain, skip)
 		// NOTE: 0x06 was briefly added as "OSGrid LAND int enum" but that was wrong — Medium 6
 		// is CoarseLocationUpdate; those packets were never LayerData. Removed 2026-05-25.
 		const isLand = layerTypeByte === 0x4C   // ASCII 'L' — LAND (standard regions)
 		            || layerTypeByte === 0x4D    // ASCII 'M' — LandExtended (var-regions, unsupported patchSize=32)
+		            || layerTypeByte === 0x37    // ASCII '7' — OSGrid water-floor terrain (same format as LAND)
 		const type = isLand ? 'LAND' : null
 		if (!type) {
 			const label = layerTypeByte === 0x57 ? 'WIND(0x57)'
@@ -341,7 +354,10 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 				// Without draining, the next readPatchHeader starts from coefficient data instead of the
 				// next patch header → wrong quantWbits/dcOffset/range → garbage coords and heights for
 				// all subsequent patches, 500+ "patches" reported, heights in thousands of metres.
-				if (ph.range > 0) readCoefficients(reader, ph.quantWbits)
+				// WHY unconditional (no range>0 check): for range=0, encoder still writes 256×wbits
+				// coefficient bits (255 zeros + endMark). Skipping the drain when range=0 causes the
+				// same bitstream misalignment as in decodePatch.
+				readCoefficients(reader, ph.quantWbits)
 				continue
 			}
 			const heights = decodePatch(reader, ph)
