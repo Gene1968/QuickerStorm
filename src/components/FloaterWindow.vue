@@ -97,6 +97,9 @@ const outerClass = computed(() => [
 	// CSS centering only when no defaultPos and not yet dragged
 	(!pos.value && !props.defaultPos) ? 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2' : '',
 	isFocused.value ? 'opacity-100' : 'opacity-[.85]',
+	// WHY: position:fixed escapes any parent display:none, so v-show on a wrapper won't hide
+	// these. Toggle UI visibility (Ctrl+Alt+F1) requires hiding directly on each floater.
+	!ui.uiVisible ? 'invisible pointer-events-none' : '',
 ])
 
 const outerStyle = computed(() => ({

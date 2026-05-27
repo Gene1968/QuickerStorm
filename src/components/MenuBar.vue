@@ -46,6 +46,18 @@ function onKey(e) {
 	if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
 		e.preventDefault()
 		rebake()
+		return
+	}
+	// Ctrl+Alt+F1 — Toggle UI visibility (render all floaters/bars off for clean screenshot)
+	if (e.ctrlKey && e.altKey && e.key === 'F1') {
+		e.preventDefault()
+		ui.toggleUiVisible()
+		return
+	}
+	// Ctrl+W — Close topmost active floater (overrides browser close-tab)
+	if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+		e.preventDefault()
+		ui.closeActiveFloater()
 	}
 }
 
@@ -158,13 +170,15 @@ const MENUS = [
 	{
 		id: 'advanced', label: 'Advanced',
 		items: [
-			{ label: 'Resync World',	action: resyncWorld },
+			{ label: 'Resync World',										action: resyncWorld },
 			{ label: 'Rebake Textures',	disabled: true },
 			{ sep: true },
-			{ label: 'Debug Panel',		 kbd: 'Ctrl+⇧+4',		action: () => act(() => ui.toggleDebug()) },
+			{ label: 'Render UI ✅ (toggle)',				kbd: 'Ctrl+Alt+F1',	action: () => act(() => ui.toggleUiVisible()) },
+			{ sep: true },
+			{ label: 'Debug Panel',						kbd: 'Ctrl+⇧+4',	action: () => act(() => ui.toggleDebug()) },
 			{ label: 'Debug Settings',	disabled: true },
 			{ sep: true },
-			{ label: 'Performance…',		disabled: true },
+			{ label: 'Performance…',	disabled: true },
 			{ label: 'Rendering Types', disabled: true },
 		],
 	},
@@ -174,12 +188,12 @@ const MENUS = [
 			{ label: 'Movement & Shortcuts', action: () => act(() => { ui.showMovementHelp = true }) },
 			{ sep: true },
 			{ label: 'quickerSTORM Wiki',	disabled: true },
-			{ label: 'Report Issue',			 disabled: true },
+			{ label: 'Report Issue',		disabled: true },
 			{ sep: true },
-			{ label: 'Grid Help',					disabled: true },
-			{ label: 'About Current Grid', disabled: true },
+			{ label: 'Grid Help',			disabled: true },
+			{ label: 'About Current Grid',	disabled: true },
 			{ sep: true },
-			{ label: 'About quickerSTORM', disabled: true },
+			{ label: 'About quickerSTORM',	disabled: true },
 		],
 	},
 ]

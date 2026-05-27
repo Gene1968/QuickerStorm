@@ -59,6 +59,32 @@ export const useUiStore = defineStore('ui', () => {
 		floaterStack.value = [...floaterStack.value.filter(f => f !== id), id]
 	}
 
+	const uiVisible = ref(true)
+	function toggleUiVisible() { uiVisible.value = !uiVisible.value }
+
+	// WHY: Ctrl+W closes topmost floater by mapping FloaterWindow id → show ref.
+	// Stack may have stale IDs (FloaterWindow doesn't clean up on unmount), so always
+	// remove the popped ID from the stack regardless.
+	const _FLOATER_CLOSE = {
+		conversations:   () => { showChat.value         = false },
+		map:             () => { showMap.value           = false },
+		inventory:       () => { showInventory.value     = false },
+		appearance:      () => { showAppearance.value    = false },
+		move:            () => { showMoveControls.value  = false },
+		camera:          () => { showCameraControls.value = false },
+		places:          () => { showPlaces.value        = false },
+		'object-edit':   () => { showObjectEdit.value    = false },
+		preferences:     () => { showPreferences.value   = false },
+		profile:         () => { showProfile.value       = false },
+		'movement-help': () => { showMovementHelp.value  = false },
+	}
+	function closeActiveFloater() {
+		if (!floaterStack.value.length) return
+		const topId = floaterStack.value.at(-1)
+		floaterStack.value = floaterStack.value.filter(f => f !== topId)
+		_FLOATER_CLOSE[topId]?.()
+	}
+
 	// Camera position + heading — updated by useWorldEngine at ~4 Hz, not every frame
 	const cameraPos = shallowRef({ x: 128, y: 25, z: 128 })  // SL coords (x, z=height, y)
 	function setCameraPos(x, y, z) {
@@ -105,6 +131,7 @@ export const useUiStore = defineStore('ui', () => {
 		toggleMovementHelp, togglePlaces, openPreferencesOnTab,
 		openProfile, toggleProfile,
 		floaterStack, focusFloater,
+		uiVisible, toggleUiVisible, closeActiveFloater,
 		cameraPos, setCameraPos,
 		cameraYaw, setCameraYaw,
 		avatarMenu, openAvatarMenu, closeAvatarMenu,

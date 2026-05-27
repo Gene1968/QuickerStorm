@@ -80,18 +80,18 @@ watch(
 		<!-- 2D fallback -->
 		<template v-if="show2D">
 			<!-- Top row: menu bar + location bar -->
-			<div class="relative flex shrink-0 h-8 bg-black/70 border-b border-brd">
+			<div v-show="ui.uiVisible" class="relative flex shrink-0 h-8 bg-black/70 border-b border-brd">
 				<MenuBar />
 				<LocationBar />
 			</div>
 			<SimpleWorldView class="flex-1" />
-			<BottomToolbar />
+			<BottomToolbar v-show="ui.uiVisible" />
 		</template>
 
 		<!-- 3D world -->
 		<template v-else>
 			<!-- Top row: menu bar + location bar -->
-			<div class="flex shrink-0 align-items-center justify-content-between h-8 bg-black/70 border-b border-brd">
+			<div v-show="ui.uiVisible" class="flex shrink-0 align-items-center justify-content-between h-8 bg-black/70 border-b border-brd">
 				<MenuBar />
 				<LocationBar />
 				<AudioControlsWidget class="hidden md:flex" />
@@ -100,29 +100,34 @@ watch(
 			<!-- Middle: canvas area with overlays -->
 			<div class="flex-1 relative overflow-hidden">
 				<WorldCanvas class="absolute inset-0" />
-				<ResyncBanner />
-				<MinimapOverlay			v-if="ui.showMinimap" />
-				<AvatarList				v-if="ui.showAvatarList" />
 
-				<!-- Floater panels — positioned within the canvas area -->
-				<ConversationsFloater	v-if="ui.showChat" />
-				<InventoryFloater		v-if="ui.showInventory" />
-				<AppearanceFloater		v-if="ui.showAppearance" />
-				<MoveControlsFloater	v-if="ui.showMoveControls" />
-				<CameraControlsFloater	v-if="ui.showCameraControls" />
-				<MapFloater				v-if="ui.showMap" />
-				<PlacesFloater			v-if="ui.showPlaces" />
-				<ObjectEditFloater		v-if="ui.showObjectEdit" />
-				<ProfileFloater			v-if="ui.showProfile" />
-				<SettingsFloater		v-if="ui.showSettings" />
-				<DebugPanel				v-if="ui.showDebug" />
-				<MovementHelpFloater	v-if="ui.showMovementHelp" />
-				<AvatarContextMenu />
-				<ObjectContextMenu />
+				<!-- Overlay/floater layer — hidden as a unit by Ctrl+Alt+F1.
+				     Absolute children are hidden by display:none on this wrapper.
+				     FloaterWindow children are position:fixed and escape display:none;
+				     they handle visibility via FloaterWindow.vue's invisible class. -->
+				<div v-show="ui.uiVisible">
+					<ResyncBanner />
+					<MinimapOverlay			v-if="ui.showMinimap" />
+					<AvatarList				v-if="ui.showAvatarList" />
+					<ConversationsFloater	v-if="ui.showChat" />
+					<InventoryFloater		v-if="ui.showInventory" />
+					<AppearanceFloater		v-if="ui.showAppearance" />
+					<MoveControlsFloater	v-if="ui.showMoveControls" />
+					<CameraControlsFloater	v-if="ui.showCameraControls" />
+					<MapFloater				v-if="ui.showMap" />
+					<PlacesFloater			v-if="ui.showPlaces" />
+					<ObjectEditFloater		v-if="ui.showObjectEdit" />
+					<ProfileFloater			v-if="ui.showProfile" />
+					<SettingsFloater		v-if="ui.showSettings" />
+					<DebugPanel				v-if="ui.showDebug" />
+					<MovementHelpFloater	v-if="ui.showMovementHelp" />
+					<AvatarContextMenu />
+					<ObjectContextMenu />
+				</div>
 			</div>
 
 			<!-- Bottom toolbar -->
-			<BottomToolbar />
+			<BottomToolbar v-show="ui.uiVisible" />
 		</template>
 
 	</div>
