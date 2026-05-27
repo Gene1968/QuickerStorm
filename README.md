@@ -16,30 +16,54 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 **🟢 Working now**
 - [x] Log in to various grids — splash page, Home, last location, or any region
 - [x] Others on Firestorm see your avatar appearance and movement normally (outbound AgentUpdate working)
-- [x] You see nearby users listed (and simplified prims for their avies)
+- [x] You see nearby users listed and they show up as simplified avatars (cyan capsules) at the right place
+- [x] **Other avatars now turn to face the right way as they walk** (TerseUpdate rotation decode)
+- [x] **Real region terrain heightmap** — decoded from LayerData, rendered with topo colors (blue/teal/green/earthy/stone)
 - [x] See your region and coordinates in the location bar, and do same-region teleport from there
 - [x] Session resume on network blip (15-second circuit hold).  Proper logout disconnect.
-- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, etc.)
+- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, collision bump?, etc.)
 
 **🟡 Partially working**
-- [~] Movement — 70%.  Your inputs send correctly; you can move and see your coords in the location bar, but don't really see others move. World is currently a placeholder scene — region geometry (terrain, prims) not yet rendered.
-- [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating needs for: transcript, muted transcript, options and search, tear-off, close
+- [~] Movement — 80%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision so you don't silently bump into invisible prims.
+- [~] Scene — 50%.  Real terrain rendering and height color done. Prims still render as 1m cubes with hash-tinted color (each prim distinguishable but no real geometry yet). Ocean is flat blue — no ripple. No neighboring sims.
+- [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating: transcript, muted transcript, options and search, tear-off, close
+- [~] Menus/floaters — 30%.  Some disabled placeholders as we implement features
 
-**🔜 Up next**
-- [ ] Inbound movement — render your others' position updates in the 3D scene
-- [ ] Region geometry — even a wireframe or simplified terrain would be a big step up from the placeholder
-- [ ] Avatar appearance — currently capsule placeholders; baked texture download is the hard part
-- [ ] Floater tools (inventory, map, profile, preferences) — shells exist, wiring in progress. Heavy data?
-- [ ] DM / IM chat
-- [ ] Object and avatar context menus
-- [ ] Import/export of assets?
+**🔜 Up next — Phase 2 ("world looks like world")**
+- [ ] **Real prim geometry** — read PathCurve/ProfileCurve already in the packet → boxes/cylinders/spheres/tori instead of cubes
+- [ ] **Child-prim composition** — linked sets (houses, vehicles) currently explode into scatter; ParentID is decoded but unused
+- [ ] **Prim colors** — decode TextureEntry default color so prims show their real RGBA without any texture fetch
+- [ ] **Terrain collision + gravity** — heightmap exists, just sample it under the avatar's feet
+- [ ] **Ocean ripple** — small vertex displacement shader on the water plane
+- [ ] **Neighboring-sim terrain** — load 4 neighbor regions at the right world offset
+- [ ] **Cross-region teleport** — tear down current UDP circuit, open new one to target sim
+- [ ] **Instant Messaging (IM)** — `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
+- [ ] **Right-click avatar menu** — IM, View Profile, Face Toward
+- [ ] **Right-click object menu (subset)** — Inspect, Touch, Sit (no Edit/Take/Delete yet — those need Phase 3 caps)
+- [ ] Hovering text on prims (already in the packet, just not surfaced)
+
+**🔜 Up next later — Phase 3 ("real assets + social", HTTP caps)**
+- [ ] HTTP-capability client foundation (LLSD-XML over Bun proxy)
+- [ ] **Inventory viewing** via `FetchInventoryDescendents2` cap; folder tree + item icons
+- [ ] **Texture asset pipeline** — `GetTexture` cap → J2C (JPEG2000) decode in browser → real prim textures
+- [ ] **Texture Inspect floater** — per-face UUID, dimensions, repeat/offset
+- [ ] **Mesh export/import** via `GetMesh2` cap; GLTF/OBJ on the export side
+- [ ] **Friends / Contacts** floater with online status, IM, profile, teleport-to (with rights)
+- [ ] **Groups** + **Group IM** (group chat is `ChatSessionRequest` cap + IM hybrid)
+- [ ] **Profile floater** via avatar properties cap
+- [ ] **Places floater** — landmark list, saved teleport favorites
+- [ ] **Object Edit floater** — Object Properties + TransformControls + `MultipleObjectUpdate`
+- [ ] Right-click object **Edit / Take / Copy / Delete / Export** (perms + caps)
+- [ ] Web-on-prim (`ObjectMedia` cap)
 
 **⚠️ May be tricky**
 - Cross-region teleport — requires tearing down and rebuilding the UDP circuit mid-session
-- Avatar textures — LLUDP baked-texture pipeline; large assets, cache strategy TBD
+- Avatar appearance — `AgentSetAppearance` with empty bake data destroys appearance globally; very risky to wire without thorough test grid validation
+- J2C (JPEG2000) decode in the browser — needs WASM port of OpenJPEG or similar
+- Mesh upload — mesh validator + physics LOD + L$ costs; export is much easier than import
 - WebRTC proximity voice — peer signaling works; spatial falloff and VAD tuning still ahead
 - Inventory at scale — UUID dedup, folder tree sync across login sessions
-- Object physics / collision — terrain and gravity are out of scope for now
+- LLSD-XML / LLSD-binary parser — every cap response uses it; not just JSON
 
 ---
 

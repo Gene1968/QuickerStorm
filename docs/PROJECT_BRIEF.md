@@ -4,55 +4,104 @@
 
 ## Purpose
 
-quickerSTORM is a web-based 3D viewer for Open Simulator and Second Life.  It provides real-time presence awareness, proximity-based voice chat, user messaging, groups, inventory, movement, teleporting, SLURLs, landmarks, etc.
+quickerSTORM is a web-based 3D viewer for OpenSimulator and Second Life. It provides real-time scene rendering, avatar movement, local/IM chat, teleporting, eventually proximity voice, inventory, groups, and object editing — all from a browser tab with no thick-client install.
 
 ## Target Users
 
-Opensim or SL users who want a lighter experience accessing their grids without needing to do an install.
+OpenSim or SL users who want a lighter way into their grid: a browser bookmark instead of a multi-GB client. Useful for quick check-ins, mobile/tablet, shared computers, anywhere a thick client install isn't practical.
 
 ## Stack & Infrastructure
 
 | Layer | Choice |
 | --- | --- |
-| Frontend | Vue 3 (Composition API, `<script setup>`), Vite, Pinia, Vue Router |
-| 3D Engine | Three.js — scene, avatar meshes, room geometry, door meshes, GSAP tweening |
-| Voice | WebRTC (browser native) + Bun WS server for signaling |
-| Data | ? |
-| Styling | Scoped component CSS + Tailwind utilities; light/dark theming via `useTheme()` |
-| Hosting | Vite SPA (static) + **Bun WS server ? ** |
+| Frontend | Vue 3 (Composition API, `<script setup>`), Vite, Pinia, Vue Router (hash mode) |
+| 3D Engine | Three.js r183 — scene, avatar meshes, terrain mesh, GSAP tweening |
+| LLUDP bridge | Bun WebSocket server (`server/`) — UDP↔WS relay, holds circuit state |
+| Voice | WebRTC (browser native) + Bun WS server for signaling (Phase 2 wire-up) |
+| Data | No backend database. State lives client-side (Pinia + localStorage); sim is authoritative for world state. (Phase 3 may add asset-cache IndexedDB for textures/meshes.) |
+| Styling | Tailwind utilities + Bootstrap helpers + scoped CSS; light/dark via `useTheme()` |
+| Hosting | Vite SPA (static); Bun server runs on Railway (staging) or locally |
 
 ## Key Constraints
 
-- **Hash-based routing** (`createWebHashHistory`) for standalone and potential embedded hosts (see ADR-0001).
+- **Hash-based routing** (`createWebHashHistory`) — required for SharePoint host and standalone embed (see ADR-0001).
+- **All LLUDP traffic goes through the Bun WS server.** Browsers cannot speak UDP. The server is mandatory infrastructure.
+- **Sim is authoritative for world state.** Local position is best-effort (dead reckoning matched to SL physics 3.2/5.2/11 m/s); sim corrections via TerseUpdate blend in.
+- **Three.js r152+ uses sRGB output color space.** Vertex colors and material colors must be stored in linear space; convert via `Color.convertSRGBToLinear()` or `pow(c, 2.4)`.
+- **SL Z-up vs Three.js Y-up.** Always convert with `slToThree()` / `slQuatToThree()` at server boundary.
 
 ## Core Features
 
-1. **3D virtual world viewer** — Three.js 
-2. **Real-time presence** — Heartbeat to world sync for instant updates. 
-3. **Proximity voice chat** — WebRTC peer connections with VAD talking indicators and mic/speaker device selection.
-19. **2D flat view** — Simplified view for low-end devices and mobile, more HTML & buttons, perhaps mini map.
+Phase 1 (shipped):
 
-## Out of Scope (unless explicitly added)
+1. **3D virtual world viewer** — Three.js scene, real terrain mesh with height-color rendering
+2. **Login + circuit** — XML-RPC login proxy + LLUDP UseCircuitCode + CompleteAgentMovement + AgentThrottle
+3. **Movement** — AgentUpdate at 10 Hz, dead reckoning matched to SL physics, follow camera
+4. **Avatar rendering** — own + other avatars as capsules with face indicator, name tags
+5. **Local chat** — ChatFromViewer / ChatFromSimulator with emoji
+6. **Same-region teleport** — from LocationBar
+7. **Session resume** — 15-second circuit hold on network blip; clean logout via LogoutRequest
+8. **RebakeAvatarTextures** cap
 
-- ?
+Phase 2 (next — see README + `memory/phase2-goals.md`):
+
+9. **Real prim geometry** — PathCurve/ProfileCurve → boxes/cylinders/spheres/tori
+10. **Child-prim composition** — linked sets via ParentID
+11. **TextureEntry default color** — real prim RGBA without asset fetch
+12. **Terrain collision + gravity + ocean ripple**
+13. **Neighboring-sim terrain + cross-region teleport**
+14. **WebRTC proximity voice** — wire-up to existing signaling
+15. **IM** — `ImprovedInstantMessage` LLUDP
+16. **Right-click avatar + object context menus** (Phase 2 subset)
+17. **Places floater**
+
+Phase 3 (HTTP capability layer — see `memory/phase3-goals.md`):
+
+18. **Inventory viewing + management** via `FetchInventoryDescendents2` cap
+19. **Texture pipeline** — `GetTexture` cap + J2C (JPEG2000) decode in browser
+20. **Mesh export/import** via `GetMesh2` cap
+21. **Friends / Contacts** + **Groups + Group IM**
+22. **Object Edit floater** + Take/Copy/Delete/Export
+23. **Profile floater** + (carefully) appearance editing
+24. **Web-on-prim** via `ObjectMedia` cap
+
+## Out of Scope
+
+- Backend database / multi-user persistence (sim is authoritative)
+- Slack / Google / Microsoft / Supabase integrations (removed earlier; do not reintroduce)
+- Office-collab / meeting-room features (legacy from prior product; `useOfficeEngine.js` being phased out)
+- LSL script editing — write goes to sim caps anyway, but no client-side IDE
+- Marketplace / commerce — out of scope; users use thick client for L$ transactions
+- Mobile-native app — web-only
 
 ## Success Metrics
 
-- Online users have near parity of abilities with those using the thick clients
-- Users see their region, move around, interact with objects and each other, run LSL scripts, teleport, cross regions
+- Online users have near parity of abilities with thick clients for common day-to-day actions
+- Users see their region accurately (terrain, prim geometry, other avatars moving and turning), move around without drift, IM and chat
+- Phase 3: users can view inventory, see real prim textures, and edit basic object properties
 - Voice chat connects reliably between peers in the same area
 
 ## Glossary
 
 | Term | Meaning |
 | --- | --- |
+| LLUDP | Linden Lab UDP — the binary wire protocol SL/OpenSim sims speak |
+| Sim / simulator | One server-side region (256×256 m standard, 512×512+ for var-regions) |
+| Var-region | Variable-size region larger than 256×256; uses 32×32 terrain patches instead of 16×16 |
+| Cap / capability | Per-session HTTP endpoint URL issued by the sim's seed cap; modern SL/OpenSim uses caps for inventory, textures, mesh, groups, etc. |
+| Seed cap | The bootstrap capability URL returned by login; POST returns a list of all other cap URLs |
+| Terse update | `ImprovedTerseObjectUpdate` — 10 Hz position+rotation+velocity packet (U16-quantized) |
+| Full update | `ObjectUpdate` — full prim/avatar metadata; sent on spawn, region entry, big changes |
+| J2C | JPEG2000 codestream — SL/OpenSim's native texture format |
+| TE / TextureEntry | Per-face texture+color+repeat+offset+rotation+glow bitfield-packed block on every prim |
 
 ## Related Docs
 
 | Doc | Role |
 | --- | --- |
-| `../CLAUDE.md` | Setup commands, architecture summary, key files for AI sessions |
-| `CONTEXT.md` | Quick AI context, tech stack, important paths, Railway services, presence warning |
+| `../README.md` | Public-facing status + roadmap |
+| `../CLAUDE.md` | Setup commands, architecture summary, AI session entry point |
+| `CONTEXT.md` | Stack, key composables, coordinate transforms |
 | `CONVENTIONS.md` | Style, naming, git, AI workflow hooks |
-| `../TODO.md` | Current work checklist |
 | `tech-debt.md` | Known shortcuts and fragile areas |
+| `superpowers/specs/` | Canonical spec — read before implementing |
