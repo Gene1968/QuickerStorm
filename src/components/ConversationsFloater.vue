@@ -1,32 +1,41 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
 import { useLocalChat }  from '@/composables/useLocalChat'
+import { useInstantMessage } from '@/composables/useInstantMessage'
 import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
 import { playSound } from '@/composables/useAudio'
-import { ChevronDownIcon } from '@lucide/vue'
+import { ChevronDownIcon, XIcon } from '@lucide/vue'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
 import 'emoji-picker-element'
 
 const avatar = useAvatarStore()
 const ui     = useUiStore()
 const { messages, send } = useLocalChat()
+const im     = useInstantMessage()
 
 const activeTab  = ref('nearby')
 const chatInput  = ref('')
+const imInput    = ref('')
 const msgEl      = ref(null)
+const imLogEl    = ref(null)
 const inputEl    = ref(null)
+const imInputEl  = ref(null)
 const showEmoji  = ref(false)
 
-// TODO: openIMs — populated by incoming IM events; shape: { agentId, agentName, messages[] }
-// Switching to a new IM from WorldView should push here + set activeTab = agentId
-const openIMs = ref([])
-
+// WHY: tabs derived from active IM conversations + fixed nearby/contacts.
+// im.activeId switching is mirrored to activeTab so right-click → "IM" focuses correctly.
 const tabs = computed(() => [
 	{ id: 'contacts', label: 'Contacts', icon: '👥' },
 	{ id: 'nearby',   label: 'Nearby Chat',   icon: '📡' },
-	...openIMs.value.map(im => ({ id: im.agentId, label: im.agentName, icon: '💬' })),
+	...[...im.conversations.value.values()].map(c => ({
+		id: c.agentId, label: c.agentName, icon: '💬', closable: true,
+	})),
 ])
+
+const activeConv = computed(() => im.conversations.value.get(activeTab.value) ?? null)
+
+watch(() => im.activeId.value, (id) => { if (id) activeTab.value = id })
 
 const floaterTitle = computed(() =>
 	avatar.displayName ? `Conversations — ${avatar.displayName}` : 'Conversations'
@@ -44,10 +53,25 @@ function onInput() {
 
 async function selectTab(id) {
 	activeTab.value = id
-	if (id === 'nearby') {
-		await nextTick()
-		inputEl.value?.focus()
-	}
+	im.setActive(id?.includes('-') ? id : null)
+	await nextTick()
+	if (id === 'nearby') inputEl.value?.focus()
+	else if (activeConv.value) imInputEl.value?.focus()
+}
+
+function closeImTab(id, e) {
+	e?.stopPropagation()
+	im.close(id)
+	if (activeTab.value === id) activeTab.value = 'nearby'
+}
+
+async function submitIM() {
+	const text = imInput.value.trim()
+	if (!text || !activeConv.value) return
+	im.send(activeConv.value.agentId, text)
+	imInput.value = ''
+	await nextTick()
+	if (imLogEl.value) imLogEl.value.scrollTop = 0
 }
 
 function focusInput() {
@@ -112,18 +136,30 @@ async function submitChat() {
 
 			<!-- Vertical tab strip -->
 			<nav class="flex flex-col shrink-0 w-[7rem] border-r border-brd overflow-y-auto">
-				<button
+				<div
 					v-for="tab in tabs"
 					:key="tab.id"
-					class="flex flex-col items-center gap-0.5 py-2 px-1 text-xs leading-tight hover:bg-white/5 transition-colors border-l-2"
-					:class="activeTab === tab.id
-						? 'bg-white/10 text-accent border-accent'
-						: 'text-white/50 hover:text-white/70 border-transparent'"
-					@click="selectTab(tab.id)"
+					class="relative group"
 				>
-					<span class="text-sm leading-none">{{ tab.icon }}</span>
-					<span class="truncate w-full text-center mt-0.5">{{ tab.label }}</span>
-				</button>
+					<button
+						class="flex flex-col items-center gap-0.5 py-2 px-1 text-xs leading-tight hover:bg-white/5 transition-colors border-l-2 w-full"
+						:class="activeTab === tab.id
+							? 'bg-white/10 text-accent border-accent'
+							: 'text-white/50 hover:text-white/70 border-transparent'"
+						@click="selectTab(tab.id)"
+					>
+						<span class="text-sm leading-none">{{ tab.icon }}</span>
+						<span class="truncate w-full text-center mt-0.5">{{ tab.label }}</span>
+					</button>
+					<button
+						v-if="tab.closable"
+						class="absolute top-0.5 right-0.5 opacity-0 group-hover:opacity-100 text-white/40 hover:text-white"
+						title="Close conversation"
+						@click="closeImTab(tab.id, $event)"
+					>
+						<XIcon class="w-3 h-3" />
+					</button>
+				</div>
 			</nav>
 
 			<!-- Content area -->
@@ -193,9 +229,46 @@ async function submitChat() {
 				</template>
 
 				<!-- IM tab (per avatar) ──────────────────────────────── -->
+				<template v-else-if="activeConv">
+					<div
+						ref="imLogEl"
+						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0 cursor-text"
+						@click="imInputEl?.focus()"
+					>
+						<div
+							v-for="(m, i) in [...activeConv.messages].reverse().slice(0, 200)"
+							:key="i"
+							class="text-xs leading-snug text-t1"
+						>
+							<span class="text-accent font-medium">{{ m.from }}:</span>
+							{{ m.text }}
+						</div>
+						<div v-if="!activeConv.messages.length" class="py-4 text-white/30 text-xs italic">
+							No messages yet — say hello.
+						</div>
+					</div>
+					<form
+						class="flex gap-1.5 px-2 py-1.5 border-t border-brd shrink-0"
+						@submit.prevent="submitIM"
+					>
+						<input
+							ref="imInputEl"
+							v-model="imInput"
+							type="text"
+							:placeholder="`To ${activeConv.agentName}`"
+							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+							maxlength="1023"
+						/>
+						<button
+							type="submit"
+							class="px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+						>Send</button>
+					</form>
+				</template>
+
 				<template v-else>
 					<div class="flex-1 flex items-center justify-center text-white/30 text-xs italic select-none">
-						IM session — coming soon
+						Right-click an avatar to start an IM.
 					</div>
 				</template>
 

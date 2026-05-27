@@ -30,5 +30,9 @@ export function useLLUDP() {
 		emit(C.LOGOUT, {})
 	}
 
-	return { sendMove, sendChat, sendLogout }
+	function sendIM(toAgentId, fromAgentName, message) {
+		emit(C.IM_SEND, { toAgentId, fromAgentName, message })
+	}
+
+	return { sendMove, sendChat, sendLogout, sendIM }
 }

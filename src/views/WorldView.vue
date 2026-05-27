@@ -14,6 +14,7 @@ import MenuBar				from '@/components/MenuBar.vue'
 import AvatarList			from '@/components/AvatarList.vue'
 import MinimapOverlay		from '@/components/MinimapOverlay.vue'
 import ConversationsFloater	from '@/components/ConversationsFloater.vue'
+import AvatarContextMenu	from '@/components/AvatarContextMenu.vue'
 import BottomToolbar		from '@/components/BottomToolbar.vue'
 import MapFloater			from '@/components/MapFloater.vue'
 import InventoryFloater		from '@/components/InventoryFloater.vue'
@@ -111,6 +112,7 @@ watch(
 				<SettingsFloater		v-if="ui.showSettings" />
 				<DebugPanel				v-if="ui.showDebug" />
 				<MovementHelpFloater	v-if="ui.showMovementHelp" />
+				<AvatarContextMenu />
 			</div>
 
 			<!-- Bottom toolbar -->

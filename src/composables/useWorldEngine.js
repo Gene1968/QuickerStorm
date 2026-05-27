@@ -85,7 +85,35 @@ export function useWorldEngine(canvasRef) {
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
-	let waterMesh   = null  // flat blue plane at y=20
+	let waterMesh   = null  // animated water plane
+	let waterMaterial = null  // ShaderMaterial — uTime updated each frame for ripple
+
+	// ── Physics state ─────────────────────────────────────────────────────────
+	// WHY: simple per-session vertical velocity for gravity. SL standard g ≈ 9.8 m/s².
+	// Reset on fly/teleport. Terminal velocity caps fall so jumps off cliffs don't accelerate forever.
+	let vertVel = 0
+	const GRAVITY       = 9.8   // m/s²
+	const TERMINAL_VEL  = 50    // m/s downward cap
+	const FOOT_CLEAR    = 1.0   // m — capsule centre above terrain surface when grounded
+
+	// WHY: Bilinear-interpolated terrain height at SL coord (slX, slY). Stride matches
+	// worldStore.TERRAIN_STRIDE (513). Clamped 1px short of stride edge for the +1 index.
+	function sampleTerrainHeight(slX, slY) {
+		const stride  = worldStore.TERRAIN_STRIDE
+		const heights = worldStore.terrainHeights
+		if (!heights || heights.length === 0) return 0
+		const maxIdx = stride - 1.001
+		const x = Math.max(0, Math.min(maxIdx, slX))
+		const y = Math.max(0, Math.min(maxIdx, slY))
+		const x0 = Math.floor(x), y0 = Math.floor(y)
+		const x1 = x0 + 1, y1 = y0 + 1
+		const fx = x - x0, fy = y - y0
+		const h00 = heights[y0 * stride + x0]
+		const h10 = heights[y0 * stride + x1]
+		const h01 = heights[y1 * stride + x0]
+		const h11 = heights[y1 * stride + x1]
+		return (h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy
+	}
 
 	// ── Own avatar tracking ───────────────────────────────────────────────────
 	// Set from first ObjectUpdate where fullId == agentId
@@ -546,15 +574,38 @@ export function useWorldEngine(canvasRef) {
 		scene.add(terrainMesh)
 
 		// WHY: Water plane sized to region + 4m margin on each side to avoid visible seam.
-		// Centred at region midpoint (rx/2, ry/2 in SL) = Three.js (rx/2, 20, -ry/2).
+		// 64×64 segments give enough vertices for a visible sine ripple without taxing GPU.
+		// ShaderMaterial drives vertical displacement via uTime updated each frame in animate().
+		waterMaterial = new THREE.ShaderMaterial({
+			uniforms: {
+				uTime:    { value: 0 },
+				uColor:   { value: new THREE.Color(0x2266aa) },
+				uOpacity: { value: 0.72 },
+			},
+			vertexShader: `
+				uniform float uTime;
+				void main() {
+					vec3 p = position;
+					// Two crossed sine waves + a slower diagonal mode. Amplitude tuned subtle so
+					// it reads as gentle swell rather than rough sea. Plane is rotated -π/2 around
+					// X at mesh level → local +Z displacement becomes world +Y (vertical bob).
+					p.z += sin(p.x * 0.30 + uTime * 1.20) * 0.08
+					     + sin(p.y * 0.25 + uTime * 0.90) * 0.08
+					     + sin((p.x + p.y) * 0.15 + uTime * 0.70) * 0.05;
+					gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+				}
+			`,
+			fragmentShader: `
+				uniform vec3 uColor;
+				uniform float uOpacity;
+				void main() { gl_FragColor = vec4(uColor, uOpacity); }
+			`,
+			transparent: true,
+			side: THREE.FrontSide,
+		})
 		waterMesh = new THREE.Mesh(
-			new THREE.PlaneGeometry(rx + 8, ry + 8),
-			new THREE.MeshBasicMaterial({
-				color: 0x2266aa,
-				transparent: true,
-				opacity: 0.72,
-				side: THREE.FrontSide,
-			}),
+			new THREE.PlaneGeometry(rx + 8, ry + 8, 64, 64),
+			waterMaterial,
 		)
 		waterMesh.rotation.x = -Math.PI / 2
 		waterMesh.position.set(rx / 2, 20, -ry / 2)
@@ -961,6 +1012,59 @@ export function useWorldEngine(canvasRef) {
 	const BUMP_COOLDOWN_MS = 400
 	let lastBumpAt = 0
 
+	// WHY: Right-click on canvas → raycast against other-avatar meshes only. Hit opens
+	// uiStore.avatarMenu with screen coords + target identity so AvatarContextMenu.vue can
+	// render in WorldView. Miss closes any open menu. Own avatar excluded so the user can't
+	// IM themselves.
+	const _pickNdc = new THREE.Vector2()
+	function onContextMenu(e) {
+		if (!canvasRef.value || !camera) return
+		e.preventDefault()
+		const rect = canvasRef.value.getBoundingClientRect()
+		_pickNdc.set(
+			((e.clientX - rect.left) / rect.width) * 2 - 1,
+			-((e.clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		_raycaster.far = 1000
+		const targets = []
+		meshMap.forEach((mesh, localId) => {
+			if (localId === ownAvatarLocalId) return
+			const obj = worldStore.objects.get(localId)
+			if (obj?.pcode !== PCODE_AVATAR) return
+			targets.push(mesh)
+		})
+		const hits = _raycaster.intersectObjects(targets, true)
+		if (hits.length === 0) { uiStore.closeAvatarMenu(); return }
+		let hitMesh = hits[0].object
+		while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
+		if (!hitMesh) { uiStore.closeAvatarMenu(); return }
+		const obj = worldStore.objects.get(hitMesh.userData.localId)
+		if (!obj) return
+		uiStore.openAvatarMenu({
+			agentId: obj.fullId,
+			name:    obj.name || 'Avatar',
+			localId: hitMesh.userData.localId,
+			x: e.clientX,
+			y: e.clientY,
+		})
+	}
+
+	// WHY: Right-click avatar menu "Face Toward" action — set yaw so own avatar looks at target.
+	// SL forward vector for yaw=0 is (-sin(0), cos(0)) = (0,1) = +SL Y. To face target T from own
+	// position O: dx = T.x - O.x, dy = T.y - O.y. yaw such that (-sin(y), cos(y)) ∝ (dx, dy).
+	// Solution: yaw = atan2(-dx, dy).
+	function onFaceToward(e) {
+		const localId = e?.detail?.localId
+		if (!localId || !avatarSLPos) return
+		const target = worldStore.objects.get(localId)
+		if (!target?.pos) return
+		const dx = target.pos[0] - avatarSLPos[0]
+		const dy = target.pos[1] - avatarSLPos[1]
+		if (Math.hypot(dx, dy) < 0.01) return
+		yaw = Math.atan2(-dx, dy)
+	}
+
 	function checkCollision(slDirX, slDirY) {
 		if (!avatarSLPos || !ownAvatarLocalId) return false
 		// Avatar collision ray origin: chest height in Three.js coords.
@@ -1099,6 +1203,33 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
+		// ── Gravity + ground clamp ───────────────────────────────────────────────
+		// WHY: Runs every frame regardless of input. Without input the avatar still
+		// must fall toward terrain (landing after fly-off, walking off ledges).
+		// Flying zeroes vertVel so toggling fly back off starts a fresh fall, not a
+		// continuation of stale accumulated velocity.
+		if (avatarSLPos && ownAvatarLocalId) {
+			const groundZ = sampleTerrainHeight(avatarSLPos[0], avatarSLPos[1]) + FOOT_CLEAR
+			if (isFlying) {
+				vertVel = 0
+			} else if (avatarSLPos[2] > groundZ) {
+				vertVel = Math.max(vertVel - GRAVITY * dt, -TERMINAL_VEL)
+				avatarSLPos[2] += vertVel * dt
+				if (avatarSLPos[2] < groundZ) { avatarSLPos[2] = groundZ; vertVel = 0 }
+			} else {
+				avatarSLPos[2] = groundZ
+				vertVel = 0
+			}
+			const ownMesh = meshMap.get(ownAvatarLocalId)
+			if (ownMesh) {
+				const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+				ownMesh.position.set(t.x, t.y, t.z)
+			}
+			worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+		}
+
+		if (waterMaterial) waterMaterial.uniforms.uTime.value += dt
+
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
 	}
@@ -1144,12 +1275,14 @@ export function useWorldEngine(canvasRef) {
 		window.addEventListener('blur',    onBlur)
 		window.addEventListener('qs:camera-preset', onCameraPreset)
 		window.addEventListener('qs:camera-track',  onCameraTrack)
+		window.addEventListener('qs:face-toward',   onFaceToward)
 		// Mouse drag on canvas for look control
 		canvasRef.value.addEventListener('mousedown', onMouseDown)
 		window.addEventListener('mousemove', onMouseMove)
 		window.addEventListener('mouseup',   onMouseUp)
 		// Scroll wheel for forward/back movement; passive:false so we can preventDefault
 		canvasRef.value.addEventListener('wheel', onWheel, { passive: false })
+		canvasRef.value.addEventListener('contextmenu', onContextMenu)
 		on(S.OBJECT_UPDATE,    onObjectUpdate)
 		on(S.TERSE_UPDATE,     onTerseUpdate)
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
@@ -1164,10 +1297,12 @@ export function useWorldEngine(canvasRef) {
 		window.removeEventListener('blur',    onBlur)
 		window.removeEventListener('qs:camera-preset', onCameraPreset)
 		window.removeEventListener('qs:camera-track',  onCameraTrack)
+		window.removeEventListener('qs:face-toward',   onFaceToward)
 		window.removeEventListener('mousemove', onMouseMove)
 		window.removeEventListener('mouseup',   onMouseUp)
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
 		canvasRef.value?.removeEventListener('wheel', onWheel)
+		canvasRef.value?.removeEventListener('contextmenu', onContextMenu)
 		off(S.OBJECT_UPDATE,   onObjectUpdate)
 		off(S.TERSE_UPDATE,    onTerseUpdate)
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)

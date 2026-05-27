@@ -9,6 +9,7 @@ import {
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
 	encodeTeleportLocationRequest, encodeCompleteAgentMovement,
 	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance, decodeKillObject,
+	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -32,6 +33,7 @@ const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spa
 const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
 const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
+const LOW_IMPROVED_INSTANT_MSG= 254   // ImprovedInstantMessage — both directions (Low freq)
 const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
@@ -197,6 +199,17 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		slog.warn(session.ws, '⚠ DisableSimulator received — sim terminated circuit')
 		session.ws.send(JSON.stringify({ t: S.DISCONNECTED, d: { reason: 'Simulator terminated the circuit' } }))
 		deleteSession(sessionId)
+		return
+	}
+
+	if (type === `low:${LOW_IMPROVED_INSTANT_MSG}`) {
+		try {
+			const im = decodeImprovedInstantMessage(buf, dataOffset)
+			slog.info(session.ws, `IM from "${im.fromAgentName}" dialog=${im.dialog}: ${im.message.slice(0, 60)}`)
+			session.ws.send(JSON.stringify({ t: S.IM_RECV, d: im }))
+		} catch (e) {
+			slog.warn(session.ws, `IM decode error: ${(e as Error).message}`)
+		}
 		return
 	}
 
@@ -510,6 +523,24 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ChatFromViewer: "${d.message.slice(0, 40)}" type=${d.chatType} ch=${d.channel}`)
+		return
+	}
+
+	if (msg.t === C.IM_SEND) {
+		const d = msg.d as { toAgentId: string; fromAgentName: string; message: string }
+		const seq = nextSeq(session)
+		const pkt = encodeImprovedInstantMessage({
+			agentId:       session.agentId,
+			sessionId:     session.sessionId,
+			seq,
+			toAgentId:     d.toAgentId,
+			fromAgentName: d.fromAgentName,
+			message:       d.message,
+			dialog:        0,  // MessageFromAgent
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ IM to ${d.toAgentId.slice(0, 8)}: "${d.message.slice(0, 40)}"`)
 		return
 	}
 

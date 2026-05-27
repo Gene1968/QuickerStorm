@@ -345,6 +345,93 @@ export function encodeAgentUpdate(p: AgentUpdateParams): Buffer {
   return Buffer.concat([hdr, MSG_ID.AgentUpdate, body])
 }
 
+// ── ImprovedInstantMessage (Low #254) ────────────────────────────────────
+// Per phoenix-firestorm message_template.msg: NotTrusted Zerocoded. AgentData carries
+// AgentID + SessionID; MessageBlock carries FromGroup, ToAgentID, ParentEstateID, RegionID,
+// Position, Offline, Dialog (0=MessageFromAgent), ID (msg UUID), Timestamp, FromAgentName
+// (Variable1), Message (Variable2), BinaryBucket (Variable2). SL convention: text Variables
+// include trailing null terminator in length.
+export function encodeImprovedInstantMessage(p: {
+  agentId:        string
+  sessionId:      string
+  seq:            number
+  toAgentId:      string
+  fromAgentName:  string
+  message:        string
+  regionId?:      string
+  position?:      [number, number, number]
+  dialog?:        number      // 0 = MessageFromAgent
+  messageId?:     string
+}): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const fromBuf = Buffer.from(p.fromAgentName + '\0', 'utf8')
+  const msgBuf  = Buffer.from(p.message + '\0', 'utf8')
+  const regionId = p.regionId  ?? '00000000-0000-0000-0000-000000000000'
+  const pos      = p.position  ?? [0, 0, 0]
+  const dialog   = p.dialog    ?? 0
+  const msgId    = p.messageId ?? '00000000-0000-0000-0000-000000000000'
+  const bucketLen = 0
+
+  const bodySize = 32 + 1 + 16 + 4 + 16 + 12 + 1 + 1 + 16 + 4 +
+                   1 + fromBuf.length + 2 + msgBuf.length + 2 + bucketLen
+  const body = Buffer.allocUnsafe(bodySize)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body[off++] = 0  // FromGroup = false
+  uuidToBytes(p.toAgentId).copy(body, off); off += 16
+  body.writeUInt32LE(0, off); off += 4      // ParentEstateID
+  uuidToBytes(regionId).copy(body, off);    off += 16
+  body.writeFloatLE(pos[0], off); off += 4
+  body.writeFloatLE(pos[1], off); off += 4
+  body.writeFloatLE(pos[2], off); off += 4
+  body[off++] = 0       // Offline = 0
+  body[off++] = dialog
+  uuidToBytes(msgId).copy(body, off); off += 16
+  body.writeUInt32LE(Math.floor(Date.now() / 1000), off); off += 4
+  body[off++] = fromBuf.length
+  fromBuf.copy(body, off); off += fromBuf.length
+  body.writeUInt16LE(msgBuf.length, off); off += 2
+  msgBuf.copy(body, off); off += msgBuf.length
+  body.writeUInt16LE(bucketLen, off); off += 2
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0xFE]), body])
+}
+
+export interface ImprovedInstantMessageData {
+  fromAgentId:   string
+  fromAgentName: string
+  toAgentId:     string
+  dialog:        number
+  message:       string
+  timestamp:     number
+  position:      [number, number, number]
+}
+
+export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): ImprovedInstantMessageData {
+  let off = dataOffset
+  // AgentData
+  const fromAgentId = bytesToUuid(buf, off); off += 16
+  off += 16  // SessionID — not useful client-side
+  // MessageBlock
+  off += 1   // FromGroup (bool)
+  const toAgentId = bytesToUuid(buf, off); off += 16
+  off += 4   // ParentEstateID
+  off += 16  // RegionID
+  const px = buf.readFloatLE(off); off += 4
+  const py = buf.readFloatLE(off); off += 4
+  const pz = buf.readFloatLE(off); off += 4
+  off += 1   // Offline
+  const dialog = buf[off++]
+  off += 16  // ID (message UUID)
+  const timestamp = buf.readUInt32LE(off); off += 4
+  const nameLen = buf[off++]
+  const fromAgentName = buf.slice(off, off + nameLen).toString('utf8').replace(/\0/g, '')
+  off += nameLen
+  const msgLen = buf.readUInt16LE(off); off += 2
+  const message = buf.slice(off, off + msgLen).toString('utf8').replace(/\0/g, '')
+  return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz] }
+}
+
 export function encodeChatFromViewer(p: {
   agentId: string; sessionId: string; seq: number
   message: string; chatType: number; channel: number

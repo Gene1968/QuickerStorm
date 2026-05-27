@@ -67,6 +67,13 @@ export const useUiStore = defineStore('ui', () => {
 	const cameraYaw = ref(0)
 	function setCameraYaw(y) { cameraYaw.value = y }
 
+	// WHY: avatar context menu — populated by useWorldEngine raycast contextmenu handler.
+	// `target` carries the picked avatar's identity + screen position so AvatarContextMenu.vue
+	// can render at the click point and dispatch IM / Face Toward / Profile actions.
+	const avatarMenu = ref(null)  // null | { agentId, name, localId, x, y }
+	function openAvatarMenu(target) { avatarMenu.value = target }
+	function closeAvatarMenu()      { avatarMenu.value = null }
+
 	return {
 		mode, showAvatarList, showMinimap, showChat,
 		showInventory, showMap, showSettings, showDebug,
@@ -85,5 +92,6 @@ export const useUiStore = defineStore('ui', () => {
 		floaterStack, focusFloater,
 		cameraPos, setCameraPos,
 		cameraYaw, setCameraYaw,
+		avatarMenu, openAvatarMenu, closeAvatarMenu,
 	}
 })

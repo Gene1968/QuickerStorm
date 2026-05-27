@@ -15,6 +15,7 @@ export const C = {
 	REBAKE:        'rebake',        // {} — trigger RebakeAvatarTextures cap (Avatar Health → Force Appearance Update)
 	CHECK_CIRCUIT: 'check_circuit', // { grid, username } — is my circuit still alive on server?
 	RESYNC_WORLD:  'resync_world',  // {} — replay cached region/terrain/spawn snapshot, nudge sim for ObjectUpdates
+	IM_SEND:       'im_send',       // { toAgentId, toAgentName, fromAgentName, message } — outbound IM via ImprovedInstantMessage
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ export const S = {
 	KILL_OBJECT:     'kill_obj',      // { ids: number[] } — sim removed these localIds from scene
 	TERRAIN_PATCH:   'terrain_patch', // { layerType:'LAND'|'WATER', patchSize:16, patches:[{x,y,heights:number[]}] }
 	CIRCUIT_STATUS:  'circuit_status',// { alive: boolean } — response to CHECK_CIRCUIT
+	IM_RECV:         'im_recv',       // { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp } — incoming IM
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────
