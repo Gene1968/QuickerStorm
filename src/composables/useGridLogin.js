@@ -98,7 +98,7 @@ export function useGridLogin() {
 				clearTimeout(timeout)
 				off(S.LOGIN_OK,   onOk)
 				off(S.LOGIN_FAIL, onFail)
-				sessionStore.setSession(d)
+				sessionStore.setSession({ ...d, username })
 				gridStore.setLoginState('connected')
 				router.push('/world')
 				resolve(d)

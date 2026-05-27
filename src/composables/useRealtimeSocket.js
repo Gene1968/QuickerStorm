@@ -24,7 +24,12 @@ let ws = null
 let reconnectTimer = null
 let reconnectDelay = 1000
 const MAX_RECONNECT_DELAY = 30_000
+// WHY: After this long without a WS connection, fire '_lost' so the app can
+// surface a "disconnected from grid" overlay. Matches sim's 60s idle timeout —
+// once we're past it, the sim has already dropped our circuit anyway.
+const WS_DOWN_GIVEUP_MS = 60_000
 let shouldReconnect = false
+let lostTimer = null
 let _connectArgs = null   // { roomId } — for reconnect
 
 const connected = ref(false)
@@ -112,6 +117,7 @@ function disconnect() {
 	shouldReconnect = false
 	clearTimeout(reconnectTimer)
 	reconnectTimer = null
+	if (lostTimer) { clearTimeout(lostTimer); lostTimer = null }
 	if (ws) {
 		ws.close()
 		ws = null
@@ -139,6 +145,8 @@ function _createConnection() {
 	ws.onopen = () => {
 		connected.value = true
 		reconnectDelay = 1000  // reset backoff on success
+		// WHY: WS open again — cancel the "give up" timer started on close.
+		if (lostTimer) { clearTimeout(lostTimer); lostTimer = null }
 		_dispatch('_open', null)
 	}
 
@@ -171,6 +179,14 @@ function _createConnection() {
 			}, reconnectDelay)
 			// Exponential backoff: 1s → 2s → 4s → 8s → ... → 30s max
 			reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
+			// WHY: Arm "give up" timer only on first close in a down period.
+			// If reconnect attempts keep closing, we don't reset — total downtime is what matters.
+			if (!lostTimer) {
+				lostTimer = setTimeout(() => {
+					lostTimer = null
+					_dispatch('_lost', null)
+				}, WS_DOWN_GIVEUP_MS)
+			}
 		}
 	}
 

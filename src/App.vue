@@ -7,10 +7,10 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { useGridStore } from '@/stores/gridStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
-import { S } from '@shared/protocol.js'
+import { S, C } from '@shared/protocol.js'
 import PreferencesFloater from '@/components/PreferencesFloater.vue'
 
-const { on, off } = useRealtimeSocket()
+const { on, off, emit } = useRealtimeSocket()
 const debug      = useDebugStore()
 const session    = useSessionStore()
 const grid       = useGridStore()
@@ -41,6 +41,44 @@ function onDisconnected(d) {
 	grid.setDisconnected(reason)
 }
 
+// WHY: WS reopened after a mid-session drop. Server may have lost our session
+// (Bun hot-reload, crash) and sim may have killed the circuit (60s no-packets).
+// Probe with CHECK_CIRCUIT — if server says alive:false, surface the overlay
+// instead of pretending the green dot means anything. Only fire when session
+// was previously established; skip during initial login flow.
+let wasOpenBefore = false
+function onWsOpen() {
+	const reconnect = wasOpenBefore
+	wasOpenBefore = true
+	if (!reconnect) return
+	if (!session.connected) return
+	if (grid.loginState === 'disconnected') return
+	const grd = grid.selectedNick
+	const usr = session.username
+	if (!grd || !usr) return
+	emit(C.CHECK_CIRCUIT, { grid: grd, username: usr })
+	const t = setTimeout(() => {
+		off(S.CIRCUIT_STATUS, onStatus)
+	}, 5000)
+	function onStatus(d) {
+		clearTimeout(t)
+		off(S.CIRCUIT_STATUS, onStatus)
+		if (!d?.alive) {
+			debug.push('warn', 'Reconnect probe: server has no live circuit — disconnected')
+			grid.setDisconnected('Server lost your session while disconnected')
+		}
+	}
+	on(S.CIRCUIT_STATUS, onStatus)
+}
+
+function onWsLost() {
+	// WS down >60s — sim has dropped our circuit by now even if server is alive.
+	if (!session.connected) return
+	if (grid.loginState === 'disconnected') return
+	debug.push('warn', 'WebSocket unreachable for 60s — disconnected')
+	grid.setDisconnected('Lost connection to quickerSTORM server')
+}
+
 function onAgentSpawnPosRoot(d) {
 	// WHY: Register AGENT_SPAWN_POS at app root (always mounted, registered before any route
 	// component). This eliminates the race condition where AGENT_SPAWN_POS arrives between
@@ -69,6 +107,8 @@ onMounted(() => {
 	on(S.REGION_INFO, onRegionInfo)
 	on(S.DISCONNECTED, onDisconnected)
 	on(S.AGENT_SPAWN_POS, onAgentSpawnPosRoot)
+	on('_open', onWsOpen)
+	on('_lost', onWsLost)
 	window.addEventListener('keydown', onKeyDown)
 })
 onUnmounted(() => {
@@ -76,6 +116,8 @@ onUnmounted(() => {
 	off(S.REGION_INFO, onRegionInfo)
 	off(S.DISCONNECTED, onDisconnected)
 	off(S.AGENT_SPAWN_POS, onAgentSpawnPosRoot)
+	off('_open', onWsOpen)
+	off('_lost', onWsLost)
 	window.removeEventListener('keydown', onKeyDown)
 })
 </script>

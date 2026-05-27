@@ -5,6 +5,9 @@ import { ref } from 'vue'
 export const useSessionStore = defineStore('session', () => {
 	const agentId       = ref('')
 	const sessionId     = ref('')
+	// WHY: Original login username ("First Last"). Needed for CHECK_CIRCUIT probe
+	// on mid-session WS reconnect — server keys circuits by `${grid}:${username}`.
+	const username      = ref('')
 	const simIp         = ref('')
 	const simPort       = ref(0)
 	const seedCap       = ref('')
@@ -22,6 +25,7 @@ export const useSessionStore = defineStore('session', () => {
 	function setSession(data) {
 		agentId.value       = data.agentId       ?? ''
 		sessionId.value     = data.sessionId     ?? ''
+		username.value      = data.username      ?? username.value
 		simIp.value         = data.simIp         ?? ''
 		simPort.value       = data.simPort        ?? 0
 		seedCap.value       = data.seedCap       ?? ''
@@ -37,6 +41,7 @@ export const useSessionStore = defineStore('session', () => {
 
 	function clearSession() {
 		agentId.value = sessionId.value = simIp.value = seedCap.value = ''
+		username.value = ''
 		regionName.value = startLocation.value = agentAccess.value = ''
 		simPort.value = regionX.value = regionY.value = 0
 		regionSizeX.value = regionSizeY.value = 256
@@ -44,7 +49,7 @@ export const useSessionStore = defineStore('session', () => {
 	}
 
 	return {
-		agentId, sessionId, simIp, simPort, seedCap,
+		agentId, sessionId, username, simIp, simPort, seedCap,
 		regionName, regionX, regionY, regionSizeX, regionSizeY,
 		startLocation, agentAccess, connected, setSession, clearSession,
 	}
