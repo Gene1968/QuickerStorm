@@ -170,9 +170,12 @@ export function encodeCompleteAgentMovement(p: CircuitParams): Buffer {
 export function encodeAgentThrottle(p: { agentId: string; sessionId: string; circuitCode: number; seq: number }): Buffer {
   const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
   // 7 throttle categories × 4 bytes F32LE = 28 bytes
-  // WHY: Using Firestorm-like defaults. Too low → sim starves textures/objects.
-  // Too high → sim floods us and we can't keep up. These are typical mid-range values.
-  const THROTTLES = [150000, 162000, 20000, 20000, 700000, 1300000, 500000]
+  // Categories in order: Resend, Land, Wind, Cloud, Task, Texture, Asset (per Firestorm).
+  // WHY land 500kbps (was 162k): terrain patches drip in slowly at low alloc — distant
+  // patches stay at h=0 (flat ocean) for many seconds, making islands at region corner
+  // appear submerged. 500k matches FS "high" preset and pushes the full 16×16 patch grid
+  // in well under a minute.
+  const THROTTLES = [150000, 500000, 20000, 20000, 700000, 1300000, 500000]
   const throttleBuf = Buffer.allocUnsafe(28)
   THROTTLES.forEach((v, i) => throttleBuf.writeFloatLE(v, i * 4))
 
@@ -434,6 +437,122 @@ export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): I
   return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz] }
 }
 
+// ── ObjectSelect / ObjectDeselect (Low #110 / #111) — selection set ──────
+// libomv ObjectSelectPacket: AgentData(agentId+sessionId) + ObjectData Variable count of
+// ObjectLocalID(U32). Sim replies with ObjectProperties for each selected object.
+export function encodeObjectSelect(p: {
+  agentId: string; sessionId: string; seq: number; localIds: number[]
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 1 + p.localIds.length * 4)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body[off++] = p.localIds.length
+  for (const id of p.localIds) { body.writeUInt32LE(id, off); off += 4 }
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x6E]), body])  // Low 110
+}
+
+export function encodeObjectDeselect(p: {
+  agentId: string; sessionId: string; seq: number; localIds: number[]
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 1 + p.localIds.length * 4)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body[off++] = p.localIds.length
+  for (const id of p.localIds) { body.writeUInt32LE(id, off); off += 4 }
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x6F]), body])  // Low 111
+}
+
+// ── ObjectProperties (Medium #9) — sim → viewer per-object metadata ──────
+// Per message_template.msg:3704 — ObjectData block (Variable count), each block:
+//   ObjectID(UUID) CreatorID(UUID) OwnerID(UUID) GroupID(UUID)
+//   CreationDate(U64) BaseMask/OwnerMask/GroupMask/EveryoneMask/NextOwnerMask(U32×5)
+//   OwnershipCost(S32) SaleType(U8) SalePrice(S32)
+//   AggregatePerms/AggregatePermTextures/AggregatePermTexturesOwner(U8×3)
+//   Category(U32) InventorySerial(S16) ItemID/FolderID/FromTaskID/LastOwnerID(UUID×4)
+//   Name(V1) Description(V1) TouchName(V1) SitName(V1) TextureID(V1)
+export interface ObjectPropertiesData {
+  fullId:         string
+  creatorId:      string
+  ownerId:        string
+  groupId:        string
+  creationDate:   bigint
+  baseMask:       number
+  ownerMask:      number
+  groupMask:      number
+  everyoneMask:   number
+  nextOwnerMask:  number
+  ownershipCost:  number
+  saleType:       number
+  salePrice:      number
+  category:       number
+  lastOwnerId:    string
+  name:           string
+  description:    string
+  touchName:      string
+  sitName:        string
+}
+
+export function decodeObjectProperties(buf: Buffer, dataOffset: number): ObjectPropertiesData[] {
+  const results: ObjectPropertiesData[] = []
+  let off = dataOffset
+  if (off >= buf.length) return results
+  const count = buf[off++]
+
+  const readVar1 = (): string => {
+    if (off >= buf.length) return ''
+    const len = buf[off++]
+    if (off + len > buf.length) { off = buf.length; return '' }
+    const s = buf.slice(off, off + len).toString('utf8').replace(/\0/g, '')
+    off += len
+    return s
+  }
+
+  for (let i = 0; i < count && off < buf.length; i++) {
+    try {
+      const fullId      = bytesToUuid(buf, off); off += 16
+      const creatorId   = bytesToUuid(buf, off); off += 16
+      const ownerId     = bytesToUuid(buf, off); off += 16
+      const groupId     = bytesToUuid(buf, off); off += 16
+      const creationDate = buf.readBigUInt64LE(off); off += 8
+      const baseMask      = buf.readUInt32LE(off); off += 4
+      const ownerMask     = buf.readUInt32LE(off); off += 4
+      const groupMask     = buf.readUInt32LE(off); off += 4
+      const everyoneMask  = buf.readUInt32LE(off); off += 4
+      const nextOwnerMask = buf.readUInt32LE(off); off += 4
+      const ownershipCost = buf.readInt32LE(off);  off += 4
+      const saleType      = buf[off++]
+      const salePrice     = buf.readInt32LE(off);  off += 4
+      off += 3   // AggregatePerms + AggregatePermTextures + AggregatePermTexturesOwner
+      const category   = buf.readUInt32LE(off); off += 4
+      off += 2   // InventorySerial S16
+      off += 16  // ItemID
+      off += 16  // FolderID
+      off += 16  // FromTaskID
+      const lastOwnerId = bytesToUuid(buf, off); off += 16
+      const name        = readVar1()
+      const description = readVar1()
+      const touchName   = readVar1()
+      const sitName     = readVar1()
+      // TextureID Variable 1 — list of texture UUIDs; skip for Phase 2 (no texture fetch yet)
+      readVar1()
+      results.push({
+        fullId, creatorId, ownerId, groupId, creationDate,
+        baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask,
+        ownershipCost, saleType, salePrice, category, lastOwnerId,
+        name, description, touchName, sitName,
+      })
+    } catch {
+      // Decode failure on one entry — return what we have so far rather than corrupting offset chain
+      break
+    }
+  }
+  return results
+}
+
 // ── ObjectGrab / ObjectDeGrab (Low #117 / #118) — "touch" gesture ────────
 // libomv ObjectGrabPacket: AgentData(agentId+sessionId) + ObjectData(LocalID+GrabOffset) +
 // SurfaceInfo (Variable count-prefixed). Minimal touch sends SurfaceInfo count=0.
@@ -649,10 +768,21 @@ export function decodeObjectUpdate(
       // `continue` because off would be corrupted after the failed TE variable-field skip.
       // avatarSLPos and ownAvatarLocalId survive any avatar-packet loss via worldStore
       // restore in onMounted (see useWorldEngine.js).
-      // WHY pcode=0: OpenSim emits pcode=0 objects with garbage scale and CRC=0 in some
+      // WHY pcode=0: OpenSim emits pcode=0 objects with garbage scale/CRC=0 in some
       // multi-object packets. These are not standard LLUDP prims/avatars and decode to
-      // absurd ObjectData lengths (235+), pushing @TE OOB. Silently skip.
-      if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) break
+      // absurd ObjectData lengths (235+), pushing @TE OOB. Silent break sacrifices any
+      // remaining objects in this packet but prevents log spam and decode-cascade errors.
+      // TODO Phase 2 polish: byte-scan forward for next valid localId pattern to recover
+      // subsequent objects rather than abandoning the whole packet.
+      if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) {
+        // WHY: pcode=0 trailing entries are OpenSim tombstones — benign when at packet end.
+        // Only warn when we're actually losing data (remaining > 0).
+        const remaining = count - i - 1
+        if (remaining > 0) {
+          onError?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} unsupported; remaining ${remaining} objects in packet dropped`)
+        }
+        break
+      }
       off += 2   // material, clickAction
       const sx = buf.readFloatLE(off); off += 4  // Scale
       const sy = buf.readFloatLE(off); off += 4
@@ -734,6 +864,14 @@ export function decodeObjectUpdate(
         const len = buf[off++]
         _diag += ` ${name}=${len}`
         if (len === undefined) throw new Error(`${name}: undefined len at off=${off - 1}`)
+        // WHY: Sim occasionally sends a Variable1 length that exceeds remaining buffer
+        // (truncated packet or off-by-one in an earlier optional field). Clamp the
+        // advance to buf.length so a tail OOB doesn't poison this object's decode — the
+        // outer try will still salvage the prim via the push-on-tail-fail fallback.
+        if (off + len > buf.length) {
+          off = buf.length
+          throw new Error(`${name}: length ${len} exceeds remaining buffer at off=${off - 1 - len}`)
+        }
         off += len
       }
       // WHY: Log the actual 2 bytes at the TE prefix position so we can see if the
@@ -798,48 +936,57 @@ export function decodeObjectUpdate(
       // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
       // LLUDP message_template: TextureAnim { Variable 1 }
       // Bug was: skipVar2() reading 1-byte TA prefix + 1-byte NV prefix as U16LE → crash.
-      skipVar1('TA')  // TextureAnim (Variable1 — 1-byte prefix)
-      // NameValue: variable2 — read value before skipping
-      if (off + 1 >= buf.length) throw new Error(`NV prefix OOB at off=${off}`)
-      const nvLen    = buf.readUInt16LE(off); off += 2
-      _diag += ` NV=${nvLen}`
-      const nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
-      skipVar1('Data')
-      // === Hovertext + color — Variable1 + Fixed4 RGBA bytes (NOT floats) ===
-      // WHY: Per libomv Primitive.cs, TextColor is 4 bytes RGBA stored INVERTED like
-      // TextureEntry default color (actual = (255-byte)/255). Empty Text → length 0 (or 1
-      // for trailing null) and color is ignored client-side.
+      // === Tail fields — best-effort; if any OOB, push partial object below ===
+      // WHY: Sim occasionally truncates ObjectUpdate packets mid-tail (rare but seen on
+      // OpenSim during heavy load). Header through TextureEntry is enough to render the
+      // prim (pos/rot/scale/shape/colors); MediaURL/PSBlock/ExtraParams/Sound/OwnerID/etc
+      // are optional render-side. Wrap in nested try so a tail OOB still produces a
+      // usable mesh rather than dropping the entire prim.
+      let nameValue = ''
       let text = ''
-      if (off + 1 <= buf.length) {
-        const tlen = buf[off++]
-        _diag += ` Text=${tlen}`
-        text = buf.slice(off, off + tlen).toString('utf8').replace(/\0/g, '')
-        off += tlen
-      }
       let textColor: [number, number, number, number] | undefined
-      if (off + 4 <= buf.length) {
-        textColor = [
-          (255 - buf[off])     / 255,
-          (255 - buf[off + 1]) / 255,
-          (255 - buf[off + 2]) / 255,
-          (255 - buf[off + 3]) / 255,
-        ]
-        off += 4
+      let tailOk = false
+      try {
+        skipVar1('TA')  // TextureAnim (Variable1)
+        // NameValue: Variable2
+        if (off + 1 >= buf.length) throw new Error(`NV prefix OOB at off=${off}`)
+        const nvLen = buf.readUInt16LE(off); off += 2
+        _diag += ` NV=${nvLen}`
+        if (off + nvLen > buf.length) throw new Error(`NV: length ${nvLen} exceeds remaining buf`)
+        nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
+        skipVar1('Data')
+        // Text Variable1 + TextColor Fixed4 inverted RGBA
+        if (off + 1 <= buf.length) {
+          const tlen = buf[off++]
+          _diag += ` Text=${tlen}`
+          if (off + tlen > buf.length) throw new Error(`Text: length ${tlen} exceeds remaining buf`)
+          text = buf.slice(off, off + tlen).toString('utf8').replace(/\0/g, '')
+          off += tlen
+        }
+        if (off + 4 <= buf.length) {
+          textColor = [
+            (255 - buf[off])     / 255,
+            (255 - buf[off + 1]) / 255,
+            (255 - buf[off + 2]) / 255,
+            (255 - buf[off + 3]) / 255,
+          ]
+          off += 4
+        }
+        skipVar1('MediaURL')
+        skipVar1('PSBlock')      // particle system data, 0-86 bytes
+        skipVar1('ExtraParams')
+        off += 16   // Sound UUID
+        off += 16   // OwnerID UUID
+        off += 4    // SoundGain F32
+        off += 1    // Flags U8
+        off += 4    // SoundRadius F32
+        off += 1    // JointType U8
+        off += 12   // JointPivot LLVector3
+        off += 12   // JointAxisOrAnchor LLVector3
+        tailOk = true
+      } catch (tailErr) {
+        onError?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} tail decode OOB at off=${off}: ${(tailErr as Error).message}; pushing partial`)
       }
-      skipVar1('MediaURL')
-      // WHY: Must skip ALL remaining fields so `off` lands at the next object's ID for
-      // multi-object packets (count > 1). Stopping at MediaURL leaves ~66+ bytes unread,
-      // corrupting every subsequent object parse.
-      skipVar1('PSBlock')  // particle system data, 0-86 bytes
-      skipVar1('ExtraParams')
-      off += 16   // Sound UUID
-      off += 16   // OwnerID UUID
-      off += 4    // SoundGain F32
-      off += 1    // Flags U8
-      off += 4    // SoundRadius F32
-      off += 1    // JointType U8
-      off += 12   // JointPivot LLVector3
-      off += 12   // JointAxisOrAnchor LLVector3
       objects.push({
         localId, fullId, pcode,
         scale: [sx, sy, sz], pos, rot, nameValue,
@@ -850,6 +997,10 @@ export function decodeObjectUpdate(
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
+      // WHY: A tail OOB means `off` is no longer aligned to the next object's start.
+      // Subsequent objects in this packet can't be safely decoded — break out cleanly so
+      // we don't waste cycles on garbage and we keep the partial we already pushed.
+      if (!tailOk) break
       // WHY: log each successful decode + 40 bytes AFTER endOff so we can see whether
       // the bytes immediately following are the next real object header or zero-padding.
       // This lets us diagnose the 25-zero gap that appears between objects in multi-object packets.
@@ -901,50 +1052,74 @@ export function decodeImprovedTerseObjectUpdate(
   off += 8  // RegionHandle U64
   off += 2  // TimeDilation U16
 
+  if (off >= buf.length) return results
   const count = buf[off++]
 
-  for (let i = 0; i < count && off < buf.length; i++) {
-    const localId = buf.readUInt32LE(off); off += 4
-    off += 1   // State U8
-    off += 16  // FootCollisionPlane: LLVector4 (4 F32) — always present, zeroed for prims
+  // WHY: Per message_template.msg, ObjectData block has ONLY two fields:
+  //   Data (Variable1) + TextureEntry (Variable2)
+  // EVERYTHING (LocalID, State, AvatarFlag, CollisionPlane, Pos, Vel, Acc, Rot, AngVel)
+  // lives INSIDE the Data variable1 blob. Previous decoder read LocalID+State+CollisionPlane
+  // outside the wrapper → reading byte 22 as the Variable1 length prefix → dlen=255 sentinel
+  // garbage → every terse update dropped → other-user movement invisible.
+  //
+  // Data binary layout (per phoenix-firestorm llviewerobject.cpp:1739-1776 dp branch):
+  //   LocalID (U32 LE) — 4B
+  //   State   (U8)     — 1B
+  //   Agent   (U8)     — 1B (0=prim, 1=avatar)
+  //   [CollisionPlane LLVector4 = 4×F32 = 16B] — avatar only
+  //   Pos     (LLVector3 = 3×F32 = 12B)        — F32, NOT U16
+  //   Vel     (3 U16) range -128..128          — 6B
+  //   Acc     (3 U16) range -64..64            — 6B
+  //   Rot     (4 U16) range -1..1              — 8B
+  //   AngVel  (3 U16) range -64..64            — 6B
+  // Prim length 32, avatar length 48.
+  const dequantQ = (u16: number) => (u16 / 65535) * 2 - 1
 
+  for (let i = 0; i < count && off < buf.length; i++) {
+    if (off >= buf.length) break
     const dataLen = buf[off++]
+    if (off + dataLen > buf.length) break
+    const dStart = off
+
+    const localId = buf.readUInt32LE(dStart)
+    let dp = 4
+    /* state = */ dp += 1
+    const agentFlag = buf[dStart + dp]; dp += 1
+
+    if (agentFlag) dp += 16  // CollisionPlane (avatar only)
+
+    // Position: 3 F32
     let pos: [number, number, number] = [0, 0, 0]
     let rot: [number, number, number, number] | undefined
-
-    // WHY: Quaternion components in terse updates are U16 quantized to [-1, 1]:
-    //   dequant = (u16 / 65535) * 2 - 1
-    // Avatar terse (38B layout): Pos(12 F32) | Vel(6 U16) | Acc(6 U16) | Rot(8 U16) | AngVel(6 U16)
-    // Prim   terse (32B layout): Pos(6 U16) | Vel(6 U16) | Acc(6 U16) | Rot(8 U16) | AngVel(6 U16)
-    const dequantQ = (u16: number) => (u16 / 65535) * 2 - 1
-    const readQuat = (qOff: number): [number, number, number, number] => [
-      dequantQ(buf.readUInt16LE(qOff)),
-      dequantQ(buf.readUInt16LE(qOff + 2)),
-      dequantQ(buf.readUInt16LE(qOff + 4)),
-      dequantQ(buf.readUInt16LE(qOff + 6)),
-    ]
-
-    if (dataLen >= 12 && dataLen > 32) {
-      pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
-      // Rotation at offset 12 + 6 + 6 = 24 within the avatar terse blob.
-      if (dataLen >= 32) rot = readQuat(off + 24)
-    } else if (dataLen >= 6) {
-      // WHY: Prim position quantized to region bounds [0, 256] as U16 in range [0, 65535].
-      const px = buf.readUInt16LE(off)     * (256.0 / 65535.0)
-      const py = buf.readUInt16LE(off + 2) * (256.0 / 65535.0)
-      const pz = buf.readUInt16LE(off + 4) * (256.0 / 65535.0)
-      pos = [px, py, pz]
-      // Rotation at offset 6 + 6 + 6 = 18 within the prim terse blob.
-      if (dataLen >= 26) rot = readQuat(off + 18)
+    if (dStart + dp + 12 <= dStart + dataLen) {
+      pos = [
+        buf.readFloatLE(dStart + dp),
+        buf.readFloatLE(dStart + dp + 4),
+        buf.readFloatLE(dStart + dp + 8),
+      ]
+      dp += 12
     }
 
-    off += dataLen
-    // WHY: Positions near ±FLT_MAX (3.4e38) are "kill sentinels" — the sim signals
-    // that an object should be removed from the scene. Skip these to avoid garbage
-    // positions that break camera follow or location bar. Object removal will arrive
-    // via ObjectUpdate with KillObject flag (handled separately or ignored for now).
-    const FLT_MAX = 3.4e38
-    const isSentinel = Math.abs(pos[0]) > FLT_MAX * 0.5 || Math.abs(pos[1]) > FLT_MAX * 0.5 || Math.abs(pos[2]) > FLT_MAX * 0.5
+    // Skip Vel (6) + Acc (6), then read Rot (8 U16)
+    if (dStart + dp + 12 + 8 <= dStart + dataLen) {
+      const rOff = dStart + dp + 12
+      rot = [
+        dequantQ(buf.readUInt16LE(rOff)),
+        dequantQ(buf.readUInt16LE(rOff + 2)),
+        dequantQ(buf.readUInt16LE(rOff + 4)),
+        dequantQ(buf.readUInt16LE(rOff + 6)),
+      ]
+    }
+
+    off = dStart + dataLen
+
+    // TextureEntry (Variable 2) — usually empty for terse, skip
+    if (off + 2 > buf.length) break
+    const teLen = buf.readUInt16LE(off); off += 2
+    off += teLen
+
+    const isSentinel = !isFinite(pos[0]) || !isFinite(pos[1]) || !isFinite(pos[2])
+      || Math.abs(pos[0]) > 1e30 || Math.abs(pos[1]) > 1e30 || Math.abs(pos[2]) > 1e30
     onRaw?.(localId, dataLen, pos, isSentinel)
     if (isSentinel) continue
     results.push({ localId, pos, rot })

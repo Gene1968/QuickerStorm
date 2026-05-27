@@ -13,6 +13,7 @@ import {
 	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
+	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -40,6 +41,7 @@ const LOW_IMPROVED_INSTANT_MSG= 254   // ImprovedInstantMessage — both directi
 const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
+const MEDIUM_OBJECT_PROPERTIES      = 9  // ObjectProperties — sim's reply to ObjectSelect (Medium freq)
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
@@ -488,6 +490,21 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `med:${MEDIUM_OBJECT_PROPERTIES}`) {
+		try {
+			const items = decodeObjectProperties(buf, dataOffset)
+			if (items.length > 0) {
+				slog.info(session.ws, `[ObjProps] ${items.length} object(s) — first: "${items[0].name || '(unnamed)'}" owner=${items[0].ownerId.slice(0,8)}…`)
+				// Serialize bigints (creationDate) for JSON wire safety
+				const serial = items.map(i => ({ ...i, creationDate: i.creationDate.toString() }))
+				session.ws.send(JSON.stringify({ t: S.OBJECT_PROPS, d: { items: serial } }))
+			}
+		} catch (e) {
+			slog.warn(session.ws, `ObjectProperties decode error: ${(e as Error).message}`)
+		}
+		return
+	}
+
 	if (type === `med:${MEDIUM_COARSE_LOCATION_UPDATE}`) {
 		// WHY: CoarseLocationUpdate (Medium 6) arrives every ~4.5s with approximate avatar positions
 		// for the minimap. Body: locCount U8 | [X U8, Y U8, Z U8]×N | You S16 | Prey S16 |
@@ -586,6 +603,24 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			camUp: [number, number, number]
 			far: number
 		}
+		// WHY: Client sometimes sends nulls in cam vectors before camera fully initializes
+		// (e.g. first MOVE after login, before WorldEngine has computed yaw/pos). Coerce to
+		// 0 so encodeAgentUpdate writes valid floats and logging can't crash on null.toFixed.
+		const safeVec = (v: unknown): [number, number, number] => {
+			if (!Array.isArray(v)) return [0, 0, 0]
+			return [
+				typeof v[0] === 'number' ? v[0] : 0,
+				typeof v[1] === 'number' ? v[1] : 0,
+				typeof v[2] === 'number' ? v[2] : 0,
+			]
+		}
+		d.bodyRot   = safeVec(d.bodyRot)
+		d.headRot   = safeVec(d.headRot)
+		d.camCenter = safeVec(d.camCenter)
+		d.camAt     = safeVec(d.camAt)
+		d.camLeft   = safeVec(d.camLeft)
+		d.camUp     = safeVec(d.camUp)
+		if (typeof d.far !== 'number') d.far = 64
 		// Save for heartbeat retransmit when client is idle
 		session.lastAgentParams    = d
 		session.lastAgentUpdateAt  = Date.now()
@@ -597,7 +632,14 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		session.wsMoveCount = (session.wsMoveCount ?? 0) + 1
 		const mc = session.wsMoveCount
 		if (mc === 1 || mc % 50 === 0) {
-			slog.info(session.ws, `→ MOVE #${mc} cf=0x${d.controlFlags.toString(16)} camCenter=${d.camCenter?.map(v=>v.toFixed(1)).join(',')}`)
+			// WHY: camCenter array may contain nulls (client cam not initialized yet). Guard
+			// per-element so logging can't crash the handler. Previously `v.toFixed(1)` on null
+			// threw TypeError that killed Bun's WebSocket message handler.
+			const fmtVec = (v: unknown): string => {
+				if (!Array.isArray(v)) return String(v)
+				return v.map(c => (typeof c === 'number' ? c.toFixed(1) : '?')).join(',')
+			}
+			slog.info(session.ws, `→ MOVE #${mc} cf=0x${d.controlFlags.toString(16)} camCenter=${fmtVec(d.camCenter)}`)
 		}
 		if (d.controlFlags !== 0 && !session.loggedTypes.has(`cf:${d.controlFlags}`)) {
 			session.loggedTypes.add(`cf:${d.controlFlags}`)
@@ -632,6 +674,27 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ChatFromViewer: "${d.message.slice(0, 40)}" type=${d.chatType} ch=${d.channel}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_SELECT) {
+		const d = msg.d as { localIds: number[] }
+		if (!d.localIds?.length) return
+		const seq = nextSeq(session)
+		const pkt = encodeObjectSelect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectSelect ${d.localIds.length} id(s) — awaiting ObjectProperties reply`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_DESELECT) {
+		const d = msg.d as { localIds: number[] }
+		if (!d.localIds?.length) return
+		const seq = nextSeq(session)
+		const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		return
 	}
 

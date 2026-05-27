@@ -82,6 +82,13 @@ export const useUiStore = defineStore('ui', () => {
 	function openObjectMenu(target) { objectMenu.value = target }
 	function closeObjectMenu()      { objectMenu.value = null }
 
+	// WHY: ObjectEditFloater target — single localId driving the inspector. Right-click menu
+	// "Edit" sets this and toggles showObjectEdit. null = floater shows empty-state.
+	const showObjectEdit = ref(false)
+	const editObjectId   = ref(null)
+	function openObjectEdit(localId) { editObjectId.value = localId; showObjectEdit.value = true; closeObjectMenu() }
+	function toggleObjectEdit()      { showObjectEdit.value = !showObjectEdit.value }
+
 	return {
 		mode, showAvatarList, showMinimap, showChat,
 		showInventory, showMap, showSettings, showDebug,
@@ -102,5 +109,6 @@ export const useUiStore = defineStore('ui', () => {
 		cameraYaw, setCameraYaw,
 		avatarMenu, openAvatarMenu, closeAvatarMenu,
 		objectMenu, openObjectMenu, closeObjectMenu,
+		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
 	}
 })

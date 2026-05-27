@@ -229,8 +229,8 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 			</div>
 
 			<!-- ── Tip ─────────────────────────────────────────────── -->
-			<div class="text-[6cqi] text-white/25 text-center leading-none mt-0.5">
-				Alt+drag/A/D/E/C → orbit · Scroll → zoom · Esc → glide back
+			<div class="hidden text-[6cqi] text-white/25 text-center leading-none mt-0.5">
+				Alt+drag/A/D/E/C → orbit · Alt+W/D/Scroll → zoom · Esc → reset
 			</div>
 
 		</div>

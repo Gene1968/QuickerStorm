@@ -20,16 +20,21 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] **Other avatars now turn to face the right way as they walk** (TerseUpdate rotation decode)
 - [x] **Real region terrain heightmap** — decoded from LayerData, rendered with topo colors (blue/teal/green/earthy/stone)
 - [x] See your region and coordinates in the location bar, and do same-region teleport from there
-- [x] Session resume on network blip (15-second circuit hold).  Proper logout disconnect.
-- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, collision bump?, etc.)
+- [x] Session resume on network blip (15-second circuit hold).  Proper logout disconnect
+- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, collision bump, etc.)
+- [x] Gravity and fall terrain impact
+- [x] Bump into other avatars
 
 **🟡 Partially working**
 - [~] Movement — 80%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision so you don't silently bump into invisible prims.
 - [~] Scene — 50%.  Real terrain rendering and height color done. Prims still render as 1m cubes with hash-tinted color (each prim distinguishable but no real geometry yet). Ocean is flat blue — no ripple. No neighboring sims.
 - [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating: transcript, muted transcript, options and search, tear-off, close
-- [~] Menus/floaters — 30%.  Some disabled placeholders as we implement features
+- [~] IM chat — 50%.  Sending and receiving works, need to add emojis, 10+ toolbar buttons, voice
+- [~] Menus/floaters — 50%.  Some disabled placeholders as we implement features
+- [~] Minimap — 50%.  Good as a compass and sometimes shows avies.
 
 **🔜 Up next — Phase 2 ("world looks like world")**
+- [ ] **Map** — almost ready for the real thing
 - [ ] **Real prim geometry** — read PathCurve/ProfileCurve already in the packet → boxes/cylinders/spheres/tori instead of cubes
 - [ ] **Child-prim composition** — linked sets (houses, vehicles) currently explode into scatter; ParentID is decoded but unused
 - [ ] **Prim colors** — decode TextureEntry default color so prims show their real RGBA without any texture fetch
@@ -68,8 +73,8 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 ---
 
 **🔧 Enhancement backlog**
-- [ ] Inventory: find duplicates by UUID
-- [ ] Inventory true export probably not possible from here unless you have console access
+- [ ] Inventory: find/filter duplicates by UUID (might still have different tints, sizes or perms?)
+- [ ] Bulk inventory true export probably not possible from here unless you have IAR console access
 
 ---
 

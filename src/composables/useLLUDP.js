@@ -42,5 +42,15 @@ export function useLLUDP() {
 		emit(C.OBJECT_SIT, { targetId })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit }
+	function sendSelect(localIds) {
+		const ids = Array.isArray(localIds) ? localIds : [localIds]
+		emit(C.OBJECT_SELECT, { localIds: ids })
+	}
+
+	function sendDeselect(localIds) {
+		const ids = Array.isArray(localIds) ? localIds : [localIds]
+		emit(C.OBJECT_DESELECT, { localIds: ids })
+	}
+
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect }
 }

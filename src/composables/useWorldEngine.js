@@ -19,22 +19,71 @@ function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 // (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
 // sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,
 // 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
-// mesh.scale.set applies the prim's sx/sy/sz afterwards. Twist/Taper/Shear/Hollow are
-// Phase 2 polish — Phase 1 box stand-in is replaced here, not perfected.
+// mesh.scale.set applies the prim's sx/sy/sz afterwards. Hollow deferred to Phase 3
+// (true CSG needed); Twist + Taper applied as per-vertex deformation below.
 function buildPrimGeometry(shape) {
 	const pc = shape?.pathCurve ?? 16
 	const pf = (shape?.profileCurve ?? 1) & 0x0F
+	let geom
 	if (pc === 16) {
-		if (pf === 0) return new THREE.CylinderGeometry(0.5, 0.5, 1, 24)
-		if (pf === 3) return new THREE.CylinderGeometry(0.5, 0.5, 1, 3)  // prism
-		return new THREE.BoxGeometry(1, 1, 1)
+		// HeightSegments=8 so Twist/Taper deformation has enough vertices to look smooth.
+		if (pf === 0)      geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 8)
+		else if (pf === 3) geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 3, 8)   // prism
+		else               geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
+	} else if (pc === 32 || pc === 33) {
+		if (pf === 5) geom = new THREE.SphereGeometry(0.5, 16, 12)
+		// torus / tube / ring — Three TorusGeometry stand-in; full profile sweep is Phase 3
+		else          geom = new THREE.TorusGeometry(0.35, 0.15, 12, 24)
+	} else {
+		geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
 	}
-	if (pc === 32 || pc === 33) {
-		if (pf === 5) return new THREE.SphereGeometry(0.5, 16, 12)
-		// torus / tube / ring — single Three TorusGeometry stand-in; full profile sweep is Phase 2 polish
-		return new THREE.TorusGeometry(0.35, 0.15, 12, 24)
+	return applyShapeDeformation(geom, shape)
+}
+
+// WHY: SL Twist + Taper applied per-vertex. Twist rotates around the path axis (Three.js
+// local Y for our PathCurve=16/32 geometries) by an angle that lerps from PathTwistBegin
+// at the bottom to PathTwist at the top. Taper shrinks XZ scale linearly from bottom to
+// top. Both encoded as S8 with 0.01 quantization (libomv Primitive.cs TWIST_QUANTA).
+// Skip torus (PathCurve=32 + non-half-circle profile) — deformation doesn't follow the
+// same axis convention and would mangle the geometry.
+function applyShapeDeformation(geom, shape) {
+	if (!shape) return geom
+	const pc = shape.pathCurve ?? 16
+	const isTorusLike = (pc === 32 || pc === 33) && (shape.profileCurve & 0x0F) !== 5
+	if (isTorusLike) return geom
+	const twist      = (shape.pathTwist      || 0) * 0.01   // turns: -1..1
+	const twistBegin = (shape.pathTwistBegin || 0) * 0.01
+	const taperX     = (shape.pathTaperX     || 0) * 0.01
+	const taperY     = (shape.pathTaperY     || 0) * 0.01
+	if (twist === 0 && twistBegin === 0 && taperX === 0 && taperY === 0) return geom
+	const pos = geom.attributes.position
+	const TWO_PI = Math.PI * 2
+	for (let i = 0; i < pos.count; i++) {
+		let x = pos.getX(i)
+		const y = pos.getY(i)
+		let z = pos.getZ(i)
+		// t in [0, 1] from bottom (y=-0.5) to top (y=+0.5)
+		const t = y + 0.5
+		// Taper: pinches/expands at top (positive value = narrow at top, SL convention)
+		const sX = 1 - t * taperX
+		const sZ = 1 - t * taperY
+		x *= sX
+		z *= sZ
+		// Twist: rotation around Y axis, lerps begin → end across height
+		const angle = ((1 - t) * twistBegin + t * twist) * TWO_PI
+		if (angle !== 0) {
+			const ca = Math.cos(angle)
+			const sa = Math.sin(angle)
+			const xr = x * ca - z * sa
+			const zr = x * sa + z * ca
+			pos.setXYZ(i, xr, y, zr)
+		} else {
+			pos.setXYZ(i, x, y, z)
+		}
 	}
-	return new THREE.BoxGeometry(1, 1, 1)
+	pos.needsUpdate = true
+	geom.computeVertexNormals()
+	return geom
 }
 
 // Quaternion: same axis remap as position (SL Z-up → Three Y-up). The imaginary
@@ -79,7 +128,7 @@ export function useWorldEngine(canvasRef) {
 	const uiStore      = useUiStore()
 	const debugStore   = useDebugStore()
 	const { on, off }  = useRealtimeSocket()
-	const { sendMove } = useLLUDP()
+	const { sendMove, sendSelect } = useLLUDP()
 	const { playSound } = useAudio()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
@@ -254,13 +303,46 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// WHY: Alt+click camera focal-point pick — raycast against terrain + objects, set
+	// orbitPivot to hit point so user can zoom/orbit around any clicked feature. Matches
+	// SL/Firestorm behaviour (Alt-LMB-click sets focus, Alt-LMB-drag orbits around it).
+	function enterOrbitAt(pivot) {
+		orbitPivot.copy(pivot)
+		const dx = camera.position.x - pivot.x
+		const dy = camera.position.y - pivot.y
+		const dz = camera.position.z - pivot.z
+		const r  = Math.hypot(dx, dy, dz)
+		orbitRadius = Math.max(2, Math.min(128, r))
+		orbitPitch  = Math.asin(dy / orbitRadius)
+		orbitYaw    = Math.atan2(dx, dz)
+		isAltOrbit  = true
+	}
+
 	function onMouseDown(e) {
 		if (e.button !== 0) return
 		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
 		isDragging = true
 		lastMouseX = e.clientX
 		lastMouseY = e.clientY
-		// WHY: Fresh orbit entry only — if already frozen in orbit, preserve current angles/radius.
+		// WHY: Alt+click raycasts terrain/objects to set new pivot. Miss → fall back to
+		// avatar-centred orbit (preserves angles/radius if already orbiting).
+		if (canvasRef.value && camera) {
+			const rect = canvasRef.value.getBoundingClientRect()
+			_pickNdc.set(
+				((e.clientX - rect.left) / rect.width) * 2 - 1,
+				-((e.clientY - rect.top) / rect.height) * 2 + 1,
+			)
+			_raycaster.setFromCamera(_pickNdc, camera)
+			_raycaster.far = 1000
+			const targets = []
+			if (terrainMesh) targets.push(terrainMesh)
+			meshMap.forEach((m) => targets.push(m))
+			const hits = _raycaster.intersectObjects(targets, true)
+			if (hits.length > 0) {
+				enterOrbitAt(hits[0].point)
+				return
+			}
+		}
 		if (!isAltOrbit) enterOrbit()
 	}
 	function onMouseMove(e) {
@@ -520,11 +602,15 @@ export function useWorldEngine(canvasRef) {
 	function initScene() {
 		scene = new THREE.Scene()
 		scene.background = new THREE.Color(0x87ceeb)
-		scene.fog = new THREE.FogExp2(0x87ceeb, 0.002)
+		// WHY: FogExp2 0.002 fades to ~0 by ~700m which clipped neighbor-region objects in
+		// horizon view. 0.0006 keeps haze visible without truncating distant objects past
+		// region edges. Tune per future scene-detail measurements.
+		scene.fog = new THREE.FogExp2(0x87ceeb, 0.0006)
 
-		// WHY far=1024: diagonal of 512×512 var-region is ~724m; 512 clips objects at far corners.
-		// 1024 covers any standard or var-region without aggressive fog truncation.
-		camera = new THREE.PerspectiveCamera(70, 1, 0.1, 1024)
+		// WHY far=4096: previous 1024 clipped objects past ~1km. SL standard draw distance is
+		// 64–512m but neighbor regions + cross-region context need more headroom. 4096 covers
+		// 4×4 region cluster (1024m) plus margin without z-buffer precision loss at near=0.1.
+		camera = new THREE.PerspectiveCamera(70, 1, 0.1, 4096)
 		// WHY: Start at SL z=25 (Three.js y=25) — matches heartbeat camCenter default so
 		// the sim receives a sensible above-ground camera while waiting for first TerseUpdate.
 		// TerseUpdate snap corrects to real avatar position once sim responds.
@@ -1033,6 +1119,14 @@ export function useWorldEngine(canvasRef) {
 		sessionStore.regionName = ''  // new RegionHandshake will set it
 	}
 
+	// WHY: ObjectProperties reply — merge into worldStore so right-click Inspect / Edit floater
+	// see real name/description/creator/owner instead of placeholder fields.
+	function onObjectProps(payload) {
+		const items = payload?.items ?? []
+		for (const p of items) worldStore.applyObjectProperties(p)
+		if (items.length > 0) debugStore.push('info', `[3D] ObjectProperties: ${items.length} updated`)
+	}
+
 	function onKillObject(payload) {
 		// WHY: Sim sends KillObject (High #16) when prims/avatars/NPCs leave or are deleted.
 		// Remove from Three.js scene and worldStore so they don't persist as ghost objects.
@@ -1170,6 +1264,10 @@ export function useWorldEngine(canvasRef) {
 			x: e.clientX,
 			y: e.clientY,
 		})
+		// WHY: Sim only sends ObjectProperties (name/creator/owner/perms) in response to
+		// an explicit ObjectSelect. Fire one on right-click so the Edit floater shows real
+		// data instead of placeholder fields. Deselect happens when menu closes.
+		sendSelect([hitMesh.userData.localId])
 	}
 
 	// WHY: Right-click avatar menu "Face Toward" action — set yaw so own avatar looks at target.
@@ -1415,6 +1513,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.KILL_OBJECT,      onKillObject)
 		on(S.TERRAIN_PATCH,    onTerrainPatch)
 		on(S.TELEPORT_FINISH,  onTeleportFinish)
+		on(S.OBJECT_PROPS,     onObjectProps)
 	})
 
 	onUnmounted(() => {
@@ -1436,6 +1535,7 @@ export function useWorldEngine(canvasRef) {
 		off(S.KILL_OBJECT,     onKillObject)
 		off(S.TERRAIN_PATCH,   onTerrainPatch)
 		off(S.TELEPORT_FINISH, onTeleportFinish)
+		off(S.OBJECT_PROPS,    onObjectProps)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()

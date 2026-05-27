@@ -77,7 +77,7 @@ const hopUrl = computed(() => {
 })
 
 function showLocationInfo() {
-	console.log(`To-do: [LocationBar] open location About info for ${region.value}`)
+	console.log(`To-do: [LocationBar] open location Place Profile for Parcel / ${region.value}`)
 }
 
 function startEdit() {
@@ -122,7 +122,7 @@ function onEditKeydown(e) {
 		<span @click="showLocationInfo" title="See more info about the current location (TO-DO)" class="me-2 text-base">ℹ️</span>
 
 		<!-- Connection status dot -->
-		<span class="fs-5 pb-1 shrink-0" :class="connected ? 'text-green-400' : 'text-red-400'" :title="'You are ' + connected ? 'Online' : 'Disconnected'">
+		<span class="fs-5 pb-1 shrink-0" :class="connected ? 'text-green-400' : 'text-red-400'" :title="'You are ' + (connected ? 'online' : 'disconnected')">
 			{{ connected ? '●' : '○' }}
 		</span>
 

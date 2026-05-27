@@ -33,6 +33,19 @@ export const useWorldStore = defineStore('world', () => {
 
 	function removeObject(localId) { objects.value.delete(localId) }
 
+	// WHY: ObjectProperties arrives keyed by fullId (UUID), not localId. Walk values to match.
+	// Merges name/description/creator/owner/perms into the object so Edit floater + Inspect
+	// menus get real metadata without re-fetching.
+	function applyObjectProperties(props) {
+		for (const [id, obj] of objects.value) {
+			if (obj.fullId?.toLowerCase() === props.fullId?.toLowerCase()) {
+				objects.value.set(id, { ...obj, ...props, name: props.name || obj.name })
+				return true
+			}
+		}
+		return false
+	}
+
 	function clearAll() { objects.value.clear() }
 
 	const avatars = computed(() =>
@@ -95,7 +108,7 @@ export const useWorldStore = defineStore('world', () => {
 
 	return {
 		objects, avatars, prims,
-		upsertObject, updateObjectPos, removeObject, clearAll,
+		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
 		terrainHeights, TERRAIN_STRIDE, terrainPatchCount, setTerrainPatch, clearTerrain,
