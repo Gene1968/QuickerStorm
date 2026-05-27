@@ -1,16 +1,20 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 
 const ui = useUiStore()
 
 // ── Mode state ────────────────────────────────────────────────────────────
-// WHY: walk is default and connected. run/fly are stubs — Phase 2 needs
-// server-side avatar state relay and capability negotiation.
-// CPP refs: MM_RUN → gAgent.setAlwaysRun() / gAgent.setFlying(false)
-//           MM_FLY → LLAgent::toggleFlying()
-const moveMode = ref('walk')
+// WHY: Run drives uiStore.alwaysRun (AGENT_CONTROL_ALWAYS_RUN, Ctrl+R).
+// Fly mirrors uiStore.flying which the engine updates when F or hold-E flips isFlying.
+// Fly takes precedence in the highlight since it's the dominant mode.
+// CPP refs: MM_RUN → gAgent.setAlwaysRun(); MM_FLY → LLAgent::toggleFlying()
+const moveMode = computed(() => {
+	if (ui.flying) return 'fly'
+	if (ui.alwaysRun) return 'run'
+	return 'walk'
+})
 
 // ── Synthetic key dispatch ────────────────────────────────────────────────
 // WHY: useOfficeEngine.js movement loop reads `heldKeys` Set populated by
@@ -47,42 +51,36 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 // JS wired via Shift+A / Shift+D — confirmed working in useOfficeEngine.js
 const BTNS = [
 	// ── Row 1 ──────────────────────────────────────────────────────────
-	{ id: 'turn_left',    label: '↰', sub: '← A',   title: 'Turn Left (← or A)',    code: 'ArrowLeft',  key: 'ArrowLeft',  wired: true              },
-	{ id: 'forward',      label: '↑', sub: '↑ W',   title: 'Move Forward (↑ or W)', code: 'ArrowUp',    key: 'ArrowUp',    wired: true              },
-	{ id: 'turn_right',   label: '↱', sub: '→ D',   title: 'Turn Right (→ or D)',   code: 'ArrowRight', key: 'ArrowRight', wired: true              },
-	{ id: 'move_up',      label: '⬆', sub: 'E',     title: 'Jump / Fly Up (E)',     code: 'KeyE',       key: 'e',          wired: true              },
+	{ id: 'turn_left',    label: '↰', sub: '← A',   title: 'Turn left (← or A)',    code: 'ArrowLeft',  key: 'ArrowLeft',  wired: true              },
+	{ id: 'forward',      label: '↑', sub: '↑ W',   title: 'Move forward (↑ or W)', code: 'ArrowUp',    key: 'ArrowUp',    wired: true              },
+	{ id: 'turn_right',   label: '↱', sub: '→ D',   title: 'Turn right (→ or D)',   code: 'ArrowRight', key: 'ArrowRight', wired: true              },
+	{ id: 'move_up',      label: '⬆', sub: 'E',     title: 'Jump / Fly up (E)',     code: 'KeyE',       key: 'e',          wired: true              },
 	// ── Row 2 ──────────────────────────────────────────────────────────
-	{ id: 'strafe_left',  label: '←', sub: 'Shft+A', title: 'Strafe Left (Shift+A)', code: 'KeyA',     key: 'a',          wired: true, shift: true },
-	{ id: 'backward',     label: '↓', sub: '↓ S',   title: 'Move Backward (↓ or S)',code: 'ArrowDown',  key: 'ArrowDown',  wired: true              },
-	{ id: 'strafe_right', label: '→', sub: 'Shft+D', title: 'Strafe Right (Shift+D)',code: 'KeyD',     key: 'd',          wired: true, shift: true },
-	{ id: 'move_down',    label: '⬇', sub: 'C',     title: 'Crouch / Fly Down (C)', code: 'KeyC',       key: 'c',          wired: true              },
+	{ id: 'strafe_left',  label: '←', sub: 'Shft+A', title: 'Sidestep left (Shift+A)', code: 'KeyA',     key: 'a',          wired: true, shift: true },
+	{ id: 'backward',     label: '↓', sub: '↓ S',   title: 'Move backward (↓ or S)',code: 'ArrowDown',  key: 'ArrowDown',  wired: true              },
+	{ id: 'strafe_right', label: '→', sub: 'Shft+D', title: 'Strafe right (Shift+D)',code: 'KeyD',     key: 'd',          wired: true, shift: true },
+	{ id: 'move_down',    label: '⬇', sub: 'C',     title: 'Crouch / Fly down (C)', code: 'KeyC',       key: 'c',          wired: true              },
 ]
 
 const MODES = [
-	{ id: 'walk', label: '🚶', sub: 'Walk', wired: true,  title: 'Walk mode (default)' },
-	{ id: 'run',  label: '🏃', sub: 'Run',  wired: true,  title: 'Run mode — forward/back keys gain Shift (CTRL_FAST_AT)' },
+	{ id: 'walk', label: '🚶', sub: 'Walk', wired: true,  title: 'Walk mode not run (Ctrl+R)' },
+	{ id: 'run',  label: '🏃', sub: 'Run',  wired: true,  title: 'Always Run (Ctrl+R)' },
 	{ id: 'fly',  label: '✈',  sub: 'Fly',  wired: true,  title: 'Fly toggle (F)' },
 ]
 
-// WHY: Real SL always-run is a sim flag (AGENT_CONTROL_ALWAYS_RUN). Client-side
-// approximation: forward/back press dispatched with shiftKey=true so engine ORs
-// CTRL_FAST_AT into the AgentUpdate. Strafe/turn keep their normal speed.
-function shiftFor(btn) {
-	if (btn.shift) return true
-	if (moveMode.value === 'run' && (btn.id === 'forward' || btn.id === 'backward')) return true
-	return false
-}
+function shiftFor(btn) { return !!btn.shift }
 function onBtnDown(btn) { if (btn.wired && btn.code) press(btn.code, btn.key, shiftFor(btn)) }
 function onBtnUp(btn)   { if (btn.wired && btn.code) release(btn.code, btn.key, shiftFor(btn)) }
 function selectMode(m) {
 	if (!m.wired) return
 	if (m.id === 'fly') {
-		// WHY: F key toggles fly in engine — tap (not hold); mirror toggle in UI
+		// WHY: F key toggles fly in engine — tap (not hold)
 		tap('KeyF', 'f')
-		moveMode.value = moveMode.value === 'fly' ? 'walk' : 'fly'
-	} else {
-		moveMode.value = m.id
+		return
 	}
+	// WHY: FS parity — clicking Walk/Run while flying also lands the avatar
+	if (ui.flying) tap('KeyF', 'f')
+	ui.setAlwaysRun(m.id === 'run')
 }
 </script>
 

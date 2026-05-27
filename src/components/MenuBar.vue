@@ -59,6 +59,11 @@ function onKey(e) {
 		e.preventDefault()
 		ui.closeActiveFloater()
 	}
+	// Ctrl+R — Toggle Always Run (SL AGENT_CONTROL_ALWAYS_RUN). Overrides browser refresh.
+	if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'r' || e.key === 'R')) {
+		e.preventDefault()
+		ui.toggleAlwaysRun()
+	}
 }
 
 onMounted(() => {

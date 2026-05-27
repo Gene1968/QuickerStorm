@@ -11,22 +11,22 @@ const movementRows = [
 	{ keys: 'D / →',         desc: 'Turn right' },
 	{ keys: 'E',             desc: 'Jump' },
 	{ keys: 'C',             desc: 'Crouch' },
-	{ keys: 'F / Home',      desc: 'Toggle fly/drop' },
-	{ keys: 'Shift+A',       desc: 'Strafe walk left' },
-	{ keys: 'Shift+D',       desc: 'Strafe walk right' },
+	{ keys: 'F / Home',      desc: 'Fly/fall (toggle)' },
+	{ keys: 'Shift+A',       desc: 'Sidestep left' },
+	{ keys: 'Shift+D',       desc: 'Sidestep right' },
 	{ keys: 'Hold E / PgUp', desc: 'Fly up' },
 	{ keys: 'Hold C / PgDn', desc: 'Fly down' },
 ]
 
 const shortcutRows = [
-	{ keys: 'Ctrl+M',       desc: 'Toggle map' },
+	{ keys: 'Ctrl+M',       desc: 'Map display (toggle)' },
 	{ keys: 'Ctrl+P',       desc: 'Preferences' },
-	{ keys: 'Ctrl+R',       desc: 'Toggle Run / Walk (TO-DO)' },
+	{ keys: 'Ctrl+R',       desc: 'Always Run (toggle)' },
 	{ keys: 'Ctrl+Shift+I', desc: 'Inventory (TO-DO)' },
 	{ keys: 'Ctrl+Shift+4', desc: 'Debug Panel' },
 	{ keys: 'Ctrl+Alt+R',   desc: 'Rebake avatar textures' },
-	{ keys: 'Shift+Alt+A',  desc: 'Toggle mic mute (TO-DO)' },
-	{ keys: 'Ctrl+Alt+F1',  desc: 'Toggle hide all UI (TO-DO)' },
+	{ keys: 'Shift+Alt+A',  desc: 'Mic mute (toggle TO-DO)' },
+	{ keys: 'Ctrl+Alt+F1',  desc: 'UI all hide/render (toggle)' },
 ]
 
 const cameraRows = [
@@ -46,7 +46,7 @@ const cameraRows = [
 		@close="ui.showMovementHelp = false"
 	>
 		<div class="p-4 text-xs text-t2 space-y-5">
-			<div class="flex gap-5">
+			<div class="flex justify-between gap-4">
 				<section>
 					<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Movement</h3>
 					<table class="w-full border-collapse">

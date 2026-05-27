@@ -1,6 +1,7 @@
 // src/stores/uiStore.js — UI mode, panel visibility, camera position readout
 import { defineStore } from 'pinia'
 import { ref, shallowRef } from 'vue'
+import { useChatStore } from './chatStore'
 
 export const useUiStore = defineStore('ui', () => {
 	const mode           = ref('3d')      // '3d' | '2d'
@@ -26,6 +27,8 @@ export const useUiStore = defineStore('ui', () => {
 	const showProfile        = ref(false)    // profile floater
 	const profileTargetId    = ref(null)     // null = self; UUID string = other user
 	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
+	const alwaysRun          = ref(false)    // SL AGENT_CONTROL_ALWAYS_RUN flag — Ctrl+R toggle
+	const flying             = ref(false)    // mirrors engine isFlying for UI button state
 
 	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
@@ -47,6 +50,25 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleAO()             { showAO.value             = !showAO.value }
 	function toggleMovementHelp()   { showMovementHelp.value   = !showMovementHelp.value }
 	function togglePlaces()         { showPlaces.value         = !showPlaces.value }
+	// WHY: FS parity — emit "Always Run enabled./disabled." into Nearby Chat on state change
+	function _notifyAlwaysRun() {
+		useChatStore().addMessage({
+			fromName: 'System',
+			message:  `Always Run ${alwaysRun.value ? 'enabled' : 'disabled'}.`,
+			chatType: 0,
+		})
+	}
+	function toggleAlwaysRun() {
+		alwaysRun.value = !alwaysRun.value
+		_notifyAlwaysRun()
+	}
+	function setAlwaysRun(v) {
+		const next = !!v
+		if (next === alwaysRun.value) return
+		alwaysRun.value = next
+		_notifyAlwaysRun()
+	}
+	function setFlying(v) { flying.value = !!v }
 	function openPreferencesOnTab(tabId) {
 		preferenceActiveTab.value = tabId
 		showPreferences.value     = true
@@ -129,6 +151,8 @@ export const useUiStore = defineStore('ui', () => {
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,
 		toggleMovementHelp, togglePlaces, openPreferencesOnTab,
+		alwaysRun, toggleAlwaysRun, setAlwaysRun,
+		flying, setFlying,
 		openProfile, toggleProfile,
 		floaterStack, focusFloater,
 		uiVisible, toggleUiVisible, closeActiveFloater,

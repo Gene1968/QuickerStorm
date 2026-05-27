@@ -117,6 +117,7 @@ const CTRL_YAW_NEG   = 0x0200  // turn right
 const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
+const CTRL_ALWAYS_RUN = 0x00100000  // sticky run state (Ctrl+R); sim treats movement as run
 
 const FOLLOW_DIST   = 1.0   // metres behind avatar (third-person)
 const FOLLOW_HEIGHT = 2.0   // metres above avatar feet
@@ -201,13 +202,15 @@ export function useWorldEngine(canvasRef) {
 	const MOVE_KEYS = [
 		'KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','KeyC','KeyF',
 		'ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown',
+		'Home',
 	]
 
 	function onKeyDown(e) {
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
-		if (e.code === 'KeyF') {
+		if (e.code === 'KeyF' || e.code === 'Home') {
 			isFlying = !isFlying
+			uiStore.setFlying(isFlying)
 			e.preventDefault()
 			return
 		}
@@ -443,7 +446,7 @@ export function useWorldEngine(canvasRef) {
 		const goDown = keys['KeyC'] || keys['PageDown']
 		if (goUp) {
 			eHoldTime += dt
-			if (eHoldTime >= 1.5 && !isFlying) isFlying = true
+			if (eHoldTime >= 1.5 && !isFlying) { isFlying = true; uiStore.setFlying(true) }
 		} else {
 			eHoldTime = 0
 		}
@@ -469,6 +472,9 @@ export function useWorldEngine(canvasRef) {
 		// ── Control flags (always sent to sim regardless of camera mode) ──────
 		let cf = 0
 		if (isFlying) cf |= CTRL_FLY
+		// WHY: ALWAYS_RUN is a sticky sim-side flag toggled by Ctrl+R. Sim treats agent
+		// as running for all subsequent movement; viewer no longer needs CTRL_FAST_AT.
+		if (uiStore.alwaysRun) cf |= CTRL_ALWAYS_RUN
 
 		if (!shift) {
 			if (keys['KeyA'] || keys['ArrowLeft'])  cf |= CTRL_YAW_POS
@@ -1378,8 +1384,9 @@ export function useWorldEngine(canvasRef) {
 			const hasLat  = cf & (CTRL_LEFT_POS | CTRL_LEFT_NEG)
 			const hasVert = cf & (CTRL_UP_POS | CTRL_UP_NEG)
 			if (hasFwd || hasLat || hasVert) {
-				const spd  = (cf & CTRL_FAST_AT)   ? SL_RUN_SPEED : SL_WALK_SPEED
-				const lspd = (cf & CTRL_FAST_LEFT) ? SL_RUN_SPEED : SL_WALK_SPEED
+				const runSticky = !!(cf & CTRL_ALWAYS_RUN)
+				const spd  = ((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
+				const lspd = ((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
 				// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
 				const fX = -Math.sin(yaw), fY = Math.cos(yaw)
 				const rX =  Math.cos(yaw), rY = Math.sin(yaw)
