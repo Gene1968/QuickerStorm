@@ -97,14 +97,11 @@ export function useWorldEngine(canvasRef) {
 			e.preventDefault()
 			return
 		}
-		// WHY: Esc resets camera to default follow position behind avatar.
-		// Same effect as W (which auto-snaps when far) but explicit and instant.
-		// Also exits alt-orbit mode so follow camera resumes.
+		// WHY: Esc exits orbit and glides camera back to follow position behind avatar.
+		// No instant snap — animate()'s lerp provides smooth ~0.25s glide-back.
+		// Reset zoom distance so Esc is useful even when only scroll displaced the camera.
 		if (e.code === 'Escape' && avatarSLPos) {
-			// WHY: Reset zoom distance too so Esc is visibly useful even when camera
-			// was only displaced by scrollwheel (followDist changed, position wasn't lost).
 			followDist = FOLLOW_DIST
-			cameraSnapRequested = true
 			isAltOrbit = false
 			isDragging = false
 			e.preventDefault()
@@ -116,51 +113,49 @@ export function useWorldEngine(canvasRef) {
 	// WHY: When the window loses focus (tab switch, alt-tab), keyup events are not delivered.
 	// Keys appear stuck and the avatar spins / walks indefinitely.
 	// Clear all held keys and mouse drag state on blur to prevent this.
+	// WHY: Keep isAltOrbit on blur — frozen orbit survives alt-tab; only isDragging clears.
 	function onBlur() {
 		for (const k in keys) keys[k] = false
-		isDragging  = false
-		isAltOrbit  = false
-		eHoldTime   = 0
+		isDragging = false
+		eHoldTime  = 0
 	}
 
 	function onMouseDown(e) {
 		if (e.button !== 0) return
-		isDragging  = true
-		isAltOrbit  = e.altKey
-		lastMouseX  = e.clientX
-		lastMouseY  = e.clientY
-		if (isAltOrbit) {
-			// Seed orbit angles from current camera state
+		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
+		isDragging = true
+		lastMouseX = e.clientX
+		lastMouseY = e.clientY
+		if (!isAltOrbit) {
+			// WHY: Fresh orbit entry only — if already frozen in orbit, preserve current angles/radius.
+			isAltOrbit = true
 			orbitYaw   = yaw
 			orbitPitch = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, -pitch + 0.3))
-			// WHY: Pivot on avatar when known; avoids y=0 ground-lock when flying.
-			// Fallback: project forward from camera at ground level (old behavior).
-			if (avatarSLPos) {
-				orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
-			} else {
-				const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
-				orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
-				orbitPivot.y = 0
-			}
+		}
+		// WHY: Always refresh pivot to avatar's current position when starting a drag.
+		// Keeps orbit centred on avatar even if they moved since last orbit session.
+		if (avatarSLPos) {
+			orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
+		} else {
+			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+			orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
+			orbitPivot.y = 0
 		}
 	}
 	function onMouseMove(e) {
-		if (!isDragging) return
+		if (!isDragging || !isAltOrbit) return
 		const dx = e.clientX - lastMouseX
 		const dy = e.clientY - lastMouseY
 		lastMouseX = e.clientX
 		lastMouseY = e.clientY
-		if (isAltOrbit) {
-			// WHY: Alt-drag orbits camera around pivot (third-person view), matching SL alt+drag
-			orbitYaw   -= dx * MOUSE_SENSITIVITY
-			orbitPitch  = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPitch + dy * MOUSE_SENSITIVITY))
-		} else {
-			yaw   -= dx * MOUSE_SENSITIVITY
-			pitch -= dy * MOUSE_SENSITIVITY
-			pitch  = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 4, pitch))
-		}
+		// WHY: Alt-drag L/R orbits camera around pivot; U/D zooms (matches SL alt+drag).
+		// Zoom is proportional to current radius for consistent feel at any distance.
+		orbitYaw    -= dx * MOUSE_SENSITIVITY
+		orbitRadius  = Math.max(2, Math.min(64, orbitRadius - dy * orbitRadius * 0.008))
 	}
-	function onMouseUp() { isDragging = false; isAltOrbit = false }
+	// WHY: Mouse-up freezes orbit position — camera stays where user left it.
+	// isAltOrbit stays true; cleared by Esc, reset button, or avatar movement.
+	function onMouseUp() { isDragging = false }
 
 	// Scroll wheel: zoom in orbit mode or third-person; forward/back in explore mode
 	function onWheel(e) {
@@ -187,9 +182,32 @@ export function useWorldEngine(canvasRef) {
 		if (!camera) return 0
 
 		const shift = keys['ShiftLeft'] || keys['ShiftRight']
+		const alt   = keys['AltLeft']   || keys['AltRight']
 		const turn  = CAM_TURN_SPEED * dt
 		const spd   = (shift ? CAM_RUN_SPEED : CAM_SPEED) * dt
 		const fly   = CAM_FLY_SPEED * dt
+
+		// WHY: Alt+A/D orbits camera left/right; Alt+E/C orbits up/down.
+		// Intercept before the normal yaw/fly path so avatar does NOT rotate.
+		// Same isAltOrbit system as mouse drag — entry initialises pivot/angles once.
+		if (alt && (keys['KeyA'] || keys['KeyD'] || keys['ArrowLeft'] || keys['ArrowRight'] || keys['KeyE'] || keys['KeyC'])) {
+			if (!isAltOrbit) {
+				isAltOrbit = true
+				orbitYaw   = yaw
+				orbitPitch = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, -pitch + 0.3))
+				if (avatarSLPos) {
+					orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
+				} else {
+					const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+					orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
+					orbitPivot.y = 0
+				}
+			}
+			if (keys['KeyA'] || keys['ArrowLeft'])  orbitYaw += turn
+			if (keys['KeyD'] || keys['ArrowRight']) orbitYaw -= turn
+			if (keys['KeyE']) orbitPitch = Math.min(Math.PI / 2 - 0.05, orbitPitch + turn)
+			if (keys['KeyC']) orbitPitch = Math.max(-Math.PI / 4,       orbitPitch - turn)
+		}
 
 		if (isAltOrbit) {
 			// Alt-orbit: update camera position only, no control flags
@@ -306,21 +324,31 @@ export function useWorldEngine(canvasRef) {
 	// in onObjectUpdate/onTerseUpdate. LocationBar reads worldStore.avatarPos directly.
 
 	// WHY: Topo coloring matches spec: teal near water, green mid, stone high.
-	// Returns [r, g, b] in 0–1 range. Smooth lerp between bands avoids hard edges.
+	// Band values are authored in sRGB (the colors a designer would pick); we
+	// convert to linear via srgbToLinear because Three r152+ outputs sRGB and
+	// expects vertex colors in linear space — uncorrected sRGB values get
+	// gamma-applied at output and look washed out (#527959 → #9ab69f → fog
+	// blend → #acc2b1 in the viewer). Returns [r, g, b] in 0–1 linear.
 	function heightColor(h) {
+		let rgb
 		// deep/underwater
-		if (h <= 0)   return [0.08, 0.30, 0.60]
+		if      (h <= 0)  rgb = [0.08, 0.30, 0.60]
 		// shallow → low land
-		if (h <= 10)  return lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], h / 10)
+		else if (h <= 10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], h / 10)
 		// low land → grass
-		if (h <= 20)  return lerpRgb([0.25, 0.55, 0.45], [0.29, 0.49, 0.35], (h - 10) / 10)
+		else if (h <= 20) rgb = lerpRgb([0.25, 0.55, 0.45], [0.29, 0.49, 0.35], (h - 10) / 10)
 		// grass → earthy mid
-		if (h <= 40)  return lerpRgb([0.29, 0.49, 0.35], [0.45, 0.42, 0.35], (h - 20) / 20)
+		else if (h <= 40) rgb = lerpRgb([0.29, 0.49, 0.35], [0.45, 0.42, 0.35], (h - 20) / 20)
 		// earthy → stone grey
-		return lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((h - 40) / 60, 1))
+		else              rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((h - 40) / 60, 1))
+		return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]
 	}
 
 	function lerpRgb(a, b, t) { return a.map((v, i) => v + (b[i] - v) * t) }
+
+	// sRGB → linear conversion. Matches THREE.Color.convertSRGBToLinear (pow 2.4
+	// with a small linear toe), but we just need approximate so pow(2.2) is fine.
+	function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
 
 	function applyHeightColor(colAttr, vertexIndex, h) {
 		const [r, g, b] = heightColor(h)
@@ -397,13 +425,15 @@ export function useWorldEngine(canvasRef) {
 		terrainGeo.rotateX(-Math.PI / 2)
 		terrainGeo.translate(rx / 2, 0, -ry / 2)
 
-		// Add vertex color attribute — updated per patch in onTerrainPatch
+		// Add vertex color attribute — updated per patch in onTerrainPatch.
+		// Initial fill matches heightColor(20) = mid-green; stored in LINEAR
+		// space so the sRGB renderer pipeline outputs the intended hue.
 		const vtxColors = new Float32Array(terrainGeo.attributes.position.count * 3)
-		// Initial fill: mid-green (r=0.29, g=0.49, b=0.35)
+		const [ir, ig, ib] = heightColor(20)
 		for (let i = 0; i < vtxColors.length; i += 3) {
-			vtxColors[i]     = 0.29  // r
-			vtxColors[i + 1] = 0.49  // g
-			vtxColors[i + 2] = 0.35  // b
+			vtxColors[i]     = ir
+			vtxColors[i + 1] = ig
+			vtxColors[i + 2] = ib
 		}
 		terrainGeo.setAttribute('color', new THREE.BufferAttribute(vtxColors, 3))
 
@@ -759,7 +789,13 @@ export function useWorldEngine(canvasRef) {
 
 		// WHY: Third-person follow camera — positions camera behind and above avatar.
 		// Lerp factor 0.15 smooths 10Hz TerseUpdate jitter into fluid motion.
-		// Hard-snap (lerp=1.0) only on Esc or >50m off target (see snap comment below).
+		// Hard-snap (lerp=1.0) only for teleport/spawn >50m (cameraSnapRequested).
+		const isMoving = MOVE_KEYS.some(k => keys[k])
+		// WHY: Movement cancels frozen orbit — avatar walking triggers smooth glide back
+		// to follow position. Only cancel when not actively dragging (drag holds orbit).
+		if (isAltOrbit && isMoving && !isDragging) {
+			isAltOrbit = false
+		}
 		if (avatarSLPos && !isAltOrbit) {
 			const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 			const target = new THREE.Vector3(
@@ -768,13 +804,11 @@ export function useWorldEngine(canvasRef) {
 				t.z + Math.cos(yaw) * followDist,
 			)
 			const distToTarget = camera.position.distanceTo(target)
-			// WHY: Hard-snap only on Esc (explicit) or >50m (teleport/first login).
-			// Variable lerp: when a movement key is held and camera is displaced, glide back
-			// faster (up to 0.35) so pressing W naturally re-centres the camera without a jarring
-			// teleport. Scales with distance so the acceleration eases off as it converges.
+			// WHY: Hard-snap only on teleport/spawn (cameraSnapRequested) or >50m displacement.
+			// Variable lerp: movement key held → faster glide (up to 0.35); idle or Esc exit →
+			// smooth 0.15 glide (~0.25s). No more snap=1.0 on Esc — glide always.
 			const snap = cameraSnapRequested || distToTarget > 50
 			cameraSnapRequested = false
-			const isMoving = MOVE_KEYS.some(k => keys[k])
 			const lerpFactor = snap ? 1.0
 				: isMoving ? Math.min(0.35, 0.15 + distToTarget * 0.02)
 				: 0.15

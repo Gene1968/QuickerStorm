@@ -77,7 +77,22 @@
       "Bash(grep -A 20 \"^{$\" \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\phoenix-firestorm\\\\scripts\\\\messages\\\\message_template.msg\")",
       "Bash(bun server/lib/terrain-codec.ts)",
       "PowerShell($env:PATH -split ';' | Where-Object { $_ -match 'bun|node|npm' })",
-      "Bash(node test-sign-fix.mjs)"
+      "Bash(node test-sign-fix.mjs)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverseTypes/BitPack.cs\")",
+      "Bash(curl -sL \"https://api.github.com/search/code?q=class+BitPack+filename:BitPack.cs+repo:cinderblocks/libopenmetaverse\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/cinderblocks/libopenmetaverse/master/OpenMetaverseTypes/BitPack.cs\" -o /tmp/BitPack.cs)",
+      "Read(//tmp/**)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/cinderblocks/libopenmetaverse/master/OpenMetaverse.Types/BitPack.cs\" -o /tmp/BitPack.cs)",
+      "Bash(curl -sL \"https://api.github.com/repos/cinderblocks/libopenmetaverse/contents/OpenMetaverse?ref=master\")",
+      "Bash(curl -sL \"https://api.github.com/search/repositories?q=libopenmetaverse\")",
+      "Bash(curl -sL \"https://api.github.com/repos/openmetaversefoundation/libopenmetaverse/contents/OpenMetaverseTypes\")",
+      "Bash(curl -sL \"https://api.github.com/repos/openmetaversefoundation/libopenmetaverse/contents/OpenMetaverse\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/BitPack.cs\" -o /tmp/BitPack.cs)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/BitPack.cs\" -o C:/temp/BitPack.cs)",
+      "Read(//c/temp/**)",
+      "Bash(mkdir -p /tmp/libomv)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/BitPack.cs\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/TerrainCompressor.cs\")"
     ]
   }
 }

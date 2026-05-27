@@ -5,67 +5,89 @@ import FloaterWindow from '@/components/FloaterWindow.vue'
 const ui = useUiStore()
 
 const movementRows = [
-	{ keys: 'W / ↑',       desc: 'Move forward' },
-	{ keys: 'S / ↓',       desc: 'Move back' },
-	{ keys: 'A / ←',       desc: 'Turn left' },
-	{ keys: 'D / →',       desc: 'Turn right' },
-	{ keys: 'E',           desc: 'Jump (hold to fly)' },
-	{ keys: 'C',           desc: 'Crouch' },
-	{ keys: 'F',           desc: 'Toggle fly/drop' },
-	{ keys: 'Shift+A',     desc: 'Strafe walk left' },
-	{ keys: 'Shift+D',     desc: 'Strafe walk right' },
-	{ keys: 'PgUp',        desc: 'Fly up' },
-	{ keys: 'PgDn',        desc: 'Fly down' },
-	{ keys: 'Scrollwheel / Alt+W/↑ / Alt+S/↓',        desc: 'Zoom camera view' },
-	{ keys: 'Drag / Alt+A/← / Alt+D/→',        desc: 'Look around (cam orbit)' },
+	{ keys: 'W / ↑',         desc: 'Move forward' },
+	{ keys: 'S / ↓',         desc: 'Move back' },
+	{ keys: 'A / ←',         desc: 'Turn left' },
+	{ keys: 'D / →',         desc: 'Turn right' },
+	{ keys: 'E',             desc: 'Jump (hold to fly)' },
+	{ keys: 'C',             desc: 'Crouch' },
+	{ keys: 'F',             desc: 'Toggle fly/drop' },
+	{ keys: 'Shift+A',       desc: 'Strafe walk left' },
+	{ keys: 'Shift+D',       desc: 'Strafe walk right' },
+	{ keys: 'Hold E / PgUp', desc: 'Fly up' },
+	{ keys: 'Hold C / PgDn', desc: 'Fly down' },
 ]
 
 const shortcutRows = [
-	{ keys: 'Ctrl+M',      desc: 'Toggle map' },
-	{ keys: 'Ctrl+P',      desc: 'Preferences' },
-	{ keys: 'Ctrl+R',      desc: 'Toggle Run / Walk (TO-DO)' },
-	{ keys: 'Ctrl+Shift+I',      desc: 'Inventory (TO-DO)' },
-	{ keys: 'Ctrl+Shift+4',      desc: 'Debug Panel' },
-	{ keys: 'Ctrl+Alt+R',      desc: 'Rebake avatar textures' },
-	{ keys: 'Shift+Alt+A', desc: 'Toggle mic mute (TO-DO)' },
+	{ keys: 'Ctrl+M',       desc: 'Toggle map' },
+	{ keys: 'Ctrl+P',       desc: 'Preferences' },
+	{ keys: 'Ctrl+R',       desc: 'Toggle Run / Walk (TO-DO)' },
+	{ keys: 'Ctrl+Shift+I', desc: 'Inventory (TO-DO)' },
+	{ keys: 'Ctrl+Shift+4', desc: 'Debug Panel' },
+	{ keys: 'Ctrl+Alt+R',   desc: 'Rebake avatar textures' },
+	{ keys: 'Shift+Alt+A',  desc: 'Toggle mic mute (TO-DO)' },
 ]
+
+const cameraRows = [
+	{ keys: 'Alt+A/← / Alt+D/→ / Alt+Drag lft/rt',          desc: 'Orbit camera left/right' },
+	{ keys: 'Alt+W/↑ / Alt+S/↓ / Scroll / Alt+Drag up/dwn', desc: 'Zoom camera in/out' },
+	{ keys: 'Alt+E / Alt+C',              desc: 'Orbit camera up/down' },
+]
+
 </script>
 
 <template>
 	<FloaterWindow
 		id="movement-help"
 		title="Movement &amp; Shortcuts"
-		:wrap-style="{ width: '30rem' }"
+		:wrap-style="{ width: '35rem' }"
 		:default-pos="{ left: '28%', top: '5%' }"
 		@close="ui.showMovementHelp = false"
 	>
-		<div class="p-4 text-xs text-t2 space-y-3">
-			<section>
-				<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Movement</h3>
-				<table class="w-full border-collapse">
-					<tbody>
-						<tr
-							v-for="row in movementRows"
-							:key="row.keys"
-							class="border-b border-brd last:border-0"
-						>
-							<td class="py-1 pr-3 font-mono text-accent whitespace-nowrap">{{ row.keys }}</td>
-							<td class="py-1 text-t2">{{ row.desc }}</td>
-						</tr>
-					</tbody>
-				</table>
-			</section>
+		<div class="p-4 text-xs text-t2 space-y-5">
+			<div class="flex gap-5">
+				<section>
+					<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Movement</h3>
+					<table class="w-full border-collapse">
+						<tbody>
+							<tr
+								v-for="row in movementRows"
+								:key="row.keys"
+								class="border-b border-brd last:border-0"
+							>
+								<td class="py-1 pr-3 font-mono text-accent text-end whitespace-nowrap">{{ row.keys }}</td>
+								<td class="py-1 text-t2">{{ row.desc }}</td>
+							</tr>
+						</tbody>
+					</table>
+				</section>
+				<section>
+					<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Other shortcuts</h3>
+					<table class="w-full border-collapse">
+						<tbody>
+							<tr
+								v-for="row in shortcutRows"
+								:key="row.keys"
+								class="border-b border-brd last:border-0"
+							>
+								<td class="py-1 pr-3 font-mono text-accent text-end whitespace-nowrap">{{ row.keys }}</td>
+								<td class="py-1 text-t2">{{ row.desc }}</td>
+							</tr>
+						</tbody>
+					</table>
+				</section>
+			</div>
 
 			<section>
-				<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Shortcuts</h3>
+				<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Camera view</h3>
 				<table class="w-full border-collapse">
 					<tbody>
 						<tr
-							v-for="row in shortcutRows"
+							v-for="row in cameraRows"
 							:key="row.keys"
 							class="border-b border-brd last:border-0"
 						>
-							<td class="py-1 pr-3 font-mono text-accent whitespace-nowrap">{{ row.keys }}</td>
+							<td class="py-1 pr-3 font-mono text-accent text-end whitespace-nowrap">{{ row.keys }}</td>
 							<td class="py-1 text-t2">{{ row.desc }}</td>
 						</tr>
 					</tbody>

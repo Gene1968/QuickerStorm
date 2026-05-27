@@ -9,11 +9,16 @@ const ui = useUiStore()
 // WHY: useWorldEngine listens on `window` for keydown/keyup. Synthetic events
 // let floater buttons reuse existing engine handlers with zero engine changes.
 // target.tagName check in onKeyDown passes since window has no tagName.
-function press(code) {
-	window.dispatchEvent(new KeyboardEvent('keydown', { code, key: code, bubbles: true, cancelable: true }))
+// WHY alt param: orbit pitch (KeyE/KeyC) requires altKey=true so the engine
+// enters the alt-orbit path instead of triggering fly/jump.
+function press(code, alt = false) {
+	// WHY: dispatch AltLeft first so keys['AltLeft'] is set before the move key arrives.
+	if (alt) window.dispatchEvent(new KeyboardEvent('keydown', { code: 'AltLeft', key: 'Alt', bubbles: true, cancelable: true }))
+	window.dispatchEvent(new KeyboardEvent('keydown', { code, key: code, altKey: alt, bubbles: true, cancelable: true }))
 }
-function release(code) {
-	window.dispatchEvent(new KeyboardEvent('keyup', { code, key: code, bubbles: true, cancelable: true }))
+function release(code, alt = false) {
+	window.dispatchEvent(new KeyboardEvent('keyup', { code, key: code, altKey: alt, bubbles: true, cancelable: true }))
+	if (alt) window.dispatchEvent(new KeyboardEvent('keyup', { code: 'AltLeft', key: 'Alt', bubbles: true, cancelable: true }))
 }
 function tap(code) {
 	press(code)
@@ -50,19 +55,18 @@ const PRESETS = [
 	{ id: 'reset',     label: '↩', title: 'Reset camera view (Esc)',        wired: true  },
 ]
 
-// Orbit 3×3 grid — left/right wired via ArrowLeft/ArrowRight (yaw).
-// Pitch up/down = Phase 2 (no keyboard pitch in useWorldEngine — mouse only).
+// Orbit 3×3 grid — left/right via ArrowLeft/ArrowRight; up/down via Alt+E/Alt+C.
 // CPP: LLJoystickCameraRotate → gAgentCamera.cameraOrbitAround / cameraOrbitOver
 const ORBIT = [
-	{ id: 'tl',    label: '↖', title: 'Orbit up-left — Phase 2',    code: null,         tap: false, wired: false },
-	{ id: 'up',    label: '↑', title: 'Pitch up — Phase 2',          code: null,         tap: false, wired: false },
-	{ id: 'tr',    label: '↗', title: 'Orbit up-right — Phase 2',   code: null,         tap: false, wired: false },
-	{ id: 'left',  label: '↰', title: 'Orbit left (Arrow ←)',        code: 'ArrowLeft',  tap: false, wired: true  },
-	{ id: 'rst',   label: '↺', title: 'Reset camera view (Esc)',     code: 'Escape',     tap: true,  wired: true  },
-	{ id: 'right', label: '↱', title: 'Orbit right (Arrow →)',       code: 'ArrowRight', tap: false, wired: true  },
-	{ id: 'bl',    label: '↙', title: 'Orbit down-left — Phase 2',   code: null,         tap: false, wired: false },
-	{ id: 'down',  label: '↓', title: 'Pitch down — Phase 2',        code: null,         tap: false, wired: false },
-	{ id: 'br',    label: '↘', title: 'Orbit down-right — Phase 2',  code: null,         tap: false, wired: false },
+	{ id: 'tl',    label: '↖', title: 'Orbit up-left — Phase 2',   code: null,         alt: false, tap: false, wired: false },
+	{ id: 'up',    label: '↑', title: 'Pitch up (Alt+E)',           code: 'KeyE',       alt: true,  tap: false, wired: true  },
+	{ id: 'tr',    label: '↗', title: 'Orbit up-right — Phase 2',  code: null,         alt: false, tap: false, wired: false },
+	{ id: 'left',  label: '↰', title: 'Orbit left (Arrow ←)',       code: 'ArrowLeft',  alt: false, tap: false, wired: true  },
+	{ id: 'rst',   label: '↺', title: 'Reset camera view (Esc)',    code: 'Escape',     alt: false, tap: true,  wired: true  },
+	{ id: 'right', label: '↱', title: 'Orbit right (Arrow →)',      code: 'ArrowRight', alt: false, tap: false, wired: true  },
+	{ id: 'bl',    label: '↙', title: 'Orbit down-left — Phase 2',  code: null,         alt: false, tap: false, wired: false },
+	{ id: 'down',  label: '↓', title: 'Pitch down (Alt+C)',         code: 'KeyC',       alt: true,  tap: false, wired: true  },
+	{ id: 'br',    label: '↘', title: 'Orbit down-right — Phase 2', code: null,         alt: false, tap: false, wired: false },
 ]
 
 // Track 3×3 grid — all Phase 2 (needs Alt+scroll pan or engine-exposed API).
@@ -82,11 +86,11 @@ const TRACK = [
 function onOrbitDown(btn) {
 	if (!btn.wired) return
 	if (btn.tap) { tap(btn.code); return }
-	press(btn.code)
+	press(btn.code, btn.alt)
 }
 function onOrbitUp(btn) {
 	if (!btn.wired || btn.tap) return
-	release(btn.code)
+	release(btn.code, btn.alt)
 }
 function onPresetClick(p) {
 	if (!p.wired) return
@@ -95,7 +99,7 @@ function onPresetClick(p) {
 
 // Safety: release all held orbit keys + stop zoom on global mouseup
 function globalUp() {
-	for (const b of ORBIT) if (b.wired && !b.tap && b.code) release(b.code)
+	for (const b of ORBIT) if (b.wired && !b.tap && b.code) release(b.code, b.alt)
 	stopZoom()
 }
 onMounted(()   => window.addEventListener('mouseup', globalUp))
@@ -106,8 +110,8 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 	<FloaterWindow
 		id="camera"
 		title="🎥 Camera"
-		:wrap-style="{ width: '17rem', resize: 'both' }"
-		:default-pos="{ left: '21vw', bottom: '2.5rem' }"
+		:wrap-style="{ width: '19rem', resize: 'both' }"
+		:default-pos="{ left: '20.25vw', bottom: '2.5rem' }"
 		@close="ui.toggleCameraControls()"
 	>
 		<div class="containerQ flex flex-col gap-[3px] p-[5px] select-none">
@@ -195,7 +199,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 
 			<!-- ── Tip ─────────────────────────────────────────────── -->
 			<div class="text-[6cqi] text-white/25 text-center leading-none mt-0.5">
-				Drag → look · Alt+drag → orbit · Scroll → zoom · Esc → reset
+				Alt+drag/A/D/E/C → orbit · Scroll → zoom · Esc → glide back
 			</div>
 
 		</div>
@@ -210,7 +214,7 @@ button {
 	font-size: 13cqi;
 	white-space: nowrap;
 	overflow: hidden;
-	aspect-ratio: 1/1
+	/* aspect-ratio: 1/1; */
 }
 input[type="range"] {
 	max-height: 4cqi;

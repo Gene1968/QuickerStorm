@@ -32,7 +32,15 @@ export default ({ mode }) => {
 		},
 	}
 
-	const plugins = [vue()]
+	const plugins = [vue({
+		template: {
+			compilerOptions: {
+				// WHY: emoji-picker is a web component (emoji-picker-element package),
+				// not a Vue component — suppress "Failed to resolve component" warning.
+				isCustomElement: (tag) => tag === 'emoji-picker',
+			},
+		},
+	})]
 	console.log("Mode: ", mode)
 	// SharePoint hosting expects index.aspx; standalone hosting (Railway/staging) keeps index.html.
 	const isSharePointHost = mode === "im" || mode === "production"
