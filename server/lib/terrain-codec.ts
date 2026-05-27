@@ -31,9 +31,20 @@ interface PatchHeader {
 	patchY: number
 }
 
-// ── BitReader — reads MSB-first variable-length fields from a Buffer ──────────
-// WHY: LLUDP terrain patch data uses bit-packed fields (not byte-aligned).
-// Reads proceed MSB-first within each byte, matching LLBitPack in firestorm.
+// ── BitReader — matches libopenmetaverse BitPack.cs UnpackBits ────────────────
+// WHY: LLUDP LayerData uses libomv BitPack encoding. The wire format:
+//   • Values split into 8-bit chunks. For an N-bit value, write floor(N/8) full
+//     8-bit chunks, then a final (N % 8)-bit chunk if N is not a multiple of 8.
+//   • Source byte order is little-endian (BitConverter.GetBytes on x86).
+//   • Within each chunk, bits are written MSB-first into the stream.
+//   • Final partial chunk reads bits (count-1)..0 of the next source byte
+//     (the LOW `count` bits, MSB-first within those).
+// Decoding: read 8-bit chunks MSB-first from stream into output bytes (LE order),
+// then interpret as a LE integer. For ≤8-bit reads this is identical to naive
+// MSB-first concatenation; for 9..32-bit reads (patchIds, range, dcOffset,
+// coefficient magnitudes) the LE byte assembly is essential.
+// Reference: openmetaversefoundation/libopenmetaverse OpenMetaverse/BitPack.cs
+//            UnpackBitsArray + UnpackBits with `if (weAreBigEndian) Array.Reverse`.
 export class BitReader {
 	private buf: Buffer
 	private bitPos: number = 0
@@ -41,43 +52,45 @@ export class BitReader {
 	constructor(buf: Buffer) { this.buf = buf }
 
 	readBits(n: number): number {
+		if (n <= 0) return 0
 		let result = 0
-		for (let i = 0; i < n; i++) {
-			const byteIdx = (this.bitPos / 8) | 0
-			const bitIdx  = 7 - (this.bitPos % 8)   // MSB first
-			if (byteIdx >= this.buf.length) break
-			result = (result << 1) | ((this.buf[byteIdx] >> bitIdx) & 1)
-			this.bitPos++
+		let shift = 0
+		let remaining = n
+		while (remaining > 0) {
+			const count = remaining > 8 ? 8 : remaining
+			remaining -= count
+			let byteVal = 0
+			for (let i = 0; i < count; i++) {
+				const byteIdx = (this.bitPos / 8) | 0
+				const bitIdx  = 7 - (this.bitPos % 8)   // MSB first within byte
+				if (byteIdx >= this.buf.length) return result >>> 0
+				byteVal = (byteVal << 1) | ((this.buf[byteIdx] >> bitIdx) & 1)
+				this.bitPos++
+			}
+			result |= (byteVal << shift)
+			shift += 8   // ALWAYS shift by 8, even for partial final chunk —
+			             // chunks correspond to whole output bytes in LE order
 		}
-		return result >>> 0  // force unsigned
+		return result >>> 0
 	}
 
-	// Read 32-bit IEEE 754 float, little-endian byte order.
-	// WHY: firestorm patch_code.cpp decode_patch_header uses bitUnpack((U8*)&retvalu32, 32).
-	// On LE (x86) this puts the first 8 bits from the stream into the LSByte of the float,
-	// so the float is stored LSByte-first in the bitstream. OpenSim servers are x86/LE.
+	// Read 32-bit IEEE 754 float. With LE-chunked readBits, the 4 successive
+	// 8-bit reads produce LSByte..MSByte directly.
 	readFloat32LE(): number {
-		const b0 = this.readBits(8)   // LSByte
+		const b0 = this.readBits(8)
 		const b1 = this.readBits(8)
 		const b2 = this.readBits(8)
-		const b3 = this.readBits(8)   // MSByte
+		const b3 = this.readBits(8)
 		const tmp = Buffer.allocUnsafe(4)
 		tmp[0] = b0; tmp[1] = b1; tmp[2] = b2; tmp[3] = b3
 		return tmp.readFloatLE(0)
 	}
 
-	// Read 16-bit LE unsigned int (LSByte first in bitstream — same LE convention as float).
-	readU16LE(): number {
-		const lo = this.readBits(8)   // LSByte
-		const hi = this.readBits(8)   // MSByte
-		return (lo | (hi << 8)) >>> 0
-	}
+	readU16LE(): number { return this.readBits(16) }   // 2-chunk LE assembly
+	readU8():    number { return this.readBits(8)  }
 
-	readU16(): number { return this.readBits(16) }
-	readU8():  number { return this.readBits(8)  }
-
-	get bytesRead():        number  { return Math.ceil(this.bitPos / 8) }
-	get bitsRemaining():    number  { return Math.max(0, this.buf.length * 8 - this.bitPos) }
+	get bytesRead():     number { return Math.ceil(this.bitPos / 8) }
+	get bitsRemaining(): number { return Math.max(0, this.buf.length * 8 - this.bitPos) }
 }
 
 // ── Group header — 4 plain bytes at start of LayerData.Data ──────────────────
@@ -105,12 +118,14 @@ function readPatchHeader(reader: BitReader): PatchHeader | null {
 	const dcOffset   = reader.readFloat32LE()        // LE float (LSByte first in stream)
 	const range      = reader.readU16LE()             // LE U16  (LSByte first in stream)
 	const patchIds   = reader.readBits(10)            // 10-bit patch grid ID
-	// WHY: firestorm encodes patchids = x | (y << 5), so lower 5 bits = X (column),
-	// upper 5 bits = Y (row). See firestorm patch_code.cpp decode_patch_header and
-	// libopenmetaverse DecodePatchHeader. Previous code had X and Y swapped, placing
-	// each patch at the transposed grid position (column→row, row→column).
-	const patchX = patchIds & 0x1f          // lower 5 bits = X (column, 0-15)
-	const patchY = (patchIds >> 5) & 0x1f   // upper 5 bits = Y (row,    0-15)
+	// WHY: libomv TerrainCompressor encodes patchids as `(patchX << 5) | patchY`
+	// (see CreatePatchFromHeightmap), and decodes with X = patchIds >> 5,
+	// Y = patchIds & 0x1F. Upper 5 bits = X (column), lower 5 bits = Y (row).
+	// Earlier "swap fix" had this inverted — combined with broken readBits(10)
+	// it happened to produce small in-range values for some flat patches, hiding
+	// the issue. With LE-chunked readBits the libomv convention is required.
+	const patchX = (patchIds >> 5) & 0x1f
+	const patchY = patchIds & 0x1f
 	return { dcOffset, range, quantWbits, patchX, patchY }
 }
 
@@ -193,26 +208,33 @@ function idct2D(block: Float32Array): void {
 }
 
 // ── Read quantized DCT coefficients from bitstream ───────────────────────────
-// WHY: Coefficients are variable-width integers. Each coefficient uses `wbits` bits.
-// Sentinel: value == (2^wbits - 1) → end of significant data, remaining coeffs = 0.
-// Sign: 1 bit follows each non-sentinel value (0=positive, 1=negative).
+// WHY: libomv/OpenSim TerrainCompressor.EncodePatch uses a prefix code, NOT a
+// fixed-width-per-coefficient scheme. Per OpenMetaverse/TerrainCompressor.cs:
+//   • ZERO_CODE     = `0`        (1 bit)  — this coefficient is 0, continue
+//   • ZERO_EOB      = `10`       (2 bits) — all remaining coefficients are 0, stop
+//   • POSITIVE_VALUE = `110`+mag (3 + wbits) — +magnitude follows
+//   • NEGATIVE_VALUE = `111`+mag (3 + wbits) — −magnitude follows
+// `wbits` is dynamic per patch: stored in low 4 bits of quantWbits as (wbits-2).
+// Previous fixed-width decoder read wbits bits per coef and a sign bit on non-zero,
+// which mis-aligned the bitstream and produced garbage IDCT output (heights
+// in the thousands or 1e+23 m). Encoder ALWAYS writes at least one symbol
+// (ZERO_EOB = 2 bits) even for range=0 / all-zero patches — so this function
+// must be called for every patch to keep the BitReader aligned for the next one.
 function readCoefficients(reader: BitReader, quantWbits: number): Int32Array {
-	const coeffs = new Int32Array(PATCH_SIZE * PATCH_SIZE)  // default 0
-	const wbits  = (quantWbits & 0x0f) + 2  // lower 4 bits + 2 = effective word bits
-	const endMark = (1 << wbits) - 1        // all bits set = end-of-data marker
+	const coeffs = new Int32Array(PATCH_SIZE * PATCH_SIZE)
+	const wbits  = (quantWbits & 0x0f) + 2
 
 	for (let i = 0; i < PATCH_SIZE * PATCH_SIZE; i++) {
-		const val = reader.readBits(wbits)
-		if (val === endMark) break  // end of non-zero coefficients
-		if (val === 0) {
-			coeffs[i] = 0  // WHY: encoder (firestorm patch_code.cpp, OpenMetaverse TerrainCompressor.cs)
-			               // writes sign bit only for non-zero values: `if (temp != 0) writeBit(sign)`.
-			               // Reading a sign bit for zero drifts the bitstream by 1 bit per zero, causing
-			               // garbage coefficients and extreme heights (hundreds of metres off).
-		} else {
-			const sign = reader.readBits(1)
-			coeffs[i] = sign ? -val : val
+		if (reader.readBits(1) === 0) {            // `0` → ZERO_CODE
+			coeffs[i] = 0
+			continue
 		}
+		if (reader.readBits(1) === 0) {            // `10` → ZERO_EOB
+			break                                  // remaining coefs already 0
+		}
+		const negative = reader.readBits(1) === 1  // `110` pos, `111` neg
+		const mag = reader.readBits(wbits)
+		coeffs[i] = negative ? -mag : mag
 	}
 	return coeffs
 }
@@ -221,13 +243,11 @@ function readCoefficients(reader: BitReader, quantWbits: number): Int32Array {
 function decodePatch(reader: BitReader, hdr: PatchHeader): Float32Array {
 	const heights = new Float32Array(PATCH_SIZE * PATCH_SIZE)
 
-	// WHY: readCoefficients MUST be called before the range=0 early return.
-	// Firestorm always encodes coefficient bits for every patch regardless of range
-	// (for range=0 patches, all quantized coefficients are 0, so the encoder writes
-	// 255 zeros × wbits + endMark × wbits). Returning early without reading these
-	// bits leaves the BitReader misaligned, causing subsequent patch headers to be
-	// read from inside the coefficient data → garbage dcOffset/range/patchIds for
-	// every patch that follows in the same packet (h0=−3.575e13, h0=5116m, etc.).
+	// WHY: readCoefficients MUST run before the range=0 early return. The
+	// prefix-code encoder always writes at least the ZERO_EOB symbol (2 bits)
+	// even for all-zero patches. Skipping the read leaves the BitReader off
+	// by ≥2 bits, which shifts every following patch header (dcOffset, range,
+	// patchIds all read garbage → h0 = ±1e+23, 5116 m, etc.).
 	const rawCoeffs = readCoefficients(reader, hdr.quantWbits)
 
 	// Zero-range shortcut: flat area, skip IDCT (coefficients already consumed above)
@@ -350,13 +370,10 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 			const ph = readPatchHeader(reader)
 			if (!ph) break  // END_OF_PATCHES sentinel (quantWbits=97)
 			if (ph.patchX > 15 || ph.patchY > 15) {
-				// WHY: MUST drain coefficient bits for out-of-range patches even though we discard results.
-				// Without draining, the next readPatchHeader starts from coefficient data instead of the
-				// next patch header → wrong quantWbits/dcOffset/range → garbage coords and heights for
-				// all subsequent patches, 500+ "patches" reported, heights in thousands of metres.
-				// WHY unconditional (no range>0 check): for range=0, encoder still writes 256×wbits
-				// coefficient bits (255 zeros + endMark). Skipping the drain when range=0 causes the
-				// same bitstream misalignment as in decodePatch.
+				// Out-of-range coord (header misaligned or sim sent a stray ID).
+				// MUST still consume coefficient bits — encoder always writes at
+				// least ZERO_EOB (2 bits) per patch, so skipping the drain shifts
+				// the bitstream and corrupts every following patch.
 				readCoefficients(reader, ph.quantWbits)
 				continue
 			}
