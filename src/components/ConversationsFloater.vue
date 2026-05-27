@@ -88,19 +88,22 @@ function closeEmoji() {
 }
 
 function onEmojiClick(e) {
-	const emoji = e.detail.unicode
-	const el    = inputEl.value
+	const emoji   = e.detail.unicode
+	const isNearby = activeTab.value === 'nearby'
+	const el      = isNearby ? inputEl.value : imInputEl.value
 	if (el) {
-		const start = el.selectionStart ?? chatInput.value.length
-		const end   = el.selectionEnd   ?? chatInput.value.length
-		chatInput.value = chatInput.value.slice(0, start) + emoji + chatInput.value.slice(end)
+		const model = isNearby ? chatInput : imInput
+		const start = el.selectionStart ?? model.value.length
+		const end   = el.selectionEnd   ?? model.value.length
+		model.value = model.value.slice(0, start) + emoji + model.value.slice(end)
 		nextTick(() => {
 			const pos = start + [...emoji].length  // WHY: emoji may be multi-codepoint
 			el.setSelectionRange(pos, pos)
 			el.focus()
 		})
 	} else {
-		chatInput.value += emoji
+		const model = isNearby ? chatInput : imInput
+		model.value += emoji
 	}
 	showEmoji.value = false
 }
@@ -207,7 +210,7 @@ async function submitChat() {
 						<div class="relative shrink-0">
 							<button
 								title="Show emoji panel"
-								class="flex items-center px-2 py-0.5 bg-accent text-white rounded text-base hover:opacity-80"
+								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
 								@click="toggleEmoji"
 							>
 								<span class="text-base leading-none">🙂</span>
@@ -223,7 +226,7 @@ async function submitChat() {
 						</div>
 						<button
 							type="submit"
-							class="hidden px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="hidden px-2 py-1 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>
@@ -259,9 +262,26 @@ async function submitChat() {
 							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 						/>
+						<div class="relative shrink-0">
+							<button
+								title="Show emoji panel"
+								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
+								@click="toggleEmoji"
+							>
+								<span class="text-base leading-none">🙂</span>
+								<ChevronDownIcon class="w-3.5 h-3.5 ml-0.5" />
+							</button>
+							<div
+								v-if="showEmoji"
+								class="absolute bottom-full right-0 mb-1 z-50"
+								@click.stop
+							>
+								<emoji-picker class="dark" @emoji-click="onEmojiClick" />
+							</div>
+						</div>
 						<button
 							type="submit"
-							class="px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="hidden px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>
