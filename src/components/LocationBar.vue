@@ -165,7 +165,7 @@ function onEditKeydown(e) {
 		<button @click="playSound('tick.mp3', 0.6); showLocationHistory = !showLocationHistory" title="Location history (TO-DO)" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-white" /></button>
 
 	</div>
-	<div v-if="showLocationHistory" class="absolute top-8 right-0 bg-black/50 w-[33.33rem] translate-x-[-126%] p-1 text-sm text-white z-10">
+	<div v-if="showLocationHistory" class="absolute top-8 right-0 bg-black/50 w-[33.333rem] translate-x-[-130%] p-1 text-sm text-white z-10">
 		<button class="hover:bg-tm w-full text-start" title="hop://login.osgrid.org/Lazarus%20Taxon%206/137/44/24">Lazarus Taxon 6 (137, 44, 24)</button>
 		<button class="hover:bg-tm w-full text-start" title="hop://login.osgrid.org/Lazarus%20Taxon%207/140/140/25">Lazarus Taxon 7 (140, 140, 25)</button>
 		<button class="hover:bg-tm w-full text-start">Location history (TO-DO)</button>
@@ -173,5 +173,5 @@ function onEditKeydown(e) {
 </template>
 
 <style scoped>
-
+/* TODO: click-out to close */
 </style>

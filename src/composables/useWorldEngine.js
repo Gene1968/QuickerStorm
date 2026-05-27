@@ -15,6 +15,28 @@ import { S } from '@shared/protocol.js'
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 
+// WHY: Map SL prim PathCurve+ProfileCurve to a Three.js geometry. Reference table
+// (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
+// sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,
+// 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
+// mesh.scale.set applies the prim's sx/sy/sz afterwards. Twist/Taper/Shear/Hollow are
+// Phase 2 polish — Phase 1 box stand-in is replaced here, not perfected.
+function buildPrimGeometry(shape) {
+	const pc = shape?.pathCurve ?? 16
+	const pf = (shape?.profileCurve ?? 1) & 0x0F
+	if (pc === 16) {
+		if (pf === 0) return new THREE.CylinderGeometry(0.5, 0.5, 1, 24)
+		if (pf === 3) return new THREE.CylinderGeometry(0.5, 0.5, 1, 3)  // prism
+		return new THREE.BoxGeometry(1, 1, 1)
+	}
+	if (pc === 32 || pc === 33) {
+		if (pf === 5) return new THREE.SphereGeometry(0.5, 16, 12)
+		// torus / tube / ring — single Three TorusGeometry stand-in; full profile sweep is Phase 2 polish
+		return new THREE.TorusGeometry(0.35, 0.15, 12, 24)
+	}
+	return new THREE.BoxGeometry(1, 1, 1)
+}
+
 // Quaternion: same axis remap as position (SL Z-up → Three Y-up). The imaginary
 // components (x,y,z) carry the rotation axis × sin(θ/2), so they transform like
 // a vector; w is invariant. Returns a new THREE.Quaternion.
@@ -580,24 +602,24 @@ export function useWorldEngine(canvasRef) {
 			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
 			const geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
-				: new THREE.BoxGeometry(1, 1, 1)
-			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit).
-			// MeshStandardMaterial for avatars caused directional-light flicker: as the avatar
-			// capsule rotates with yaw each frame, the bright/dark face boundary sweeps around the
-			// surface and produces visible brightness oscillation (same "dark-artefact" bug as prims).
-			// MeshBasicMaterial ignores all lights — flat colour, no per-face shading — eliminates
-			// the rotation-induced flicker entirely. Revisit when we have proper avatar mesh geometry.
-			// WHY hashed prim color: until TextureEntry colors are decoded, uniform grey
-			// makes navigation impossible (everything blends together). Hashing localId into
-			// HSL gives each prim a stable, distinguishable tint. Muted saturation/lightness
-			// (0.35 / 0.55) keeps the scene readable without becoming a clown rainbow.
-			const primColor = new THREE.Color().setHSL(
+				: buildPrimGeometry(obj.shape)
+			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit). MeshStandardMaterial
+			// caused directional-light flicker as the mesh rotated with yaw.
+			// WHY hashed-HSL fallback: legacy stand-in when TE decode produces no defaultColor.
+			// Real TE color preferred; fall back keeps prims visually distinct rather than uniform grey.
+			const hashedColor = new THREE.Color().setHSL(
 				((obj.localId * 2654435761) >>> 0) / 0xffffffff,
 				0.35,
 				0.55,
 			)
+			const teColor = obj.defaultColor
+				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+				: null
+			const primColor = teColor ?? hashedColor
 			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			mesh = new THREE.Mesh(geo, mat)
+			mesh.userData.localId  = obj.localId
+			mesh.userData.parentId = obj.parentId ?? 0
 
 			if (isAvatar) {
 				// ── Face indicator — flat box on front of upper body ─────────────────
@@ -655,8 +677,23 @@ export function useWorldEngine(canvasRef) {
 				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
 			}
 
-			scene.add(mesh)
+			// WHY: Linked-set children carry parentId != 0. Their pos/rot from sim are in
+			// parent-local space; Three.js applies them locally once mesh is added under parent.
+			// If parent mesh hasn't arrived yet, attach to scene as orphan — reparent on parent spawn.
+			const parentLocalId = obj.parentId ?? 0
+			const parentMesh = parentLocalId ? meshMap.get(parentLocalId) : null
+			if (parentMesh) parentMesh.add(mesh)
+			else scene.add(mesh)
 			meshMap.set(obj.localId, mesh)
+
+			// WHY: This mesh may itself be a parent for orphans that arrived earlier. Scan and reparent.
+			meshMap.forEach((other) => {
+				if (other === mesh) return
+				if (other.userData.parentId === obj.localId && other.parent !== mesh) {
+					other.parent?.remove(other)
+					mesh.add(other)
+				}
+			})
 		} else {
 			// Existing mesh: scale update + animated position
 			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
@@ -689,7 +726,8 @@ export function useWorldEngine(canvasRef) {
 			mesh.traverse(child => {
 				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
 			})
-			scene.remove(mesh)
+			// WHY: Linked-set children sit under parent mesh, not scene. Detach from actual parent.
+			mesh.parent?.remove(mesh)
 			meshMap.delete(localId)
 		}
 	}

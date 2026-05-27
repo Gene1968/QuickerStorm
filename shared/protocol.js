@@ -21,7 +21,7 @@ export const C = {
 export const S = {
 	LOGIN_OK:     'login_ok',   // { agentId, sessionId, simIp, simPort, seedCap, regionName }
 	LOGIN_FAIL:   'login_fail', // { message }
-	OBJECT_UPDATE:'obj_upd',    // { objects: [{ localId, fullId, pcode, pos, rot, scale, name }] }
+	OBJECT_UPDATE:'obj_upd',    // { objects: [{ localId, fullId, pcode, pos, rot, scale, nameValue, parentId, shape, defaultColor?, faceColors? }] }
 	TERSE_UPDATE: 'terse_upd', // { objects: [{ localId, pos:[x,y,z] }] } — position-only sim updates
 	CHAT_MSG:     'chat_msg',   // { fromName, sourceId, type, channel, message, pos }
 	REGION_INFO:  'region',     // { name, handle, waterHeight }

@@ -399,14 +399,54 @@ export function decodeChatFromSimulator(buf: Buffer, dataOffset: number): ChatFr
   return { fromName, sourceId, chatType, channel: 0, message, position: [px, py, pz] }
 }
 
+// WHY: SL TextureEntry face overrides use a varint-style bitfield (each byte's top bit
+// flags continuation, low 7 bits are payload). Returns the assembled bitmask and next offset.
+function readFaceBitfield(buf: Buffer, off: number, end: number): { bits: number, next: number } {
+  let bits = 0
+  let cur = off
+  let more = true
+  while (more && cur < end) {
+    const b = buf[cur]
+    bits = (bits << 7) | (b & 0x7F)
+    more = (b & 0x80) !== 0
+    cur++
+  }
+  return { bits, next: cur }
+}
+
+export interface PrimShape {
+  pathCurve:        number  // U8 — 16=line/box, 32=circle, 33=half-circle (sphere top), etc.
+  profileCurve:     number  // U8 — low nibble: 0=circle, 1=square, 2=isoTri, 3=eqTri, 4=rightTri, 5=halfCircle
+  pathBegin:        number  // U16 → 0..1
+  pathEnd:          number  // U16 → 0..1
+  pathScaleX:       number  // U8  → 0..1 (taper-style scale start)
+  pathScaleY:       number  // U8  → 0..1
+  pathShearX:       number  // U8 (signed) → -0.5..0.5
+  pathShearY:       number  // U8 (signed) → -0.5..0.5
+  pathTwist:        number  // S8 (signed)
+  pathTwistBegin:   number  // S8
+  pathRadiusOffset: number  // S8
+  pathTaperX:       number  // S8
+  pathTaperY:       number  // S8
+  pathRevolutions:  number  // U8 → 1..4
+  pathSkew:         number  // S8
+  profileBegin:     number  // U16 → 0..1
+  profileEnd:       number  // U16 → 0..1
+  profileHollow:    number  // U16 → 0..1
+}
+
 export interface ObjectData {
-  localId:   number
-  fullId:    string
-  pcode:     number   // 9=prim, 47=avatar
-  scale:     [number, number, number]
-  pos:       [number, number, number]
-  rot:       [number, number, number, number]   // quaternion xyzw (w derived from xyz, w≥0)
-  nameValue: string   // raw NameValue string (contains avatar display name)
+  localId:       number
+  fullId:        string
+  pcode:         number   // 9=prim, 47=avatar
+  scale:         [number, number, number]
+  pos:           [number, number, number]
+  rot:           [number, number, number, number]   // quaternion xyzw (w derived from xyz, w≥0)
+  nameValue:     string   // raw NameValue string (contains avatar display name)
+  parentId?:     number   // U32 — 0=root, else localId of parent prim (linked sets)
+  shape?:        PrimShape
+  defaultColor?: [number, number, number, number]   // RGBA 0..1 from TextureEntry default
+  faceColors?:   Array<[number, number, number, number] | null>  // length up to 32; null where face uses defaultColor
 }
 
 /**
@@ -497,16 +537,34 @@ export function decodeObjectUpdate(
         pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
       }
       off += odLen
-      off += 4   // parentId
+      const parentId = buf.readUInt32LE(off); off += 4
       off += 4   // updateFlags
-      // WHY: Path/profile block is 23 bytes, not 10.
+      // WHY: Path/profile block is 23 bytes. Decode each field for client-side prim shape.
       //   PathCurve(1) + ProfileCurve(1) + PathBegin(2) + PathEnd(2) +
       //   PathScaleX(1) + PathScaleY(1) + PathShearX(1) + PathShearY(1) +
       //   PathTwist(1) + PathTwistBegin(1) + PathRadiusOffset(1) +
       //   PathTaperX(1) + PathTaperY(1) + PathRevolutions(1) + PathSkew(1) +
       //   ProfileBegin(2) + ProfileEnd(2) + ProfileHollow(2) = 23
-      // Previous off+=10 caused readUInt16LE to land on PathScaleX/Y (0x80,0x80 = 32896),
-      // making TextureEntry skip 32KB → RangeError → decode crash → no obj_upd WS message.
+      const shape: PrimShape = {
+        pathCurve:        buf.readUInt8(off + 0),
+        profileCurve:     buf.readUInt8(off + 1),
+        pathBegin:        buf.readUInt16LE(off + 2),
+        pathEnd:          buf.readUInt16LE(off + 4),
+        pathScaleX:       buf.readUInt8(off + 6),
+        pathScaleY:       buf.readUInt8(off + 7),
+        pathShearX:       buf.readInt8(off + 8),
+        pathShearY:       buf.readInt8(off + 9),
+        pathTwist:        buf.readInt8(off + 10),
+        pathTwistBegin:   buf.readInt8(off + 11),
+        pathRadiusOffset: buf.readInt8(off + 12),
+        pathTaperX:       buf.readInt8(off + 13),
+        pathTaperY:       buf.readInt8(off + 14),
+        pathRevolutions:  buf.readUInt8(off + 15),
+        pathSkew:         buf.readInt8(off + 16),
+        profileBegin:     buf.readUInt16LE(off + 17),
+        profileEnd:       buf.readUInt16LE(off + 19),
+        profileHollow:    buf.readUInt16LE(off + 21),
+      }
       off += 23
       // Variable fields: each variable2 has 2-byte length prefix, variable1 has 1-byte
       // WHY: closures capture `off` by reference so each call advances the shared offset.
@@ -537,7 +595,53 @@ export function decodeObjectUpdate(
       // unknowns that also have garbage TE). Break SILENTLY (no onError) to suppress
       // log spam. Cannot `continue` — off is at a wrong position for this packet.
       if (off + 1 < buf.length && buf.readUInt16LE(off) > 2048) break
-      skipVar2('TE')  // TextureEntry (Variable2)
+      // === TextureEntry — decode default RGBA + per-face color overrides ===
+      // WHY: TE colors are stored inverted (actual = (255-byte)/255) so uninitialized
+      // 0xFFFFFFFF decodes to transparent black, signaling "use default."
+      // Format: defaultTex(16B) → [bitfield + texUUID]* → defaultColor(4B) → [bitfield + RGBA]* → ...
+      // Skip texture UUIDs (Phase 3 asset fetch); only need default + face color.
+      if (off + 1 >= buf.length) throw new Error(`TE prefix OOB at off=${off}`)
+      const _teLen = buf.readUInt16LE(off); off += 2
+      _diag += ` TE=${_teLen}`
+      const _teEnd = off + _teLen
+      let defaultColor: [number, number, number, number] | undefined
+      let faceColors: Array<[number, number, number, number] | null> | undefined
+      try {
+        let p = off + 16  // skip default texture UUID
+        while (p < _teEnd) {
+          const { bits, next } = readFaceBitfield(buf, p, _teEnd)
+          p = next
+          if (bits === 0) break
+          p += 16  // face texture UUID — skip (Phase 3)
+        }
+        if (p + 4 <= _teEnd) {
+          defaultColor = [
+            (255 - buf[p])     / 255,
+            (255 - buf[p + 1]) / 255,
+            (255 - buf[p + 2]) / 255,
+            (255 - buf[p + 3]) / 255,
+          ]
+          p += 4
+          while (p < _teEnd) {
+            const { bits, next } = readFaceBitfield(buf, p, _teEnd)
+            p = next
+            if (bits === 0) break
+            if (p + 4 > _teEnd) break
+            const c: [number, number, number, number] = [
+              (255 - buf[p])     / 255,
+              (255 - buf[p + 1]) / 255,
+              (255 - buf[p + 2]) / 255,
+              (255 - buf[p + 3]) / 255,
+            ]
+            p += 4
+            if (!faceColors) faceColors = new Array(32).fill(null)
+            for (let f = 0; f < 32; f++) {
+              if (bits & (1 << f)) faceColors[f] = c
+            }
+          }
+        }
+      } catch { /* best-effort: missing color OK, mesh falls back to hashed tint */ }
+      off = _teEnd
       // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
       // LLUDP message_template: TextureAnim { Variable 1 }
       // Bug was: skipVar2() reading 1-byte TA prefix + 1-byte NV prefix as U16LE → crash.
@@ -564,7 +668,14 @@ export function decodeObjectUpdate(
       off += 1    // JointType U8
       off += 12   // JointPivot LLVector3
       off += 12   // JointAxisOrAnchor LLVector3
-      objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos, rot, nameValue })
+      objects.push({
+        localId, fullId, pcode,
+        scale: [sx, sy, sz], pos, rot, nameValue,
+        parentId,
+        shape,
+        ...(defaultColor ? { defaultColor } : {}),
+        ...(faceColors ? { faceColors } : {}),
+      })
       // WHY: log each successful decode + 40 bytes AFTER endOff so we can see whether
       // the bytes immediately following are the next real object header or zero-padding.
       // This lets us diagnose the 25-zero gap that appears between objects in multi-object packets.

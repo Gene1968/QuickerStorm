@@ -15,6 +15,7 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { C } from '@shared/protocol.js'
+import { Repeat2Icon } from '@lucide/vue'
 
 const session  = useSessionStore()
 const world    = useWorldStore()
@@ -74,7 +75,7 @@ function dismiss() { dismissed.value = true }
 			class="rb-banner"
 			role="alert"
 		>
-			<div class="rb-icon">⟳</div>
+			<div class="rb-icon"><Repeat2Icon class="w-7 h-7" /></div>
 			<div class="rb-text">
 				<div class="rb-title">Scene not fully loaded</div>
 				<div class="rb-sub">{{ !session.regionName ? 'Region name pending…' : 'Terrain pending…' }} Server may be holding a stale circuit after reload.</div>
@@ -106,7 +107,7 @@ function dismiss() { dismissed.value = true }
 	backdrop-filter: blur(6px);
 }
 .rb-icon {
-	font-size: 1.25rem;
+	font-size: 1.75rem;
 	color: rgba(255, 200, 80, 0.95);
 	animation: rb-spin 2.4s linear infinite;
 }

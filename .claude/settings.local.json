@@ -92,7 +92,9 @@
       "Read(//c/temp/**)",
       "Bash(mkdir -p /tmp/libomv)",
       "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/BitPack.cs\")",
-      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/TerrainCompressor.cs\")"
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/TerrainCompressor.cs\")",
+      "Bash(findstr -i \"tsc bun\")",
+      "Bash(bun build *)"
     ]
   }
 }

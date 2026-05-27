@@ -65,9 +65,10 @@ const stubChannels = [
 		@mouseenter="onEnter"
 		@mouseleave="onLeave"
 	>
-	<div class="flex items-center gap-2 me-5">
-		<div title="Click to refresh your X$ balance (TO-DO)" class="mx-3 text-xs text-white/60">X$ 0</div>
-		<div title="Monday, May 25, 2026 (TO-DO)" class="mx-3 text-xs text-white/60">23:59PDT</div>
+	<div class="flex items-center gap-2 me-6">
+		<div class="mx-1.5"></div>
+		<div title="Click to refresh your X$ balance (TO-DO)" class="mx-4 text-xs text-white/60">X$ 0</div>
+		<div title="Monday, May 25, 2026 (TO-DO)" class="me-7 ms-3 text-xs text-white/60">23:59PDT</div>
 		<VideoIcon title="Camera presets (TO-DO)" class="w-4 h-4 text-white/20" />
 		<MonitorIcon title="Graphics presets (TO-DO)" class="w-4 h-4 text-white/20" />
 		<MusicIcon title="Start/stop parcel audio stream (TO-DO)" class="w-4 h-4 text-white/20" />
