@@ -14,6 +14,7 @@ import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendP
 import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
 import { decodeLayerData } from '../lib/terrain-codec.js'
+import { replayCachedWorld } from '../lib/resync'
 
 // Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
 // WHY: High-freq = 1-byte prefix. Medium-freq = 0xFF + 1-byte ID. Low-freq = 0xFF 0xFF + U16LE.
@@ -129,6 +130,9 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			const reply = encodeRegionHandshakeReply({ agentId: session.agentId, sessionId: session.sessionId, seq })
 			trackReliable(session, seq, reply)
 			session.udpSocket.send(reply, session.simPort, session.simIp)
+			// Cache for resync replays (HMR / page reload / manual "Resync World")
+			session.cachedRegionName   = simName
+			session.cachedRegionAccess = simAccess
 			// Forward region name to browser
 			session.ws.send(JSON.stringify({ t: S.REGION_INFO, d: { name: simName, access: simAccess } }))
 		} catch (e) { slog.warn(session.ws, `RegionHandshake decode error: ${(e as Error).message}`) }
@@ -149,6 +153,8 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.regionHandle = buf.readBigUInt64LE(dataOffset + 56)
 			}
 			slog.info(session.ws, `✓ AgentMovementComplete: confirmed spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`)
+			// Cache for resync replays
+			session.cachedSpawnPos = [x, y, z]
 			// Forward confirmed sim-authoritative position to browser so it can correct
 			// worldStore.avatarPos before the first TerseUpdate arrives.
 			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos: [x, y, z] } }))
@@ -245,6 +251,10 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		)
 		if (objects.length > 0) {
 			slog.info(session.ws, `ObjectUpdate: ${objects.length} objects (pcodes: ${objects.map(o=>o.pcode).join(',')})`)
+			// Cache by localId for resync replay (page reload / "Resync World")
+			for (const o of objects) {
+				if (typeof o.localId === 'number') session.objCache.set(o.localId, o)
+			}
 			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
 		} else {
 			slog.warn(session.ws, `[ObjUpd] decode returned 0 objects (bufLen=${buf.length})`)
@@ -273,6 +283,12 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					const ids = objects.slice(0, 5).map(o => `${o.localId}(${o.pos[0].toFixed(1)},${o.pos[1].toFixed(1)},${o.pos[2].toFixed(1)})`).join(' ')
 					slog.info(session.ws, `[TerseUpd] ${objects.length} objs: ${ids}`)
 				}
+				// Update cached position so a resync replay reflects current state, not the
+				// stale spawn position from the first ObjectUpdate.
+				for (const o of objects) {
+					const cached = session.objCache.get(o.localId) as { pos?: [number, number, number] } | undefined
+					if (cached) cached.pos = o.pos
+				}
 				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
 			}
 		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
@@ -286,6 +302,8 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			const ids = decodeKillObject(buf, dataOffset)
 			if (ids.length > 0) {
 				slog.info(session.ws, `[KillObj] removing ${ids.length} localIds: ${ids.slice(0, 4).join(',')}${ids.length > 4 ? '…' : ''}`)
+				// Drop from object cache too — otherwise resync would re-add killed objects.
+				for (const id of ids) session.objCache.delete(id)
 				session.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids } }))
 			}
 		} catch (e) { slog.warn(session.ws, `KillObject decode error: ${(e as Error).message}`) }
@@ -323,16 +341,28 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		const h0 = p0.heights[0].toFixed(2)
 		const hN = p0.heights[p0.heights.length - 1].toFixed(2)
 		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m hN=${hN}m`)
+		const wirePatches = result.patches.map(p => ({
+			x: p.x,
+			y: p.y,
+			heights: Array.from(p.heights),
+		}))
+		// Cache LAND patches for resync replays. WATER plane is fixed flat so skip.
+		if (result.type === 'LAND') {
+			for (const p of wirePatches) {
+				session.terrainCache.set(`${p.x},${p.y}`, {
+					patchSize: result.patchSize,
+					x: p.x,
+					y: p.y,
+					heights: p.heights,
+				})
+			}
+		}
 		session.ws.send(JSON.stringify({
 			t: S.TERRAIN_PATCH,
 			d: {
 				layerType: result.type,
 				patchSize: result.patchSize,
-				patches: result.patches.map(p => ({
-					x: p.x,
-					y: p.y,
-					heights: Array.from(p.heights),
-				})),
+				patches: wirePatches,
 			},
 		}))
 		return
@@ -366,6 +396,8 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const { pos, lookAt } = decodeTeleportLocal(buf, dataOffset)
 			slog.info(session.ws, `✓ TeleportLocal: pos=${pos[0].toFixed(1)},${pos[1].toFixed(1)},${pos[2].toFixed(1)} lookAt=${lookAt[0].toFixed(2)},${lookAt[1].toFixed(2)},${lookAt[2].toFixed(2)}`)
+			// Cache for resync replays
+			session.cachedSpawnPos = pos as [number, number, number]
 			// Forward to browser as a position update (same as AgentMovementComplete)
 			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos } }))
 		} catch (e) { slog.warn(session.ws, `TeleportLocal decode error: ${(e as Error).message}`) }
@@ -496,6 +528,26 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		})
 			.then(() => slog.info(session.ws, '✓ RebakeAvatarTextures → avatar appearance pushed to grid'))
 			.catch((e: Error) => slog.error(session.ws, `RebakeAvatarTextures failed: ${e.message}`))
+		return
+	}
+
+	if (msg.t === C.RESYNC_WORLD) {
+		// WHY: Manual resync trigger — replay cached region/terrain/spawn to the browser,
+		// then send an AgentUpdate to nudge the sim to refresh its interest list so prims
+		// (cached only client-side) eventually stream back via ObjectUpdate as the user moves.
+		slog.info(session.ws, '→ RESYNC_WORLD requested by client')
+		replayCachedWorld(session)
+		if (session.lastAgentParams) {
+			const seq = nextSeq(session)
+			const pkt = encodeAgentUpdate({
+				agentId:   session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				...session.lastAgentParams,
+			})
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+			slog.info(session.ws, `→ AgentUpdate nudge sent (seq=${seq}) to refresh sim interest list`)
+		}
 		return
 	}
 }

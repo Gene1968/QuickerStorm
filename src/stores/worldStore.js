@@ -68,6 +68,10 @@ export const useWorldStore = defineStore('world', () => {
 	// vertices when rebuilding geometry from this array.
 	const TERRAIN_STRIDE = 513
 	const terrainHeights = ref(new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE))
+	// WHY: Float32Array element mutations don't trigger Vue reactivity. Increment this
+	// counter on every patch write so consumers (e.g. ResyncBanner) can react to terrain
+	// data arriving without resorting to polling. Also useful as a diagnostic.
+	const terrainPatchCount = ref(0)
 
 	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per
 	// TERRAIN_PATCH message). Stores raw 16×16 patch data; seam-fill handled in useWorldEngine.
@@ -81,15 +85,19 @@ export const useWorldStore = defineStore('world', () => {
 				terrainHeights.value[slY * TERRAIN_STRIDE + slX] = heights[j * patchSize + i]
 			}
 		}
+		terrainPatchCount.value++
 	}
 
-	function clearTerrain() { terrainHeights.value.fill(0) }
+	function clearTerrain() {
+		terrainHeights.value.fill(0)
+		terrainPatchCount.value = 0
+	}
 
 	return {
 		objects, avatars, prims,
 		upsertObject, updateObjectPos, removeObject, clearAll,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
-		terrainHeights, TERRAIN_STRIDE, setTerrainPatch, clearTerrain,
+		terrainHeights, TERRAIN_STRIDE, terrainPatchCount, setTerrainPatch, clearTerrain,
 	}
 })

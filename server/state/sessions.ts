@@ -58,6 +58,23 @@ export interface CircuitState {
 		startLocation: string
 		agentAccess:   string
 	}
+	// ── World snapshot cache (resync after WS reconnect / HMR / page reload) ─
+	// WHY: Sim sends RegionHandshake, terrain LayerData, and ObjectUpdates exactly once
+	// when a circuit comes online. After page reload the UDP circuit stays alive (no
+	// re-handshake) so the browser has no way to get this data back without a full
+	// logout/relogin. Cache the snapshots server-side and replay on demand.
+	cachedRegionName?:   string
+	cachedRegionAccess?: number
+	cachedSpawnPos?:     [number, number, number]
+	// Keyed by `${patchX},${patchY}` — last decoded LAND patch for that tile.
+	// WHY: WATER layer omitted (water plane is fixed flat).
+	terrainCache: Map<string, { patchSize: number; x: number; y: number; heights: number[] }>
+	// WHY: Cache the last full ObjectUpdate per localId. On WS reconnect / manual resync we
+	// replay these so prims and avatars reappear without waiting for the sim to re-blast its
+	// interest list. TerseUpdates (position deltas) layer on top — they reference the localId
+	// established by an ObjectUpdate, so the cache is what makes the scene reconstitutable.
+	// objCache stores the raw decoded obj payload as forwarded to the browser.
+	objCache: Map<number, unknown>   // localId → obj record (shape matches decodeObjectUpdate output)
 }
 
 const sessions     = new Map<string, CircuitState>()

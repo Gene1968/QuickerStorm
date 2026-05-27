@@ -9,6 +9,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
+import { useAudio } from './useAudio.js'
 import { S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -46,8 +47,9 @@ const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
 
-const FOLLOW_DIST   = 7.0   // metres behind avatar (third-person)
-const FOLLOW_HEIGHT = 4.0   // metres above avatar feet
+const FOLLOW_DIST   = 2.0   // metres behind avatar (third-person)
+const FOLLOW_HEIGHT = 3.0   // metres above avatar feet
+const LOOKAT_Y      = 0.8   // metres above avatar feet for camera lookAt (lower = avatar lower in frame)
 
 export function useWorldEngine(canvasRef) {
 	const worldStore   = useWorldStore()
@@ -56,6 +58,7 @@ export function useWorldEngine(canvasRef) {
 	const debugStore   = useDebugStore()
 	const { on, off }  = useRealtimeSocket()
 	const { sendMove } = useLLUDP()
+	const { playSound } = useAudio()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
@@ -132,20 +135,10 @@ export function useWorldEngine(canvasRef) {
 		eHoldTime  = 0
 	}
 
-	function onMouseDown(e) {
-		if (e.button !== 0) return
-		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
-		isDragging = true
-		lastMouseX = e.clientX
-		lastMouseY = e.clientY
-		if (!isAltOrbit) {
-			// WHY: Fresh orbit entry only — if already frozen in orbit, preserve current angles/radius.
-			isAltOrbit = true
-			orbitYaw   = yaw
-			orbitPitch = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, -pitch + 0.3))
-		}
-		// WHY: Always refresh pivot to avatar's current position when starting a drag.
-		// Keeps orbit centred on avatar even if they moved since last orbit session.
+	// WHY: Enter alt-orbit by deriving radius/yaw/pitch from current camera position
+	// relative to pivot. Without this, orbit entry teleports the camera to a default
+	// shape (radius=8, fixed pitch) — visible "jump" on the first alt+drag pixel.
+	function enterOrbit() {
 		if (avatarSLPos) {
 			orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
 		} else {
@@ -153,6 +146,24 @@ export function useWorldEngine(canvasRef) {
 			orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
 			orbitPivot.y = 0
 		}
+		const dx = camera.position.x - orbitPivot.x
+		const dy = camera.position.y - orbitPivot.y
+		const dz = camera.position.z - orbitPivot.z
+		const r  = Math.sqrt(dx * dx + dy * dy + dz * dz)
+		orbitRadius = Math.max(2, Math.min(64, r))
+		orbitPitch  = Math.asin(dy / orbitRadius)
+		orbitYaw    = Math.atan2(dx, dz)
+		isAltOrbit  = true
+	}
+
+	function onMouseDown(e) {
+		if (e.button !== 0) return
+		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
+		isDragging = true
+		lastMouseX = e.clientX
+		lastMouseY = e.clientY
+		// WHY: Fresh orbit entry only — if already frozen in orbit, preserve current angles/radius.
+		if (!isAltOrbit) enterOrbit()
 	}
 	function onMouseMove(e) {
 		if (!isDragging || !isAltOrbit) return
@@ -199,30 +210,32 @@ export function useWorldEngine(canvasRef) {
 		const spd   = (shift ? CAM_RUN_SPEED : CAM_SPEED) * dt
 		const fly   = CAM_FLY_SPEED * dt
 
-		// WHY: Alt+A/D orbits camera left/right; Alt+E/C orbits up/down.
-		// Intercept before the normal yaw/fly path so avatar does NOT rotate.
-		// Same isAltOrbit system as mouse drag — entry initialises pivot/angles once.
-		if (alt && (keys['KeyA'] || keys['KeyD'] || keys['ArrowLeft'] || keys['ArrowRight'] || keys['KeyE'] || keys['KeyC'])) {
-			if (!isAltOrbit) {
-				isAltOrbit = true
-				orbitYaw   = yaw
-				orbitPitch = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, -pitch + 0.3))
-				if (avatarSLPos) {
-					orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
-				} else {
-					const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
-					orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
-					orbitPivot.y = 0
-				}
-			}
+		// WHY: Alt+A/D orbits camera left/right; Alt+E/C orbits up/down (full FS-style vertical
+		// range — true straight-up/down allowed, only ε prevents gimbal singularity).
+		// Alt+W/S zooms camera in/out toward pivot with acceleration: deceleration as radius
+		// approaches the pivot (so you can get to centimetre values), no upper limit (zoom out
+		// to hundreds of metres). Intercept before normal yaw/fly path so avatar does NOT rotate.
+		const altOrbitKey = keys['KeyA'] || keys['KeyD'] || keys['ArrowLeft'] || keys['ArrowRight']
+			|| keys['KeyE'] || keys['KeyC']
+			|| keys['KeyW'] || keys['KeyS'] || keys['ArrowUp'] || keys['ArrowDown']
+		if (alt && altOrbitKey) {
+			if (!isAltOrbit) enterOrbit()
 			if (keys['KeyA'] || keys['ArrowLeft'])  orbitYaw += turn
 			if (keys['KeyD'] || keys['ArrowRight']) orbitYaw -= turn
-			if (keys['KeyE']) orbitPitch = Math.min(Math.PI / 2 - 0.05, orbitPitch + turn)
-			if (keys['KeyC']) orbitPitch = Math.max(-Math.PI / 4,       orbitPitch - turn)
+			if (keys['KeyE']) orbitPitch = Math.min(Math.PI / 2 - 0.001, orbitPitch + turn)
+			if (keys['KeyC']) orbitPitch = Math.max(-Math.PI / 2 + 0.001, orbitPitch - turn)
+			// Alt+W/S: zoom in/out. Speed proportional to current radius so:
+			//   - large radius → fast metres/sec (accelerates as you zoom out)
+			//   - tiny radius  → small metres/sec (decelerates near pivot, can reach cm)
+			// Floor at 0.01m, no upper cap.
+			const zoomRate = Math.max(0.05, orbitRadius * 1.2) * dt
+			if (keys['KeyW'] || keys['ArrowUp'])   orbitRadius = Math.max(0.01, orbitRadius - zoomRate)
+			if (keys['KeyS'] || keys['ArrowDown']) orbitRadius = orbitRadius + zoomRate
 		}
 
 		if (isAltOrbit) {
-			// Alt-orbit: update camera position only, no control flags
+			// Alt-orbit: update camera position only. ZERO control flags returned so avatar
+			// doesn't walk/turn/fly while user is moving the camera.
 			const cx = orbitPivot.x + orbitRadius * Math.sin(orbitYaw) * Math.cos(orbitPitch)
 			const cy = orbitPivot.y + orbitRadius * Math.sin(orbitPitch)
 			const cz = orbitPivot.z + orbitRadius * Math.cos(orbitYaw) * Math.cos(orbitPitch)
@@ -230,6 +243,11 @@ export function useWorldEngine(canvasRef) {
 			camera.lookAt(orbitPivot)
 			return 0
 		}
+
+		// WHY: alt held but no orbit (e.g. only alt held with no W/A/S/D/E/C) — still must NOT
+		// rotate or move avatar. Suppress all walk/turn flags, but keep CTRL_FLY sustained so
+		// sim doesn't drop the avatar out of the air mid-camera-adjustment.
+		if (alt) return isFlying ? CTRL_FLY : 0
 
 		// WHY: Shift held = strafe instead of turn (matches SL/Firestorm Shift behaviour)
 		if (!shift) {
@@ -756,8 +774,8 @@ export function useWorldEngine(canvasRef) {
 
 	function onAgentSpawnPos(payload) {
 		// WHY: AgentMovementComplete fires once after login — sim's authoritative spawn position.
-		// Arrives before ObjectUpdate (pcode=47) and before any TerseUpdate.
-		// Set avatarSLPos immediately so camera snaps to correct location before scene loads.
+		// Also fires on TeleportLocal (same-region TP). Arrives before ObjectUpdate/TerseUpdate
+		// for the new location, so we snap avatarSLPos, camera, AND own avatar mesh ourselves.
 		const p = payload?.pos
 		if (!p || p.length < 3) return
 		const [x, y, z] = p
@@ -765,7 +783,21 @@ export function useWorldEngine(canvasRef) {
 		avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates in-place
 		worldStore.setAvatarPos(x, y, z)
 		worldStore.setSpawnPos(x, y, z)  // also update persistent store for future remounts
+		// WHY: Exit alt-orbit on teleport — otherwise animate() short-circuits the avatar-follow
+		// camera update and the view stays stuck at the pre-TP orbit position.
+		isAltOrbit = false
+		isDragging = false
+		followDist = FOLLOW_DIST
 		cameraSnapRequested = true  // snap camera to new position immediately
+		// WHY: Snap own avatar mesh too — without this it stays at pre-TP location until
+		// the next ObjectUpdate/TerseUpdate, leaving camera looking at empty space.
+		if (ownAvatarLocalId) {
+			const ownMesh = meshMap.get(ownAvatarLocalId)
+			if (ownMesh) {
+				const t = slToThree(x, y, z)
+				ownMesh.position.set(t.x, t.y, t.z)
+			}
+		}
 		debugStore.push('info', `[3D] AgentMovementComplete spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} (regionSize=${sessionStore.regionSizeX}×${sessionStore.regionSizeY})`)
 		const rx = sessionStore.regionSizeX, ry = sessionStore.regionSizeY
 		if (x < 10 || x > rx - 10 || y < 10 || y > ry - 10) {
@@ -829,6 +861,43 @@ export function useWorldEngine(canvasRef) {
 		terrainMesh.geometry.computeVertexNormals()
 	}
 
+	// ── Collision detection (dead-reckoning aid) ─────────────────────────────
+	// WHY: Sim doesn't tell us when we bump into something for our own avatar — TerseUpdates
+	// stop arriving, and other clients see us stuck while DR would march our coords through
+	// the wall. Cast a short ray from the avatar in the intended SL-XY direction and check
+	// for any non-own mesh in front. Hit → block step + play bump.
+	const _raycaster   = new THREE.Raycaster()
+	const _rayOrigin   = new THREE.Vector3()
+	const _rayDir      = new THREE.Vector3()
+	const COLLIDE_DIST = 0.6   // metres — avatar radius + small buffer
+	const BUMP_COOLDOWN_MS = 400
+	let lastBumpAt = 0
+
+	function checkCollision(slDirX, slDirY) {
+		if (!avatarSLPos || !ownAvatarLocalId) return false
+		// Avatar collision ray origin: chest height in Three.js coords.
+		// SL→Three: (slX, slZ, -slY). SL dir (dx, dy, 0) → Three dir (dx, 0, -dy).
+		_rayOrigin.set(avatarSLPos[0], avatarSLPos[2] + 1.0, -avatarSLPos[1])
+		_rayDir.set(slDirX, 0, -slDirY).normalize()
+		_raycaster.set(_rayOrigin, _rayDir)
+		_raycaster.far = COLLIDE_DIST
+		// Collect candidate meshes — skip own avatar, terrain, water.
+		const targets = []
+		for (const [lid, m] of meshMap) {
+			if (lid === ownAvatarLocalId) continue
+			targets.push(m)
+		}
+		if (targets.length === 0) return false
+		const hits = _raycaster.intersectObjects(targets, false)
+		if (hits.length === 0) return false
+		const now = performance.now()
+		if (now - lastBumpAt > BUMP_COOLDOWN_MS) {
+			lastBumpAt = now
+			try { playSound('bump.mp3', 0.5) } catch {}
+		}
+		return true
+	}
+
 	// ── Render loop ───────────────────────────────────────────────────────────
 	let lastTime = 0
 	function animate(time) {
@@ -841,10 +910,13 @@ export function useWorldEngine(canvasRef) {
 		// WHY: Third-person follow camera — positions camera behind and above avatar.
 		// Lerp factor 0.15 smooths 10Hz TerseUpdate jitter into fluid motion.
 		// Hard-snap (lerp=1.0) only for teleport/spawn >50m (cameraSnapRequested).
+		const altHeld  = keys['AltLeft'] || keys['AltRight']
 		const isMoving = MOVE_KEYS.some(k => keys[k])
 		// WHY: Movement cancels frozen orbit — avatar walking triggers smooth glide back
-		// to follow position. Only cancel when not actively dragging (drag holds orbit).
-		if (isAltOrbit && isMoving && !isDragging) {
+		// to follow position. EXCEPT when alt is held — alt+W/S/A/D/E/C are camera orbit
+		// keys, not avatar move keys. Without the !altHeld guard, holding Alt+A clears
+		// isAltOrbit every frame → orbit barely advances before being yanked back to follow.
+		if (isAltOrbit && isMoving && !isDragging && !altHeld) {
 			isAltOrbit = false
 		}
 		if (avatarSLPos && !isAltOrbit) {
@@ -855,18 +927,21 @@ export function useWorldEngine(canvasRef) {
 				t.z + Math.cos(yaw) * followDist,
 			)
 			const distToTarget = camera.position.distanceTo(target)
-			// WHY: Hard-snap only on teleport/spawn (cameraSnapRequested) or >50m displacement.
+			// WHY: Hard-snap ONLY when explicitly flagged (teleport/spawn). Distance
+			// heuristic removed — Esc-from-orbit can put camera >50m from follow target
+			// (especially zoomed-out alt-orbit), and snapping then jumps the view instead
+			// of gliding back smoothly.
 			// Variable lerp: movement key held → faster glide (up to 0.35); idle or Esc exit →
-			// smooth 0.15 glide (~0.25s). No more snap=1.0 on Esc — glide always.
-			const snap = cameraSnapRequested || distToTarget > 50
+			// smooth 0.15 glide (~0.25s).
+			const snap = cameraSnapRequested
 			cameraSnapRequested = false
 			const lerpFactor = snap ? 1.0
 				: isMoving ? Math.min(0.35, 0.15 + distToTarget * 0.02)
 				: 0.15
 			camera.position.lerp(target, lerpFactor)
-			// WHY: lookAt at y+1.4 (chest/shoulder level, not waist). Higher lookAt + taller
-			// camera height pushes avatar into lower frame area — feet near bottom, more scene above.
-			camera.lookAt(t.x, t.y + 1.4, t.z)
+			// WHY: lookAt at LOOKAT_Y above avatar feet. Camera at FOLLOW_HEIGHT looking
+			// down at this lower point pushes avatar into lower portion of frame.
+			camera.lookAt(t.x, t.y + LOOKAT_Y, t.z)
 
 			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
 			// Capsule is symmetric so visual diff is subtle, but sets up correct orientation
@@ -896,10 +971,25 @@ export function useWorldEngine(canvasRef) {
 				// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
 				const fX = -Math.sin(yaw), fY = Math.cos(yaw)
 				const rX =  Math.cos(yaw), rY = Math.sin(yaw)
-				if (cf & CTRL_AT_POS)   { avatarSLPos[0] += fX * spd  * dt; avatarSLPos[1] += fY * spd  * dt }
-				if (cf & CTRL_AT_NEG)   { avatarSLPos[0] -= fX * spd  * dt; avatarSLPos[1] -= fY * spd  * dt }
-				if (cf & CTRL_LEFT_POS) { avatarSLPos[0] -= rX * lspd * dt; avatarSLPos[1] -= rY * lspd * dt }
-				if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
+				// WHY: Raycast against scene meshes (prims/avatars) before applying the DR step.
+				// If something is in the way, block that axis and play the bump SFX (rate-limited).
+				// Sim already has us stuck — DR would otherwise march coords through walls and
+				// LocationBar/camera diverge from where everyone else sees us.
+				const dxStep = (cf & CTRL_AT_POS ? fX : 0) - (cf & CTRL_AT_NEG ? fX : 0)
+				                - (cf & CTRL_LEFT_POS ? rX : 0) + (cf & CTRL_LEFT_NEG ? rX : 0)
+				const dyStep = (cf & CTRL_AT_POS ? fY : 0) - (cf & CTRL_AT_NEG ? fY : 0)
+				                - (cf & CTRL_LEFT_POS ? rY : 0) + (cf & CTRL_LEFT_NEG ? rY : 0)
+				const stepMag = Math.hypot(dxStep, dyStep)
+				let blocked = false
+				if (stepMag > 0.001 && (hasFwd || hasLat)) {
+					blocked = checkCollision(dxStep / stepMag, dyStep / stepMag)
+				}
+				if (!blocked) {
+					if (cf & CTRL_AT_POS)   { avatarSLPos[0] += fX * spd  * dt; avatarSLPos[1] += fY * spd  * dt }
+					if (cf & CTRL_AT_NEG)   { avatarSLPos[0] -= fX * spd  * dt; avatarSLPos[1] -= fY * spd  * dt }
+					if (cf & CTRL_LEFT_POS) { avatarSLPos[0] -= rX * lspd * dt; avatarSLPos[1] -= rY * lspd * dt }
+					if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
+				}
 				if (cf & CTRL_UP_POS)   avatarSLPos[2] += SL_FLY_SPEED * dt
 				if (cf & CTRL_UP_NEG)   avatarSLPos[2] -= SL_FLY_SPEED * dt
 				// WHY: clamp to [1, regionSize-1] — prevents walking off the sim edge.

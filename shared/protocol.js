@@ -14,6 +14,7 @@ export const C = {
 	TELEPORT:      'teleport',      // { x, y, z } — same-region teleport via LocationBar coord edit
 	REBAKE:        'rebake',        // {} — trigger RebakeAvatarTextures cap (Avatar Health → Force Appearance Update)
 	CHECK_CIRCUIT: 'check_circuit', // { grid, username } — is my circuit still alive on server?
+	RESYNC_WORLD:  'resync_world',  // {} — replay cached region/terrain/spawn snapshot, nudge sim for ObjectUpdates
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────

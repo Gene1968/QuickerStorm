@@ -79,6 +79,11 @@ function rebake() {
 	emit(C.REBAKE, {})
 }
 
+function resyncWorld() {
+	close()
+	emit(C.RESYNC_WORLD, {})
+}
+
 // ── Menu definitions ──────────────────────────────────────────────────────
 // item: { label, kbd?, action?, disabled?, sep?, submenu? }
 // sep: true → divider. submenu: Item[] → nested dropdown (hover to open, CSS-only).
@@ -153,6 +158,7 @@ const MENUS = [
 	{
 		id: 'advanced', label: 'Advanced',
 		items: [
+			{ label: 'Resync World',	action: resyncWorld },
 			{ label: 'Rebake Textures',	disabled: true },
 			{ sep: true },
 			{ label: 'Debug Panel',		 kbd: 'Ctrl+⇧+4',		action: () => act(() => ui.toggleDebug()) },

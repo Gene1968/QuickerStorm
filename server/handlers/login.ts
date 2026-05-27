@@ -9,6 +9,7 @@ import { createSession, deleteSession, getSession, findCircuitByUser, attachWs, 
 import { handleUdpMessage, startCircuitTimers } from './lludp'
 import { slog } from '../lib/serverLog'
 import { S } from '../../shared/protocol.js'
+import { replayCachedWorld } from '../lib/resync'
 
 export async function handleLogin(
 	ws: ServerWebSocket<unknown>,
@@ -53,6 +54,10 @@ export async function handleLogin(
 				},
 			}))
 		}
+		// WHY: Replay cached world snapshot immediately on resume so terrain, region name,
+		// and spawn position are restored without the user clicking anything. Sim won't
+		// re-send RegionHandshake/LayerData on its own — the circuit is already established.
+		replayCachedWorld(circuit)
 		return
 	}
 
@@ -141,6 +146,8 @@ export async function handleLogin(
 		caps:               new Map<string, string>(),
 		userKey,
 		cachedLoginOk,
+		terrainCache:       new Map(),
+		objCache:           new Map(),
 	}
 
 	// WHY: wsId is the first WS's per-connection UUID — used as both the circuitId and

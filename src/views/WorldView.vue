@@ -25,6 +25,7 @@ import SettingsFloater		from '@/components/SettingsFloater.vue'
 import DebugPanel			from '@/components/DebugPanel.vue'
 import AudioControlsWidget	from '@/components/AudioControlsWidget.vue'
 import MovementHelpFloater	from '@/components/MovementHelpFloater.vue'
+import ResyncBanner			from '@/components/ResyncBanner.vue'
 
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
 const { is2D: autoDetect2D } = use2DFallback()
@@ -95,6 +96,7 @@ watch(
 			<!-- Middle: canvas area with overlays -->
 			<div class="flex-1 relative overflow-hidden">
 				<WorldCanvas class="absolute inset-0" />
+				<ResyncBanner />
 				<MinimapOverlay			v-if="ui.showMinimap" />
 				<AvatarList				v-if="ui.showAvatarList" />
 
