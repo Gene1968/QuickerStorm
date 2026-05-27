@@ -76,7 +76,9 @@ function fmtCreationDate(unixSecStr) {
 	if (!unixSecStr) return '—'
 	const n = Number(unixSecStr)
 	if (!Number.isFinite(n) || n <= 0) return '—'
-	return new Date(n * 1000).toISOString().slice(0, 16).replace('T', ' ')
+	const d = new Date(n * 1000)
+	if (Number.isNaN(d.getTime())) return '—'
+	return d.toISOString().slice(0, 16).replace('T', ' ')
 }
 
 // linkCount = self + children with parentId == self.localId
