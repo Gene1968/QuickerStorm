@@ -69,9 +69,9 @@ const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
 
-const FOLLOW_DIST   = 2.0   // metres behind avatar (third-person)
-const FOLLOW_HEIGHT = 3.0   // metres above avatar feet
-const LOOKAT_Y      = 0.8   // metres above avatar feet for camera lookAt (lower = avatar lower in frame)
+const FOLLOW_DIST   = 1.0   // metres behind avatar (third-person)
+const FOLLOW_HEIGHT = 2.0   // metres above avatar feet
+const LOOKAT_Y      = 1.25   // metres above avatar feet for camera lookAt (lower = avatar lower in frame)
 
 export function useWorldEngine(canvasRef) {
 	const worldStore   = useWorldStore()
@@ -611,6 +611,29 @@ export function useWorldEngine(canvasRef) {
 		waterMesh.position.set(rx / 2, 20, -ry / 2)
 		scene.add(waterMesh)
 
+		// WHY: Region edge skirt — 4 vertical quads around the perimeter so the void below
+		// the horizon reads as continuous earth/seabed instead of fog showing nothing. Top sits
+		// just above water (y=15 < waterY=20) so it tucks under the wave plane; bottom at y=-45
+		// is well past any expected terrain dip. DoubleSide avoids facing-direction quibbles.
+		const SKIRT_TOP   = 15
+		const SKIRT_DEPTH = 60
+		const SKIRT_CY    = SKIRT_TOP - SKIRT_DEPTH / 2
+		const skirtMat    = new THREE.MeshBasicMaterial({ color: 0x3a3520, side: THREE.DoubleSide })
+		const skirtN = new THREE.Mesh(new THREE.PlaneGeometry(rx, SKIRT_DEPTH), skirtMat)
+		skirtN.position.set(rx / 2, SKIRT_CY, -ry)
+		scene.add(skirtN)
+		const skirtS = new THREE.Mesh(new THREE.PlaneGeometry(rx, SKIRT_DEPTH), skirtMat)
+		skirtS.position.set(rx / 2, SKIRT_CY, 0)
+		scene.add(skirtS)
+		const skirtE = new THREE.Mesh(new THREE.PlaneGeometry(ry, SKIRT_DEPTH), skirtMat)
+		skirtE.position.set(rx, SKIRT_CY, -ry / 2)
+		skirtE.rotation.y = -Math.PI / 2
+		scene.add(skirtE)
+		const skirtW = new THREE.Mesh(new THREE.PlaneGeometry(ry, SKIRT_DEPTH), skirtMat)
+		skirtW.position.set(0, SKIRT_CY, -ry / 2)
+		skirtW.rotation.y = Math.PI / 2
+		scene.add(skirtW)
+
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
 		// Prims now use MeshBasicMaterial (unlit) so lighting doesn't affect them at all.
 		const sun = new THREE.DirectionalLight(0xfff4e6, 1.2)
@@ -942,6 +965,40 @@ export function useWorldEngine(canvasRef) {
 		if (x < 10 || x > rx - 10 || y < 10 || y > ry - 10) {
 			debugStore.push('warn', `[3D] Spawn near region edge — movement may be blocked`)
 		}
+	}
+
+	// WHY: Cross-region teleport — server already swapped UDP socket onto new sim.
+	// Browser side: wipe meshes/terrain/objects so the new sim's RegionHandshake +
+	// LayerData + ObjectUpdates rebuild from scratch. ownAvatarLocalId is nulled so
+	// re-attribution happens on the new sim's first ObjectUpdate for the agent.
+	function onTeleportFinish(d) {
+		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
+		meshMap.forEach((mesh) => {
+			mesh.traverse(child => {
+				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
+			})
+			mesh.parent?.remove(mesh)
+		})
+		meshMap.clear()
+		worldStore.clearAll()
+		worldStore.clearTerrain()
+		avatarSLPos = null
+		ownAvatarLocalId = null
+		vertVel = 0
+		cameraSnapRequested = true
+		// regionHandle decodes to (regionY << 32) | regionX in global meters. JSON serialised
+		// as string from server (bigint) — convert via BigInt for U32 splits.
+		if (d?.simIp)  sessionStore.simIp  = d.simIp
+		if (d?.simPort) sessionStore.simPort = d.simPort
+		if (d?.seedCap) sessionStore.seedCap = d.seedCap
+		if (d?.regionHandle) {
+			try {
+				const h = BigInt(d.regionHandle)
+				sessionStore.regionX = Number(h & 0xFFFFFFFFn)
+				sessionStore.regionY = Number(h >> 32n)
+			} catch { /* ignore parse error — non-blocking */ }
+		}
+		sessionStore.regionName = ''  // new RegionHandshake will set it
 	}
 
 	function onKillObject(payload) {
@@ -1288,6 +1345,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
 		on(S.KILL_OBJECT,      onKillObject)
 		on(S.TERRAIN_PATCH,    onTerrainPatch)
+		on(S.TELEPORT_FINISH,  onTeleportFinish)
 	})
 
 	onUnmounted(() => {
@@ -1308,6 +1366,7 @@ export function useWorldEngine(canvasRef) {
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
 		off(S.KILL_OBJECT,     onKillObject)
 		off(S.TERRAIN_PATCH,   onTerrainPatch)
+		off(S.TELEPORT_FINISH, onTeleportFinish)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()

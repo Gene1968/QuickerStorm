@@ -122,7 +122,7 @@ function onEditKeydown(e) {
 		<span @click="showLocationInfo" title="See more info about the current location (TO-DO)" class="me-2 text-base">ℹ️</span>
 
 		<!-- Connection status dot -->
-		<span :class="connected ? 'text-green-400' : 'text-red-400'" class="fs-5 pb-1 shrink-0">
+		<span class="fs-5 pb-1 shrink-0" :class="connected ? 'text-green-400' : 'text-red-400'" :title="'You are ' + connected ? 'Online' : 'Disconnected'">
 			{{ connected ? '●' : '○' }}
 		</span>
 

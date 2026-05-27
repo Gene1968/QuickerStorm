@@ -1,4 +1,5 @@
 // server/handlers/lludp.ts — UDP→WS relay: decode incoming LLUDP packets, forward to browser
+import * as dgram from 'dgram'
 import { getSession, deleteSession } from '../state/sessions'
 import type { CircuitState } from '../state/sessions'
 import {
@@ -10,6 +11,7 @@ import {
 	encodeTeleportLocationRequest, encodeCompleteAgentMovement,
 	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance, decodeKillObject,
 	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
+	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -46,6 +48,99 @@ const SIM_IDLE_TIMEOUT_MS = 65_000
 
 // Log every N packets to avoid flooding the debug panel
 const LOG_EVERY_N_PACKETS = 20
+
+/**
+ * Cross-region teleport — swap session's UDP socket onto the new sim and replay the
+ * circuit handshake (UseCircuitCode + CompleteAgentMovement + AgentThrottle + AgentHeightWidth).
+ * agentId/sessionId/circuitCode are preserved across the hop — only sim addr changes.
+ * Caps are cleared; the new seed cap is fetched 3s later (same convention as login.ts).
+ */
+function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, newRegionHandle: bigint, newSeedCap: string): void {
+	const session = getSession(sessionId)
+	if (!session) return
+	const ws = session.ws
+
+	slog.info(ws, `↻ swapCircuit: ${session.simIp}:${session.simPort} → ${newSimIp}:${newSimPort}`)
+
+	// Tear down old socket; in-flight reliable packets are abandoned by design (new sim
+	// won't ack them, so retransmission would loop forever).
+	try { session.udpSocket.close() } catch { /* already closed */ }
+	session.reliableOut.clear()
+	session.pendingAcks.length = 0
+	session.objCache.clear()
+	session.terrainCache.clear()
+	session.caps.clear()
+	session.seqNum = 0
+	session.lastPingAt = 0
+	session.lastUdpRxAt = Date.now()
+	session.circuitEstablished = false
+	session.simIp = newSimIp
+	session.simPort = newSimPort
+	session.regionHandle = newRegionHandle
+
+	const newSock = dgram.createSocket('udp4')
+	session.udpSocket = newSock
+	newSock.on('message', (msg: Buffer) => handleUdpMessage(sessionId, msg))
+	newSock.on('error', (err: Error) => {
+		slog.error(ws, `[swap] UDP socket error: ${err.message}`)
+		deleteSession(sessionId)
+	})
+	newSock.bind(0, '0.0.0.0', () => {
+		slog.info(ws, `[swap] UDP socket bound (local port ${newSock.address().port}) → ${newSimIp}:${newSimPort}`)
+		const seq1 = nextSeq(session)
+		const useCircuit = encodeUseCircuitCode({
+			agentId: session.agentId, sessionId: session.sessionId,
+			circuitCode: session.circuitCode, seq: seq1,
+		})
+		trackReliable(session, seq1, useCircuit)
+		newSock.send(useCircuit, newSimPort, newSimIp)
+
+		const seq2 = nextSeq(session)
+		const completeMove = encodeCompleteAgentMovement({
+			agentId: session.agentId, sessionId: session.sessionId,
+			circuitCode: session.circuitCode, seq: seq2,
+		})
+		trackReliable(session, seq2, completeMove)
+		newSock.send(completeMove, newSimPort, newSimIp)
+
+		const seq3 = nextSeq(session)
+		const throttlePkt = encodeAgentThrottle({
+			agentId: session.agentId, sessionId: session.sessionId,
+			circuitCode: session.circuitCode, seq: seq3,
+		})
+		trackReliable(session, seq3, throttlePkt)
+		newSock.send(throttlePkt, newSimPort, newSimIp)
+
+		const seq4 = nextSeq(session)
+		const hwPkt = encodeAgentHeightWidth({
+			agentId: session.agentId, sessionId: session.sessionId,
+			circuitCode: session.circuitCode, seq: seq4,
+		})
+		newSock.send(hwPkt, newSimPort, newSimIp)
+
+		slog.info(ws, `[swap] handshake sent (UseCircuitCode+CompleteAgentMovement+AgentThrottle+AgentHeightWidth)`)
+	})
+
+	// Same 3s convention as login: POST to new seed cap so SentSeeds flag flips.
+	if (newSeedCap) {
+		setTimeout(async () => {
+			try {
+				const res = await fetch(newSeedCap, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/llsd+xml' },
+					body: '<?xml version="1.0"?>\n<llsd><array><string>RebakeAvatarTextures</string></array></llsd>',
+				})
+				slog.info(ws, `[swap] ✓ new seed cap fetched (${res.status})`)
+				const xml = await res.text()
+				const m = xml.match(/RebakeAvatarTextures<\/key>\s*<string>([^<]+)<\/string>/)
+				const s = getSession(sessionId)
+				if (s && m) s.caps.set('RebakeAvatarTextures', m[1].trim())
+			} catch (e) {
+				slog.warn(ws, `[swap] seed cap fetch failed: ${(e as Error).message}`)
+			}
+		}, 3000)
+	}
+}
 
 /** Called when a UDP packet arrives from the grid sim */
 export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
@@ -437,14 +532,16 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.udpSocket.send(pkt, session.simPort, session.simIp)
 				slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim) — awaiting AgentMovementComplete at new pos`)
 			} else {
-				// WHY: Different sim = true cross-region teleport. Circuit switch required.
-				// Phase 2 work: create new UDP socket, UseCircuitCode+CompleteAgentMovement to new sim.
-				// For now forward to browser so UI can show "teleporting to new region" state.
-				slog.warn(session.ws, `TeleportFinish cross-sim → ${simIp}:${simPort} — cross-region TP not yet implemented`)
+				// WHY: Different sim = true cross-region teleport. Swap UDP socket onto new sim,
+				// replay circuit handshake (UseCircuitCode + CompleteAgentMovement + AgentThrottle +
+				// AgentHeightWidth). agentId/sessionId/circuitCode preserved by SL protocol.
+				// Notify browser so client clears the scene + waits for new RegionHandshake.
+				slog.info(session.ws, `TeleportFinish cross-sim → ${simIp}:${simPort} — swapping circuit`)
 				session.ws.send(JSON.stringify({
 					t: S.TELEPORT_FINISH,
 					d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess },
 				}))
+				swapCircuit(sessionId, simIp, simPort, regionHandle, seedCap)
 			}
 		} catch (e) { slog.warn(session.ws, `TeleportFinish decode error: ${(e as Error).message}`) }
 		return
