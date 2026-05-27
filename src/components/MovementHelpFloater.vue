@@ -9,9 +9,9 @@ const movementRows = [
 	{ keys: 'S / ↓',         desc: 'Move back' },
 	{ keys: 'A / ←',         desc: 'Turn left' },
 	{ keys: 'D / →',         desc: 'Turn right' },
-	{ keys: 'E',             desc: 'Jump (hold to fly)' },
+	{ keys: 'E',             desc: 'Jump' },
 	{ keys: 'C',             desc: 'Crouch' },
-	{ keys: 'F',             desc: 'Toggle fly/drop' },
+	{ keys: 'F / Home',      desc: 'Toggle fly/drop' },
 	{ keys: 'Shift+A',       desc: 'Strafe walk left' },
 	{ keys: 'Shift+D',       desc: 'Strafe walk right' },
 	{ keys: 'Hold E / PgUp', desc: 'Fly up' },
@@ -26,6 +26,7 @@ const shortcutRows = [
 	{ keys: 'Ctrl+Shift+4', desc: 'Debug Panel' },
 	{ keys: 'Ctrl+Alt+R',   desc: 'Rebake avatar textures' },
 	{ keys: 'Shift+Alt+A',  desc: 'Toggle mic mute (TO-DO)' },
+	{ keys: 'Ctrl+Alt+F1',  desc: 'Toggle hide all UI (TO-DO)' },
 ]
 
 const cameraRows = [

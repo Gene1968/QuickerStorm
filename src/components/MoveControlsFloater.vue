@@ -60,12 +60,20 @@ const BTNS = [
 
 const MODES = [
 	{ id: 'walk', label: '🚶', sub: 'Walk', wired: true,  title: 'Walk mode (default)' },
-	{ id: 'run',  label: '🏃', sub: 'Run',  wired: false, title: 'Run — Phase 2 (CPP: gAgent.setAlwaysRun())' },
+	{ id: 'run',  label: '🏃', sub: 'Run',  wired: true,  title: 'Run mode — forward/back keys gain Shift (CTRL_FAST_AT)' },
 	{ id: 'fly',  label: '✈',  sub: 'Fly',  wired: true,  title: 'Fly toggle (F)' },
 ]
 
-function onBtnDown(btn) { if (btn.wired && btn.code) press(btn.code, btn.key, !!btn.shift) }
-function onBtnUp(btn)   { if (btn.wired && btn.code) release(btn.code, btn.key, !!btn.shift) }
+// WHY: Real SL always-run is a sim flag (AGENT_CONTROL_ALWAYS_RUN). Client-side
+// approximation: forward/back press dispatched with shiftKey=true so engine ORs
+// CTRL_FAST_AT into the AgentUpdate. Strafe/turn keep their normal speed.
+function shiftFor(btn) {
+	if (btn.shift) return true
+	if (moveMode.value === 'run' && (btn.id === 'forward' || btn.id === 'backward')) return true
+	return false
+}
+function onBtnDown(btn) { if (btn.wired && btn.code) press(btn.code, btn.key, shiftFor(btn)) }
+function onBtnUp(btn)   { if (btn.wired && btn.code) release(btn.code, btn.key, shiftFor(btn)) }
 function selectMode(m) {
 	if (!m.wired) return
 	if (m.id === 'fly') {

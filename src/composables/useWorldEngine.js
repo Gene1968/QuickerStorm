@@ -156,6 +156,54 @@ export function useWorldEngine(canvasRef) {
 		isAltOrbit  = true
 	}
 
+	// WHY: Camera preset selector — receives a name and locks orbit at a canonical angle.
+	// Dispatched from CameraControlsFloater preset buttons via window CustomEvent so the
+	// component doesn't have to import or thread engine state through props.
+	// 'rear'  → behind avatar (= default follow yaw)
+	// 'front' → in front of avatar, looking back
+	// 'side'  → to avatar's left, looking right
+	// 'tpp'   → alias for rear (FS preset naming)
+	const PRESET_DIST  = 5.0
+	const PRESET_PITCH = 0.35   // ~20° above horizontal — same vibe as default follow
+	function setCameraPreset(name) {
+		if (!camera || !avatarSLPos) return
+		orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
+		orbitRadius = PRESET_DIST
+		orbitPitch  = PRESET_PITCH
+		switch (name) {
+			case 'rear':
+			case 'tpp':   orbitYaw = yaw;                      break
+			case 'front': orbitYaw = yaw + Math.PI;            break
+			case 'side':  orbitYaw = yaw - Math.PI / 2;        break
+			default: return
+		}
+		isAltOrbit = true
+		isDragging = false
+	}
+	function onCameraPreset(e) { setCameraPreset(e?.detail?.name) }
+
+	// WHY: Camera Track pan — shift orbit pivot in screen-relative directions.
+	// Detail: { dir: 'left'|'right'|'up'|'down', step: metres }. Pivot moves in the
+	// camera's view-perpendicular axes so the avatar slides across the frame.
+	function onCameraTrack(e) {
+		if (!camera) return
+		const dir = e?.detail?.dir
+		const step = e?.detail?.step ?? 0.5
+		if (!isAltOrbit) enterOrbit()
+		// Camera right/forward vectors in Three.js world space derived from orbitYaw.
+		// Camera looks from (sin*r*cos(p), sin(p)*r, cos*r*cos(p)) toward pivot.
+		// View dir (pivot - cam) projected to xz plane = (-sin(yaw), 0, -cos(yaw)).
+		// Right = (cos(yaw), 0, -sin(yaw)).
+		const ry = orbitYaw
+		switch (dir) {
+			case 'left':   orbitPivot.x -= Math.cos(ry) * step; orbitPivot.z += Math.sin(ry) * step; break
+			case 'right':  orbitPivot.x += Math.cos(ry) * step; orbitPivot.z -= Math.sin(ry) * step; break
+			case 'up':     orbitPivot.y += step;                                                       break
+			case 'down':   orbitPivot.y -= step;                                                       break
+			case 'reset':  if (avatarSLPos) orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])); break
+		}
+	}
+
 	function onMouseDown(e) {
 		if (e.button !== 0) return
 		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
@@ -220,8 +268,10 @@ export function useWorldEngine(canvasRef) {
 			|| keys['KeyW'] || keys['KeyS'] || keys['ArrowUp'] || keys['ArrowDown']
 		if (alt && altOrbitKey) {
 			if (!isAltOrbit) enterOrbit()
-			if (keys['KeyA'] || keys['ArrowLeft'])  orbitYaw += turn
-			if (keys['KeyD'] || keys['ArrowRight']) orbitYaw -= turn
+			// WHY: Alt+A swings camera LEFT around pivot (orbitYaw decreases); Alt+D right.
+			// Three.js orbit formula: increasing orbitYaw moves camera to +X side (right of avatar).
+			if (keys['KeyA'] || keys['ArrowLeft'])  orbitYaw -= turn
+			if (keys['KeyD'] || keys['ArrowRight']) orbitYaw += turn
 			if (keys['KeyE']) orbitPitch = Math.min(Math.PI / 2 - 0.001, orbitPitch + turn)
 			if (keys['KeyC']) orbitPitch = Math.max(-Math.PI / 2 + 0.001, orbitPitch - turn)
 			// Alt+W/S: zoom in/out. Speed proportional to current radius so:
@@ -1054,6 +1104,8 @@ export function useWorldEngine(canvasRef) {
 		window.addEventListener('keydown', onKeyDown, { passive: false })
 		window.addEventListener('keyup',   onKeyUp)
 		window.addEventListener('blur',    onBlur)
+		window.addEventListener('qs:camera-preset', onCameraPreset)
+		window.addEventListener('qs:camera-track',  onCameraTrack)
 		// Mouse drag on canvas for look control
 		canvasRef.value.addEventListener('mousedown', onMouseDown)
 		window.addEventListener('mousemove', onMouseMove)
@@ -1072,6 +1124,8 @@ export function useWorldEngine(canvasRef) {
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
 		window.removeEventListener('blur',    onBlur)
+		window.removeEventListener('qs:camera-preset', onCameraPreset)
+		window.removeEventListener('qs:camera-track',  onCameraTrack)
 		window.removeEventListener('mousemove', onMouseMove)
 		window.removeEventListener('mouseup',   onMouseUp)
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)

@@ -44,63 +44,88 @@ function startZoom(dir) { // dir: -1=in, +1=out
 function stopZoom() { clearInterval(_zoomTimer); _zoomTimer = null }
 
 // ── Button maps ───────────────────────────────────────────────────────────
-// Preset view row (top) — only Reset wired; others need camera-preset system
+// Preset view row (top) — dispatched as window CustomEvent('qs:camera-preset')
+// consumed by useWorldEngine which sets orbit yaw/pitch/radius to a fixed pose.
 // CPP: CameraPresets.ChangeView → gAgentCamera.setPositionTargetGlobal / rotations
 const PRESETS = [
-	{ id: 'front',     label: '⬆', title: 'Front View — Phase 2',          wired: false },
-	{ id: 'side',      label: '➡', title: 'Side View — Phase 2',           wired: false },
-	{ id: 'rear',      label: '⬇', title: 'Rear View (default)',           wired: true },
-	{ id: 'tpp',       label: '👁', title: 'Third-Person View — Phase 2',   wired: false },
+	{ id: 'front',     label: '⬆', title: 'Front View',                     wired: true  },
+	{ id: 'side',      label: '➡', title: 'Side View (left of avatar)',     wired: true  },
+	{ id: 'rear',      label: '⬇', title: 'Rear View (default)',            wired: true  },
+	{ id: 'tpp',       label: '👁', title: 'Third-Person View',              wired: true  },
 	{ id: 'mouselook', label: '🎯', title: 'Mouselook — Phase 2',           wired: false },
 	{ id: 'reset',     label: '↩', title: 'Reset camera view (Esc)',        wired: true  },
 ]
 
-// Orbit 3×3 grid — left/right via ArrowLeft/ArrowRight; up/down via Alt+E/Alt+C.
-// CPP: LLJoystickCameraRotate → gAgentCamera.cameraOrbitAround / cameraOrbitOver
+// Orbit 3×3 grid — cardinals via single key, diagonals via two-key combos.
+// The engine reads keys['KeyA']/['KeyE']/etc. simultaneously, so dispatching both
+// keydown events at once produces diagonal orbit motion. CPP: LLJoystickCameraRotate.
 const ORBIT = [
-	{ id: 'tl',    label: '↖', title: 'Orbit up-left — Phase 2',   code: null,         alt: false, tap: false, wired: false },
-	{ id: 'up',    label: '↑', title: 'Pitch up (Alt+E)',           code: 'KeyE',       alt: true,  tap: false, wired: true  },
-	{ id: 'tr',    label: '↗', title: 'Orbit up-right — Phase 2',  code: null,         alt: false, tap: false, wired: false },
-	{ id: 'left',  label: '↰', title: 'Orbit left (Arrow ←)',       code: 'ArrowLeft',  alt: false, tap: false, wired: true  },
-	{ id: 'rst',   label: '↺', title: 'Reset camera view (Esc)',    code: 'Escape',     alt: false, tap: true,  wired: true  },
-	{ id: 'right', label: '↱', title: 'Orbit right (Arrow →)',      code: 'ArrowRight', alt: false, tap: false, wired: true  },
-	{ id: 'bl',    label: '↙', title: 'Orbit down-left — Phase 2',  code: null,         alt: false, tap: false, wired: false },
-	{ id: 'down',  label: '↓', title: 'Pitch down (Alt+C)',         code: 'KeyC',       alt: true,  tap: false, wired: true  },
-	{ id: 'br',    label: '↘', title: 'Orbit down-right — Phase 2', code: null,         alt: false, tap: false, wired: false },
+	{ id: 'tl',    label: '↖', title: 'Orbit up-left (Alt+A+E)',    codes: ['KeyA','KeyE'], alt: true,  tap: false, wired: true },
+	{ id: 'up',    label: '↑', title: 'Pitch up (Alt+E)',            codes: ['KeyE'],         alt: true,  tap: false, wired: true },
+	{ id: 'tr',    label: '↗', title: 'Orbit up-right (Alt+D+E)',   codes: ['KeyD','KeyE'], alt: true,  tap: false, wired: true },
+	{ id: 'left',  label: '↰', title: 'Orbit left (Arrow ←)',        codes: ['ArrowLeft'],   alt: false, tap: false, wired: true },
+	{ id: 'rst',   label: '↺', title: 'Reset camera view (Esc)',     codes: ['Escape'],      alt: false, tap: true,  wired: true },
+	{ id: 'right', label: '↱', title: 'Orbit right (Arrow →)',       codes: ['ArrowRight'],  alt: false, tap: false, wired: true },
+	{ id: 'bl',    label: '↙', title: 'Orbit down-left (Alt+A+C)',  codes: ['KeyA','KeyC'], alt: true,  tap: false, wired: true },
+	{ id: 'down',  label: '↓', title: 'Pitch down (Alt+C)',          codes: ['KeyC'],         alt: true,  tap: false, wired: true },
+	{ id: 'br',    label: '↘', title: 'Orbit down-right (Alt+D+C)', codes: ['KeyD','KeyC'], alt: true,  tap: false, wired: true },
 ]
 
-// Track 3×3 grid — all Phase 2 (needs Alt+scroll pan or engine-exposed API).
+// Track 3×3 grid — pan the orbit pivot in screen-relative axes (no orbit angle change).
 // CPP: LLJoystickCameraTrack → gAgentCamera.cameraPanLeft / cameraPanUp / cameraPanIn
+// Each entry's dirs[] gets dispatched per held-tick via window CustomEvent('qs:camera-track').
 const TRACK = [
-	{ id: 'tl', label: '↖', title: 'Pan up-left — Phase 2'    },
-	{ id: 'up', label: '↑', title: 'Pan up — Phase 2'          },
-	{ id: 'tr', label: '↗', title: 'Pan up-right — Phase 2'   },
-	{ id: 'l',  label: '←', title: 'Pan left — Phase 2'        },
-	{ id: 'c',  label: '⊕', title: 'Pan reset — Phase 2'       },
-	{ id: 'r',  label: '→', title: 'Pan right — Phase 2'       },
-	{ id: 'bl', label: '↙', title: 'Pan down-left — Phase 2'   },
-	{ id: 'dn', label: '↓', title: 'Pan down — Phase 2'        },
-	{ id: 'br', label: '↘', title: 'Pan down-right — Phase 2'  },
+	{ id: 'tl', label: '↖', title: 'Pan up-left',        dirs: ['up','left'],     wired: true },
+	{ id: 'up', label: '↑', title: 'Pan up',             dirs: ['up'],            wired: true },
+	{ id: 'tr', label: '↗', title: 'Pan up-right',       dirs: ['up','right'],    wired: true },
+	{ id: 'l',  label: '←', title: 'Pan left',           dirs: ['left'],          wired: true },
+	{ id: 'c',  label: '⊕', title: 'Pan reset to avatar',dirs: ['reset'], tap: true, wired: true },
+	{ id: 'r',  label: '→', title: 'Pan right',          dirs: ['right'],         wired: true },
+	{ id: 'bl', label: '↙', title: 'Pan down-left',      dirs: ['down','left'],   wired: true },
+	{ id: 'dn', label: '↓', title: 'Pan down',           dirs: ['down'],          wired: true },
+	{ id: 'br', label: '↘', title: 'Pan down-right',     dirs: ['down','right'],  wired: true },
 ]
 
 function onOrbitDown(btn) {
 	if (!btn.wired) return
-	if (btn.tap) { tap(btn.code); return }
-	press(btn.code, btn.alt)
+	if (btn.tap) { tap(btn.codes[0]); return }
+	// WHY: For diagonals, dispatch both keydowns so the engine's per-frame key state
+	// has both axes held simultaneously. Alt prefix added once.
+	for (const c of btn.codes) press(c, btn.alt)
 }
 function onOrbitUp(btn) {
 	if (!btn.wired || btn.tap) return
-	release(btn.code, btn.alt)
+	for (const c of btn.codes) release(c, btn.alt)
 }
 function onPresetClick(p) {
 	if (!p.wired) return
-	tap('Escape') // only reset preset is wired
+	if (p.id === 'reset') { tap('Escape'); return }
+	// Engine listens for this CustomEvent and sets orbit yaw/pitch/radius to the named pose
+	window.dispatchEvent(new CustomEvent('qs:camera-preset', { detail: { name: p.id } }))
 }
 
-// Safety: release all held orbit keys + stop zoom on global mouseup
+// ── Track pan: hold-fire dispatching CustomEvent at ~30Hz while held ──────
+let _trackTimer = null
+function fireTrack(dirs) {
+	for (const d of dirs) {
+		window.dispatchEvent(new CustomEvent('qs:camera-track', { detail: { dir: d, step: 0.25 } }))
+	}
+}
+function onTrackDown(btn) {
+	if (!btn.wired) return
+	if (btn.tap) { fireTrack(btn.dirs); return }
+	fireTrack(btn.dirs)
+	_trackTimer = setInterval(() => fireTrack(btn.dirs), 33)
+}
+function onTrackUp() { clearInterval(_trackTimer); _trackTimer = null }
+
+// Safety: release all held orbit keys + stop zoom/track on global mouseup
 function globalUp() {
-	for (const b of ORBIT) if (b.wired && !b.tap && b.code) release(b.code, b.alt)
+	for (const b of ORBIT) {
+		if (b.wired && !b.tap) for (const c of b.codes) release(c, b.alt)
+	}
 	stopZoom()
+	onTrackUp()
 }
 onMounted(()   => window.addEventListener('mouseup', globalUp))
 onUnmounted(() => window.removeEventListener('mouseup', globalUp))
@@ -182,15 +207,21 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 					>−</button>
 				</div>
 
-				<!-- Track 3×3 (all Phase 2) -->
+				<!-- Track 3×3 (pan pivot in screen-relative axes) -->
 				<div class="flex flex-col flex-1 gap-[2px]">
 					<div class="text-te text-white/35 uppercase tracking-widest text-center">Track</div>
 					<div class="grid grid-cols-3 gap-[2px]">
 						<button
 							v-for="btn in TRACK" :key="btn.id"
-							class="flex items-center justify-center rounded border leading-none bg-white/3 border-brd/30 text-white/25 cursor-not-allowed cam-btn"
+							class="flex items-center justify-center rounded border leading-none transition-colors cam-btn"
+							:class="btn.wired
+								? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
+								: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
 							:title="btn.title"
-							disabled
+							:disabled="!btn.wired"
+							@mousedown.prevent="onTrackDown(btn)"
+							@mouseup="onTrackUp"
+							@mouseleave="onTrackUp"
 						>{{ btn.label }}</button>
 					</div>
 				</div>
