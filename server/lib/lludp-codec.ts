@@ -405,6 +405,7 @@ export interface ObjectData {
   pcode:     number   // 9=prim, 47=avatar
   scale:     [number, number, number]
   pos:       [number, number, number]
+  rot:       [number, number, number, number]   // quaternion xyzw (w derived from xyz, w≥0)
   nameValue: string   // raw NameValue string (contains avatar display name)
 }
 
@@ -472,9 +473,28 @@ export function decodeObjectUpdate(
       const odLen = buf[off++]
       _diag = `od=${odLen}`
       let pos: [number, number, number] = [0, 0, 0]
-      if (odLen >= 12) {
-        const posOff = (odLen === 76) ? off + 16 : off   // skip CollisionPlane for avatar blobs
-        pos = [buf.readFloatLE(posOff), buf.readFloatLE(posOff + 4), buf.readFloatLE(posOff + 8)]
+      let rot: [number, number, number, number] = [0, 0, 0, 1]
+      // ObjectData layout for F32 forms (libomv ObjectManager.cs):
+      //   odLen=76 (avatar full): CollisionPlane(16) | Pos(12) | Vel(12) | Acc(12) | Rot(12) | AngVel(12)
+      //   odLen=60 (prim full):   Pos(12) | Vel(12) | Acc(12) | Rot(12) | AngVel(12)
+      // Rotation is 3 F32 = xyz of quaternion; w derived (w = sqrt(max(0, 1−x²−y²−z²)), w≥0).
+      // odLen=48 is the half-precision form (U16-quantized); rotation decode TODO.
+      if (odLen === 76) {
+        pos = [buf.readFloatLE(off + 16), buf.readFloatLE(off + 20), buf.readFloatLE(off + 24)]
+        const rx = buf.readFloatLE(off + 52)
+        const ry = buf.readFloatLE(off + 56)
+        const rz = buf.readFloatLE(off + 60)
+        const rw = Math.sqrt(Math.max(0, 1 - rx * rx - ry * ry - rz * rz))
+        rot = [rx, ry, rz, rw]
+      } else if (odLen === 60) {
+        pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
+        const rx = buf.readFloatLE(off + 36)
+        const ry = buf.readFloatLE(off + 40)
+        const rz = buf.readFloatLE(off + 44)
+        const rw = Math.sqrt(Math.max(0, 1 - rx * rx - ry * ry - rz * rz))
+        rot = [rx, ry, rz, rw]
+      } else if (odLen >= 12) {
+        pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
       }
       off += odLen
       off += 4   // parentId
@@ -544,7 +564,7 @@ export function decodeObjectUpdate(
       off += 1    // JointType U8
       off += 12   // JointPivot LLVector3
       off += 12   // JointAxisOrAnchor LLVector3
-      objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos, nameValue })
+      objects.push({ localId, fullId, pcode, scale: [sx, sy, sz], pos, rot, nameValue })
       // WHY: log each successful decode + 40 bytes AFTER endOff so we can see whether
       // the bytes immediately following are the next real object header or zero-padding.
       // This lets us diagnose the 25-zero gap that appears between objects in multi-object packets.
@@ -574,6 +594,7 @@ export function decodeObjectUpdate(
 export interface TerseObjectData {
   localId: number
   pos:     [number, number, number]
+  rot?:    [number, number, number, number]   // quaternion xyzw, dequantized from U16
 }
 
 /**
@@ -604,18 +625,32 @@ export function decodeImprovedTerseObjectUpdate(
 
     const dataLen = buf[off++]
     let pos: [number, number, number] = [0, 0, 0]
+    let rot: [number, number, number, number] | undefined
+
+    // WHY: Quaternion components in terse updates are U16 quantized to [-1, 1]:
+    //   dequant = (u16 / 65535) * 2 - 1
+    // Avatar terse (38B layout): Pos(12 F32) | Vel(6 U16) | Acc(6 U16) | Rot(8 U16) | AngVel(6 U16)
+    // Prim   terse (32B layout): Pos(6 U16) | Vel(6 U16) | Acc(6 U16) | Rot(8 U16) | AngVel(6 U16)
+    const dequantQ = (u16: number) => (u16 / 65535) * 2 - 1
+    const readQuat = (qOff: number): [number, number, number, number] => [
+      dequantQ(buf.readUInt16LE(qOff)),
+      dequantQ(buf.readUInt16LE(qOff + 2)),
+      dequantQ(buf.readUInt16LE(qOff + 4)),
+      dequantQ(buf.readUInt16LE(qOff + 6)),
+    ]
 
     if (dataLen >= 12 && dataLen > 32) {
-      // WHY: Avatar terse data (38 bytes) starts with F32 position (3 * 4 = 12 bytes).
-      // Prim terse data (32 bytes) starts with U16 quantized position (3 * 2 = 6 bytes).
-      // dataLen > 32 reliably distinguishes avatar from prim across OpenSim versions.
       pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
+      // Rotation at offset 12 + 6 + 6 = 24 within the avatar terse blob.
+      if (dataLen >= 32) rot = readQuat(off + 24)
     } else if (dataLen >= 6) {
       // WHY: Prim position quantized to region bounds [0, 256] as U16 in range [0, 65535].
       const px = buf.readUInt16LE(off)     * (256.0 / 65535.0)
       const py = buf.readUInt16LE(off + 2) * (256.0 / 65535.0)
       const pz = buf.readUInt16LE(off + 4) * (256.0 / 65535.0)
       pos = [px, py, pz]
+      // Rotation at offset 6 + 6 + 6 = 18 within the prim terse blob.
+      if (dataLen >= 26) rot = readQuat(off + 18)
     }
 
     off += dataLen
@@ -627,7 +662,7 @@ export function decodeImprovedTerseObjectUpdate(
     const isSentinel = Math.abs(pos[0]) > FLT_MAX * 0.5 || Math.abs(pos[1]) > FLT_MAX * 0.5 || Math.abs(pos[2]) > FLT_MAX * 0.5
     onRaw?.(localId, dataLen, pos, isSentinel)
     if (isSentinel) continue
-    results.push({ localId, pos })
+    results.push({ localId, pos, rot })
   }
 
   return results

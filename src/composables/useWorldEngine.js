@@ -14,8 +14,20 @@ import { S } from '@shared/protocol.js'
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 
-const CAM_SPEED      = 8    // m/s walk
-const CAM_RUN_SPEED  = 16   // m/s run (Shift)
+// Quaternion: same axis remap as position (SL Z-up → Three Y-up). The imaginary
+// components (x,y,z) carry the rotation axis × sin(θ/2), so they transform like
+// a vector; w is invariant. Returns a new THREE.Quaternion.
+function slQuatToThree(x, y, z, w) { return new THREE.Quaternion(x, z, -y, w) }
+
+const CAM_SPEED      = 8    // m/s walk (camera-free explore mode only)
+const CAM_RUN_SPEED  = 16   // m/s run (camera-free explore mode only)
+// WHY: SL avatar physics — walk ≈ 3.2 m/s, run ≈ 5.2 m/s, fly ≈ 11 m/s. Dead
+// reckoning MUST use these (not the 8/16 m/s camera speeds) or local position
+// drifts ahead of the sim, putting our LocationBar 2× further than where other
+// users see us in Firestorm.
+const SL_WALK_SPEED  = 3.2
+const SL_RUN_SPEED   = 5.2
+const SL_FLY_SPEED   = 11
 const CAM_TURN_SPEED = 1.8  // rad/s
 const CAM_FLY_SPEED  = 12   // m/s fly (PageUp/Dn)
 
@@ -507,7 +519,16 @@ export function useWorldEngine(canvasRef) {
 			// surface and produces visible brightness oscillation (same "dark-artefact" bug as prims).
 			// MeshBasicMaterial ignores all lights — flat colour, no per-face shading — eliminates
 			// the rotation-induced flicker entirely. Revisit when we have proper avatar mesh geometry.
-			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : 0xcccccc })
+			// WHY hashed prim color: until TextureEntry colors are decoded, uniform grey
+			// makes navigation impossible (everything blends together). Hashing localId into
+			// HSL gives each prim a stable, distinguishable tint. Muted saturation/lightness
+			// (0.35 / 0.55) keeps the scene readable without becoming a clown rainbow.
+			const primColor = new THREE.Color().setHSL(
+				((obj.localId * 2654435761) >>> 0) / 0xffffffff,
+				0.35,
+				0.55,
+			)
+			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			mesh = new THREE.Mesh(geo, mat)
 
 			if (isAvatar) {
@@ -559,12 +580,21 @@ export function useWorldEngine(canvasRef) {
 				mesh.position.set(t.x, t.y, t.z)
 			}
 			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			// WHY: Apply quaternion rotation for prims so walls/doors point right way.
+			// Skip for avatars — their orientation is driven by yaw in animate() (own) /
+			// face indicator (others) and applying server rot tilts the capsule.
+			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
+				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+			}
 
 			scene.add(mesh)
 			meshMap.set(obj.localId, mesh)
 		} else {
 			// Existing mesh: scale update + animated position
 			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
+				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+			}
 			if (obj.pos) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				// WHY: ObjectUpdate is sparse (login + new objects in range). Avatar gets GSAP
@@ -621,12 +651,26 @@ export function useWorldEngine(canvasRef) {
 				if (myId && objId !== myId) {
 					// Other avatar — not our own; no action needed
 				} else if (objId === myId && myId) {
+					const firstOwn = ownAvatarLocalId === null
 					ownAvatarLocalId = obj.localId
 					// WHY: Recolor own avatar to green so it's visually distinct from other cyan avatars.
 					// Material is set after mesh creation so this works whether mesh was just created
 					// or already existed (e.g., duplicate ObjectUpdate).
 					const ownMesh = meshMap.get(obj.localId)
 					if (ownMesh) ownMesh.material.color.setHex(0x00e676)
+					// WHY: Seed yaw from sim's body rotation on first identify. Encoder pairs
+					// outgoing yaw with slAngle = π/2 + yaw → bodyRot = (0, 0, sin(slAngle/2), cos(slAngle/2)).
+					// Inverse: slAngle = 2 * atan2(rotZ, rotW); yaw = slAngle − π/2.
+					// Without this the camera always faces north (yaw=0) even when the avatar
+					// is logged in facing a different direction (e.g. from previous session).
+					if (firstOwn && obj.rot && Number.isFinite(obj.rot[3])) {
+						const slAngle = 2 * Math.atan2(obj.rot[2], obj.rot[3])
+						yaw = slAngle - Math.PI / 2
+						// normalize to [-π, π]
+						while (yaw > Math.PI)  yaw -= 2 * Math.PI
+						while (yaw < -Math.PI) yaw += 2 * Math.PI
+						debugStore.push('info', `[3D] Initial yaw from sim: ${(yaw * 180 / Math.PI).toFixed(1)}°`)
+					}
 					const p = obj.pos
 					debugStore.push('info', `[3D] Own avatar id=${obj.localId} fullId=${objId.slice(0,8)} pos=${p?.[0]?.toFixed(1) ?? '?'},${p?.[1]?.toFixed(1) ?? '?'},${p?.[2]?.toFixed(1) ?? '?'}`)
 					if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
@@ -675,6 +719,13 @@ export function useWorldEngine(canvasRef) {
 					gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
 				} else {
 					mesh.position.set(t.x, t.y, t.z)
+				}
+				// WHY: Apply rotation from TerseUpdate so other avatars visibly turn when
+				// walking, and physics-driven prims (vehicles, doors animated by sim) reorient.
+				// Skip own avatar — its yaw is driven locally and applying server rot would
+				// fight the input-driven mesh.rotation.y in animate().
+				if (obj.rot && obj.localId !== ownAvatarLocalId) {
+					mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
 				}
 			}
 			// WHY: avatarSLPos drives third-person follow camera in animate().
@@ -840,8 +891,8 @@ export function useWorldEngine(canvasRef) {
 			const hasLat  = cf & (CTRL_LEFT_POS | CTRL_LEFT_NEG)
 			const hasVert = cf & (CTRL_UP_POS | CTRL_UP_NEG)
 			if (hasFwd || hasLat || hasVert) {
-				const spd  = (cf & CTRL_FAST_AT)   ? CAM_RUN_SPEED : CAM_SPEED
-				const lspd = (cf & CTRL_FAST_LEFT)  ? CAM_RUN_SPEED : CAM_SPEED
+				const spd  = (cf & CTRL_FAST_AT)   ? SL_RUN_SPEED : SL_WALK_SPEED
+				const lspd = (cf & CTRL_FAST_LEFT) ? SL_RUN_SPEED : SL_WALK_SPEED
 				// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
 				const fX = -Math.sin(yaw), fY = Math.cos(yaw)
 				const rX =  Math.cos(yaw), rY = Math.sin(yaw)
@@ -849,8 +900,8 @@ export function useWorldEngine(canvasRef) {
 				if (cf & CTRL_AT_NEG)   { avatarSLPos[0] -= fX * spd  * dt; avatarSLPos[1] -= fY * spd  * dt }
 				if (cf & CTRL_LEFT_POS) { avatarSLPos[0] -= rX * lspd * dt; avatarSLPos[1] -= rY * lspd * dt }
 				if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
-				if (cf & CTRL_UP_POS)   avatarSLPos[2] += CAM_FLY_SPEED * dt
-				if (cf & CTRL_UP_NEG)   avatarSLPos[2] -= CAM_FLY_SPEED * dt
+				if (cf & CTRL_UP_POS)   avatarSLPos[2] += SL_FLY_SPEED * dt
+				if (cf & CTRL_UP_NEG)   avatarSLPos[2] -= SL_FLY_SPEED * dt
 				// WHY: clamp to [1, regionSize-1] — prevents walking off the sim edge.
 				// Uses sessionStore.regionSizeX/Y so var regions (e.g. 512×512) work correctly.
 				avatarSLPos[0] = Math.max(1, Math.min(sessionStore.regionSizeX - 1, avatarSLPos[0]))

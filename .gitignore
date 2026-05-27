@@ -75,3 +75,7 @@ supabase/.temp/*
 /supabase/.temp/*
 supabase/.temp
 /supabase/.temp
+.claude/worktrees/agent-a5beec2fa2ba810e6/
+.claude/worktrees/agent-abf03b0ca669f4828/
+.claude/worktrees/agent-ad4c08c3832f7f9e1/
+.claude/worktrees/agent-add409f0ad16ccf21/
