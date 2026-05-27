@@ -16,6 +16,8 @@ export const C = {
 	CHECK_CIRCUIT: 'check_circuit', // { grid, username } — is my circuit still alive on server?
 	RESYNC_WORLD:  'resync_world',  // {} — replay cached region/terrain/spawn snapshot, nudge sim for ObjectUpdates
 	IM_SEND:       'im_send',       // { toAgentId, toAgentName, fromAgentName, message } — outbound IM via ImprovedInstantMessage
+	OBJECT_TOUCH:  'object_touch',  // { localId } — outbound ObjectGrab + ObjectDeGrab pair
+	OBJECT_SIT:    'object_sit',    // { targetId } — outbound AgentRequestSit + AgentSit pair
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────

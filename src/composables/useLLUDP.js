@@ -34,5 +34,13 @@ export function useLLUDP() {
 		emit(C.IM_SEND, { toAgentId, fromAgentName, message })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM }
+	function sendTouch(localId) {
+		emit(C.OBJECT_TOUCH, { localId })
+	}
+
+	function sendSit(targetId) {
+		emit(C.OBJECT_SIT, { targetId })
+	}
+
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit }
 }

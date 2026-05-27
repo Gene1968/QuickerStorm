@@ -21,6 +21,7 @@ export const useUiStore = defineStore('ui', () => {
 	const showSnapshot       = ref(false)    // snapshot/screenshot floater (stub)
 	const showAO             = ref(false)    // animation override floater (stub)
 	const showMovementHelp   = ref(false)    // movement help floater
+	const showPlaces         = ref(false)    // Places floater (landmarks + favorites)
 	const preferenceActiveTab = ref('appearance') // active tab id in Preferences floater
 	const showProfile        = ref(false)    // profile floater
 	const profileTargetId    = ref(null)     // null = self; UUID string = other user
@@ -45,6 +46,7 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleSnapshot()       { showSnapshot.value       = !showSnapshot.value }
 	function toggleAO()             { showAO.value             = !showAO.value }
 	function toggleMovementHelp()   { showMovementHelp.value   = !showMovementHelp.value }
+	function togglePlaces()         { showPlaces.value         = !showPlaces.value }
 	function openPreferencesOnTab(tabId) {
 		preferenceActiveTab.value = tabId
 		showPreferences.value     = true
@@ -74,24 +76,31 @@ export const useUiStore = defineStore('ui', () => {
 	function openAvatarMenu(target) { avatarMenu.value = target }
 	function closeAvatarMenu()      { avatarMenu.value = null }
 
+	// WHY: object (prim) context menu — Inspect / Touch / Sit. Phase 2 subset; edit/take/copy
+	// require HTTP caps + perms (Phase 3).
+	const objectMenu = ref(null)  // null | { localId, fullId, name, pos, x, y }
+	function openObjectMenu(target) { objectMenu.value = target }
+	function closeObjectMenu()      { objectMenu.value = null }
+
 	return {
 		mode, showAvatarList, showMinimap, showChat,
 		showInventory, showMap, showSettings, showDebug,
 		showPreferences, showQuickPrefs,
 		showVoiceControls, showMoveControls, showCameraControls,
 		showAppearance, showSearch, showSnapshot, showAO,
-		showMovementHelp, preferenceActiveTab,
+		showMovementHelp, showPlaces, preferenceActiveTab,
 		showProfile, profileTargetId,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleSettings, toggleDebug,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,
-		toggleMovementHelp, openPreferencesOnTab,
+		toggleMovementHelp, togglePlaces, openPreferencesOnTab,
 		openProfile, toggleProfile,
 		floaterStack, focusFloater,
 		cameraPos, setCameraPos,
 		cameraYaw, setCameraYaw,
 		avatarMenu, openAvatarMenu, closeAvatarMenu,
+		objectMenu, openObjectMenu, closeObjectMenu,
 	}
 })

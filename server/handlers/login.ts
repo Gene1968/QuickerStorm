@@ -124,12 +124,15 @@ export async function handleLogin(
 		agentAccess:   loginResult.agent_access ?? '',
 	}
 
+	const fullName = [loginResult.first_name, loginResult.last_name].filter(Boolean).join(' ')
+
 	const circuit = {
 		agentId:      loginResult.agent_id!,
 		sessionId:    loginResult.session_id!,
 		simIp:        loginResult.sim_ip!,
 		simPort:      loginResult.sim_port!,
 		circuitCode:  loginResult.circuit_code!,
+		agentName:    fullName,
 		regionHandle: (BigInt(regionY) << 32n) | BigInt(regionX),
 		seqNum:       0,
 		pendingAcks:  [] as number[],

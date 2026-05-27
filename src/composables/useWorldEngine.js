@@ -665,6 +665,37 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer.setSize(w, h)
 	}
 
+	// WHY: Hovertext label — CSS2DObject above prim mesh. Phase 2 baseline: text from
+	// ObjectUpdate.Text (Variable1), color from ObjectUpdate.TextColor (4B inverted bytes,
+	// already decoded server-side to 0..1 floats). Position y=0.7 is in local pre-scale
+	// space so taller prims push the label further up — matches SL behaviour roughly.
+	function applyHoverText(mesh, obj) {
+		const text = obj.text || ''
+		if (!text) {
+			if (mesh.userData.hoverLabel) {
+				mesh.remove(mesh.userData.hoverLabel)
+				mesh.userData.hoverDiv = null
+				mesh.userData.hoverLabel = null
+			}
+			return
+		}
+		let div = mesh.userData.hoverDiv
+		if (!div) {
+			div = document.createElement('div')
+			div.style.cssText = 'font-size:0.7rem;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,0.9);white-space:pre;pointer-events:none;text-align:center;'
+			const label = new CSS2DObject(div)
+			label.position.set(0, 0.7, 0)
+			mesh.add(label)
+			mesh.userData.hoverDiv   = div
+			mesh.userData.hoverLabel = label
+		}
+		if (div.textContent !== text) div.textContent = text
+		const c = obj.textColor
+		div.style.color = c
+			? `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${c[3].toFixed(2)})`
+			: '#ffffff'
+	}
+
 	// ── Mesh management ───────────────────────────────────────────────────────
 	function upsertMesh(obj) {
 		let mesh = meshMap.get(obj.localId)
@@ -791,6 +822,7 @@ export function useWorldEngine(canvasRef) {
 				if (current !== obj.name) mesh.userData.labelDiv.textContent = obj.name
 			}
 		}
+		if (obj.pcode !== PCODE_AVATAR) applyHoverText(mesh, obj)
 	}
 
 	function removeMesh(localId) {
@@ -1092,16 +1124,49 @@ export function useWorldEngine(canvasRef) {
 			targets.push(mesh)
 		})
 		const hits = _raycaster.intersectObjects(targets, true)
-		if (hits.length === 0) { uiStore.closeAvatarMenu(); return }
-		let hitMesh = hits[0].object
+		if (hits.length > 0) {
+			let hitMesh = hits[0].object
+			while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
+			if (hitMesh) {
+				const obj = worldStore.objects.get(hitMesh.userData.localId)
+				if (obj) {
+					uiStore.closeObjectMenu()
+					uiStore.openAvatarMenu({
+						agentId: obj.fullId,
+						name:    obj.name || 'Avatar',
+						localId: hitMesh.userData.localId,
+						x: e.clientX,
+						y: e.clientY,
+					})
+					return
+				}
+			}
+		}
+		// Avatar miss → try prims. Skip terrain/water/skirt (their meshes have no userData.localId).
+		const primTargets = []
+		meshMap.forEach((mesh, localId) => {
+			if (localId === ownAvatarLocalId) return
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR) return
+			primTargets.push(mesh)
+		})
+		const primHits = _raycaster.intersectObjects(primTargets, true)
+		if (primHits.length === 0) {
+			uiStore.closeAvatarMenu()
+			uiStore.closeObjectMenu()
+			return
+		}
+		let hitMesh = primHits[0].object
 		while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
-		if (!hitMesh) { uiStore.closeAvatarMenu(); return }
+		if (!hitMesh) return
 		const obj = worldStore.objects.get(hitMesh.userData.localId)
 		if (!obj) return
-		uiStore.openAvatarMenu({
-			agentId: obj.fullId,
-			name:    obj.name || 'Avatar',
+		uiStore.closeAvatarMenu()
+		uiStore.openObjectMenu({
 			localId: hitMesh.userData.localId,
+			fullId:  obj.fullId,
+			name:    obj.name || obj.text || `Object ${hitMesh.userData.localId}`,
+			pos:     obj.pos,
 			x: e.clientX,
 			y: e.clientY,
 		})
@@ -1265,7 +1330,11 @@ export function useWorldEngine(canvasRef) {
 		// must fall toward terrain (landing after fly-off, walking off ledges).
 		// Flying zeroes vertVel so toggling fly back off starts a fresh fall, not a
 		// continuation of stale accumulated velocity.
-		if (avatarSLPos && ownAvatarLocalId) {
+		// WHY terrainPatchCount guard: sampleTerrainHeight returns 0 when heights array
+		// is empty (pre-RegionHandshake or right after cross-region TP). Without the
+		// guard, gravity would pull avatar to z=1 (FOOT_CLEAR over zero) and the snap-up
+		// when terrain finally arrives would visibly teleport the avatar upward.
+		if (avatarSLPos && ownAvatarLocalId && worldStore.terrainPatchCount > 0) {
 			const groundZ = sampleTerrainHeight(avatarSLPos[0], avatarSLPos[1]) + FOOT_CLEAR
 			if (isFlying) {
 				vertVel = 0

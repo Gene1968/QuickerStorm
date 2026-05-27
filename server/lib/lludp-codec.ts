@@ -369,7 +369,9 @@ export function encodeImprovedInstantMessage(p: {
   const regionId = p.regionId  ?? '00000000-0000-0000-0000-000000000000'
   const pos      = p.position  ?? [0, 0, 0]
   const dialog   = p.dialog    ?? 0
-  const msgId    = p.messageId ?? '00000000-0000-0000-0000-000000000000'
+  // WHY: SL/OpenSim sim may dedupe IMs with identical message IDs (especially during retries).
+  // Generate a fresh random UUID per message so sim treats each send as distinct.
+  const msgId    = p.messageId ?? crypto.randomUUID()
   const bucketLen = 0
 
   const bodySize = 32 + 1 + 16 + 4 + 16 + 12 + 1 + 1 + 16 + 4 +
@@ -430,6 +432,68 @@ export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): I
   const msgLen = buf.readUInt16LE(off); off += 2
   const message = buf.slice(off, off + msgLen).toString('utf8').replace(/\0/g, '')
   return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz] }
+}
+
+// ── ObjectGrab / ObjectDeGrab (Low #117 / #118) — "touch" gesture ────────
+// libomv ObjectGrabPacket: AgentData(agentId+sessionId) + ObjectData(LocalID+GrabOffset) +
+// SurfaceInfo (Variable count-prefixed). Minimal touch sends SurfaceInfo count=0.
+export function encodeObjectGrab(p: {
+  agentId: string; sessionId: string; seq: number; localId: number
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 12 + 1)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(p.localId, off);       off += 4
+  body.writeFloatLE(0, off); off += 4   // GrabOffset.x
+  body.writeFloatLE(0, off); off += 4   // GrabOffset.y
+  body.writeFloatLE(0, off); off += 4   // GrabOffset.z
+  body[off++] = 0  // SurfaceInfo count = 0
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x75]), body])  // Low 117
+}
+
+export function encodeObjectDeGrab(p: {
+  agentId: string; sessionId: string; seq: number; localId: number
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 1)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(p.localId, off);       off += 4
+  body[off++] = 0  // SurfaceInfo count = 0
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x76]), body])  // Low 118
+}
+
+// ── AgentRequestSit (Low #122) — claim a target prim as the sit target ───
+// Followed by AgentSit (Low #123) which actually sits. Sim broadcasts the result via
+// ObjectUpdate carrying the avatar's new parent + offset. Phase 2: send both immediately.
+export function encodeAgentRequestSit(p: {
+  agentId: string; sessionId: string; seq: number; targetId: string
+  offset?: [number, number, number]
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const off3 = p.offset ?? [0, 0, 0]
+  const body = Buffer.allocUnsafe(16 + 16 + 16 + 12)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  uuidToBytes(p.targetId).copy(body, off);  off += 16
+  body.writeFloatLE(off3[0], off); off += 4
+  body.writeFloatLE(off3[1], off); off += 4
+  body.writeFloatLE(off3[2], off); off += 4
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x7A]), body])  // Low 122
+}
+
+export function encodeAgentSit(p: {
+  agentId: string; sessionId: string; seq: number
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x7B]), body])  // Low 123
 }
 
 export function encodeChatFromViewer(p: {
@@ -534,6 +598,8 @@ export interface ObjectData {
   shape?:        PrimShape
   defaultColor?: [number, number, number, number]   // RGBA 0..1 from TextureEntry default
   faceColors?:   Array<[number, number, number, number] | null>  // length up to 32; null where face uses defaultColor
+  text?:         string   // hovertext (Variable1)
+  textColor?:    [number, number, number, number]  // RGBA 0..1
 }
 
 /**
@@ -739,8 +805,27 @@ export function decodeObjectUpdate(
       _diag += ` NV=${nvLen}`
       const nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
       skipVar1('Data')
-      skipVar1('Text')
-      off += 4    // WHY: TextColor is Fixed4 (RGBA), NOT a variable field — easy to miss
+      // === Hovertext + color — Variable1 + Fixed4 RGBA bytes (NOT floats) ===
+      // WHY: Per libomv Primitive.cs, TextColor is 4 bytes RGBA stored INVERTED like
+      // TextureEntry default color (actual = (255-byte)/255). Empty Text → length 0 (or 1
+      // for trailing null) and color is ignored client-side.
+      let text = ''
+      if (off + 1 <= buf.length) {
+        const tlen = buf[off++]
+        _diag += ` Text=${tlen}`
+        text = buf.slice(off, off + tlen).toString('utf8').replace(/\0/g, '')
+        off += tlen
+      }
+      let textColor: [number, number, number, number] | undefined
+      if (off + 4 <= buf.length) {
+        textColor = [
+          (255 - buf[off])     / 255,
+          (255 - buf[off + 1]) / 255,
+          (255 - buf[off + 2]) / 255,
+          (255 - buf[off + 3]) / 255,
+        ]
+        off += 4
+      }
       skipVar1('MediaURL')
       // WHY: Must skip ALL remaining fields so `off` lands at the next object's ID for
       // multi-object packets (count > 1). Stopping at MediaURL leaves ~66+ bytes unread,
@@ -762,6 +847,8 @@ export function decodeObjectUpdate(
         shape,
         ...(defaultColor ? { defaultColor } : {}),
         ...(faceColors ? { faceColors } : {}),
+        ...(text ? { text } : {}),
+        ...(textColor ? { textColor } : {}),
       })
       // WHY: log each successful decode + 40 bytes AFTER endOff so we can see whether
       // the bytes immediately following are the next real object header or zero-padding.

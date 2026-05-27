@@ -8,6 +8,9 @@ export interface CircuitState {
 	simIp:        string
 	simPort:      number
 	circuitCode:  number
+	// WHY: SL "First Last" name from XML-RPC login response. Required for IM FromAgentName
+	// so recipients see real name rather than client's possibly-empty displayName.
+	agentName?:   string
 	// WHY: regionHandle is U64 extracted from AgentMovementComplete. Required to build
 	// TeleportLocationRequest (same-region teleport from LocationBar coord edit).
 	regionHandle: bigint

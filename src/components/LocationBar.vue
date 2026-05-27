@@ -77,7 +77,7 @@ const hopUrl = computed(() => {
 })
 
 function showLocationInfo() {
-	console.log(`To do: [LocationBar] open location About info for ${region.value}`)
+	console.log(`To-do: [LocationBar] open location About info for ${region.value}`)
 }
 
 function startEdit() {

@@ -12,6 +12,7 @@ import {
 	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance, decodeKillObject,
 	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
+	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -77,6 +78,17 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	session.simIp = newSimIp
 	session.simPort = newSimPort
 	session.regionHandle = newRegionHandle
+	// WHY: cachedLoginOk is what gets replayed on WS reconnect. Without updating it, a page
+	// reload after cross-region TP would re-attach to the OLD sim's circuit — but our local
+	// state already swapped. Update sim addr + seed cap; region name comes from new
+	// RegionHandshake (cachedRegionName updated in the handler when it arrives).
+	if (session.cachedLoginOk) {
+		session.cachedLoginOk.simIp   = newSimIp
+		session.cachedLoginOk.simPort = newSimPort
+		session.cachedLoginOk.seedCap = newSeedCap
+		session.cachedLoginOk.regionX = Number(newRegionHandle & 0xFFFFFFFFn)
+		session.cachedLoginOk.regionY = Number(newRegionHandle >> 32n)
+	}
 
 	const newSock = dgram.createSocket('udp4')
 	session.udpSocket = newSock
@@ -623,6 +635,34 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.OBJECT_TOUCH) {
+		const d = msg.d as { localId: number }
+		const seqA = nextSeq(session)
+		const grab = encodeObjectGrab({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, localId: d.localId })
+		trackReliable(session, seqA, grab)
+		session.udpSocket.send(grab, session.simPort, session.simIp)
+		const seqB = nextSeq(session)
+		const degrab = encodeObjectDeGrab({ agentId: session.agentId, sessionId: session.sessionId, seq: seqB, localId: d.localId })
+		trackReliable(session, seqB, degrab)
+		session.udpSocket.send(degrab, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectGrab+DeGrab localId=${d.localId}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_SIT) {
+		const d = msg.d as { targetId: string }
+		const seqA = nextSeq(session)
+		const req = encodeAgentRequestSit({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, targetId: d.targetId })
+		trackReliable(session, seqA, req)
+		session.udpSocket.send(req, session.simPort, session.simIp)
+		const seqB = nextSeq(session)
+		const sit = encodeAgentSit({ agentId: session.agentId, sessionId: session.sessionId, seq: seqB })
+		trackReliable(session, seqB, sit)
+		session.udpSocket.send(sit, session.simPort, session.simIp)
+		slog.info(session.ws, `→ AgentRequestSit+AgentSit target=${d.targetId.slice(0,8)}…`)
+		return
+	}
+
 	if (msg.t === C.IM_SEND) {
 		const d = msg.d as { toAgentId: string; fromAgentName: string; message: string }
 		const seq = nextSeq(session)
@@ -631,7 +671,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			sessionId:     session.sessionId,
 			seq,
 			toAgentId:     d.toAgentId,
-			fromAgentName: d.fromAgentName,
+			// WHY: Client supplies fromAgentName but may pass an empty/placeholder string when
+			// avatarStore.displayName isn't populated yet. Fall back to the SL "First Last" from
+			// XML-RPC login so recipients see a real name, not "User".
+			fromAgentName: d.fromAgentName || session.agentName || 'User',
 			message:       d.message,
 			dialog:        0,  // MessageFromAgent
 		})

@@ -18,6 +18,8 @@ function storageKey(agentId) {
 }
 
 function persist(agentId) {
+	// WHY: Skip when agentId empty (pre-login or post-logout). Writing to qs_im_anon would
+	// pollute the bucket and stomp another user's anon-bucket state.
 	if (!agentId) return
 	const serial = {}
 	for (const [id, conv] of conversations.value) serial[id] = conv
