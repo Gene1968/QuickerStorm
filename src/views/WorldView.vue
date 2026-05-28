@@ -110,7 +110,11 @@ watch(
 					<MinimapOverlay			v-if="ui.showMinimap" />
 					<AvatarList				v-if="ui.showAvatarList" />
 					<ConversationsFloater	v-if="ui.showChat" />
-					<InventoryFloater		v-if="ui.showInventory" />
+					<InventoryFloater
+						v-for="i in ui.inventoryInstances"
+						:key="i"
+						:index="i"
+					/>
 					<AppearanceFloater		v-if="ui.showAppearance" />
 					<MoveControlsFloater	v-if="ui.showMoveControls" />
 					<CameraControlsFloater	v-if="ui.showCameraControls" />

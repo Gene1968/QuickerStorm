@@ -121,7 +121,7 @@ const outerStyle = computed(() => ({
 	>
 		<!-- Titlebar / drag handle -->
 		<div
-			class="flex items-center justify-between px-3 py-2 bg-card2 border-b border-brd shrink-0 select-none cursor-grab active:cursor-grabbing"
+			class="flex items-center justify-between px-3 py-1 bg-card2 border-b border-brd shrink-0 select-none cursor-grab active:cursor-grabbing"
 			@mousedown.stop="onTitlebarMousedown"
 		>
 			<span class="text-sm font-semibold text-t1">{{ title }}</span>

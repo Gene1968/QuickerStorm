@@ -1,14 +1,37 @@
 // src/stores/uiStore.js — UI mode, panel visibility, camera position readout
 import { defineStore } from 'pinia'
-import { ref, shallowRef } from 'vue'
+import { ref, computed, shallowRef } from 'vue'
 import { useChatStore } from './chatStore'
+
+// WHY: Inventory supports up to 6 simultaneous floaters (per-bag, multi-view).
+// Default positions are arranged in a brick pattern so opening many at once
+// keeps them legible — row 1: #1+#2 side-by-side; row 2: #3 half-offset above;
+// row 3: #4+#5 full; row 4: #6 half-offset. User drag overrides defaultPos.
+export const MAX_INVENTORY = 6
+const INV_ROW_BOTTOM = [
+	'2.65rem',
+	'calc(2.65rem + 45vh + 0.25rem)',
+	'calc(2.65rem + 90vh + 0.125rem)',
+]
+export const INVENTORY_DEFAULT_POS = [
+	{ left: '0.125vw', bottom: INV_ROW_BOTTOM[0] }, // #1
+	{ left: '15.125vw', bottom: INV_ROW_BOTTOM[0] }, // #2
+	{ left: '7.6875vw', bottom: INV_ROW_BOTTOM[1] }, // #3
+	{ left: '30.125vw', bottom: INV_ROW_BOTTOM[0] }, // #4
+	{ left: '22.6875vw', bottom: INV_ROW_BOTTOM[1] }, // #5
+	{ left: '45.125vw', bottom: INV_ROW_BOTTOM[0] }, // #6
+]
 
 export const useUiStore = defineStore('ui', () => {
 	const mode           = ref('3d')      // '3d' | '2d'
 	const showAvatarList = ref(true)
 	const showMinimap    = ref(true)
 	const showChat       = ref(true)
-	const showInventory  = ref(false)
+	// WHY: Inventory is multi-instance — array of indices currently open (0..MAX_INVENTORY-1).
+	// showInventory kept as a computed for legacy callers (toolbar/menu active state); they
+	// reflect whether instance #0 is open. Suitcase button inside floater #N opens floater #N+1.
+	const inventoryInstances = ref([])
+	const showInventory      = computed(() => inventoryInstances.value.includes(0))
 	const showMap        = ref(false)
 	const showSettings       = ref(false)
 	const showDebug          = ref(false)    // debug/connection panel
@@ -34,7 +57,30 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
 	function toggleMinimap()     { showMinimap.value     = !showMinimap.value }
 	function toggleChat()        { showChat.value        = !showChat.value }
-	function toggleInventory()   { showInventory.value   = !showInventory.value }
+	function openInventoryAt(idx) {
+		if (idx < 0 || idx >= MAX_INVENTORY) return
+		if (inventoryInstances.value.includes(idx)) return
+		inventoryInstances.value = [...inventoryInstances.value, idx].sort((a, b) => a - b)
+	}
+	function closeInventoryAt(idx) {
+		if (!inventoryInstances.value.includes(idx)) return
+		inventoryInstances.value = inventoryInstances.value.filter(i => i !== idx)
+		// Remove from floater stack too, otherwise Ctrl+W finds a stale id.
+		floaterStack.value = floaterStack.value.filter(f => f !== `inventory-${idx}`)
+	}
+	function toggleInventoryAt(idx) {
+		if (inventoryInstances.value.includes(idx)) closeInventoryAt(idx)
+		else openInventoryAt(idx)
+	}
+	// WHY: Ctrl+Shift+I opens the next available slot (0..MAX). Returns the opened idx
+	// or -1 if all slots are full so callers can stop.
+	function openNextInventory() {
+		for (let i = 0; i < MAX_INVENTORY; i++) {
+			if (!inventoryInstances.value.includes(i)) { openInventoryAt(i); return i }
+		}
+		return -1
+	}
+	function toggleInventory() { toggleInventoryAt(0) }
 	function toggleMap()         { showMap.value         = !showMap.value }
 	function toggleSettings()    { showSettings.value    = !showSettings.value }
 	function toggleDebug()       { showDebug.value       = !showDebug.value }
@@ -90,7 +136,6 @@ export const useUiStore = defineStore('ui', () => {
 	const _FLOATER_CLOSE = {
 		conversations:   () => { showChat.value         = false },
 		map:             () => { showMap.value           = false },
-		inventory:       () => { showInventory.value     = false },
 		appearance:      () => { showAppearance.value    = false },
 		move:            () => { showMoveControls.value  = false },
 		camera:          () => { showCameraControls.value = false },
@@ -104,6 +149,12 @@ export const useUiStore = defineStore('ui', () => {
 		if (!floaterStack.value.length) return
 		const topId = floaterStack.value.at(-1)
 		floaterStack.value = floaterStack.value.filter(f => f !== topId)
+		// WHY: inventory ids are 'inventory-N' (multi-instance). Map back to instance close.
+		if (typeof topId === 'string' && topId.startsWith('inventory-')) {
+			const idx = Number(topId.slice('inventory-'.length))
+			if (Number.isFinite(idx)) closeInventoryAt(idx)
+			return
+		}
 		_FLOATER_CLOSE[topId]?.()
 	}
 
@@ -152,6 +203,7 @@ export const useUiStore = defineStore('ui', () => {
 		showProfile, profileTargetId,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleSettings, toggleDebug,
+		inventoryInstances, openInventoryAt, closeInventoryAt, toggleInventoryAt, openNextInventory,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,

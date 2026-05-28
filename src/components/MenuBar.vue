@@ -64,6 +64,13 @@ function onKey(e) {
 		e.preventDefault()
 		ui.toggleAlwaysRun()
 	}
+	// Ctrl+Shift+I — Open next inventory floater (up to MAX_INVENTORY). Each press opens a new one.
+	// WHY: browser DevTools also uses Ctrl+Shift+I but we override here to match FS parity; user
+	// can still use F12 for DevTools.
+	if (e.ctrlKey && !e.altKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.code === 'KeyI')) {
+		e.preventDefault()
+		ui.openNextInventory()
+	}
 }
 
 onMounted(() => {

@@ -1,20 +1,35 @@
 <script setup>
-import { useUiStore }  from '@/stores/uiStore'
+import { computed } from 'vue'
+import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon } from '@lucide/vue'
 
+const props = defineProps({
+	index: { type: Number, default: 0 },
+})
+
 const ui = useUiStore()
+
+// WHY: per-instance id so each floater has its own focus/z-index slot in the floater stack.
+const floaterId   = computed(() => `inventory-${props.index}`)
+const defaultPos  = computed(() => INVENTORY_DEFAULT_POS[props.index] ?? INVENTORY_DEFAULT_POS[0])
+const title       = computed(() => props.index === 0 ? '📦 Inventory' : `📦 Inventory ${props.index + 1}`)
+const isLast      = computed(() => props.index >= MAX_INVENTORY - 1)
+const nextOpen    = computed(() => ui.inventoryInstances.includes(props.index + 1))
+
+function close()        { ui.closeInventoryAt(props.index) }
+function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 1) }
 </script>
 
 <template>
 	<FloaterWindow
-		id="inventory"
-		title="📦 Inventory"
+		:id="floaterId"
+		:title="title"
 		:wrap-style="{ width: '15vw', height: '45vh', resize: 'both' }"
-		:default-pos="{ left: '0.125vw', bottom: '2.65rem' }"
-		@close="ui.toggleInventory()"
+		:default-pos="defaultPos"
+		@close="close"
 	>
-		<div class="flex p-1"><input class="inv-search rounded-5 bg-brd2 w-full px-3 text-t1" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
+		<div class="flex p-1"><input class="inv-search rounded-5 bg-brd2 w-full px-3 text-t1 text-sm font-light" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
 		<div class="flex flex-row align-items-center justify-content-evenly w-full mb-1 text-white">
 			<div class="flex flex-row align-items-center justify-content-start w-full overflow-hidden text-2xs">
 				<button class="me-2 py-0">Collapse</button>
@@ -46,7 +61,14 @@ const ui = useUiStore()
 		<div class="flex flex-row align-items-center justify-content-between text-xs text-white">
 			<button title="Show additional options (TO-DO)" class="px-1"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 			<button title="Add new item (TO-DO)"><PlusIcon /></button>
-			<button title="Additional inventory floater (TO-DO)"><LuggageIcon /></button>
+			<button
+				:title="isLast
+					? `Maximum of ${MAX_INVENTORY} inventory floaters reached`
+					: nextOpen ? `Close Inventory ${index + 2}` : `Open Inventory ${index + 2}`"
+				:disabled="isLast"
+				:class="isLast ? 'opacity-40 cursor-not-allowed' : nextOpen ? 'text-accent border-accent' : ''"
+				@click="toggleNext"
+			><LuggageIcon /></button>
 			<button title="Show filters - Shows the filter side menu when selected. Becomes highlighted when any filter is enabled. (TO-DO)"><FilterIcon /></button>
 			<button v-if="true" title="Switch between views (TO-DO)"><ListIcon /></button>
 			<button v-else title="Switch between views (TO-DO)"><TableOfContentsIcon /></button>
