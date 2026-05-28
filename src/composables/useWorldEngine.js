@@ -793,7 +793,7 @@ export function useWorldEngine(canvasRef) {
 				}
 			`,
 			transparent: true,
-			depthWrite: false,   // avoid fighting with terrain/skirt sorting
+			depthWrite: false,
 			side: THREE.FrontSide,
 		})
 		const OCEAN_SIZE = 8192
@@ -804,31 +804,6 @@ export function useWorldEngine(canvasRef) {
 		waterMesh.rotation.x = -Math.PI / 2
 		waterMesh.position.set(rx / 2, 20, -ry / 2)
 		scene.add(waterMesh)
-
-		// WHY: Region edge skirt — 4 vertical quads around the perimeter so the void below
-		// the horizon reads as continuous earth/seabed instead of fog showing nothing.
-		// Top tucks just under the water plane (waterY=20). Bottom anchored at y=0 so
-		// side-on the visible region is roughly terrain_peak × region_width — close to
-		// the real 12.8:1 ratio (256m wide / ~20m water-height). Larger SKIRT_DEPTH
-		// (the original 60m) exaggerated vertical span and made terrain read as too steep.
-		const SKIRT_TOP   = 18
-		const SKIRT_DEPTH = 18
-		const SKIRT_CY    = SKIRT_TOP - SKIRT_DEPTH / 2
-		const skirtMat    = new THREE.MeshBasicMaterial({ color: 0x3a3520, side: THREE.DoubleSide })
-		const skirtN = new THREE.Mesh(new THREE.PlaneGeometry(rx, SKIRT_DEPTH), skirtMat)
-		skirtN.position.set(rx / 2, SKIRT_CY, -ry)
-		scene.add(skirtN)
-		const skirtS = new THREE.Mesh(new THREE.PlaneGeometry(rx, SKIRT_DEPTH), skirtMat)
-		skirtS.position.set(rx / 2, SKIRT_CY, 0)
-		scene.add(skirtS)
-		const skirtE = new THREE.Mesh(new THREE.PlaneGeometry(ry, SKIRT_DEPTH), skirtMat)
-		skirtE.position.set(rx, SKIRT_CY, -ry / 2)
-		skirtE.rotation.y = -Math.PI / 2
-		scene.add(skirtE)
-		const skirtW = new THREE.Mesh(new THREE.PlaneGeometry(ry, SKIRT_DEPTH), skirtMat)
-		skirtW.position.set(0, SKIRT_CY, -ry / 2)
-		skirtW.rotation.y = Math.PI / 2
-		scene.add(skirtW)
 
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
 		// Prims now use MeshBasicMaterial (unlit) so lighting doesn't affect them at all.
