@@ -170,7 +170,7 @@ async function submitChat() {
 
 				<!-- Contacts ───────────────────────────────────────── -->
 				<template v-if="activeTab === 'contacts'">
-					<div class="flex-1 flex items-center justify-center text-white/30 text-xs italic select-none">
+					<div class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
 						Contacts — coming soon
 					</div>
 				</template>
@@ -190,7 +190,7 @@ async function submitChat() {
 							<span class="text-accent font-medium">{{ m.fromName }}:</span>
 							{{ m.message }}
 						</div>
-						<div v-if="!messages.length" class="py-4 text-white/30 text-xs italic">
+						<div v-if="!messages.length" class="py-4 text-gray-200 text-xs italic">
 							No messages yet.
 						</div>
 					</div>
@@ -246,7 +246,7 @@ async function submitChat() {
 							<span class="text-accent font-medium">{{ m.from }}:</span>
 							{{ m.text }}
 						</div>
-						<div v-if="!activeConv.messages.length" class="py-4 text-white/30 text-xs italic">
+						<div v-if="!activeConv.messages.length" class="py-4 text-gray-200 text-xs italic">
 							No messages yet — say hello.
 						</div>
 					</div>
@@ -287,7 +287,7 @@ async function submitChat() {
 				</template>
 
 				<template v-else>
-					<div class="flex-1 flex items-center justify-center text-white/30 text-xs italic select-none">
+					<div class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
 						Right-click an avatar to start an IM.
 					</div>
 				</template>

@@ -755,38 +755,50 @@ export function useWorldEngine(canvasRef) {
 		)
 		scene.add(terrainMesh)
 
-		// WHY: Water plane sized to region + 4m margin on each side to avoid visible seam.
-		// 64×64 segments give enough vertices for a visible sine ripple without taxing GPU.
-		// ShaderMaterial drives vertical displacement via uTime updated each frame in animate().
+		// WHY: ONE giant water plane covers in-region AND horizon — no seam, no abrupt
+		// region-edge cutoff. Ripples drawn as fragment-shader brightness modulation in
+		// world XZ (not vertex displacement) so a sparse mesh works; detail fades with
+		// distance from camera so far water reads smooth. Mirrors Firestorm's seamless
+		// ocean appearance. Opacity tuned to "good before" baseline (0.5x); no fresnel
+		// or specular — user found that look too busy.
 		waterMaterial = new THREE.ShaderMaterial({
 			uniforms: {
 				uTime:    { value: 0 },
 				uColor:   { value: new THREE.Color(0x2266aa) },
-				uOpacity: { value: 0.72 },
+				uOpacity: { value: 0.75 },
 			},
 			vertexShader: `
-				uniform float uTime;
+				varying vec3 vWorld;
 				void main() {
-					vec3 p = position;
-					// Two crossed sine waves + a slower diagonal mode. Amplitude tuned subtle so
-					// it reads as gentle swell rather than rough sea. Plane is rotated -π/2 around
-					// X at mesh level → local +Z displacement becomes world +Y (vertical bob).
-					p.z += sin(p.x * 0.30 + uTime * 1.20) * 0.08
-					     + sin(p.y * 0.25 + uTime * 0.90) * 0.08
-					     + sin((p.x + p.y) * 0.15 + uTime * 0.70) * 0.05;
-					gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+					vec4 worldPos = modelMatrix * vec4(position, 1.0);
+					vWorld = worldPos.xyz;
+					gl_Position = projectionMatrix * viewMatrix * worldPos;
 				}
 			`,
 			fragmentShader: `
+				uniform float uTime;
 				uniform vec3 uColor;
 				uniform float uOpacity;
-				void main() { gl_FragColor = vec4(uColor, uOpacity); }
+				varying vec3 vWorld;
+				void main() {
+					float d = distance(cameraPosition.xz, vWorld.xz);
+					// Ripples crisp under ~60 m, faded out by ~250 m.
+					float near = 1.0 - smoothstep(70.0, 230.0, d);
+					float r1 = sin(vWorld.x * 1.80 + uTime * 1.10);
+					float r2 = sin(vWorld.z * 1.55 + uTime * 0.90);
+					float r3 = sin((vWorld.x + vWorld.z) * 0.95 + uTime * 0.65);
+					float ripple = (r1 + r2 + 0.7 * r3) / 2.7;
+					vec3 col = uColor + ripple * 0.055 * near;
+					gl_FragColor = vec4(col, uOpacity);
+				}
 			`,
 			transparent: true,
+			depthWrite: false,   // avoid fighting with terrain/skirt sorting
 			side: THREE.FrontSide,
 		})
+		const OCEAN_SIZE = 8192
 		waterMesh = new THREE.Mesh(
-			new THREE.PlaneGeometry(rx + 8, ry + 8, 64, 64),
+			new THREE.PlaneGeometry(OCEAN_SIZE, OCEAN_SIZE, 4, 4),
 			waterMaterial,
 		)
 		waterMesh.rotation.x = -Math.PI / 2
