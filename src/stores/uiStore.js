@@ -134,6 +134,11 @@ export const useUiStore = defineStore('ui', () => {
 	// "Edit" sets this and toggles showObjectEdit. null = floater shows empty-state.
 	const showObjectEdit = ref(false)
 	const editObjectId   = ref(null)
+	// WHY: Phase 2 prim-handle preview — gizmo type rendered around the selected prim while
+	// Build Tools is open. Ctrl → 'rotate' rings, Ctrl+Shift → 'scale' cubes, default 'move' arrows.
+	// Edit actions are Phase 3 (HTTP-cap perms); this is purely the visual scaffold.
+	const gizmoMode      = ref('move')
+	function setGizmoMode(m) { gizmoMode.value = m }
 	function openObjectEdit(localId) { editObjectId.value = localId; showObjectEdit.value = true; closeObjectMenu() }
 	function toggleObjectEdit()      { showObjectEdit.value = !showObjectEdit.value }
 
@@ -161,5 +166,6 @@ export const useUiStore = defineStore('ui', () => {
 		avatarMenu, openAvatarMenu, closeAvatarMenu,
 		objectMenu, openObjectMenu, closeObjectMenu,
 		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
+		gizmoMode, setGizmoMode,
 	}
 })

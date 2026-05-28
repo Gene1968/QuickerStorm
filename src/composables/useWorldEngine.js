@@ -135,6 +135,10 @@ export function useWorldEngine(canvasRef) {
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
 	const stopAlwaysRunWatch = watch(() => uiStore.alwaysRun, (v) => sendSetAlwaysRun(v))
+	// WHY: Phase 2 prim-handle preview — rebuild gizmo when selection/mode/visibility changes.
+	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
+	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
+	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) clearGizmo(); else refreshGizmo() })
 	const { playSound } = useAudio()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
@@ -142,6 +146,11 @@ export function useWorldEngine(canvasRef) {
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
 	let waterMaterial = null  // ShaderMaterial — uTime updated each frame for ripple
+	// WHY: Selection gizmo — RGB arrows / rotation rings / scale handles drawn around the
+	// prim selected in Build Tools. Constant world-space size relative to the prim bbox; sits
+	// at scene root (not parented to mesh) so prim parent rotation doesn't twist the axes.
+	let gizmoGroup    = null  // THREE.Group | null
+	let gizmoMeshId   = null  // localId the gizmo is currently tracking, for repositioning
 
 	// ── Physics state ─────────────────────────────────────────────────────────
 	// WHY: simple per-session vertical velocity for gravity. SL standard g ≈ 9.8 m/s².
@@ -150,6 +159,11 @@ export function useWorldEngine(canvasRef) {
 	const GRAVITY       = 9.8   // m/s²
 	const TERMINAL_VEL  = 50    // m/s downward cap
 	const FOOT_CLEAR    = 1.0   // m — capsule centre above terrain surface when grounded
+	// WHY: SL jump impulse — peak height = JUMP_VEL² / (2·GRAVITY). 5.5 m/s → ~1.54m peak,
+	// matching SL physics. FS goes higher (~2m) because it uses a slightly larger force;
+	// 5.5 is the OpenSim canonical value. Edge-triggered: applied once on E keydown.
+	const JUMP_VEL      = 5.5
+	const GROUNDED_EPS  = 0.2   // m — foot within this much of groundZ counts as grounded
 
 	// WHY: Bilinear-interpolated terrain height at SL coord (slX, slY). Stride matches
 	// worldStore.TERRAIN_STRIDE (513). Clamped 1px short of stride edge for the +1 index.
@@ -186,6 +200,7 @@ export function useWorldEngine(canvasRef) {
 	let pitch   = -0.08    // slight downward tilt
 	let isFlying  = false  // F toggles; sustained CTRL_FLY sent each frame while true
 	let eHoldTime = 0      // seconds E has been continuously held
+	let prevGoUp  = false  // edge-trigger jump impulse only on the keydown frame
 
 	// WHY: Esc or W-press when camera is displaced snaps camera back to follow position.
 	// Flag set in onKeyDown (Escape) or detected via distance in animate().
@@ -210,7 +225,23 @@ export function useWorldEngine(canvasRef) {
 		'Home',
 	]
 
+	function syncGizmoModeFromModifiers(e) {
+		if (!uiStore.showObjectEdit) return
+		const ctrl = e.ctrlKey || e.metaKey
+		const shift = e.shiftKey
+		const next = ctrl && shift ? 'scale' : ctrl ? 'rotate' : 'move'
+		if (uiStore.gizmoMode !== next) uiStore.setGizmoMode(next)
+	}
+
 	function onKeyDown(e) {
+		// WHY: modifier-only updates need to flow even when focus is in an input — but mode
+		// reset on keyup of Ctrl/Shift only matters in the canvas. Keep the input early-return
+		// for non-modifier keys to avoid hijacking text fields.
+		if (e.code === 'ControlLeft' || e.code === 'ControlRight'
+			|| e.code === 'ShiftLeft' || e.code === 'ShiftRight'
+			|| e.code === 'MetaLeft' || e.code === 'MetaRight') {
+			syncGizmoModeFromModifiers(e)
+		}
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
 		if (e.code === 'KeyF' || e.code === 'Home') {
@@ -231,7 +262,14 @@ export function useWorldEngine(canvasRef) {
 		}
 		if (MOVE_KEYS.includes(e.code)) e.preventDefault()
 	}
-	function onKeyUp(e) { keys[e.code] = false }
+	function onKeyUp(e) {
+		keys[e.code] = false
+		if (e.code === 'ControlLeft' || e.code === 'ControlRight'
+			|| e.code === 'ShiftLeft' || e.code === 'ShiftRight'
+			|| e.code === 'MetaLeft' || e.code === 'MetaRight') {
+			syncGizmoModeFromModifiers(e)
+		}
+	}
 	// WHY: When the window loses focus (tab switch, alt-tab), keyup events are not delivered.
 	// Keys appear stuck and the avatar spins / walks indefinitely.
 	// Clear all held keys and mouse drag state on blur to prevent this.
@@ -328,6 +366,38 @@ export function useWorldEngine(canvasRef) {
 
 	function onMouseDown(e) {
 		if (e.button !== 0) return
+		// WHY: Build Tools open → left-click picks prim for selection. Avoid hijacking
+		// alt+click (camera focus) — alt path falls through below. Ctrl/Shift modifiers
+		// pass through too so the user can pre-set the gizmo mode while clicking.
+		if (!e.altKey && uiStore.showObjectEdit && canvasRef.value && camera) {
+			const rect = canvasRef.value.getBoundingClientRect()
+			_pickNdc.set(
+				((e.clientX - rect.left) / rect.width) * 2 - 1,
+				-((e.clientY - rect.top) / rect.height) * 2 + 1,
+			)
+			_raycaster.setFromCamera(_pickNdc, camera)
+			_raycaster.far = 1000
+			const primTargets = []
+			meshMap.forEach((m, lid) => {
+				if (lid === ownAvatarLocalId) return
+				const o = worldStore.objects.get(lid)
+				if (!o || o.pcode === PCODE_AVATAR) return
+				primTargets.push(m)
+			})
+			const hits = _raycaster.intersectObjects(primTargets, true)
+			if (hits.length > 0) {
+				let m = hits[0].object
+				while (m && m.userData?.localId === undefined) m = m.parent
+				if (m?.userData?.localId != null) {
+					uiStore.editObjectId = m.userData.localId
+					sendSelect([m.userData.localId])
+					return
+				}
+			}
+			// Miss — clicked terrain/water/sky/avatar: drop selection.
+			uiStore.editObjectId = null
+			return
+		}
 		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
 		isDragging = true
 		lastMouseX = e.clientX
@@ -455,6 +525,14 @@ export function useWorldEngine(canvasRef) {
 		} else {
 			eHoldTime = 0
 		}
+		// WHY: Edge-triggered jump impulse. Continuous Z push (old behaviour) gave a tiny
+		// fly-like rise instead of a real jump. On E keydown when grounded and not flying,
+		// set vertVel = JUMP_VEL; gravity loop carries the parabolic arc + landing.
+		if (goUp && !prevGoUp && !isFlying && avatarSLPos && worldStore.terrainPatchCount > 0) {
+			const gZ = sampleTerrainHeight(avatarSLPos[0], avatarSLPos[1]) + FOOT_CLEAR
+			if (avatarSLPos[2] - gZ < GROUNDED_EPS) vertVel = JUMP_VEL
+		}
+		prevGoUp = goUp
 
 		// WHY: Explore-mode (before avatar position known): move camera freely with WASD.
 		// Once avatarSLPos is set, animate() drives camera via third-person follow and
@@ -550,17 +628,20 @@ export function useWorldEngine(canvasRef) {
 	// gamma-applied at output and look washed out (#527959 → #9ab69f → fog
 	// blend → #acc2b1 in the viewer). Returns [r, g, b] in 0–1 linear.
 	function heightColor(h) {
+		// WHY: narrow sand band right at the wave wash (~19–21m) blends shoreline
+		// from grass into sand into water. Region terrain that sits a couple metres
+		// above sea level (typical ~23m) should already read as grass, not desert.
+		const SAND  = [0.85, 0.78, 0.58]  // pale beige
+		const GRASS = [0.29, 0.49, 0.35]
+		const TAN   = [0.68, 0.62, 0.45]  // dry low-land tan, between green and sand
 		let rgb
-		// deep/underwater
-		if      (h <= 0)  rgb = [0.08, 0.30, 0.60]
-		// shallow → low land
-		else if (h <= 10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], h / 10)
-		// low land → grass
-		else if (h <= 20) rgb = lerpRgb([0.25, 0.55, 0.45], [0.29, 0.49, 0.35], (h - 10) / 10)
-		// grass → earthy mid
-		else if (h <= 40) rgb = lerpRgb([0.29, 0.49, 0.35], [0.45, 0.42, 0.35], (h - 20) / 20)
-		// earthy → stone grey
-		else              rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((h - 40) / 60, 1))
+		if      (h <=  0) rgb = [0.08, 0.30, 0.60]                                         // deep
+		else if (h <= 10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], h / 10)    // shallow → low land
+		else if (h <= 19) rgb = lerpRgb([0.25, 0.55, 0.45], TAN,                (h - 10) / 9)   // low land → tan
+		else if (h <= 21) rgb = lerpRgb(TAN, SAND,                              (h - 19) / 2)   // tan → sand at shoreline
+		else if (h <= 23) rgb = lerpRgb(SAND, GRASS,                            (h - 21) / 2)   // sand → grass quickly
+		else if (h <= 50) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],              (h - 23) / 27)  // grass → earthy
+		else              rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((h - 50) / 60, 1))  // earthy → stone
 		return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]
 	}
 
@@ -706,11 +787,13 @@ export function useWorldEngine(canvasRef) {
 		scene.add(waterMesh)
 
 		// WHY: Region edge skirt — 4 vertical quads around the perimeter so the void below
-		// the horizon reads as continuous earth/seabed instead of fog showing nothing. Top sits
-		// just above water (y=15 < waterY=20) so it tucks under the wave plane; bottom at y=-45
-		// is well past any expected terrain dip. DoubleSide avoids facing-direction quibbles.
-		const SKIRT_TOP   = 15
-		const SKIRT_DEPTH = 60
+		// the horizon reads as continuous earth/seabed instead of fog showing nothing.
+		// Top tucks just under the water plane (waterY=20). Bottom anchored at y=0 so
+		// side-on the visible region is roughly terrain_peak × region_width — close to
+		// the real 12.8:1 ratio (256m wide / ~20m water-height). Larger SKIRT_DEPTH
+		// (the original 60m) exaggerated vertical span and made terrain read as too steep.
+		const SKIRT_TOP   = 18
+		const SKIRT_DEPTH = 18
 		const SKIRT_CY    = SKIRT_TOP - SKIRT_DEPTH / 2
 		const skirtMat    = new THREE.MeshBasicMaterial({ color: 0x3a3520, side: THREE.DoubleSide })
 		const skirtN = new THREE.Mesh(new THREE.PlaneGeometry(rx, SKIRT_DEPTH), skirtMat)
@@ -788,6 +871,115 @@ export function useWorldEngine(canvasRef) {
 		div.style.color = c
 			? `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${c[3].toFixed(2)})`
 			: '#ffffff'
+	}
+
+	// ── Selection gizmo (Phase 2 visual scaffold) ────────────────────────────
+	// WHY: Drawn at scene root and repositioned each frame in animate() — keeping it
+	// scene-level (not as a child of the prim mesh) means the prim's rotation doesn't
+	// rotate the axes, and gizmo size stays consistent even when the prim has a tiny
+	// localScale (we set our own scale from the mesh's world bbox).
+	function clearGizmo() {
+		if (!gizmoGroup) return
+		gizmoGroup.traverse(c => { if (c.isMesh) { c.geometry.dispose(); c.material.dispose() } })
+		gizmoGroup.parent?.remove(gizmoGroup)
+		gizmoGroup  = null
+		gizmoMeshId = null
+	}
+
+	// SL convention for axis colors: X=red, Y=green, Z=blue. Matches FS prim handles.
+	const _GIZMO_X = 0xff5555
+	const _GIZMO_Y = 0x55ff55
+	const _GIZMO_Z = 0x5588ff
+
+	function _buildArrow(color, dir) {
+		// Shaft + cone head pointing along +dir (length 1, head at tip).
+		const grp = new THREE.Group()
+		const shaftLen = 0.78
+		const shaftMat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.92 })
+		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, shaftLen, 10), shaftMat)
+		shaft.position.y = shaftLen / 2
+		const head = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 12), shaftMat)
+		head.position.y = shaftLen + 0.11
+		grp.add(shaft); grp.add(head)
+		// Rotate group so +Y of grp aligns with dir. Three.js +Y is the cylinder axis.
+		grp.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
+		grp.renderOrder = 999  // draw over scene
+		return grp
+	}
+
+	function _buildRing(color, axis) {
+		const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+		const ring = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.02, 8, 48), mat)
+		// Torus is in XY plane by default. Orient so its axis points along the requested axis.
+		if (axis === 'x') ring.rotation.y = Math.PI / 2  // XY → YZ plane (axis = X)
+		else if (axis === 'y') ring.rotation.x = Math.PI / 2 // XY → XZ plane (axis = Y)
+		// z axis: default orientation already correct
+		ring.renderOrder = 999
+		return ring
+	}
+
+	function _buildHandle(color, dir) {
+		const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.92 })
+		const grp = new THREE.Group()
+		const shaftLen = 0.78
+		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, shaftLen, 8), mat)
+		shaft.position.y = shaftLen / 2
+		const cube = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), mat)
+		cube.position.y = shaftLen + 0.08
+		grp.add(shaft); grp.add(cube)
+		grp.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
+		grp.renderOrder = 999
+		return grp
+	}
+
+	function buildGizmoForMode(mode) {
+		const root = new THREE.Group()
+		const X = new THREE.Vector3(1, 0, 0)
+		const Y = new THREE.Vector3(0, 1, 0)
+		const Z = new THREE.Vector3(0, 0, 1)
+		if (mode === 'rotate') {
+			root.add(_buildRing(_GIZMO_X, 'x'))
+			root.add(_buildRing(_GIZMO_Y, 'y'))
+			root.add(_buildRing(_GIZMO_Z, 'z'))
+		} else if (mode === 'scale') {
+			root.add(_buildHandle(_GIZMO_X, X)); root.add(_buildHandle(_GIZMO_X, X.clone().negate()))
+			root.add(_buildHandle(_GIZMO_Y, Y)); root.add(_buildHandle(_GIZMO_Y, Y.clone().negate()))
+			root.add(_buildHandle(_GIZMO_Z, Z)); root.add(_buildHandle(_GIZMO_Z, Z.clone().negate()))
+		} else {
+			// 'move' arrows — both directions per axis so prim handles read like FS.
+			root.add(_buildArrow(_GIZMO_X, X)); root.add(_buildArrow(_GIZMO_X, X.clone().negate()))
+			root.add(_buildArrow(_GIZMO_Y, Y)); root.add(_buildArrow(_GIZMO_Y, Y.clone().negate()))
+			root.add(_buildArrow(_GIZMO_Z, Z)); root.add(_buildArrow(_GIZMO_Z, Z.clone().negate()))
+		}
+		return root
+	}
+
+	function refreshGizmo() {
+		if (!scene) return
+		const id = uiStore.editObjectId
+		if (!uiStore.showObjectEdit || !id) { clearGizmo(); return }
+		const mesh = meshMap.get(id)
+		if (!mesh) { clearGizmo(); return }
+		clearGizmo()
+		gizmoGroup  = buildGizmoForMode(uiStore.gizmoMode || 'move')
+		gizmoMeshId = id
+		scene.add(gizmoGroup)
+		positionGizmo()
+	}
+
+	function positionGizmo() {
+		if (!gizmoGroup || !gizmoMeshId) return
+		const mesh = meshMap.get(gizmoMeshId)
+		if (!mesh) { clearGizmo(); return }
+		mesh.updateWorldMatrix?.(true, false)
+		const bbox = new THREE.Box3().setFromObject(mesh)
+		const size = new THREE.Vector3(); bbox.getSize(size)
+		const ctr  = new THREE.Vector3(); bbox.getCenter(ctr)
+		// Scale gizmo to ~1.25× the prim's max half-extent so handles sit clear of the surface.
+		const halfMax = Math.max(0.4, Math.max(size.x, size.y, size.z) * 0.5)
+		const s = halfMax * 1.25
+		gizmoGroup.position.copy(ctr)
+		gizmoGroup.scale.set(s, s, s)
 	}
 
 	// ── Mesh management ───────────────────────────────────────────────────────
@@ -1204,7 +1396,7 @@ export function useWorldEngine(canvasRef) {
 	// WHY: hits whose top edge is within this much above the foot are treated as step-ups
 	// (small terrain irregularities, low decorative prims, sloped ground). DR passes
 	// through silently; bump is reserved for taller obstacles. SL physics uses ~0.25m.
-	const STEP_UP_HEIGHT   = 0.25
+	const STEP_UP_HEIGHT   = 0.25// To-do keep testing this to see if it feels right, could increase
 	// WHY: bump only fires when truly stuck — sim refuses to move the avatar despite our
 	// AgentUpdate intent. If avatarSLPos is advancing (either via DR step or sim TerseUpdate),
 	// the chest ray may still hit nearby tall prims/avatars we are walking PAST, not into;
@@ -1451,8 +1643,11 @@ export function useWorldEngine(canvasRef) {
 					if (cf & CTRL_LEFT_POS) { avatarSLPos[0] -= rX * lspd * dt; avatarSLPos[1] -= rY * lspd * dt }
 					if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
 				}
-				if (cf & CTRL_UP_POS)   avatarSLPos[2] += SL_FLY_SPEED * dt
-				if (cf & CTRL_UP_NEG)   avatarSLPos[2] -= SL_FLY_SPEED * dt
+				// WHY: only push Z directly while flying. On the ground the jump impulse
+				// (vertVel = JUMP_VEL) drives vertical motion through the gravity loop, which
+				// produces a real parabolic arc instead of a continuous lift.
+				if (isFlying && (cf & CTRL_UP_POS)) avatarSLPos[2] += SL_FLY_SPEED * dt
+				if (isFlying && (cf & CTRL_UP_NEG)) avatarSLPos[2] -= SL_FLY_SPEED * dt
 				// WHY: clamp to [1, regionSize-1] — prevents walking off the sim edge.
 				// Uses sessionStore.regionSizeX/Y so var regions (e.g. 512×512) work correctly.
 				avatarSLPos[0] = Math.max(1, Math.min(sessionStore.regionSizeX - 1, avatarSLPos[0]))
@@ -1485,13 +1680,14 @@ export function useWorldEngine(canvasRef) {
 			const groundZ = sampleTerrainHeight(avatarSLPos[0], avatarSLPos[1]) + FOOT_CLEAR
 			if (isFlying) {
 				vertVel = 0
-			} else if (avatarSLPos[2] > groundZ) {
+			} else {
+				// WHY: unconditional integration so an upward jump impulse (vertVel > 0)
+				// actually carries the avatar above groundZ before gravity overcomes it.
+				// Previous branching cleared vertVel any time foot started at groundZ, which
+				// killed the impulse on the first frame and the jump never rose.
 				vertVel = Math.max(vertVel - GRAVITY * dt, -TERMINAL_VEL)
 				avatarSLPos[2] += vertVel * dt
 				if (avatarSLPos[2] < groundZ) { avatarSLPos[2] = groundZ; vertVel = 0 }
-			} else {
-				avatarSLPos[2] = groundZ
-				vertVel = 0
 			}
 			const ownMesh = meshMap.get(ownAvatarLocalId)
 			if (ownMesh) {
@@ -1502,6 +1698,7 @@ export function useWorldEngine(canvasRef) {
 		}
 
 		if (waterMaterial) waterMaterial.uniforms.uTime.value += dt
+		if (gizmoGroup) positionGizmo()
 
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
@@ -1567,6 +1764,10 @@ export function useWorldEngine(canvasRef) {
 
 	onUnmounted(() => {
 		stopAlwaysRunWatch()
+		stopGizmoSelWatch()
+		stopGizmoModeWatch()
+		stopGizmoVisWatch()
+		clearGizmo()
 		cancelAnimationFrame(animId)
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)

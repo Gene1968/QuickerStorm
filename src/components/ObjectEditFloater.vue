@@ -8,6 +8,24 @@ const ui    = useUiStore()
 const world = useWorldStore()
 
 const activeTab = ref('general')
+
+// WHY: FS-parity Build Tools toolbar — Focus/Move/Edit/Create/Land top-row buttons.
+// Phase 2: visual only. Edit corresponds to the prim-handle preview already wired through
+// uiStore.gizmoMode; clicking Move/Edit/Rotate (Ctrl)/Scale (Ctrl+Shift) lets the user
+// preview the gizmo type without holding modifiers. Focus/Create/Land are Phase 3 stubs.
+const buildTools = [
+	{ id: 'focus',  label: 'Focus',  hint: 'Camera focus (Phase 3)', mode: null,     disabled: true  },
+	{ id: 'move',   label: 'Move',   hint: 'Position handles',        mode: 'move',   disabled: false },
+	{ id: 'edit',   label: 'Edit',   hint: 'Edit linked',             mode: 'move',   disabled: false },
+	{ id: 'rotate', label: 'Rotate', hint: 'Rotation rings (Ctrl)',  mode: 'rotate', disabled: false },
+	{ id: 'scale',  label: 'Scale',  hint: 'Scale handles (Ctrl+Shift)', mode: 'scale', disabled: false },
+	{ id: 'create', label: 'Create', hint: 'Create prim (Phase 3)',  mode: null,     disabled: true  },
+	{ id: 'land',   label: 'Land',   hint: 'Edit land (Phase 3)',    mode: null,     disabled: true  },
+]
+function pickTool(t) {
+	if (t.disabled || !t.mode) return
+	ui.setGizmoMode(t.mode)
+}
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
 const tabs = [
@@ -106,6 +124,26 @@ function close() {
 		@close="close"
 	>
 		<div class="flex flex-col h-full text-xs">
+			<!-- Build-tools toolbar (FS-parity placeholder) ─────────────────────── -->
+			<div class="shrink-0 px-2 py-1.5 border-b border-brd flex items-center gap-1">
+				<button
+					v-for="t in buildTools"
+					:key="t.id"
+					:title="t.hint"
+					:disabled="t.disabled"
+					class="flex-1 min-w-0 px-1.5 py-1 text-[0.65rem] rounded border transition-colors truncate"
+					:class="t.disabled
+						? 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'
+						: ui.gizmoMode === t.mode && t.id !== 'edit'
+							? 'border-accent text-accent bg-accent/10'
+							: 'border-brd text-white/70 hover:text-t1 hover:bg-white/5'"
+					@click="pickTool(t)"
+				>{{ t.label }}</button>
+			</div>
+			<div class="shrink-0 px-2 py-1 text-[0.6rem] text-white/40 italic border-b border-brd">
+				Click a prim to select • Ctrl = rotate • Ctrl+Shift = scale
+			</div>
+
 			<!-- Tab strip -->
 			<nav class="flex shrink-0 border-b border-brd">
 				<button
@@ -243,6 +281,98 @@ function close() {
 								{{ obj.defaultColor.map(v => v.toFixed(2)).join(', ') }}
 							</div>
 						</div>
+					</div>
+				</template>
+
+				<!-- Texture ─────────────────────────────────────────────── -->
+				<!-- WHY: FS-parity layout (read-only Phase 2). Slots correspond to libomv
+				     TextureEntry fields — texture UUID, RGBA color, RepeatU/V, OffsetU/V,
+				     Rotation, Glow, Bumpiness, Shininess. Wired through in Phase 3 when
+				     J2C decode + perms land. -->
+				<template v-else-if="activeTab === 'texture'">
+					<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-[0.7rem]">
+						<div class="text-white/50 self-center">Texture</div>
+						<div class="flex items-center gap-2">
+							<div class="w-12 h-12 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-[0.6rem]">No tex</div>
+							<button class="flex-1 px-2 py-1 border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Pick…</button>
+						</div>
+						<div class="text-white/50 self-center">Color</div>
+						<div class="flex items-center gap-2">
+							<div
+								class="w-6 h-6 rounded border border-brd"
+								:style="obj.defaultColor
+									? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
+									: { background: 'rgba(255,255,255,0.05)' }"
+							></div>
+							<input
+								:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
+								readonly
+								class="flex-1 bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono"
+							/>
+						</div>
+						<div class="text-white/50 self-center">Transparency %</div>
+						<input
+							:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
+							readonly
+							class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono"
+						/>
+						<div class="text-white/50 self-center">Glow</div>
+						<input value="0.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+					</div>
+					<div class="border-t border-brd pt-2">
+						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Mapping</div>
+						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+							<div class="text-white/50 self-center">Mapping</div>
+							<select disabled class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-white/40 cursor-not-allowed">
+								<option>Default</option><option>Planar</option>
+							</select>
+							<div class="text-white/50 self-center">Repeats / face</div>
+							<div class="grid grid-cols-2 gap-1">
+								<input value="1.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input value="1.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+							</div>
+							<div class="text-white/50 self-center">Offset</div>
+							<div class="grid grid-cols-2 gap-1">
+								<input value="0.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input value="0.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+							</div>
+							<div class="text-white/50 self-center">Rotation°</div>
+							<input value="0.0" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+						</div>
+					</div>
+					<div class="border-t border-brd pt-2">
+						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Material</div>
+						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+							<div class="text-white/50 self-center">Bumpiness</div>
+							<select disabled class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-white/40 cursor-not-allowed">
+								<option>None</option>
+							</select>
+							<div class="text-white/50 self-center">Shininess</div>
+							<select disabled class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-white/40 cursor-not-allowed">
+								<option>None</option>
+							</select>
+						</div>
+					</div>
+					<div class="text-[0.6rem] text-white/30 italic pt-1">
+						J2C texture decode + edit (Phase 3, HTTP caps).
+					</div>
+				</template>
+
+				<!-- Content ─────────────────────────────────────────────── -->
+				<!-- WHY: FS-parity layout. Phase 2: empty inventory placeholder + disabled
+				     New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
+				<template v-else-if="activeTab === 'content'">
+					<div class="flex items-center gap-1 pb-1">
+						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
+						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
+						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
+						<div class="ml-auto text-[0.6rem] text-white/40">0 items</div>
+					</div>
+					<div class="border border-brd rounded bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-white/30 italic text-[0.7rem] px-4 text-center">
+						Inventory contents will appear here (Phase 3).
+					</div>
+					<div class="text-[0.6rem] text-white/30 italic pt-1">
+						Object inventory uses HTTP capabilities — wired with Phase 3 cap layer.
 					</div>
 				</template>
 			</div>
