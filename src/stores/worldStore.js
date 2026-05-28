@@ -85,6 +85,10 @@ export const useWorldStore = defineStore('world', () => {
 	// counter on every patch write so consumers (e.g. ResyncBanner) can react to terrain
 	// data arriving without resorting to polling. Also useful as a diagnostic.
 	const terrainPatchCount = ref(0)
+	// WHY: Track which patch keys ("px,py") have arrived from server for diagnostic
+	// missing-patch detection (see [[terrain-decoder-missing-patches]]). Compared to
+	// expected 16×16 grid (or 32×32 for var-region) post-RegionHandshake to find holes.
+	const patchReceived = ref(new Set())
 
 	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per
 	// TERRAIN_PATCH message). Stores raw 16×16 patch data; seam-fill handled in useWorldEngine.
@@ -98,12 +102,29 @@ export const useWorldStore = defineStore('world', () => {
 				terrainHeights.value[slY * TERRAIN_STRIDE + slX] = heights[j * patchSize + i]
 			}
 		}
+		patchReceived.value.add(`${px},${py}`)
 		terrainPatchCount.value++
 	}
 
 	function clearTerrain() {
 		terrainHeights.value.fill(0)
 		terrainPatchCount.value = 0
+		patchReceived.value = new Set()
+	}
+
+	// WHY: Diagnostic — compare expected 16×16 (or 32×32 var-region) patch grid against
+	// arrivals. Used by useWorldEngine debounced timer to surface decoder holes.
+	// regionSize = 256 → 16 patches per axis. 512 → 32 per axis.
+	function getMissingPatches(regionSizeX = 256, regionSizeY = 256, patchSize = 16) {
+		const cols = Math.ceil(regionSizeX / patchSize)
+		const rows = Math.ceil(regionSizeY / patchSize)
+		const missing = []
+		for (let py = 0; py < rows; py++) {
+			for (let px = 0; px < cols; px++) {
+				if (!patchReceived.value.has(`${px},${py}`)) missing.push(`${px},${py}`)
+			}
+		}
+		return missing
 	}
 
 	return {
@@ -112,5 +133,6 @@ export const useWorldStore = defineStore('world', () => {
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
 		terrainHeights, TERRAIN_STRIDE, terrainPatchCount, setTerrainPatch, clearTerrain,
+		patchReceived, getMissingPatches,
 	}
 })

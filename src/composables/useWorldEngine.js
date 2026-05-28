@@ -670,10 +670,17 @@ export function useWorldEngine(canvasRef) {
 		const hStride = worldStore.TERRAIN_STRIDE  // 513 — heights array row width
 		const vStride = rx + 1                     // geometry vertex row width
 		let anyNonZero = false
+		// WHY: PlaneGeometry(rx,ry) rotateX(-π/2) + translate(rx/2, 0, -ry/2) puts
+		// mesh vertex iy=0 at Three Z=-ry (north) and iy=ry at Three Z=0 (south).
+		// Avatar SL slY maps to Three Z=-slY (slToThree). Therefore avatar at slY
+		// stands on mesh vertex iy=ry-slY, not iy=slY. Writing heights at iy=slY
+		// produced a north-south mirror that was invisible in flat regions but
+		// caused "walking on water" / "sinking into hill" where heights varied by slY.
 		for (let slY = 0; slY <= ry; slY++) {
+			const iy = ry - slY
 			for (let slX = 0; slX <= rx; slX++) {
 				const hIdx = slY * hStride + slX
-				const vi   = slY * vStride + slX
+				const vi   = iy * vStride + slX
 				const h    = worldStore.terrainHeights[hIdx]
 				if (h !== 0) anyNonZero = true
 				pos.setY(vi, h)
@@ -1346,10 +1353,37 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// WHY: Debounced missing-patch dump — fires 3s after the last TERRAIN_PATCH arrives,
+	// listing any (px,py) in the expected grid that never made it from server to store.
+	// Diagnostic for [[terrain-decoder-missing-patches]]. Reset on every patch so a long
+	// burst only logs once at the end.
+	let _missingPatchTimer = null
+	function _scheduleMissingPatchDump() {
+		if (_missingPatchTimer) clearTimeout(_missingPatchTimer)
+		_missingPatchTimer = setTimeout(() => {
+			_missingPatchTimer = null
+			const rx = sessionStore.regionSizeX
+			const ry = sessionStore.regionSizeY
+			const missing = worldStore.getMissingPatches(rx, ry, 16)
+			const total = Math.ceil(rx / 16) * Math.ceil(ry / 16)
+			const got = worldStore.patchReceived.size
+			if (missing.length === 0) {
+				const msg = `[terrain] all ${got}/${total} patches received for ${rx}×${ry}`
+				debugStore.push('info', msg)
+				console.log(msg)
+			} else {
+				const msg = `[terrain] ${got}/${total} patches received — missing ${missing.length}: [${missing.join(' ')}]`
+				debugStore.push('warn', msg)
+				console.warn(msg)
+			}
+		}, 3000)
+	}
+
 	function onTerrainPatch(payload) {
 		if (!terrainMesh) return
 		const { layerType, patchSize = 16, patches } = payload
 		if (layerType === 'WATER') return  // water plane height fixed at 20 for Phase 1
+		_scheduleMissingPatchDump()
 
 		const pos     = terrainMesh.geometry.attributes.position
 		const col     = terrainMesh.geometry.attributes.color
@@ -1364,12 +1398,15 @@ export function useWorldEngine(canvasRef) {
 
 			// WHY: Update (patchSize+1)×(patchSize+1) vertices to fill seam between patches.
 			// Clamped height index prevents reading out-of-bounds on the patch edge.
+			// iy=ry-slY: see rebuildTerrainFromStore — PlaneGeometry orientation requires
+			// mirroring slY → iy so heights land on the vertex avatar actually stands on.
 			for (let j = 0; j <= patchSize; j++) {
 				for (let i = 0; i <= patchSize; i++) {
 					const slX = px * patchSize + i
 					const slY = py * patchSize + j
 					if (slX > rx || slY > ry) continue
-					const vi = slY * vStride + slX
+					const iy = ry - slY
+					const vi = iy * vStride + slX
 					const hIdx = Math.min(j, patchSize - 1) * patchSize + Math.min(i, patchSize - 1)
 					const h = heights[hIdx]
 					pos.setY(vi, h)

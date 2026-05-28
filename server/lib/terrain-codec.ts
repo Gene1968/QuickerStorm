@@ -324,9 +324,12 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		// WHY: LayerData type byte (LayerID.Type) uses ASCII values derived from message_template.msg:
 		//   0x4C ('L') = LAND         — classic SL and standard OpenSim
 		//   0x4D ('M') = LandExtended — var-region terrain (512×512, 1024×1024), patchSize=32
-		//   0x37 ('7') = OSGrid water-floor terrain — observed on OSGrid, same binary format as LAND,
-		//                dcOffset near 0m (sea-floor depth). Decoded and applied; vertices end up below
-		//                y=20 water plane so they are hidden but correct for transition zones.
+		//   0x37 ('7') = OSGrid water-floor terrain — SEPARATE layer at sea-floor depth.
+		//                Must NOT be applied to LAND heightmap: its patch coords overlap LAND
+		//                and would overwrite real ground with h≈0, dropping avatars through
+		//                to "water" at any (slX,slY) where 0x37 arrives after LAND. Confirmed
+		//                2026-05-27 on NeverWorld: patch (0,0) real h=23m clobbered by 0x37
+		//                pseudo-patch at h≈0. Skip until a separate sea-floor mesh exists.
 		//   0x57 ('W') = WIND  — wind field (not terrain, skip)
 		//   0x43 ('C') = CLOUD — cloud field (not terrain, skip)
 		//   0x38 ('8') = WATER — water field (not terrain, skip)
@@ -334,10 +337,10 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		// is CoarseLocationUpdate; those packets were never LayerData. Removed 2026-05-25.
 		const isLand = layerTypeByte === 0x4C   // ASCII 'L' — LAND (standard regions)
 		            || layerTypeByte === 0x4D    // ASCII 'M' — LandExtended (var-regions, unsupported patchSize=32)
-		            || layerTypeByte === 0x37    // ASCII '7' — OSGrid water-floor terrain (same format as LAND)
 		const type = isLand ? 'LAND' : null
 		if (!type) {
-			const label = layerTypeByte === 0x57 ? 'WIND(0x57)'
+			const label = layerTypeByte === 0x37 ? 'OSGrid-water-floor(0x37)'
+			            : layerTypeByte === 0x57 ? 'WIND(0x57)'
 			            : layerTypeByte === 0x43 ? 'CLOUD(0x43)'
 			            : layerTypeByte === 0x38 ? 'WATER(0x38)'
 			            : `unknown(0x${layerTypeByte.toString(16)})`
@@ -364,9 +367,13 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		// WHY: minimum header size = 8+32+16+10 = 66 bits; bail before buffer exhaustion to
 		// prevent readBits returning 0 for all fields (quantWbits=0 ≠ END_OF_PATCHES=97 → infinite fake [0,0] patches).
 		const MIN_HEADER_BITS = 66
+		let exitReason = 'sentinel'
+		let oobCount = 0
+		let attemptCount = 0
 
 		for (let attempt = 0; attempt < 512; attempt++) {
-			if (reader.bitsRemaining < MIN_HEADER_BITS) break  // buffer exhausted before sentinel
+			attemptCount = attempt
+			if (reader.bitsRemaining < MIN_HEADER_BITS) { exitReason = `buf-exhausted bitsLeft=${reader.bitsRemaining}`; break }
 			const ph = readPatchHeader(reader)
 			if (!ph) break  // END_OF_PATCHES sentinel (quantWbits=97)
 			if (ph.patchX > 15 || ph.patchY > 15) {
@@ -374,11 +381,17 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 				// MUST still consume coefficient bits — encoder always writes at
 				// least ZERO_EOB (2 bits) per patch, so skipping the drain shifts
 				// the bitstream and corrupts every following patch.
+				oobCount++
+				dbg(`OOB patch (${ph.patchX},${ph.patchY}) qw=${ph.quantWbits} range=${ph.range} dc=${ph.dcOffset.toFixed(2)} — draining coeffs, bitstream may be desynced`)
 				readCoefficients(reader, ph.quantWbits)
 				continue
 			}
 			const heights = decodePatch(reader, ph)
 			patches.push({ x: ph.patchX, y: ph.patchY, heights })
+		}
+
+		if (exitReason !== 'sentinel' || oobCount > 0) {
+			dbg(`decode loop done attempts=${attemptCount} patches=${patches.length} oob=${oobCount} exit=${exitReason}`)
 		}
 
 		return { type: 'LAND', patchSize: groupHdr.patchSize, patches }

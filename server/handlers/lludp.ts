@@ -463,7 +463,11 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		const p0 = result.patches[0]
 		const h0 = p0.heights[0].toFixed(2)
 		const hN = p0.heights[p0.heights.length - 1].toFixed(2)
-		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m hN=${hN}m`)
+		// WHY: Diagnostic for [[terrain-decoder-missing-patches]] — full key list per
+		// packet so we can compare codec emit set vs client patchReceived set and find
+		// which (px,py) the decoder is silently dropping.
+		const keyList = result.patches.map(p => `${p.x},${p.y}`).join(' ')
+		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m hN=${hN}m keys=[${keyList}]`)
 		const wirePatches = result.patches.map(p => ({
 			x: p.x,
 			y: p.y,
@@ -479,6 +483,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					heights: p.heights,
 				})
 			}
+			slog.info(session.ws, `[terrain] cache size after packet: ${session.terrainCache.size}`)
 		}
 		session.ws.send(JSON.stringify({
 			t: S.TERRAIN_PATCH,
