@@ -5,7 +5,7 @@ import type { CircuitState } from '../state/sessions'
 import {
 	parseHeader, parseMsgType,
 	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
-	decodeObjectUpdateCached, encodeRequestMultipleObjects,
+	decodeObjectUpdateCached, encodeRequestMultipleObjects, decodeObjectUpdateCompressed,
 	decodeRegionHandshake, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
 	encodeTeleportLocationRequest, encodeCompleteAgentMovement,
@@ -30,6 +30,7 @@ import { replayCachedWorld } from '../lib/resync'
 const HIGH_START_PING_CHECK    = 1     // Sim → viewer: keepalive ping (High freq, 1-byte prefix)
 const HIGH_LAYER_DATA          = 11    // LayerData (terrain patches) — High freq, msg ID 11
 const HIGH_OBJECT_UPDATE       = 12    // Sim → viewer: full object/avatar update (High freq)
+const HIGH_OBJECT_UPDATE_COMPRESSED = 13  // Sim → viewer: ObjectUpdateCompressed (High freq, common for ReqMulti replies)
 const HIGH_OBJECT_UPDATE_CACHED= 14    // ObjectUpdateCached — reply with RequestMultipleObjects (High freq)
 const HIGH_OBJECT_UPDATE_TERSE = 15    // ImprovedTerseObjectUpdate — position-only (High freq)
 const HIGH_KILL_OBJECT         = 16    // Sim → viewer: remove these localIds from scene (High freq)
@@ -197,6 +198,38 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 
 	const { type, dataOffset } = parseMsgType(buf, hdr.bodyOffset)
 
+	// Per-type RX counter for prim-dropout investigation. Lets us compare sim send vs
+	// decode-success vs relay-out rates across message types (#12 ObjectUpdate, #13
+	// ObjectUpdateCompressed, #14 ObjectUpdateCached, #15 ImprovedTerseObjectUpdate, etc).
+	session.msgRxCounts.set(type, (session.msgRxCounts.get(type) ?? 0) + 1)
+
+	// Periodic 5s summary so we can compute boundary drop rates without grep-fu.
+	const _now = Date.now()
+	if (_now - session.lastDiagLogAt >= 5000) {
+		session.lastDiagLogAt = _now
+		// Show object-stream message types prominently; also dump full map so unknown types
+		// (e.g. high:13 ObjectUpdateCompressed which has no handler) appear in summary.
+		const PRIM_TYPES = ['high:12', 'high:13', 'high:14', 'high:15']
+		const primParts = PRIM_TYPES.map(t => `${t}=${session.msgRxCounts.get(t) ?? 0}`)
+		const other: string[] = []
+		for (const [k, v] of session.msgRxCounts) {
+			if (!PRIM_TYPES.includes(k)) other.push(`${k}=${v}`)
+		}
+		const counts = [...primParts, ...other]
+		// Camera pos (SL coords) from last MOVE so we can correlate distinct-count rise
+		// vs avatar movement / camera rotation. camAt vector reveals facing direction
+		// (sim interest-list cone is camera-facing-aware).
+		const camP = session.lastAgentParams?.camCenter
+		const camA = session.lastAgentParams?.camAt
+		const camStr = camP
+			? `cam=${camP[0].toFixed(0)},${camP[1].toFixed(0)},${camP[2].toFixed(0)} at=${camA?.[0].toFixed(2)},${camA?.[1].toFixed(2)}`
+			: 'cam=?'
+		slog.info(session.ws,
+			`[PrimDiag] rx{${counts.join(' ')}} decoded=${session.objDecodedCount} relayed=${session.objRelayedCount} ` +
+			`distinct=${session.distinctLocalIds.size} reqMulti=${session.reqMultiOutCount}batches/${session.reqMultiIdsCount}ids ` +
+			`pending=${session.cacheMissPending.length} ${camStr}`)
+	}
+
 	// Log first packet + every LOG_EVERY_N_PACKETS thereafter
 	if (session.udpRxCount === 1 || session.udpRxCount % LOG_EVERY_N_PACKETS === 0) {
 		slog.info(session.ws, `UDP RX #${session.udpRxCount}: type=${type} size=${rawBuf.length}b reliable=${hdr.reliable}`)
@@ -332,6 +365,34 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `high:${HIGH_OBJECT_UPDATE_COMPRESSED}`) {
+		// MVP decoder — fixed prefix only (pos/rot/scale/pcode/fullId/localId). Shape defaults
+		// to cube on client. Adequate to surface ~2000 prims sim sends as Compressed replies
+		// to RequestMultipleObjects when cache-miss volume is high.
+		try {
+			const objects = decodeObjectUpdateCompressed(buf, dataOffset,
+				(errMsg) => slog.warn(session.ws, `[ObjCompressed] partial: ${errMsg}`))
+			if (objects.length > 0) {
+				session.objDecodedCount += objects.length
+				for (const o of objects) {
+					if (typeof o.localId === 'number') {
+						session.objCache.set(o.localId, o)
+						session.distinctLocalIds.add(o.localId)
+						const idx = session.cacheMissPending.indexOf(o.localId)
+						if (idx >= 0) session.cacheMissPending.splice(idx, 1)
+					}
+				}
+				session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
+				session.objRelayedCount += objects.length
+				if (!session.loggedTypes.has('objcompressed')) {
+					session.loggedTypes.add('objcompressed')
+					slog.info(session.ws, `[ObjCompressed] first decode: ${objects.length} objects, localIds=${objects.slice(0,3).map(o=>o.localId).join(',')}`)
+				}
+			}
+		} catch (e) { slog.warn(session.ws, `ObjectUpdateCompressed decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	if (type === `high:${HIGH_OBJECT_UPDATE_CACHED}`) {
 		// WHY: Sim sends ObjectUpdateCached when it believes we have objects cached from a
 		// previous session. Since we maintain no object cache, we request full updates for
@@ -340,22 +401,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const ids = decodeObjectUpdateCached(buf, dataOffset)
 			if (ids.length > 0) {
-				// Batch into chunks of 16 to avoid oversized packets
-				const BATCH = 16
-				for (let i = 0; i < ids.length; i += BATCH) {
-					const chunk = ids.slice(i, i + BATCH)
-					const seq = nextSeq(session)
-					const pkt = encodeRequestMultipleObjects({
-						agentId:   session.agentId,
-						sessionId: session.sessionId,
-						seq,
-						ids:       chunk,
-					})
-					session.udpSocket.send(pkt, session.simPort, session.simIp)
+				// WHY: Sim's EntityUpdateQueue aged out RequestMultipleObjects entries when we
+				// bursted 348 batches in <5s — only 113/4792 returned. Enqueue here, drain at
+				// paced rate via heartbeat timer (drainCacheMissQueue). Skip IDs already
+				// fulfilled (in objCache) and any already queued (cheap O(n) check; pending
+				// list typically stays small after drain).
+				for (const id of ids) {
+					if (session.objCache.has(id)) continue
+					if (session.cacheMissPending.includes(id)) continue
+					session.cacheMissPending.push(id)
 				}
-				if (ids.length <= 4 || !session.loggedTypes.has('objcache')) {
+				if (!session.loggedTypes.has('objcache')) {
 					session.loggedTypes.add('objcache')
-					slog.info(session.ws, `[ObjCached] ${ids.length} ids → RequestMultipleObjects (first batch ids=${ids.slice(0,4).join(',')})`)
+					slog.info(session.ws, `[ObjCached] +${ids.length} ids enqueued (pending=${session.cacheMissPending.length})`)
 				}
 			}
 		} catch (e) { slog.warn(session.ws, `ObjectUpdateCached decode error: ${(e as Error).message}`) }
@@ -374,11 +432,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		)
 		if (objects.length > 0) {
 			slog.info(session.ws, `ObjectUpdate: ${objects.length} objects (pcodes: ${objects.map(o=>o.pcode).join(',')})`)
-			// Cache by localId for resync replay (page reload / "Resync World")
+			session.objDecodedCount += objects.length
+			// Cache by localId for resync replay (page reload / "Resync World").
+			// Drop from cache-miss queue — sim just fulfilled the request so we don't need to ask again.
 			for (const o of objects) {
-				if (typeof o.localId === 'number') session.objCache.set(o.localId, o)
+				if (typeof o.localId === 'number') {
+					session.objCache.set(o.localId, o)
+					session.distinctLocalIds.add(o.localId)
+					const idx = session.cacheMissPending.indexOf(o.localId)
+					if (idx >= 0) session.cacheMissPending.splice(idx, 1)
+				}
 			}
 			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
+			session.objRelayedCount += objects.length
 		} else {
 			slog.warn(session.ws, `[ObjUpd] decode returned 0 objects (bufLen=${buf.length})`)
 		}
@@ -781,6 +847,20 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.CLIENT_DIAG) {
+		// Client-side mirror of [PrimDiag] so server-log.txt holds both ends of the pipe.
+		// Without this we have no record of mesh-count or upsert failures after session ends.
+		const d = msg.d as {
+			received?: number; stored?: number; prims?: number; av?: number;
+			meshes?: number; upsertFails?: number; skippedOversize?: number
+		}
+		slog.info(session.ws,
+			`[ClientDiag] received=${d.received ?? '?'} stored=${d.stored ?? '?'} ` +
+			`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
+			`upsertFails=${d.upsertFails ?? '?'} skipOversize=${d.skippedOversize ?? '?'}`)
+		return
+	}
+
 	if (msg.t === C.RESYNC_WORLD) {
 		// WHY: Manual resync trigger — replay cached region/terrain/spawn to the browser,
 		// then send an AgentUpdate to nudge the sim to refresh its interest list so prims
@@ -799,6 +879,33 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			slog.info(session.ws, `→ AgentUpdate nudge sent (seq=${seq}) to refresh sim interest list`)
 		}
 		return
+	}
+}
+
+/**
+ * Drain N cache-miss IDs per tick and send RequestMultipleObjects to sim.
+ * Called from heartbeat timer (500ms). With BATCH=16 and PER_TICK=2 we send 32 ids/tick
+ * = 64 ids/sec — ~75s to drain 4792-id region enumeration. Each packet is tracked as
+ * reliable so UDP drops auto-retransmit.
+ */
+function drainCacheMissQueue(s: CircuitState): void {
+	if (s.cacheMissPending.length === 0) return
+	const BATCH = 16
+	const PER_TICK = 2
+	for (let p = 0; p < PER_TICK; p++) {
+		if (s.cacheMissPending.length === 0) break
+		const chunk = s.cacheMissPending.splice(0, BATCH)
+		const seq = nextSeq(s)
+		const pkt = encodeRequestMultipleObjects({
+			agentId:   s.agentId,
+			sessionId: s.sessionId,
+			seq,
+			ids:       chunk,
+		})
+		trackReliable(s, seq, pkt)
+		s.udpSocket.send(pkt, s.simPort, s.simIp)
+		s.reqMultiOutCount++
+		s.reqMultiIdsCount += chunk.length
 	}
 }
 
@@ -855,6 +962,7 @@ export function startCircuitTimers(sessionId: string): () => void {
 		retransmitOverdue(s)
 		sendPendingAcks(s)
 		sendHeartbeat(s)
+		drainCacheMissQueue(s)
 	}, 500)
 	return () => clearInterval(timer)
 }

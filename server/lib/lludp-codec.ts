@@ -260,12 +260,14 @@ export function encodeTeleportLocationRequest(p: {
   return Buffer.concat([hdr, MSG, body])
 }
 
-/** RequestMultipleObjects (Medium #22 = 0xFF 0x16) — ask sim for full ObjectUpdate for
+/** RequestMultipleObjects (Medium #3 = 0xFF 0x03) — ask sim for full ObjectUpdate for
  *  objects we have in ObjectUpdateCached but don't know about.
- *  WHY: Sims send ObjectUpdateCached (high:11) for objects they think the viewer has cached.
+ *  WHY: Sims send ObjectUpdateCached (high:14) for objects they think the viewer has cached.
  *  Since we have no object cache, we must reply to get the full update (pcode, pos, name).
- *  Without this, our own avatar's ObjectUpdate (pcode=47) is never received, ownAvatarLocalId
- *  stays null, and TerseUpdates are never attributed → location bar never updates on movement.
+ *  WHY Medium 3 (not 22): Verified against Firestorm scripts/messages/message_template.msg —
+ *  earlier code used 0xFF 0x16 (Medium 22) which sim silently drops (no matching handler),
+ *  causing 100% of 366 ReqMulti retransmits to go unacked and ~4700 cache-miss IDs to never
+ *  yield ObjectUpdate replies.
  */
 export function encodeRequestMultipleObjects(p: {
   agentId:   string
@@ -274,7 +276,7 @@ export function encodeRequestMultipleObjects(p: {
   ids:       number[]  // localIds to request
 }): Buffer {
   const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG  = Buffer.from([0xFF, 0x16])  // Medium #22
+  const MSG  = Buffer.from([0xFF, 0x03])  // Medium #3
   const body = Buffer.allocUnsafe(16 + 16 + 1 + p.ids.length * 5)
   let off = 0
   uuidToBytes(p.agentId).copy(body, off);   off += 16
@@ -736,6 +738,74 @@ export interface ObjectData {
   faceColors?:   Array<[number, number, number, number] | null>  // length up to 32; null where face uses defaultColor
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
+}
+
+/**
+ * ObjectUpdateCompressed (High #13) decoder — MVP, fixed-block only.
+ * WHY: OpenSim sends ObjectUpdateCompressed for most prims after we send a valid
+ * RequestMultipleObjects burst. Format per libomv Primitive.FromCompressedPacket:
+ *   RegionHandle U64 + TimeDilation U16 + count U8 + N × (UpdateFlags U32 + Data Variable2)
+ * Data payload starts with 64 fixed bytes (fullId..rotation). Beyond that, CompressedFlags
+ * U32 + OwnerID UUID + flag-conditional fields + Path/Profile shape + TextureEntry. Parsing
+ * conditionals correctly is non-trivial; this MVP reads only the fixed prefix and reports
+ * pos/rot/scale with default cube shape. Adequate for Phase 2 "world looks like world"
+ * — full shape decode is Phase 2.5 polish.
+ */
+export function decodeObjectUpdateCompressed(
+  buf: Buffer,
+  dataOffset: number,
+  onError?: (msg: string) => void,
+): ObjectData[] {
+  const objects: ObjectData[] = []
+  let off = dataOffset
+  off += 8   // RegionHandle U64
+  off += 2   // TimeDilation U16
+  const count = buf[off++]
+  for (let i = 0; i < count && off < buf.length; i++) {
+    try {
+      off += 4   // UpdateFlags U32
+      if (off + 2 > buf.length) throw new Error(`Data Variable2 prefix OOB at off=${off}`)
+      const dataLen = buf.readUInt16LE(off); off += 2
+      const dataEnd = off + dataLen
+      if (dataEnd > buf.length) throw new Error(`Data Variable2 length ${dataLen} exceeds buf at off=${off}`)
+      if (dataLen < 64) { off = dataEnd; continue }   // too short for fixed block
+      const fullId   = bytesToUuid(buf, off); off += 16
+      const localId  = buf.readUInt32LE(off); off += 4
+      const pcode    = buf[off++]
+      off += 1   // state
+      off += 4   // crc
+      off += 1   // material
+      off += 1   // clickAction
+      const sx = buf.readFloatLE(off);     off += 4
+      const sy = buf.readFloatLE(off);     off += 4
+      const sz = buf.readFloatLE(off);     off += 4
+      const px = buf.readFloatLE(off);     off += 4
+      const py = buf.readFloatLE(off);     off += 4
+      const pz = buf.readFloatLE(off);     off += 4
+      const rx = buf.readFloatLE(off);     off += 4
+      const ry = buf.readFloatLE(off);     off += 4
+      const rz = buf.readFloatLE(off);     off += 4
+      const rw = Math.sqrt(Math.max(0, 1 - rx * rx - ry * ry - rz * rz))
+      // Skip remaining payload — conditionals + shape + TE not parsed in MVP.
+      off = dataEnd
+      // Trees/grass/particles render-skipped (same convention as full ObjectUpdate decoder).
+      if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) continue
+      objects.push({
+        localId, fullId, pcode,
+        scale: [sx, sy, sz],
+        pos:   [px, py, pz],
+        rot:   [rx, ry, rz, rw],
+        nameValue: '',
+        parentId:  0,
+        // No shape → buildPrimGeometry falls back to BoxGeometry (cube). Adequate visual
+        // stand-in until full Compressed shape decode lands.
+      })
+    } catch (e) {
+      onError?.(`compressedObj[${i}/${count}] failOff=${off}: ${(e as Error).message}`)
+      break
+    }
+  }
+  return objects
 }
 
 /**

@@ -95,7 +95,12 @@
       "Bash(curl -sL \"https://raw.githubusercontent.com/openmetaversefoundation/libopenmetaverse/master/OpenMetaverse/TerrainCompressor.cs\")",
       "Bash(findstr -i \"tsc bun\")",
       "Bash(bun build *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(npx eslint *)",
+      "WebFetch(domain:wiki.secondlife.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/cinderblocks/libopenmetaverse/master/OpenMetaverse/message_template.msg\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/secondlife/viewer/main/scripts/messages/message_template.msg\")"
     ]
   }
 }

@@ -27,6 +27,21 @@ export interface CircuitState {
 	circuitEstablished: boolean  // true once UseCircuitCode acked
 	// Diagnostic: track packet types seen, logged once each for unhandled types
 	loggedTypes: Set<string>
+	// Diagnostic: prim-dropout investigation. Counts per LLUDP message type ("high:12" etc),
+	// total objects emerging from decodeObjectUpdate, total objects forwarded to WS,
+	// distinct localIds ever upserted to objCache, RequestMultipleObjects batches sent +
+	// total cached IDs requested. Periodic 5s summary log identifies which boundary drops prims.
+	msgRxCounts:        Map<string, number>
+	objDecodedCount:    number
+	objRelayedCount:    number
+	reqMultiOutCount:   number
+	reqMultiIdsCount:   number
+	distinctLocalIds:   Set<number>
+	lastDiagLogAt:      number
+	// Paced cache-miss queue. Sim's EntityUpdateQueue ages out RequestMultipleObjects
+	// entries when bursted faster than it can process — testing showed 348 batches in <5s
+	// yielded only 113 ObjectUpdates from 4792 requested IDs. Drain N per heartbeat tick.
+	cacheMissPending:   number[]
 	// Diagnostic counters
 	wsMoveCount?: number  // total MOVE messages received from browser client
 	// Heartbeat: send AgentUpdate periodically to prevent sim 60s timeout

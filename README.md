@@ -74,6 +74,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - WebRTC proximity voice — peer signaling works; spatial falloff and VAD tuning still ahead
 - Inventory at scale — UUID dedup, folder tree sync across login sessions
 - LLSD-XML / LLSD-binary parser — every cap response uses it; not just JSON
+- Currency?  Hard to care about it
 
 ---
 

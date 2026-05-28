@@ -10,7 +10,7 @@ import { useDebugStore } from '@/stores/debugStore'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
-import { S } from '@shared/protocol.js'
+import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
@@ -129,7 +129,7 @@ export function useWorldEngine(canvasRef) {
 	const sessionStore = useSessionStore()
 	const uiStore      = useUiStore()
 	const debugStore   = useDebugStore()
-	const { on, off }  = useRealtimeSocket()
+	const { on, off, emit: wsEmit }  = useRealtimeSocket()
 	const { sendMove, sendSelect, sendSetAlwaysRun } = useLLUDP()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
@@ -614,7 +614,11 @@ export function useWorldEngine(canvasRef) {
 			camAt:     [-Math.sin(yaw),  Math.cos(yaw), 0],   // forward in SL space
 			camLeft:   [-Math.cos(yaw), -Math.sin(yaw), 0],   // left   in SL space
 			camUp:     [0, 0, 1],                              // Z-up in SL space
-			far:       128,
+			// WHY: Sim interest list culls ObjectUpdate replies by far/draw-distance.
+			// 128m left ~97% of cache-miss requests unsatisfied in a sparse-corner spawn
+			// (4338 cached IDs requested → 44 ObjectUpdates returned over 70s). Firestorm
+			// default is 256m; matches FS behaviour and quadruples interest-list radius.
+			far:       256,
 		})
 	}
 
@@ -977,7 +981,48 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	// ── Mesh management ───────────────────────────────────────────────────────
+	// WHY: SL standard prim max = 10m. Linden megaprim spec extends to 64m. Compressed
+	// decoder is MVP; its 64-byte fixed-block parse can land on misaligned offsets for some
+	// prim variants, yielding NaN/Inf or absurd scale values. Without this guard the resulting
+	// THREE.Mesh extends "to infinity" along an axis — visible as flashing white walls into
+	// the sky. Also clamp position: SL regions are 0..256 (or up to 512 var-region); Z runs
+	// roughly -256 (underwater) to 4096 (high build). Anything beyond either bound is decode
+	// garbage. Skip the mesh entirely rather than render an out-of-region or huge object.
+	const MAX_PRIM_SCALE = 64
+	const MIN_PRIM_SCALE = 0.01
+	const POS_MIN = -64
+	const POS_MAX_XY = 1024   // generous: var-region 512 + neighbour-sim slack
+	const POS_MIN_Z = -512
+	const POS_MAX_Z = 8192
+	let skippedOversize = 0
+	function shouldSkipForSafety(obj) {
+		if (obj.pcode === PCODE_AVATAR) return false  // avatars don't carry scale; capsule fixed
+		const sc = obj.scale
+		if (sc) {
+			if (!Number.isFinite(sc[0]) || !Number.isFinite(sc[1]) || !Number.isFinite(sc[2])) return true
+			const maxS = Math.max(Math.abs(sc[0]), Math.abs(sc[1]), Math.abs(sc[2]))
+			const minS = Math.min(Math.abs(sc[0]), Math.abs(sc[1]), Math.abs(sc[2]))
+			if (maxS > MAX_PRIM_SCALE) return true
+			if (maxS < MIN_PRIM_SCALE && minS < MIN_PRIM_SCALE) return true
+		}
+		const p = obj.pos
+		if (p) {
+			if (!Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) return true
+			if (p[0] < POS_MIN || p[0] > POS_MAX_XY) return true
+			if (p[1] < POS_MIN || p[1] > POS_MAX_XY) return true
+			if (p[2] < POS_MIN_Z || p[2] > POS_MAX_Z) return true
+		}
+		return false
+	}
 	function upsertMesh(obj) {
+		if (shouldSkipForSafety(obj)) {
+			skippedOversize++
+			if (skippedOversize <= 10 || skippedOversize % 50 === 0) {
+				debugStore.push('warn',
+					`[3D] skip unsafe localId=${obj.localId} scale=${obj.scale?.map(v=>Number.isFinite(v)?v.toFixed(1):v).join(',')} pos=${obj.pos?.map(v=>Number.isFinite(v)?v.toFixed(0):v).join(',')} (#${skippedOversize})`)
+			}
+			return
+		}
 		let mesh = meshMap.get(obj.localId)
 		const isNew = !mesh
 
@@ -992,9 +1037,13 @@ export function useWorldEngine(canvasRef) {
 			// caused directional-light flicker as the mesh rotated with yaw.
 			// WHY hashed-HSL fallback: legacy stand-in when TE decode produces no defaultColor.
 			// Real TE color preferred; fall back keeps prims visually distinct rather than uniform grey.
+			// WHY: Compressed-decoded prims (most of scene after Phase 2 prim fix) lack a real
+			// TextureEntry, so they all fall back to hashedColor. Saturation 0.35 produced
+			// near-white pastels that made the scene unreadable wall-to-wall. Bump to 0.6 for
+			// distinguishable colors so user can tell prims apart at walking distance.
 			const hashedColor = new THREE.Color().setHSL(
 				((obj.localId * 2654435761) >>> 0) / 0xffffffff,
-				0.35,
+				0.6,
 				0.55,
 			)
 			const teColor = obj.defaultColor
@@ -1120,18 +1169,50 @@ export function useWorldEngine(canvasRef) {
 
 	// ── Incoming messages ─────────────────────────────────────────────────────
 	let objUpdateCount = 0
+	// Prim-dropout diagnostic: receive-side counters and 5s periodic summary so we can
+	// compare server-relayed prim count vs client-rendered mesh count. Failures in
+	// buildPrimGeometry/upsertMesh that previously crashed the loop are now caught + counted.
+	let objsReceivedTotal = 0
+	let upsertMeshFailures = 0
+	let lastPrimDiagAt = 0
 	function onObjectUpdate(payload) {
 		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers, not the full {t,d} envelope.
 		// So payload = { objects: [...] } — access as payload.objects, not payload.d.objects.
 		const objs = payload?.objects ?? []
 		objUpdateCount++
+		objsReceivedTotal += objs.length
 		if (objUpdateCount === 1 || objUpdateCount % 20 === 0) {
 			const avCount = objs.filter(o => o.pcode === PCODE_AVATAR).length
 			debugStore.push('info', `[3D] ObjectUpdate #${objUpdateCount}: ${objs.length} objects (${avCount} av) agentId=${sessionStore.agentId?.slice(0,8)}`)
 		}
+		const now = Date.now()
+		if (now - lastPrimDiagAt >= 5000) {
+			lastPrimDiagAt = now
+			const primCount = worldStore.prims.length
+			const avCount = worldStore.avatars.length
+			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} upsertFails=${upsertMeshFailures}`)
+			// Mirror to server-log via WS so server-log.txt has full client+server picture.
+			wsEmit(C.CLIENT_DIAG, {
+				received:        objsReceivedTotal,
+				stored:          worldStore.objects.size,
+				prims:           primCount,
+				av:              avCount,
+				meshes:          meshMap.size,
+				upsertFails:     upsertMeshFailures,
+				skippedOversize,
+			})
+		}
 		for (const obj of objs) {
 			worldStore.upsertObject(obj)
-			upsertMesh(obj)
+			try {
+				upsertMesh(obj)
+			} catch (e) {
+				upsertMeshFailures++
+				if (upsertMeshFailures <= 5 || upsertMeshFailures % 25 === 0) {
+					debugStore.push('warn', `[3D] upsertMesh fail #${upsertMeshFailures} localId=${obj.localId} pcode=${obj.pcode}: ${e.message}`)
+				}
+				continue
+			}
 			// WHY: Identify our own avatar by fullId == agentId so TerseUpdate can
 			// drive the third-person follow camera via avatarSLPos.
 			// WHY: bytesToUuid() returns lowercase; login XML may return uppercase agentId.
