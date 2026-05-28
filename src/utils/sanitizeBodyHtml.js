@@ -1,6 +1,6 @@
 /**
  * sanitizeBodyHtml — DOMParser-based sanitizer + wrapper used by both the
- * phone Mail body and the phone Calendar event description iframes.
+ * {mail/cal} event description iframes.
  *
  * - Strips <script>, <iframe>, <object>, <embed>, <applet>, <noscript>.
  * - Strips inline event handlers (on*).

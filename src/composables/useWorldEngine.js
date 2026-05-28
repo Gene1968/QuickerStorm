@@ -991,7 +991,7 @@ export function useWorldEngine(canvasRef) {
 	const MAX_PRIM_SCALE = 64
 	const MIN_PRIM_SCALE = 0.01
 	const POS_MIN = -64
-	const POS_MAX_XY = 1024   // generous: var-region 512 + neighbour-sim slack
+	const POS_MAX_XY = 1024// generous: var-region 512 + neighbour-sim slack
 	const POS_MIN_Z = -512
 	const POS_MAX_Z = 8192
 	let skippedOversize = 0

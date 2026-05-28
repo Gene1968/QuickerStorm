@@ -57,7 +57,7 @@ function submit() {
 }
 
 // Permanent-add request — opens GitHub issues or mailto
-const REQUEST_URL = 'mailto:gene.biondo@avatechnologyllc.com?subject=QuickerSTORM%20Grid%20Addition%20Request'
+const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%20Addition%20Request'
 </script>
 
 <template>

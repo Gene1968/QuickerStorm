@@ -18,7 +18,6 @@
 import { ref, watch, onUnmounted } from 'vue'
 import { useAudio, isAllAudioMuted } from '@/composables/useAudio.js'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket.js'
-import { useOfficeStore } from '@/stores/officeStore.js'
 import { usePresenceStore } from '@/stores/presenceStore.js'
 
 // ── Module-level mute sync ────────────────────────────────────────────
@@ -106,7 +105,6 @@ export const peerAnalysers = new Map()  // signalingId → { analyser, buf }
 
 export function useProximityVoice () {
 	const audio = useAudio()
-	const officeStore = useOfficeStore()
 	const presenceStore = usePresenceStore()
 
 	// ── Reactive state ──────────────────────────────────────────────
@@ -568,8 +566,7 @@ export function useProximityVoice () {
 	}
 
 	// ── Move to a different room ─────────────────────────────────────
-	// voiceRoomId tracks the actual room we're connected to for voice,
-	// which may lag behind officeStore.currentRoomId when blocked by a lock.
+	// voiceRoomId tracks the actual room we're connected to for voice.
 	let voiceRoomId = null
 
 	function changeRoom (roomId) {
@@ -598,11 +595,6 @@ export function useProximityVoice () {
 		// Peers are cleaned up on successful join (room-users) or on
 		// explicit navigation away.
 	}
-
-	// Auto-change voice room whenever the office room changes
-	watch(() => officeStore.currentRoomId, (roomId) => {
-		if (roomId) changeRoom(roomId)
-	})
 
 	// When knock-admitted, trigger a voice room change even if the engine's
 	// navigateTo was a no-op (user already physically in the room, so
