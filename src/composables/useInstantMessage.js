@@ -5,6 +5,7 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useAvatarStore } from '@/stores/avatarStore'
+import { playSound } from '@/composables/useAudio'
 import { S } from '@shared/protocol.js'
 
 // conversations: Map<remoteAgentId, { agentId, agentName, messages: [{from, text, ts, dialog}] }>
@@ -63,7 +64,9 @@ export function useInstantMessage() {
 		// WHY: dialog 0=MessageFromAgent, 1=MessageBox, 4=FromTaskAsAlert, 19=BusyAutoResponse, etc.
 		// For Phase 2 only handle 0 (normal IM); other dialogs (group invites, requests) are Phase 3.
 		if (d.dialog !== 0) return
+		const isNew = !conversations.value.has(d.fromAgentId)
 		const conv = ensureConv(d.fromAgentId, d.fromAgentName)
+		if (isNew) playSound('chime.mp3', 0.5)
 		conv.messages.push({ from: d.fromAgentName, text: d.message, ts: d.timestamp * 1000, dialog: d.dialog })
 		conversations.value = new Map(conversations.value)
 		if (activeId.value !== d.fromAgentId) unreadCount.value++

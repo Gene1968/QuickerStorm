@@ -21,7 +21,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] **Real region terrain heightmap** — decoded from LayerData, rendered with topo colors (blue/teal/green/earthy/stone)
 - [x] See your region and coordinates in the location bar, and do same-region teleport from there
 - [x] Session resume on network blip (15-second circuit hold).  Proper logout disconnect
-- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, collision bump, etc.)
+- [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, collision bump, new IM chime, disconnect "complication," etc.)
 - [x] Gravity and fall terrain impact
 - [x] Bump into other avatars
 

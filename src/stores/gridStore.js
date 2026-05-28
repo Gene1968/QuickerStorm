@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import builtinGrids from '@/config/grids.json'
+import { playSound } from '@/composables/useAudio'
 
 const USER_GRIDS_KEY  = 'qs_user_grids'
 const SELECTED_KEY    = 'qs_selected_grid'
@@ -57,8 +58,9 @@ export const useGridStore = defineStore('grid', () => {
 	}
 
 	function setDisconnected(reason) {
-		loginState.value      = 'disconnected'
+		loginState.value       = 'disconnected'
 		disconnectReason.value = reason
+		playSound('complication.mp3', 0.6)
 	}
 
 	// ── User-managed grids ───────────────────────────────────────────────────
