@@ -52,5 +52,9 @@ export function useLLUDP() {
 		emit(C.OBJECT_DESELECT, { localIds: ids })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect }
+	function sendSetAlwaysRun(alwaysRun) {
+		emit(C.SET_ALWAYS_RUN, { alwaysRun: !!alwaysRun })
+	}
+
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendSetAlwaysRun }
 }

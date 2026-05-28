@@ -14,6 +14,7 @@ import {
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
 	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
+	encodeSetAlwaysRun,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -695,6 +696,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		return
+	}
+
+	if (msg.t === C.SET_ALWAYS_RUN) {
+		const d = msg.d as { alwaysRun: boolean }
+		const seq = nextSeq(session)
+		const pkt = encodeSetAlwaysRun({ agentId: session.agentId, sessionId: session.sessionId, seq, alwaysRun: !!d.alwaysRun })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ SetAlwaysRun ${d.alwaysRun ? 'true' : 'false'}`)
 		return
 	}
 

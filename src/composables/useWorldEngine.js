@@ -1,5 +1,5 @@
 // src/composables/useWorldEngine.js — Three.js scene driven by LLUDP ObjectUpdate data
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import * as THREE from 'three'
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 import gsap from 'gsap'
@@ -117,7 +117,8 @@ const CTRL_YAW_NEG   = 0x0200  // turn right
 const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
-const CTRL_ALWAYS_RUN = 0x00100000  // sticky run state (Ctrl+R); sim treats movement as run
+// NOTE: Always-run is NOT a ControlFlags bit. It is sent via SetAlwaysRun (Low #21).
+// Bit 20 (0x00100000) is AGENT_CONTROL_NUDGE_AT_NEG and would make the sim auto-walk backward.
 
 const FOLLOW_DIST   = 1.0   // metres behind avatar (third-person)
 const FOLLOW_HEIGHT = 2.0   // metres above avatar feet
@@ -129,7 +130,11 @@ export function useWorldEngine(canvasRef) {
 	const uiStore      = useUiStore()
 	const debugStore   = useDebugStore()
 	const { on, off }  = useRealtimeSocket()
-	const { sendMove, sendSelect } = useLLUDP()
+	const { sendMove, sendSelect, sendSetAlwaysRun } = useLLUDP()
+
+	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
+	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
+	const stopAlwaysRunWatch = watch(() => uiStore.alwaysRun, (v) => sendSetAlwaysRun(v))
 	const { playSound } = useAudio()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
@@ -472,9 +477,6 @@ export function useWorldEngine(canvasRef) {
 		// ── Control flags (always sent to sim regardless of camera mode) ──────
 		let cf = 0
 		if (isFlying) cf |= CTRL_FLY
-		// WHY: ALWAYS_RUN is a sticky sim-side flag toggled by Ctrl+R. Sim treats agent
-		// as running for all subsequent movement; viewer no longer needs CTRL_FAST_AT.
-		if (uiStore.alwaysRun) cf |= CTRL_ALWAYS_RUN
 
 		if (!shift) {
 			if (keys['KeyA'] || keys['ArrowLeft'])  cf |= CTRL_YAW_POS
@@ -1199,7 +1201,19 @@ export function useWorldEngine(canvasRef) {
 	const _rayDir      = new THREE.Vector3()
 	const COLLIDE_DIST = 0.6   // metres — avatar radius + small buffer
 	const BUMP_COOLDOWN_MS = 400
+	// WHY: hits whose top edge is within this much above the foot are treated as step-ups
+	// (small terrain irregularities, low decorative prims, sloped ground). DR passes
+	// through silently; bump is reserved for taller obstacles. SL physics uses ~0.25m.
+	const STEP_UP_HEIGHT   = 0.25
+	// WHY: bump only fires when truly stuck — sim refuses to move the avatar despite our
+	// AgentUpdate intent. If avatarSLPos is advancing (either via DR step or sim TerseUpdate),
+	// the chest ray may still hit nearby tall prims/avatars we are walking PAST, not into;
+	// playing bump there is noise. Threshold: < this much horizontal motion between two
+	// collision checks → treat as stuck.
+	const STUCK_EPS_M      = 0.05
 	let lastBumpAt = 0
+	let prevCollideX = NaN
+	let prevCollideY = NaN
 
 	// WHY: Right-click on canvas → raycast against other-avatar meshes only. Hit opens
 	// uiStore.avatarMenu with screen coords + target identity so AvatarContextMenu.vue can
@@ -1307,11 +1321,39 @@ export function useWorldEngine(canvasRef) {
 		}
 		if (targets.length === 0) return false
 		const hits = _raycaster.intersectObjects(targets, false)
-		if (hits.length === 0) return false
-		const now = performance.now()
-		if (now - lastBumpAt > BUMP_COOLDOWN_MS) {
-			lastBumpAt = now
-			try { playSound('bump.mp3', 0.5) } catch {}
+		if (hits.length === 0) {
+			prevCollideX = avatarSLPos[0]
+			prevCollideY = avatarSLPos[1]
+			return false
+		}
+		// WHY: Step-up — if the hit mesh's top edge is within STEP_UP_HEIGHT above the
+		// foot, treat as low clutter / slope and pass through silently. FS does a similar
+		// physics-side step assist; without this, any low decorative prim or sloped ground
+		// mesh triggers a bump on every walk cycle.
+		const footY  = avatarSLPos[2]
+		const hitMesh = hits[0].object
+		hitMesh.updateWorldMatrix?.(true, false)
+		const bbox = new THREE.Box3().setFromObject(hitMesh)
+		const obstacleTopY = bbox.max.y
+		if (obstacleTopY - footY < STEP_UP_HEIGHT) {
+			prevCollideX = avatarSLPos[0]
+			prevCollideY = avatarSLPos[1]
+			return false
+		}
+		// WHY: Only bump when avatar is actually stuck — if we've advanced since the last
+		// collision check, we're walking past a tall obstacle (or sim is pushing us through),
+		// not into it. Block DR step either way to keep predicted pose conservative.
+		const moved = Number.isFinite(prevCollideX)
+			? Math.hypot(avatarSLPos[0] - prevCollideX, avatarSLPos[1] - prevCollideY)
+			: 0
+		prevCollideX = avatarSLPos[0]
+		prevCollideY = avatarSLPos[1]
+		if (moved < STUCK_EPS_M) {
+			const now = performance.now()
+			if (now - lastBumpAt > BUMP_COOLDOWN_MS) {
+				lastBumpAt = now
+				try { playSound('bump.mp3', 0.5) } catch {}
+			}
 		}
 		return true
 	}
@@ -1384,7 +1426,7 @@ export function useWorldEngine(canvasRef) {
 			const hasLat  = cf & (CTRL_LEFT_POS | CTRL_LEFT_NEG)
 			const hasVert = cf & (CTRL_UP_POS | CTRL_UP_NEG)
 			if (hasFwd || hasLat || hasVert) {
-				const runSticky = !!(cf & CTRL_ALWAYS_RUN)
+				const runSticky = uiStore.alwaysRun
 				const spd  = ((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
 				const lspd = ((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
 				// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
@@ -1524,6 +1566,7 @@ export function useWorldEngine(canvasRef) {
 	})
 
 	onUnmounted(() => {
+		stopAlwaysRunWatch()
 		cancelAnimationFrame(animId)
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)

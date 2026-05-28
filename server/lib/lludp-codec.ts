@@ -27,6 +27,7 @@ const MSG_ID = {
   AgentMovementComplete:     Buffer.from([0xFF, 0xFF, 0x00, 0xFA]),   // Low #250 (received from sim)
   // Verified from packet log: these arrive as High-frequency (1-byte prefix)
   ChatFromViewer:            Buffer.from([0xFF, 0xFF, 0x00, 0x50]),   // Low #80 (we send)
+  SetAlwaysRun:              Buffer.from([0xFF, 0xFF, 0x00, 0x15]),   // Low #21 (we send) — sticky run state
   ChatFromSimulator:         Buffer.from([0xFF, 0xFF, 0x00, 0x8B]),   // Low #139 (received)
   ObjectUpdate:              Buffer.from([0x0C]),                     // High #12 (received from sim)
   ImprovedTerseObjectUpdate: Buffer.from([0x0F]),                     // High #15 (received from sim)
@@ -613,6 +614,22 @@ export function encodeAgentSit(p: {
   uuidToBytes(p.agentId).copy(body, 0)
   uuidToBytes(p.sessionId).copy(body, 16)
   return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x7B]), body])  // Low 123
+}
+
+// WHY: SL/OpenSim track always-run as a sticky agent flag via SetAlwaysRun (Low #21),
+// NOT as a ControlFlags bit. Bit 20 (0x00100000) is AGENT_CONTROL_NUDGE_AT_NEG which
+// causes the sim to nudge the agent backward each tick — appears as auto-walk in viewer.
+// Body: AgentData { AgentID, SessionID, AlwaysRun BOOL (1 byte) }.
+export function encodeSetAlwaysRun(p: {
+  agentId: string; sessionId: string; seq: number; alwaysRun: boolean
+}): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 1)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body[off++] = p.alwaysRun ? 1 : 0
+  return Buffer.concat([hdr, MSG_ID.SetAlwaysRun, body])
 }
 
 export function encodeChatFromViewer(p: {

@@ -29,7 +29,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [~] Movement — 80%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision so you don't silently bump into invisible prims.
 - [~] Scene — 50%.  Real terrain rendering and height color done. Prims still render as 1m cubes with hash-tinted color (each prim distinguishable but no real geometry yet). Ocean is flat blue — no ripple. No neighboring sims.
 - [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating: transcript, muted transcript, options and search, tear-off, close
-- [~] IM chat — 50%.  Sending and receiving works, need to add emojis, 10+ toolbar buttons, voice
+- [~] IM chat — 60%.  Sending and receiving works, emojis added. Need 10+ toolbar buttons, voice
 - [~] Menus/floaters — 50%.  Some disabled placeholders as we implement features
 - [~] Minimap — 50%.  Good as a compass and sometimes shows avies.
 

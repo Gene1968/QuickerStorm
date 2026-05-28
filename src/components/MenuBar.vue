@@ -178,7 +178,7 @@ const MENUS = [
 			{ label: 'Resync World',										action: resyncWorld },
 			{ label: 'Rebake Textures',	disabled: true },
 			{ sep: true },
-			{ label: 'Render UI ✅ (toggle)',				kbd: 'Ctrl+Alt+F1',	action: () => act(() => ui.toggleUiVisible()) },
+			{ label: '✅ Render UI menus',				kbd: 'Ctrl+Alt+F1',	action: () => act(() => ui.toggleUiVisible()) },
 			{ sep: true },
 			{ label: 'Debug Panel',						kbd: 'Ctrl+⇧+4',	action: () => act(() => ui.toggleDebug()) },
 			{ label: 'Debug Settings',	disabled: true },

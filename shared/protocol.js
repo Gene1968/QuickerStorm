@@ -20,6 +20,7 @@ export const C = {
 	OBJECT_SIT:    'object_sit',    // { targetId } — outbound AgentRequestSit + AgentSit pair
 	OBJECT_SELECT: 'object_select', // { localIds: number[] } — outbound ObjectSelect → triggers ObjectProperties reply
 	OBJECT_DESELECT:'object_deselect', // { localIds: number[] } — outbound ObjectDeselect
+	SET_ALWAYS_RUN: 'set_always_run', // { alwaysRun: boolean } — outbound SetAlwaysRun (Low #21)
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
