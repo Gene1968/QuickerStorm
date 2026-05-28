@@ -1,11 +1,17 @@
 <script setup>
 /**
  * ResyncBanner — detects "stuck" world state after WS reconnect / HMR / page reload
- * and offers a one-click recovery via C.RESYNC_WORLD.
+ * and recovers via C.RESYNC_WORLD.
  *
- * Stuck conditions (any of, after 5s grace window since the WS connected):
+ * Stuck conditions (any of, after GRACE_MS since the WS connected):
  *   1. session.connected but regionName still empty ("Entering region…")
  *   2. session.connected but no terrain heights have arrived
+ *
+ * Recovery is two-stage:
+ *   - First time `stuck` flips true → silently auto-fire resync (no banner).
+ *   - If still stuck BANNER_DELAY_MS after that auto-resync, show banner so the
+ *     user can retry manually. This way the common reload case heals invisibly,
+ *     and the banner only appears when auto-recovery itself failed.
  *
  * Server replies with replayCachedWorld() + sim-nudge AgentUpdate. Banner auto-hides
  * once regionName populates AND at least one terrain patch exists.
@@ -21,20 +27,23 @@ const session  = useSessionStore()
 const world    = useWorldStore()
 const { emit } = useRealtimeSocket()
 
-const GRACE_MS = 5000
+const GRACE_MS        = 5000   // wait this long after WS connect before considering stuck
+const BANNER_DELAY_MS = 4000   // grace after silent auto-resync before surfacing banner
 
-const connectedSince = ref(0)
-const dismissed      = ref(false)
-const lastResyncAt   = ref(0)
-// WHY: Reactive clock tick so the time-based grace window in `stuck` re-evaluates.
+const connectedSince  = ref(0)
+const dismissed       = ref(0) // 0 = not dismissed, else timestamp
+const lastResyncAt    = ref(0)
+const autoResyncedAt  = ref(0) // timestamp of the silent auto-attempt for this session
+// WHY: Reactive clock tick so time-based windows re-evaluate.
 // Computed properties don't re-run on Date.now() alone — they need a ref dependency.
 const nowTick = ref(Date.now())
 
 const hasTerrain = computed(() => world.terrainPatchCount > 0)
 
+// WHY: "stuck" = the underlying condition. Separate from banner visibility so we can
+// auto-resync as soon as it flips true without flashing UI.
 const stuck = computed(() => {
 	if (!session.connected) return false
-	if (dismissed.value)    return false
 	if (!connectedSince.value) return false
 	if (nowTick.value - connectedSince.value < GRACE_MS) return false
 	if (!session.regionName) return true
@@ -42,10 +51,19 @@ const stuck = computed(() => {
 	return false
 })
 
+const showBanner = computed(() => {
+	if (!stuck.value) return false
+	if (dismissed.value) return false
+	// Only surface UI if the silent auto-attempt already had time to land.
+	if (!autoResyncedAt.value) return false
+	return nowTick.value - autoResyncedAt.value >= BANNER_DELAY_MS
+})
+
 watch(() => session.connected, (c) => {
 	if (c) {
 		connectedSince.value = Date.now()
-		dismissed.value = false
+		dismissed.value      = 0
+		autoResyncedAt.value = 0
 	} else {
 		connectedSince.value = 0
 	}
@@ -53,7 +71,16 @@ watch(() => session.connected, (c) => {
 
 // WHY: Auto-dismiss once both signals recover so the banner doesn't linger.
 watch([() => session.regionName, hasTerrain], ([rn, ht]) => {
-	if (rn && ht) dismissed.value = true
+	if (rn && ht) dismissed.value = Date.now()
+})
+
+// WHY: Fire one silent resync the moment `stuck` flips true. Subsequent stuck cycles
+// in the same session reset autoResyncedAt only on reconnect, so we don't spam the sim.
+watch(stuck, (s) => {
+	if (s && !autoResyncedAt.value) {
+		autoResyncedAt.value = Date.now()
+		resync()
+	}
 })
 
 const tick = setInterval(() => { nowTick.value = Date.now() }, 1000)
@@ -65,13 +92,13 @@ function resync() {
 	emit(C.RESYNC_WORLD, {})
 }
 
-function dismiss() { dismissed.value = true }
+function dismiss() { dismissed.value = Date.now() }
 </script>
 
 <template>
 	<Transition name="rb-fade">
 		<div
-			v-if="stuck"
+			v-if="showBanner"
 			class="rb-banner"
 			role="alert"
 		>

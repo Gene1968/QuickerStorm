@@ -8,45 +8,50 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 ## Current state · May 2026
 
 **✨ Parts already better than some other clients:**
-- Resumes your grid session after a brief network drop (no re-login)
-- Clean avatar logout — actually works. Takes so 2-way comm but not sure why others never had it.
+- Resumes your grid session after a brief network drop or page reload. (no re-login). Useful 'Recsync World' feature
+- Clean avatar logout — actually works. Takes some 2-way comm but not sure why others never had this
+- More sensible multi- inventory floaters (not that they can be used yet)
 
 ---
 
 **🟢 Working now**
-- [x] Log in to various grids — splash page, Home, last location, or any region
-- [x] Others on Firestorm see your avatar appearance and movement normally (outbound AgentUpdate working)
-- [x] You see nearby users listed and they show up as simplified avatars (cyan capsules) at the right place
-- [x] **Other avatars now turn to face the right way as they walk** (TerseUpdate rotation decode)
-- [x] **Real region terrain heightmap** — decoded from LayerData, rendered with topo colors (blue/teal/green/earthy/stone)
+- [x] Log in to various grids — splash page, Home, last location, or any region. Tested on OSGrid and NeverWorld
+- [x] Others on Firestorm see your avatar appearance and movement normally (outbound AgentUpdate stream)
+- [x] You see nearby users listed and they show up as simplified avatars (capsules w prim attachments) at the right places
+- [x] **Other avatars turn to face the right way as they walk** (TerseUpdate rotation decode)
+- [x] **Real region terrain heightmap** — decoded from LayerData, rendered with topo colors (blue/teal/green/earthy/stone). North-south orientation correct; OSGrid sea-floor layer (0x37) no longer clobbers land
+- [x] **Real prim geometry** — Box / Cylinder / Sphere / Prism / Torus from PathCurve / ProfileCurve; Twist + Taper deformation applied
+- [x] **Child-prim composition** — ParentID linked sets compose correctly (houses, vehicles no longer scatter)
+- [x] **Prim default color** — TextureEntry default RGBA decoded; prims show their authored tint without any HTTP texture fetch
+- [x] **Hovering text** — floating CSS2D labels on prims that set them
+- [x] **Cross-region teleport** — tear-down + new circuit handshake on TeleportFinish; scene rebuilds on new sim
+- [x] **Ocean to horizon** — single 8 km water plane, world-space shader ripples that fade with distance; no abrupt region-edge cutoff
+- [x] **Terrain collision + gravity** — bilinear-sampled foot height; clamps avatar Z above ground, real falls and impacts
 - [x] See your region and coordinates in the location bar, and do same-region teleport from there
 - [x] Session resume on network blip (15-second circuit hold).  Proper logout disconnect
 - [x] UI sounds (teleport whoosh, chat typing, floater pop, menu click, collision bump, new IM chime, disconnect "complication," etc.)
-- [x] Gravity and fall terrain impact
 - [x] Bump into other avatars
+- [x] Always Run toggle, terrain step-up tolerance, anti-fall safety
 
 **🟡 Partially working**
-- [~] Movement — 80%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision so you don't silently bump into invisible prims.
-- [~] Scene — 50%.  Terrain rendering & height color are fairly accurate, but has low detail to be investigated later. Prims still render as 1m cubes with hash-tinted color (each prim distinguishable but only minimal geometry so far). Ocean is flat blue — no ripple. No neighboring sims.
+- [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision & objects so you don't silently bump into invisible prims.
 - [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating: transcript, muted transcript, options and search, tear-off, close
-- [~] IM chat — 60%.  Sending and receiving works, emojis added. Need 10+ toolbar buttons, voice
-- [~] Menus/floaters — 50%.  Some disabled placeholders as we implement features
-- [~] Minimap — 50%.  Good as a compass and sometimes shows avies.
+- [~] **Instant Messaging (IM)** — 60%.  Sending and receiving works, emojis added. Need 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
+- [~] Scene — 60%.  Terrain rendering & height color are accurate, ocean w ripples to horizon! No neighboring sims yet. No environment settings or light sources
+- [~] Avatars and objects — 10%.  Avatars get prims for attachments but it looks quite strange.  Objects rarely show up, based on late-stage server updates, and are incorrect white prims.
+- [~] Menus/floaters — 60%.  Some disabled placeholders as we implement features
+- [~] Minimap — 60%.  Good as a compass and sometimes shows avies.
 - [~] **Object Edit floater**  - 20% Object Properties + TransformControls + `MultipleObjectUpdate`
-- [~] **Instant Messaging (IM)** — `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
-- [~] **Right-click avatar menu** — IM, View Profile, Face Toward
-- [~] **Right-click object menu (subset)** — Inspect, Touch, Sit (no Edit/Take/Delete yet — those need Phase 3 caps)
+- [~] **Right-click object menu (subset)** — 30% Edit (basic), Inspect (mock), Touch, Sit?? (no Take/Delete yet — those need Phase 3 caps)
+- [~] **Right-click avatar menu** —  40% IM, View Profile, Face Toward. No zoom, call, invite, inspect
 
-**🔜 Up next — Phase 2 ("world looks like world")**
+**🔜 Phase 2 finishing items**
 - [ ] **Map** — almost ready for the real thing
-- [ ] **Real prim geometry** — read PathCurve/ProfileCurve already in the packet → boxes/cylinders/spheres/tori instead of cubes
-- [ ] **Child-prim composition** — linked sets (houses, vehicles) currently explode into scatter; ParentID is decoded but unused
-- [ ] **Prim colors** — decode TextureEntry default color so prims show their real RGBA without any texture fetch
-- [~] **Terrain collision + gravity** — heightmap exists, just sample it under the avatar's feet
-- [ ] **Ocean ripple** — small vertex displacement shader on the water plane
-- [ ] **Neighboring-sim terrain** — load 4 neighbor regions at the right world offset
-- [ ] **Cross-region teleport** — tear down current UDP circuit, open new one to target sim
-- [ ] Hovering text on prims (already in the packet, just not surfaced)
+- [ ] **Neighboring-sim terrain** — render adjacent regions at ±regionSize offset (EnableSimulator + second circuit / cap fetch)
+- [ ] **Object face raycast picking** — currently picks bounding box; need per-triangle for correct Edit selection
+- [ ] **Region size on cross-region TP** — RegionHandshake lacks size; needs cap fetch so var-region warps stop assuming 256×256
+- [ ] **Voice (WebRTC ↔ sim VoIP)** — peer signaling works; gateway wire-up + spatial pan still TODO
+- [ ] **Hollow / PathScale / Shear / Skew / RadiusOffset** prim params decoded but not yet applied to geometry (Sculpt prims still bounding-box; full sculpt is Phase 3)
 
 **🔜 Up next later — Phase 3 ("real assets + social", HTTP caps)**
 - [ ] HTTP-capability client foundation (LLSD-XML over Bun proxy)
