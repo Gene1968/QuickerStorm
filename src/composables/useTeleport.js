@@ -13,7 +13,7 @@ export const TELEPORT_SOURCES = {
 	MAP_FLOATER:  { label: 'MapFloater',        status: 'stub'        },  // Phase 2
 	MINIMAP:      { label: 'Minimap',           status: 'placeholder' },
 	LANDMARK:     { label: 'Landmark',          status: 'placeholder' },
-	DOUBLE_CLICK: { label: 'Double-click land', status: 'placeholder' },
+	DOUBLE_CLICK: { label: 'Double-click land', status: 'implemented' },
 }
 
 export function useTeleport() {

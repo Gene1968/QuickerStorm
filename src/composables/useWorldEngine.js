@@ -10,6 +10,7 @@ import { useDebugStore } from '@/stores/debugStore'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
+import { useTeleport } from './useTeleport.js'
 import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -140,6 +141,7 @@ export function useWorldEngine(canvasRef) {
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
 	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) clearGizmo(); else refreshGizmo() })
 	const { playSound } = useAudio()
+	const { requestTeleport } = useTeleport()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
@@ -437,6 +439,22 @@ export function useWorldEngine(canvasRef) {
 	// WHY: Mouse-up freezes orbit position — camera stays where user left it.
 	// isAltOrbit stays true; cleared by Esc, reset button, or avatar movement.
 	function onMouseUp() { isDragging = false }
+
+	function onDblClick(e) {
+		if (!canvasRef.value || !camera || !terrainMesh) return
+		const rect = canvasRef.value.getBoundingClientRect()
+		_pickNdc.set(
+			((e.clientX - rect.left) / rect.width) * 2 - 1,
+			-((e.clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		_raycaster.far = 1000
+		const hits = _raycaster.intersectObject(terrainMesh, false)
+		if (!hits.length) return
+		// THREE coords: x=SL.x, y=SL.z, z=-SL.y → invert to SL
+		const p = hits[0].point
+		requestTeleport({ x: p.x, y: -p.z, z: p.y + 0.5 })
+	}
 
 	// Scroll wheel: zoom in orbit mode or third-person; forward/back in explore mode
 	function onWheel(e) {
@@ -1873,6 +1891,7 @@ export function useWorldEngine(canvasRef) {
 		// Scroll wheel for forward/back movement; passive:false so we can preventDefault
 		canvasRef.value.addEventListener('wheel', onWheel, { passive: false })
 		canvasRef.value.addEventListener('contextmenu', onContextMenu)
+		canvasRef.value.addEventListener('dblclick', onDblClick)
 		on(S.OBJECT_UPDATE,    onObjectUpdate)
 		on(S.TERSE_UPDATE,     onTerseUpdate)
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
@@ -1900,6 +1919,7 @@ export function useWorldEngine(canvasRef) {
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
 		canvasRef.value?.removeEventListener('wheel', onWheel)
 		canvasRef.value?.removeEventListener('contextmenu', onContextMenu)
+		canvasRef.value?.removeEventListener('dblclick', onDblClick)
 		off(S.OBJECT_UPDATE,   onObjectUpdate)
 		off(S.TERSE_UPDATE,    onTerseUpdate)
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
