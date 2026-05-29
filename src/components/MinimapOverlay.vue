@@ -1,11 +1,15 @@
 <script setup>
 import { computed, onMounted, onUnmounted } from 'vue'
-import { useWorldStore } from '@/stores/worldStore'
-import { useUiStore }    from '@/stores/uiStore'
+import { useWorldStore }   from '@/stores/worldStore'
+import { useUiStore }      from '@/stores/uiStore'
+import { useSessionStore } from '@/stores/sessionStore'
+import { useTeleport }     from '@/composables/useTeleport'
 import { useAudio } from '@/composables/useAudio.js'
 
-const world = useWorldStore()
-const ui    = useUiStore()
+const world   = useWorldStore()
+const ui      = useUiStore()
+const session = useSessionStore()
+const { requestTeleport } = useTeleport()
 const { playSound } = useAudio()
 
 onMounted(()   => playSound('pop.mp3', 0.7))
@@ -56,6 +60,21 @@ const compassPoints = computed(() => {
 	})
 })
 
+// Double-click → teleport within current region. Convert SVG-local coords back to SL meters.
+function onMinimapDblClick(e) {
+	const svg = e.currentTarget
+	const rect = svg.getBoundingClientRect()
+	const fx = (e.clientX - rect.left) / rect.width    // 0..1 across SVG
+	const fy = (e.clientY - rect.top)  / rect.height
+	const sizeX = session.regionSizeX || 256
+	const sizeY = session.regionSizeY || 256
+	const tx = fx * sizeX                                // SL X
+	const ty = (1 - fy) * sizeY                          // SL Y (flip — minimap +Y is up)
+	// Keep current altitude; teleport composable handles z floor.
+	const tz = world.avatarPos?.z ?? 50
+	requestTeleport({ x: tx, y: ty, z: tz })
+}
+
 // TODO: draggable + persist position — use indexedDB (too many floaters for localStorage)
 // See docs/tech-debt.md
 </script>
@@ -67,9 +86,11 @@ const compassPoints = computed(() => {
 		style="width: clamp(8rem, 10vw, 20rem); aspect-ratio: 1/1; right: 20%; top: 0.75%;"
 	>
 		<svg
-			class="w-full h-full"
+			class="w-full h-full cursor-crosshair"
 			:viewBox="`0 0 ${SIZE} ${SIZE}`"
 			preserveAspectRatio="xMidYMid meet"
+			title="Double-click to teleport within region"
+			@dblclick="onMinimapDblClick"
 		>
 			<rect width="100%" height="100%" fill="transparent" />
 

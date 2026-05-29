@@ -64,8 +64,9 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | Store | Purpose |
 |-------|---------|
 | `avatarStore` | Local identity, avatar config (colors/hair/skin placeholder) |
-| `sessionStore` | Login session: agentId, sessionId, circuit code, region size, grid info |
+| `sessionStore` | Login session: agentId, sessionId, circuit code, region size, grid info, `regionAccess` (RegionHandshake) |
 | `worldStore` | Scene state: `objects` (Map of localId → ObjectData), `terrainHeights` (Float32Array 513×513), `avatarPos`, `spawnPos` |
+| `mapStore` | World Map cache: `regions` (Map keyed `"x,y"` of MapBlockReply records), `viewCenterX/Y`, `viewZoom` (1..8 float), `queriedChunks` (60s TTL dedup) |
 | `gridStore` | Grid selection, loginState (`disconnected | reconnecting | live`) |
 | `uiStore` | Floater stack, cameraYaw, debug toggles |
 | `debugStore` | Live ring buffer of debug messages for the in-page debug panel |
@@ -78,7 +79,10 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | Path | Purpose |
 |------|---------|
 | `src/composables/useWorldEngine.js` | **Owns the Three.js scene.** Mesh creation, avatar/prim spawning, terrain mesh, follow camera, dead-reckoning, input. Replaces the older `useOfficeEngine.js`. |
-| `src/composables/useRealtimeSocket.js` | Singleton WS connection; dispatches typed messages to handlers |
+| `src/composables/useRealtimeSocket.js` | Singleton WS connection; dispatches typed messages to handlers. **Dispatch passes `msg.d` directly to handler, not full envelope** — handlers receive payload, not `{t,d}` |
+| `src/composables/useTeleport.js` | `requestTeleport` (same-region) + `requestRegionTeleport` (cross-region via MapNameRequest→MAP_TELEPORT). Plays woosh on dispatch |
+| `src/composables/useLLUDP.js` | Client→server WS emit wrappers (move, chat, teleport, map query, etc) |
+| `src/components/MapFloater.vue` | World Map 2D — SVG render, pan/zoom-toward-cursor, click-select, dbl-click TP |
 | `src/composables/useProximityVoice.js` | WebRTC voice (Phase 2 wire-up pending) |
 | `src/composables/useTheme.js` | Light/dark toggle |
 | `src/composables/useVersionCheck.js` | Polls `version.json` every 5 min; shows reload banner on new build |

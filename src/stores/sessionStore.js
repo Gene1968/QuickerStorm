@@ -19,7 +19,8 @@ export const useSessionStore = defineStore('session', () => {
 	const regionSizeX   = ref(256)
 	const regionSizeY   = ref(256)
 	const startLocation = ref('')   // 'last', 'home', or 'uri:...' as echoed by grid
-	const agentAccess   = ref('')   // 'M', 'A', etc
+	const agentAccess   = ref('')   // 'M', 'A', etc — agent's account access cap (XML-RPC)
+	const regionAccess  = ref(0)    // SL access code from RegionHandshake: 13=PG, 21=Mature, 42=Adult, 254=down
 	const connected     = ref(false)
 
 	function setSession(data) {
@@ -51,6 +52,6 @@ export const useSessionStore = defineStore('session', () => {
 	return {
 		agentId, sessionId, username, simIp, simPort, seedCap,
 		regionName, regionX, regionY, regionSizeX, regionSizeY,
-		startLocation, agentAccess, connected, setSession, clearSession,
+		startLocation, agentAccess, regionAccess, connected, setSession, clearSession,
 	}
 })

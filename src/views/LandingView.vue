@@ -107,9 +107,6 @@ onMounted(async () => {
 					</p>
 				</div>
 
-				<!-- Divider -->
-				<div class="self-stretch w-px bg-white/10 shrink-0" />
-
 				<!-- Auto-reconnect spinner -->
 				<template v-if="reconnecting">
 					<div class="flex flex-col items-center gap-3 w-full py-4 text-center">
@@ -134,7 +131,7 @@ onMounted(async () => {
 					</div>
 
 					<!-- Disclaimer -->
-					<div class="w-full mt-5 text-t1 text-xs leading-relaxed">
+					<div class="w-full mt-2 text-t1 text-xs leading-relaxed">
 						<p>
 							quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
 						</p>

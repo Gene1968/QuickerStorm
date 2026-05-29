@@ -56,5 +56,17 @@ export function useLLUDP() {
 		emit(C.SET_ALWAYS_RUN, { alwaysRun: !!alwaysRun })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendSetAlwaysRun }
+	function sendMapQuery(minX, maxX, minY, maxY) {
+		emit(C.MAP_QUERY, { minX, maxX, minY, maxY })
+	}
+
+	function sendMapNameQuery(name) {
+		emit(C.MAP_NAME_QUERY, { name })
+	}
+
+	function sendMapTeleport(regionX, regionY, x, y, z) {
+		emit(C.MAP_TELEPORT, { regionX, regionY, x, y, z })
+	}
+
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
 }

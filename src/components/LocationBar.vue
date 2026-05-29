@@ -12,20 +12,23 @@ const session = useSessionStore()
 const world	 = useWorldStore()
 const grid		= useGridStore()
 const { connected } = useRealtimeSocket()
-const { requestTeleport } = useTeleport()
+const { requestTeleport, requestRegionTeleport } = useTeleport()
 
 const { playSound } = useAudio()
 const showLocationHistory = ref(false)
 
 
-// ── Maturity rating ───────────────────────────────────────────────────────
-const MATURITY = {
-	'G':  { label: 'General ✅',    color: 'text-green-400'  },
-	'PG': { label: 'P.Guidance 👪', color: 'text-green-400'  },
-	'M':  { label: 'Moderate Ⓜ️',   color: 'text-yellow-400' },
-	'A':  { label: 'Adult 🔞',      color: 'text-red-400'    },
+// ── Region maturity rating (SL access codes from RegionHandshake) ─────────
+// 13=PG/General, 21=Mature/Moderate, 42=Adult, 254=down/offline.
+// WHY: Earlier code keyed on session.agentAccess ("M", "A") — that's the agent's account
+// access cap, not the current region's rating. FS shows region rating; mirror that.
+const REGION_MATURITY = {
+	13:  { label: 'General ✅',  color: 'text-green-400'  },
+	21:  { label: 'Moderate Ⓜ️', color: 'text-yellow-400' },
+	42:  { label: 'Adult 🔞',    color: 'text-red-400'    },
+	254: { label: 'Offline 💤',  color: 'text-tm'         },
 }
-const maturity = computed(() => MATURITY[session.agentAccess] ?? null)
+const maturity = computed(() => REGION_MATURITY[session.regionAccess] ?? null)
 
 // ── Coordinate display (SL format: X, Y, Z where Z = height) ─────────────
 // WHY: OSGrid omits region_name from login XML. Real name arrives via RegionHandshake
@@ -92,21 +95,41 @@ function cancelEdit() {
 function commitEdit() {
 	const raw = editVal.value.trim()
 	editing.value = false
-	// WHY: Use connected.value (WS state) not session.connected (login state).
-	// WS must be open to emit; session.connected may lag or differ.
 	if (!connected.value || !raw) return
 
-	// WHY: Accept three formats:
-	//	 "X, Y, Z"				 — bare SL coords (same region)
-	//	 "X Y Z"					 — same but space-separated
-	//	 "hop://gw/Reg/X/Y/Z" or "sl://Reg/X/Y/Z" — URL (extract trailing X/Y/Z)
-	// Extract the last three numeric tokens as X, Y, Z.
+	// Accept formats:
+	//   "X, Y, Z"                                — bare SL coords (same region)
+	//   "X Y Z"
+	//   "hop://gw/Region Name/X/Y/Z"             — cross-region via MapNameRequest
+	//   "secondlife://Region Name/X/Y/Z"
+	//   "Region Name X Y Z"                      — bare region name + coords
 	const nums = raw.match(/\d+\.?\d*/g)?.map(Number) ?? []
 	if (nums.length < 3) return
 	const [x, y, z] = nums.slice(-3)
 	if (isNaN(x) || isNaN(y) || isNaN(z)) return
 
-	console.log(`[LocationBar] teleport → ${x},${y},${z} raw="${raw}"`)
+	// Extract region name from URL or leading bare-name token.
+	let regionName = null
+	const urlMatch = raw.match(/^(?:hop|secondlife|sl):\/\/(?:[^/]+\/)?([^/]+?)\/\d/i)
+	if (urlMatch) {
+		try { regionName = decodeURIComponent(urlMatch[1]) } catch { regionName = urlMatch[1] }
+	} else {
+		// Strip trailing "X Y Z" or "X, Y, Z" or "X/Y/Z" — what's left is candidate name.
+		const stripped = raw.replace(/[\s,/]+\d+\.?\d*[\s,/]+\d+\.?\d*[\s,/]+\d+\.?\d*\s*$/, '').trim()
+		if (stripped && /[A-Za-z]/.test(stripped) && stripped.toLowerCase() !== session.regionName?.toLowerCase()) {
+			regionName = stripped
+		}
+	}
+
+	if (regionName && regionName.toLowerCase() !== (session.regionName ?? '').toLowerCase()) {
+		console.log(`[LocationBar] cross-region TP → "${regionName}" ${x},${y},${z}`)
+		requestRegionTeleport({ regionName, x, y, z }).then(r => {
+			if (!r.ok) console.warn(`[LocationBar] cross-region TP failed: ${r.error}`)
+		})
+		return
+	}
+
+	console.log(`[LocationBar] same-region TP → ${x},${y},${z} raw="${raw}"`)
 	requestTeleport({ x, y, z })
 }
 

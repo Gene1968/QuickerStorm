@@ -43,9 +43,11 @@ Thumbs.db
 db/data/
 
 
-# Logs
+# Logs + diagnostic dumps
 logs
 *.log
+server-log.txt
+prim-ids-snapshot.txt
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
