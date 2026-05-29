@@ -165,39 +165,39 @@ function close() {
 				<!-- General ─────────────────────────────────────────────── -->
 				<template v-if="activeTab === 'general'">
 					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
-						<div class="text-white/50">Name</div>
+						<div class="text-white/50" title="63 chars, ASCII-7 + pipe.">Name:</div>
 						<input :value="obj.name || '(Object)'" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1" />
-						<div class="text-white/50">Description</div>
+						<div class="text-white/50" title="127 chars. May get used in hover tips or scripting">Description:</div>
 						<input :value="obj.description || ''" readonly placeholder="—" class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1" />
-						<div class="text-white/50">UUID</div>
+						<div class="text-white/50">UUID:</div>
 						<input :value="obj.fullId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
-						<div class="text-white/50">Type</div>
+						<div class="text-white/50">Type:</div>
 						<div class="text-t1">{{ pcodeLabel }}</div>
-						<div class="text-white/50">Hover Text</div>
+						<div class="text-white/50">Hover Text:</div>
 						<div class="text-t1 whitespace-pre-wrap">{{ obj.text || '—' }}</div>
 					</div>
 					<div v-if="obj.creatorId" class="border-t border-brd pt-2">
 						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
-							<div class="text-white/50">Creator</div>
+							<div class="text-white/50">Creator:</div>
 							<input :value="obj.creatorId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
-							<div class="text-white/50">Owner</div>
+							<div class="text-white/50">Owner:</div>
 							<input :value="obj.ownerId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
-							<div class="text-white/50">Group</div>
+							<div class="text-white/50">Group:</div>
 							<input :value="obj.groupId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
-							<div class="text-white/50">Created</div>
+							<div class="text-white/50">Created:</div>
 							<div class="text-t1 font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
-							<div class="text-white/50">Sale</div>
+							<div class="text-white/50">Sale:</div>
 							<div class="text-t1">{{ obj.saleType ? `Type ${obj.saleType} — L$${obj.salePrice}` : 'Not for sale' }}</div>
 						</div>
 					</div>
 					<div v-if="obj.baseMask != null" class="border-t border-brd pt-2">
 						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Permissions</div>
 						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1 text-[0.7rem] font-mono">
-							<div class="text-white/50">Base</div>      <div class="text-t1">{{ permLetters(obj.baseMask) }}</div>
-							<div class="text-white/50">Owner</div>     <div class="text-t1">{{ permLetters(obj.ownerMask) }}</div>
-							<div class="text-white/50">Group</div>     <div class="text-t1">{{ permLetters(obj.groupMask) }}</div>
-							<div class="text-white/50">Everyone</div>  <div class="text-t1">{{ permLetters(obj.everyoneMask) }}</div>
-							<div class="text-white/50">Next Owner</div><div class="text-t1">{{ permLetters(obj.nextOwnerMask) }}</div>
+							<div class="text-white/50">Base:</div>      <div class="text-t1">{{ permLetters(obj.baseMask) }}</div>
+							<div class="text-white/50">Owner:</div>     <div class="text-t1">{{ permLetters(obj.ownerMask) }}</div>
+							<div class="text-white/50">Group:</div>     <div class="text-t1">{{ permLetters(obj.groupMask) }}</div>
+							<div class="text-white/50">Everyone:</div>  <div class="text-t1">{{ permLetters(obj.everyoneMask) }}</div>
+							<div class="text-white/50">Next Owner:</div><div class="text-t1">{{ permLetters(obj.nextOwnerMask) }}</div>
 						</div>
 					</div>
 					<div v-if="!obj.creatorId" class="border-t border-brd pt-2 text-[0.65rem] text-white/40 italic">

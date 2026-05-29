@@ -131,7 +131,7 @@ export function useWorldEngine(canvasRef) {
 	const uiStore      = useUiStore()
 	const debugStore   = useDebugStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
-	const { sendMove, sendSelect, sendSetAlwaysRun } = useLLUDP()
+	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun } = useLLUDP()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
@@ -140,6 +140,25 @@ export function useWorldEngine(canvasRef) {
 	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
 	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) clearGizmo(); else refreshGizmo() })
+	// WHY: Sim-side ObjectSelect must be paired with ObjectDeselect or selections leak server-side
+	// (sim keeps the prim flagged for this agent forever). Single source of truth: the prim that
+	// SHOULD be selected on the sim is whatever the UI is acting on — the Build Tools target while
+	// the edit floater is open, otherwise the right-click context-menu target. This watcher diffs
+	// that desired id against the last id we told the sim and emits only the select/deselect delta,
+	// so every code path that opens/closes a menu or edit floater is covered automatically.
+	let simSelectedId = null
+	const stopSelSyncWatch = watch(
+		[() => uiStore.showObjectEdit, () => uiStore.editObjectId, () => uiStore.objectMenu],
+		() => {
+			const desired = uiStore.showObjectEdit
+				? uiStore.editObjectId
+				: (uiStore.objectMenu?.localId ?? null)
+			if (desired === simSelectedId) return
+			if (simSelectedId != null) sendDeselect([simSelectedId])
+			if (desired != null) sendSelect([desired])
+			simSelectedId = desired
+		},
+	)
 	const { playSound } = useAudio()
 	const { requestTeleport } = useTeleport()
 
@@ -391,8 +410,8 @@ export function useWorldEngine(canvasRef) {
 				let m = hits[0].object
 				while (m && m.userData?.localId === undefined) m = m.parent
 				if (m?.userData?.localId != null) {
+					// WHY: stopSelSyncWatch reacts to editObjectId and emits the ObjectSelect.
 					uiStore.editObjectId = m.userData.localId
-					sendSelect([m.userData.localId])
 					return
 				}
 			}
@@ -1034,6 +1053,27 @@ export function useWorldEngine(canvasRef) {
 		}
 		return { ok: true }
 	}
+	// WHY: Three.js multiplies a child's local transform by EVERY ancestor's scale. SL linked
+	// children store absolute-metre offsets/sizes that must NOT be scaled by the root prim's
+	// dimensions — yet we attach the child under the root mesh (which carries the root's prim
+	// scale) so the linkset moves/rotates as a unit. We stash each prim's unparented transform
+	// in userData.{baseScale,basePos} and divide the immediate prim-parent's scale back out here
+	// (restoring base when unparented). Limitation: a non-uniform parent scale still slightly
+	// shears a rotated child — acceptable for Phase 2; full fix needs an unscaled pivot group.
+	function normalizeChildTransform(mesh) {
+		const bs = mesh.userData.baseScale
+		const bp = mesh.userData.basePos
+		if (!bs || !bp) return
+		const p = mesh.parent
+		if (p && p.userData && p.userData.localId !== undefined) {
+			mesh.scale.set(bs.x / p.scale.x, bs.y / p.scale.y, bs.z / p.scale.z)
+			mesh.position.set(bp.x / p.scale.x, bp.y / p.scale.y, bp.z / p.scale.z)
+		} else {
+			mesh.scale.copy(bs)
+			mesh.position.copy(bp)
+		}
+	}
+
 	function upsertMesh(obj) {
 		const safety = classifySafety(obj)
 		if (safety.placeholder) {
@@ -1124,7 +1164,8 @@ export function useWorldEngine(canvasRef) {
 				div.textContent = obj.name || worldStore.objects.get(obj.localId)?.name || 'Avatar'
 				mesh.userData.labelDiv = div
 				const label = new CSS2DObject(div)
-				label.position.set(0, 1.1, 0)  // WHY: slightly lower than old 1.2 to match shorter capsule
+				label.position.set(0, 1.10, 0)  // WHY: capsule half-height=0.81; 0.88 puts label ~0.07m above head
+				mesh.userData.label2D = label
 				mesh.add(label)
 			}
 
@@ -1135,12 +1176,20 @@ export function useWorldEngine(canvasRef) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				mesh.position.set(t.x, t.y, t.z)
 			}
-			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			// WHY: Skip scale for avatars — capsule is fixed geometry; server scale would
+			// amplify the CSS2DObject label position and push it far above the head.
+			if (obj.scale && obj.pcode !== PCODE_AVATAR) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
 			// WHY: Apply quaternion rotation for prims so walls/doors point right way.
 			// Skip for avatars — their orientation is driven by yaw in animate() (own) /
 			// face indicator (others) and applying server rot tilts the capsule.
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
 				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+			}
+			// WHY: Remember the world-absolute scale/pos so normalizeChildTransform can divide a
+			// prim-parent's scale back out (see helper). Avatars are never linked children.
+			if (obj.pcode !== PCODE_AVATAR) {
+				mesh.userData.baseScale = mesh.scale.clone()
+				mesh.userData.basePos   = mesh.position.clone()
 			}
 
 			// WHY: Linked-set children carry parentId != 0. Their pos/rot from sim are in
@@ -1150,6 +1199,7 @@ export function useWorldEngine(canvasRef) {
 			const parentMesh = parentLocalId ? meshMap.get(parentLocalId) : null
 			if (parentMesh) parentMesh.add(mesh)
 			else scene.add(mesh)
+			normalizeChildTransform(mesh)
 			meshMap.set(obj.localId, mesh)
 
 			// WHY: This mesh may itself be a parent for orphans that arrived earlier. Scan and reparent.
@@ -1158,11 +1208,12 @@ export function useWorldEngine(canvasRef) {
 				if (other.userData.parentId === obj.localId && other.parent !== mesh) {
 					other.parent?.remove(other)
 					mesh.add(other)
+					normalizeChildTransform(other)
 				}
 			})
 		} else {
 			// Existing mesh: scale update + animated position
-			if (obj.scale) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			if (obj.scale && obj.pcode !== PCODE_AVATAR) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
 				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
 			}
@@ -1175,6 +1226,13 @@ export function useWorldEngine(canvasRef) {
 				} else {
 					mesh.position.set(t.x, t.y, t.z)
 				}
+			}
+			// WHY: A later full ObjectUpdate just overwrote local scale/pos with raw world values —
+			// re-stash the base and re-divide the parent scale so a linked child stays normalized.
+			if (obj.pcode !== PCODE_AVATAR) {
+				mesh.userData.baseScale = mesh.scale.clone()
+				mesh.userData.basePos   = mesh.position.clone()
+				normalizeChildTransform(mesh)
 			}
 			// WHY: NameValue data can arrive in a later ObjectUpdate after the mesh was created.
 			// Refresh label text whenever we get a real name so "Avatar" placeholder gets replaced.
@@ -1263,7 +1321,14 @@ export function useWorldEngine(canvasRef) {
 					// Material is set after mesh creation so this works whether mesh was just created
 					// or already existed (e.g., duplicate ObjectUpdate).
 					const ownMesh = meshMap.get(obj.localId)
-					if (ownMesh) ownMesh.material.color.setHex(0x00e676)
+					if (ownMesh) {
+						ownMesh.material.color.setHex(0x00e676)
+						// WHY: Own avatar mesh is placed at terrain+FOOT_CLEAR (1.0m) while other avatars
+						// sit at server-reported feet position (~0m above terrain). The 1.0m extra height
+						// pushes the label up in screen space; pull it back down so it appears level with
+						// other avatars' labels relative to each head.
+						if (ownMesh.userData.label2D) ownMesh.userData.label2D.position.setY(1.0)
+					}
 					// WHY: Seed yaw from sim's body rotation on first identify. Encoder pairs
 					// outgoing yaw with slAngle = π/2 + yaw → bodyRot = (0, 0, sin(slAngle/2), cos(slAngle/2)).
 					// Inverse: slAngle = 2 * atan2(rotZ, rotW); yaw = slAngle − π/2.
@@ -1439,7 +1504,15 @@ export function useWorldEngine(canvasRef) {
 		// WHY: Sim sends KillObject (High #16) when prims/avatars/NPCs leave or are deleted.
 		// Remove from Three.js scene and worldStore so they don't persist as ghost objects.
 		const ids = payload?.ids ?? []
+		// WHY: Killing a linkset root must take its children with it — the sim often sends only
+		// the root localId. Without cascade, child meshes detach from the (removed) parent subtree
+		// visually but linger in meshMap + worldStore as ghosts. Linksets are 1-level deep (all
+		// children parent directly to root), so a single non-recursive expansion covers them.
+		const all = new Set(ids)
 		for (const id of ids) {
+			worldStore.objects.forEach((o, lid) => { if (o.parentId === id) all.add(lid) })
+		}
+		for (const id of all) {
 			removeMesh(id)
 			worldStore.removeObject(id)
 		}
@@ -1614,10 +1687,9 @@ export function useWorldEngine(canvasRef) {
 			x: e.clientX,
 			y: e.clientY,
 		})
-		// WHY: Sim only sends ObjectProperties (name/creator/owner/perms) in response to
-		// an explicit ObjectSelect. Fire one on right-click so the Edit floater shows real
-		// data instead of placeholder fields. Deselect happens when menu closes.
-		sendSelect([hitMesh.userData.localId])
+		// WHY: Sim only sends ObjectProperties (name/creator/owner/perms) in response to an
+		// explicit ObjectSelect. Opening objectMenu triggers stopSelSyncWatch, which emits the
+		// ObjectSelect (and the paired ObjectDeselect once the menu/edit floater closes).
 	}
 
 	// WHY: Right-click avatar menu "Face Toward" action — set yaw so own avatar looks at target.
@@ -1906,6 +1978,9 @@ export function useWorldEngine(canvasRef) {
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()
+		stopSelSyncWatch()
+		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
+		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
 		clearGizmo()
 		cancelAnimationFrame(animId)
 		window.removeEventListener('keydown', onKeyDown)
