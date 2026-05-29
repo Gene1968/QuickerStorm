@@ -32,7 +32,7 @@ const tools = [
 	{ id: 'appearance', icon: '🪞', label: 'Appearance',    title: 'Avatar Appearance',  action: () => ui.toggleAppearance(), active: () => ui.showAppearance },
 	{ id: 'search',     icon: '🔍', label: 'Search',    title: 'Search',             action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'map',        icon: '🗺', label: 'Map',       title: 'Map - Map of the World (Ctrl+M)',       action: () => ui.toggleMap(),        active: () => ui.showMap },
-	{ id: 'minimap',    icon: '◈',  label: 'Mini-Map',  title: 'Mini-Map - Show nearby people (Ctrl+Shift+M)',           action: () => ui.toggleMinimap(),    active: () => ui.showMinimap },
+	{ id: 'minimap',    icon: '𖣠',  label: 'Mini-Map',  title: 'Mini-Map - Show nearby people (Ctrl+Shift+M)',           action: () => ui.toggleMinimap(),    active: () => ui.showMinimap },
 	{ id: 'snapshot',   icon: '📸', label: 'Snapshot',  title: 'Snapshot - Take a picture (To-Do)',      action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'inv',        icon: '📦', label: 'Inventory', title: 'Inventory - View and use your belongings (Ctrl+I)',          action: () => ui.toggleInventory(),  active: () => ui.showInventory },
 	{ id: 'ao',         icon: '🤸', label: 'AO',        title: 'Animation Override', action: () => {},                    active: () => false,                disabled: true },

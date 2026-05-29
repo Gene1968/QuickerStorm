@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon } from '@lucide/vue'
@@ -10,12 +10,22 @@ const props = defineProps({
 
 const ui = useUiStore()
 
+const tabs = [
+	{ id: 'inventory',  label: 'Inventory' },
+	{ id: 'recent',   label: 'Recent' },
+	{ id: 'worn', label: 'Worn' },
+	{ id: 'favorites',  label: 'Favorites' },
+]
+const activeTab = ref('inventory')
+
+
 // WHY: per-instance id so each floater has its own focus/z-index slot in the floater stack.
 const floaterId   = computed(() => `inventory-${props.index}`)
 const defaultPos  = computed(() => INVENTORY_DEFAULT_POS[props.index] ?? INVENTORY_DEFAULT_POS[0])
 const title       = computed(() => props.index === 0 ? '📦 Inventory' : `📦 Inventory ${props.index + 1}`)
 const isLast      = computed(() => props.index >= MAX_INVENTORY - 1)
 const nextOpen    = computed(() => ui.inventoryInstances.includes(props.index + 1))
+
 
 function close()        { ui.closeInventoryAt(props.index) }
 function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 1) }
@@ -25,40 +35,71 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 	<FloaterWindow
 		:id="floaterId"
 		:title="title"
-		:wrap-style="{ width: '15vw', height: '45vh', resize: 'both' }"
+		:wrap-style="{ width: '15.5vw', height: '47vh', resize: 'both' }"
 		:default-pos="defaultPos"
 		@close="close"
+		class="min-w-[18rem]"
 	>
-		<div class="flex p-1"><input class="bg-brd2 rounded-5 w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
-		<div class="flex flex-row align-items-center justify-content-evenly w-full mb-1 text-white">
-			<div class="flex flex-row align-items-center justify-content-start w-full overflow-hidden text-2xs">
+		<div class="flex p-1"><input class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
+		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-white">
+			<div class="flex flex-row items-center justify-start w-full overflow-hidden text-2xs">
 				<button class="me-2 py-0">Collapse</button>
 				<button class="me-2 py-0">Expand</button>
 				<span class="me-1">Filter:</span>
-				<button class="flex grow align-items-center justify-content-between me-1 py-0 text-nowrap">All Types<ChevronDownIcon class="w-3" /></button>
+				<button class="flex grow items-center justify-between me-1 py-0 whitespace-nowrap">All Types<ChevronDownIcon class="w-3" /></button>
 			</div>
 			<button title="Show search visibility options" class="py-0"><EyeIcon /><ChevronDownIcon class="w-3" /></button>
 		</div>
-		<div class="flex flex-row align-items-start justify-content-evenly text-2xs text-white">
-			<button class="p-1"><ChevronLastIcon class="rotate-180" /></button>
-			<button class="p-1"><ChevronRightIcon class="rotate-180" /></button>
-			<div class="flex flex-row align-items-center justify-content-start w-full overflow-x-auto">
-				<button class="p-1">Inventory</button>
-				<button class="p-1">Recent</button>
-				<button class="p-1">Work</button>
-				<button class="p-1">Favorites</button>
-				<button class="p-1"><PlusIcon /></button>
+		<!-- Locked edge btns, and special Tab strip w/ overflow! -->
+		<div class="flex flex-row items-start w-full text-2xs text-white">
+			<button v-if="true" class="arrowctrl"><ChevronLastIcon class="rotate-180" /></button>
+			<button v-if="true" class="arrowctrl"><ChevronRightIcon class="rotate-180" /></button>
+			<div class="w-full overflow-x-auto">
+				<nav class="tabs">
+					<button
+						v-for="tab in tabs"
+						:key="tab.id"
+						:class="activeTab === tab.id
+							? 'active'
+							: ''"
+						@click="activeTab = tab.id"
+					>{{ tab.label }}</button>
+					<button class="sq max-w-[1.875rem] p-1"><PlusIcon /></button>
+				</nav>
 			</div>
-			<button class="p-1"><ChevronRightIcon /></button>
-			<button class="p-1"><ChevronLastIcon /></button>
+			<button v-if="true" class="arrowctrl"><ChevronRightIcon /></button>
+			<button v-if="true" class="arrowctrl"><ChevronLastIcon /></button>
 		</div>
-		<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
-			<p class="mt-8 text-2xl">📦</p>
-			<p>Inventory viewer coming in Phase 2.</p>
-			<p class="text-xs mt-2 opacity-60">Full in-world inventory browsing, attachment, and wearables.</p>
-		</div>
+
+		<template v-if="activeTab === 'inventory'">
+			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
+				<p class="mt-8 text-2xl">📦</p>
+				<p>Inventory tree coming in Phase 2.</p>
+				<p class="text-xs mt-2 opacity-60">Full in-world inventory browsing, attachment, and wearables.</p>
+			</div>
+		</template>
+		<template v-else-if="activeTab === 'recent'">
+			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
+				<p class="mt-8 text-2xl">📦</p>
+				<p>Recent items tree coming in Phase 2.</p>
+			</div>
+		</template>
+		<template v-else-if="activeTab === 'worn'">
+			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
+				<p class="mt-8 text-2xl">📦</p>
+				<p>Worn items tree coming in Phase 2.</p>
+			</div>
+		</template>
+		<template v-else-if="activeTab === 'favorites'">
+			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
+				<p class="mt-8 text-2xl">📦</p>
+				<p>Favorite items coming in Phase 2.</p>
+				<p class="text-xs mt-2 opacity-60">You haven't marked any items as favorites.</p>
+			</div>
+		</template>
+
 		<div class="flex-1"/>
-		<div class="flex flex-row align-items-center justify-content-between text-xs text-white">
+		<div class="flex flex-row items-center justify-between text-xs text-white">
 			<button title="Show additional options (TO-DO)" class="px-1"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 			<button title="Add new item (TO-DO)"><PlusIcon /></button>
 			<button
@@ -80,23 +121,5 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 </template>
 
 <style scoped>
-	button {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid var(--color-brd);
-		border-radius: 0;
-		padding: 0.35rem;
-		color: var(--color-t2);
-		transition: color 0.15s, border-color 0.15s, background 0.15s;
-	}
-	button:hover {
-		background: rgba(255, 255, 255, 0.05);
-		border-color: var(--color-accent);
-		color: var(--color-t1);
-	}
-	button svg {
-		width: 1rem;
-		height: 1rem;
-	}
+
 </style>

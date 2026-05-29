@@ -135,6 +135,11 @@ const outerStyle = computed(() => ({
 		</div>
 
 		<!-- Content slot -->
-		<slot />
+		<div class="floater flex flex-col flex-1">
+			<slot />
+		</div>
 	</div>
 </template>
+
+<style scoped>
+</style>

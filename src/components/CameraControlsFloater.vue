@@ -136,7 +136,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 		id="camera"
 		title="🎥 Camera"
 		:wrap-style="{ width: '19rem', resize: 'both' }"
-		:default-pos="{ left: '20.25vw', bottom: '2.5rem' }"
+		:default-pos="{ left: '17.25vw', bottom: '2.5rem' }"
 		@close="ui.toggleCameraControls()"
 	>
 		<div class="containerQ flex flex-col gap-[3px] p-[5px] select-none">
@@ -145,7 +145,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 			<div class="flex gap-[3px]">
 				<button
 					v-for="p in PRESETS" :key="p.id"
-					class="flex-1 flex items-center justify-center rounded border leading-none transition-colors"
+					class="custom flex-1 flex items-center justify-center rounded border leading-none transition-colors"
 					:class="p.wired
 						? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
 						: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
@@ -164,7 +164,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 					<div class="grid grid-cols-3 gap-[2px]">
 						<button
 							v-for="btn in ORBIT" :key="btn.id"
-							class="flex items-center justify-center rounded border leading-none transition-colors cam-btn"
+							class="custom flex items-center justify-center rounded border leading-none transition-colors cam-btn"
 							:class="btn.wired
 								? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
 								: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
@@ -182,7 +182,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 					<div class="text-te text-white/35 uppercase tracking-widest">Zoom</div>
 					<!-- Zoom In -->
 					<button
-						class="flex items-center justify-center w-full rounded border font-bold bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 text-[8cqw] cursor-default transition-colors"
+						class="custom sqtiny flex items-center justify-center bg-card2 hover:bg-accent2 active:bg-accent/50 border border-brd/70 hover:border-accent rounded w-full aspect-square font-bold text-t1 cursor-default transition-colors"
 						title="Zoom in (hold)"
 						@mousedown.prevent="startZoom(-1)"
 						@mouseup="stopZoom"
@@ -199,7 +199,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 					</div>
 					<!-- Zoom Out -->
 					<button
-						class="flex items-center justify-center w-full rounded border font-bold bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 text-[8cqw] cursor-default transition-colors"
+						class="custom flex items-center justify-center bg-card2 hover:bg-accent2 active:bg-accent/50 border border-brd/70 sqtiny hover:border-accent rounded w-full aspect-square font-bold text-t1 cursor-default transition-colors"
 						title="Zoom out (hold)"
 						@mousedown.prevent="startZoom(1)"
 						@mouseup="stopZoom"
@@ -213,7 +213,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 					<div class="grid grid-cols-3 gap-[2px]">
 						<button
 							v-for="btn in TRACK" :key="btn.id"
-							class="flex items-center justify-center rounded border leading-none transition-colors cam-btn"
+							class="custom flex items-center justify-center rounded border leading-none transition-colors cam-btn"
 							:class="btn.wired
 								? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
 								: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
@@ -247,8 +247,12 @@ button {
 	overflow: hidden;
 	/* aspect-ratio: 1/1; */
 }
+button.sqtiny {
+	font-size: 7cqi;
+	aspect-ratio: 1/1;
+}
 input[type="range"] {
-	max-height: 4cqi;
+	max-height: 5.3cqi;
 }
 .text-te {
 	font-size: 4cqw;

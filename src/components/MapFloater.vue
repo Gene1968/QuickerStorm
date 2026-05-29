@@ -683,7 +683,7 @@ onUnmounted(() => {
 				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-[10px] font-semibold text-white/60 uppercase tracking-widest shrink-0">
 					Find on Map
 				</div>
-				<div class="px-2 py-2 border-b border-brd flex flex-col gap-1.5 shrink-0">
+				<div class="px-1 py-1 border-b border-brd flex flex-col gap-1.5 shrink-0">
 					<select
 						class="w-full bg-card2 border border-brd text-tm rounded px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
 						disabled title="Online Friends — TO-DO"
@@ -701,11 +701,11 @@ onUnmounted(() => {
 							v-model="searchQuery"
 							type="text"
 							placeholder="Regions by name…"
-							class="flex-1 min-w-0 bg-card2 border border-brd rounded-5 text-t1 placeholder-tm rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+							class="flex-1 min-w-0 bg-card2 border border-brd rounded-xl text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 							@keydown.enter="doSearch"
 						/>
 						<button
-							class="px-2 py-1 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="bg-accent text-white rounded text-xs hover:opacity-80 shrink-0 min-w-[3.25rem]"
 							@click="doSearch"
 						>Find</button>
 					</div>
@@ -739,7 +739,7 @@ onUnmounted(() => {
 				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-[10px] font-semibold text-white/60 uppercase tracking-widest shrink-0">
 					Location
 				</div>
-				<div class="px-2 py-2 flex flex-col gap-1.5">
+				<div class="flex flex-col gap-1.5 p-1">
 					<div class="flex items-center justify-evenly gap-x-1.5 gap-y-1">
 						<span class="text-tm font-mono text-[10px] text-right">X/Y/Z:</span>
 						<input
@@ -758,7 +758,7 @@ onUnmounted(() => {
 							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 					</div>
-					<div class="flex gap-2">
+					<div class="flex gap-1">
 						<button
 							class="flex-1 py-1 bg-accent border border-brd text-white rounded text-xs font-semibold hover:opacity-60 transition-opacity"
 							@click="doTeleport"
@@ -766,7 +766,7 @@ onUnmounted(() => {
 							Teleport
 						</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors"
+							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors text-nowrap"
 							title="Copy SLurl to clipboard"
 							@click="copySlurl"
 						>Copy SLurl</button>

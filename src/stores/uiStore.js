@@ -9,17 +9,17 @@ import { useChatStore } from './chatStore'
 // row 3: #4+#5 full; row 4: #6 half-offset. User drag overrides defaultPos.
 export const MAX_INVENTORY = 6
 const INV_ROW_BOTTOM = [
-	'2.65rem',
-	'calc(2.65rem + 45vh + 0.25rem)',
-	'calc(2.65rem + 90vh + 0.125rem)',
+	'2.575rem',
+	'calc(2.575rem + 47vh + 0.125rem)',
+	'calc(2.575rem + 92vh + 0.0625rem)',
 ]
 export const INVENTORY_DEFAULT_POS = [
-	{ left: '0.125vw', bottom: INV_ROW_BOTTOM[0] }, // #1
-	{ left: '15.125vw', bottom: INV_ROW_BOTTOM[0] }, // #2
-	{ left: '7.6875vw', bottom: INV_ROW_BOTTOM[1] }, // #3
-	{ left: '30.125vw', bottom: INV_ROW_BOTTOM[0] }, // #4
-	{ left: '22.6875vw', bottom: INV_ROW_BOTTOM[1] }, // #5
-	{ left: '45.125vw', bottom: INV_ROW_BOTTOM[0] }, // #6
+	{ left: '0.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #1
+	{ left: '15.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #2
+	{ left: '7.8125vw', bottom: INV_ROW_BOTTOM[1] }, // #3
+	{ left: '31.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #4
+	{ left: '23.3125vw', bottom: INV_ROW_BOTTOM[1] }, // #5
+	{ left: '46.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #6
 ]
 
 export const useUiStore = defineStore('ui', () => {

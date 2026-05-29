@@ -145,14 +145,13 @@ function close() {
 			</div>
 
 			<!-- Tab strip -->
-			<nav class="flex shrink-0 border-b border-brd">
+			<nav class="tabs">
 				<button
 					v-for="tab in tabs"
 					:key="tab.id"
-					class="flex-1 py-1.5 text-xs transition-colors border-b-2"
 					:class="activeTab === tab.id
-						? 'text-accent border-accent'
-						: 'text-white/50 hover:text-white/70 border-transparent'"
+						? 'active'
+						: ''"
 					@click="activeTab = tab.id"
 				>{{ tab.label }}</button>
 			</nav>

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { MapPinIcon, PlusIcon, Trash2Icon, CogIcon, ChevronDownIcon, ArrowUpDownIcon } from '@lucide/vue'
+import { PlusIcon, Trash2Icon, CogIcon, ChevronDownIcon, ArrowUpDownIcon } from '@lucide/vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { usePlaces } from '@/composables/usePlaces'
 import { useUiStore } from '@/stores/uiStore'
@@ -54,7 +54,7 @@ const filteredHistory = computed(() => {
 					v-model="filter"
 					type="search"
 					placeholder="Filter My Places"
-					class="flex-1 bg-brd2 rounded-5 m-1 px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
+					class="flex-1 bg-brd2 rounded-xl m-1 px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
 				/>
 				<button class="tb-btn" title="Show options (TO-DO)"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 				<button class="tb-btn" title="Show sorting options (TO-DO)"><ArrowUpDownIcon /><ChevronDownIcon class="w-3" /></button>
@@ -63,12 +63,11 @@ const filteredHistory = computed(() => {
 			</div>
 
 			<!-- Tab row -->
-			<div class="flex border-b border-brd shrink-0">
+			<div class="tabs">
 				<button
 					v-for="tab in TABS"
 					:key="tab.id"
-					class="tab-btn"
-					:class="{ 'tab-btn--active': ui.placesActiveTab === tab.id }"
+					:class="{ 'active': ui.placesActiveTab === tab.id }"
 					@click="ui.placesActiveTab = tab.id"
 				>{{ tab.label }}</button>
 			</div>
@@ -86,7 +85,7 @@ const filteredHistory = computed(() => {
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
-								<MapPinIcon class="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+								<span class="w-3.5 h-3.5 shrink-0">📌</span>
 								<input
 									:value="p.name"
 									class="bg-transparent border-0 px-0 text-xs text-t1 focus:bg-white/10 focus:rounded focus:px-1 focus:outline-none min-w-0 flex-1"
@@ -111,7 +110,7 @@ const filteredHistory = computed(() => {
 
 				<!-- ── Landmarks ── -->
 				<!-- WHY: Phase 2 landmarks = built-in region anchors (Spawn / Region centre / Last
-				     position) from usePlaces. Inventory-asset landmarks need HTTP caps → Phase 3. -->
+					position) from usePlaces. Inventory-asset landmarks need HTTP caps → Phase 3. -->
 				<template v-else-if="ui.placesActiveTab === 'landmarks'">
 					<ul v-if="filteredLandmarks.length" class="px-2 py-1">
 						<li
@@ -121,7 +120,7 @@ const filteredHistory = computed(() => {
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
-								<MapPinIcon class="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
 									<div class="text-[0.6rem] text-white/40 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
@@ -146,7 +145,7 @@ const filteredHistory = computed(() => {
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
-								<MapPinIcon class="w-3.5 h-3.5 text-accent shrink-0" />
+								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
 									<div class="text-[0.6rem] text-white/40 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
@@ -213,28 +212,6 @@ const filteredHistory = computed(() => {
 	color: var(--color-t1);
 }
 .tb-btn svg { width: 1rem; height: 1rem; }
-
-/* ── Tab strip ── */
-.tab-btn {
-	flex: 1;
-	padding: 0.375rem 0.25rem;
-	font-size: 0.6875rem;
-	color: rgba(255, 255, 255, 0.45);
-	border: none;
-	border-bottom: 2px solid transparent;
-	border-radius: 0;
-	background: none;
-	cursor: pointer;
-	transition: color 0.12s, border-color 0.12s, background 0.12s;
-}
-.tab-btn:hover {
-	color: rgba(255, 255, 255, 0.8);
-	background: rgba(255, 255, 255, 0.04);
-}
-.tab-btn--active {
-	color: #fff;
-	border-bottom-color: var(--color-accent);
-}
 
 /* ── Inline list row buttons ── */
 .inline-btn {

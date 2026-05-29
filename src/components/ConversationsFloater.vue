@@ -138,17 +138,16 @@ async function submitChat() {
 		<div class="flex flex-1 min-h-0">
 
 			<!-- Vertical tab strip -->
-			<nav class="flex flex-col shrink-0 w-[9rem] border-r border-brd overflow-y-auto">
+			<nav class="vtabs w-[9rem]">
 				<div
 					v-for="tab in tabs"
 					:key="tab.id"
 					class="relative group"
 				>
 					<button
-						class="flex items-center gap-1 py-3 px-1 text-xs hover:bg-white/5 transition-colors border-l-2 w-full"
 						:class="activeTab === tab.id
-							? 'bg-white/10 text-accent border-accent'
-							: 'text-white/50 hover:text-white/70 border-transparent'"
+							? 'active'
+							: ''"
 						@click="selectTab(tab.id)"
 					>
 						<span class="-mt-0.5 text-base leading-none">{{ tab.icon }}</span>

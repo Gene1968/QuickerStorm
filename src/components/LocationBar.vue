@@ -140,7 +140,7 @@ function onEditKeydown(e) {
 </script>
 
 <template>
-	<div class="flex items-center gap-2 bg-white/10 rounded-1 ps-3 text-xs text-white select-none min-w-0">
+	<div class="flex items-center gap-2 bg-white/10 rounded ps-3 text-xs text-white select-none min-w-0">
 
 		<span @click="showLocationInfo" title="See more info about the current location (TO-DO)" class="me-2 text-base">ℹ️</span>
 
