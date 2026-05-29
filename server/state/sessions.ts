@@ -42,6 +42,25 @@ export interface CircuitState {
 	// entries when bursted faster than it can process — testing showed 348 batches in <5s
 	// yielded only 113 ObjectUpdates from 4792 requested IDs. Drain N per heartbeat tick.
 	cacheMissPending:   number[]
+	// Every localId we've ever sent via RequestMultipleObjects. Comparing against
+	// distinctLocalIds (full ObjectUpdate replies received) tells us which prims sim chose
+	// not to satisfy. Useful for debugging "missing in viewer but exists in sim" cases.
+	cacheMissAskedEver: Set<number>
+	// Phase 2.5 retry pass — after primary drain (CacheMissType=0) completes, re-request any
+	// localId still missing from distinctLocalIds using CacheMissType=1 (CRC mismatch). Some
+	// OpenSim builds honor type=1 differently than type=0. Single retry; on second drain
+	// completion we dump the snapshot.
+	cacheMissRetryPending: number[]
+	cacheMissRetryStarted: boolean
+	// Timestamp of last enqueue into cacheMissPending (i.e. last ObjectUpdateCached enum
+	// packet from sim). Retry pass waits for 5s of silence on this stamp before firing so
+	// we don't trigger retry mid-enum.
+	lastCacheEnumAt: number
+	// True once we've dumped the prim-ids snapshot file after pending drained to 0. Prevents
+	// re-dumping every tick once drain completes.
+	primIdsSnapshotDumped: boolean
+	// True once a MapLayerRequest has been sent on this circuit (one-shot probe).
+	mapLayerSent?: boolean
 	// Diagnostic counters
 	wsMoveCount?: number  // total MOVE messages received from browser client
 	// Heartbeat: send AgentUpdate periodically to prevent sim 60s timeout

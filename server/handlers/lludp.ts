@@ -1,5 +1,6 @@
 // server/handlers/lludp.ts — UDP→WS relay: decode incoming LLUDP packets, forward to browser
 import * as dgram from 'dgram'
+import * as fs from 'fs'
 import { getSession, deleteSession } from '../state/sessions'
 import type { CircuitState } from '../state/sessions'
 import {
@@ -15,6 +16,8 @@ import {
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
 	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
 	encodeSetAlwaysRun,
+	encodeMapBlockRequest, encodeMapNameRequest, decodeMapBlockReply,
+	encodeMapLayerRequest,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -41,6 +44,8 @@ const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
 const LOW_IMPROVED_INSTANT_MSG= 254   // ImprovedInstantMessage — both directions (Low freq)
 const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
+const LOW_MAP_BLOCK_REPLY     = 409   // Sim → viewer: world-map region entries (Low freq)
+const LOW_MAP_LAYER_REPLY     = 406   // Sim → viewer: map layer info — alive-probe response
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
 const MEDIUM_OBJECT_PROPERTIES      = 9  // ObjectProperties — sim's reply to ObjectSelect (Medium freq)
@@ -224,10 +229,20 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		const camStr = camP
 			? `cam=${camP[0].toFixed(0)},${camP[1].toFixed(0)},${camP[2].toFixed(0)} at=${camA?.[0].toFixed(2)},${camA?.[1].toFixed(2)}`
 			: 'cam=?'
+		// Unfulfilled = asked-via-ReqMulti minus received-as-ObjectUpdate. Sample first 5
+		// so user can `grep <localId> server-log.txt` and confirm "asked but sim ignored".
+		let unfulfilledCount = 0
+		const unfulfilledSample: number[] = []
+		for (const id of session.cacheMissAskedEver) {
+			if (!session.distinctLocalIds.has(id)) {
+				unfulfilledCount++
+				if (unfulfilledSample.length < 5) unfulfilledSample.push(id)
+			}
+		}
 		slog.info(session.ws,
 			`[PrimDiag] rx{${counts.join(' ')}} decoded=${session.objDecodedCount} relayed=${session.objRelayedCount} ` +
-			`distinct=${session.distinctLocalIds.size} reqMulti=${session.reqMultiOutCount}batches/${session.reqMultiIdsCount}ids ` +
-			`pending=${session.cacheMissPending.length} ${camStr}`)
+			`distinct=${session.distinctLocalIds.size} asked=${session.cacheMissAskedEver.size} reqMulti=${session.reqMultiOutCount}batches/${session.reqMultiIdsCount}ids ` +
+			`pending=${session.cacheMissPending.length} retryPending=${session.cacheMissRetryPending.length} unfulfilled=${unfulfilledCount}(${unfulfilledSample.join(',')}) ${camStr}`)
 	}
 
 	// Log first packet + every LOG_EVERY_N_PACKETS thereafter
@@ -406,11 +421,14 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				// paced rate via heartbeat timer (drainCacheMissQueue). Skip IDs already
 				// fulfilled (in objCache) and any already queued (cheap O(n) check; pending
 				// list typically stays small after drain).
+				let enqueued = 0
 				for (const id of ids) {
 					if (session.objCache.has(id)) continue
 					if (session.cacheMissPending.includes(id)) continue
 					session.cacheMissPending.push(id)
+					enqueued++
 				}
+				if (enqueued > 0) session.lastCacheEnumAt = Date.now()
 				if (!session.loggedTypes.has('objcache')) {
 					session.loggedTypes.add('objcache')
 					slog.info(session.ws, `[ObjCached] +${ids.length} ids enqueued (pending=${session.cacheMissPending.length})`)
@@ -648,6 +666,26 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `low:${LOW_MAP_LAYER_REPLY}`) {
+		slog.info(session.ws, `[MapLayer] reply received — map pipeline alive (size=${rawBuf.length}b)`)
+		return
+	}
+
+	if (type === `low:${LOW_MAP_BLOCK_REPLY}`) {
+		try {
+			const blocks = decodeMapBlockReply(buf, dataOffset)
+			// Log every reply (incl. empty) for diagnostics until map proven stable.
+			const hex = buf.slice(dataOffset, Math.min(dataOffset + 40, buf.length)).toString('hex')
+			slog.info(session.ws,
+				`[MapBlocks] rx ${blocks.length} block(s) bufLen=${buf.length} hex[${hex}]` +
+				(blocks.length > 0 ? ` first="${blocks[0].name}"(${blocks[0].regionX},${blocks[0].regionY}) access=${blocks[0].access}` : ''))
+			if (blocks.length > 0) {
+				session.ws.send(JSON.stringify({ t: S.MAP_BLOCKS, d: { blocks } }))
+			}
+		} catch (e) { slog.warn(session.ws, `MapBlockReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	// WHY: Log each unknown packet type once so we can detect unhandled messages.
 	// Handled: high:1,11,12,14,15,16 med:6 low:64,69,139,148,152,250 fixed:251.
 	if (!session.loggedTypes.has(type)) {
@@ -852,12 +890,77 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// Without this we have no record of mesh-count or upsert failures after session ends.
 		const d = msg.d as {
 			received?: number; stored?: number; prims?: number; av?: number;
-			meshes?: number; upsertFails?: number; skippedOversize?: number
+			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number
 		}
 		slog.info(session.ws,
 			`[ClientDiag] received=${d.received ?? '?'} stored=${d.stored ?? '?'} ` +
 			`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
-			`upsertFails=${d.upsertFails ?? '?'} skipOversize=${d.skippedOversize ?? '?'}`)
+			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'}`)
+		return
+	}
+
+	if (msg.t === C.MAP_QUERY) {
+		const d = msg.d as { minX: number; maxX: number; minY: number; maxY: number }
+		// First-time probe: send MapLayerRequest once per circuit. Some OpenSim builds gate
+		// WorldMapModule until at least one MapLayerRequest seen. Tracks via flag on session.
+		if (!session.mapLayerSent) {
+			session.mapLayerSent = true
+			const layerSeq = nextSeq(session)
+			const layerPkt = encodeMapLayerRequest({
+				agentId: session.agentId, sessionId: session.sessionId, seq: layerSeq,
+			})
+			trackReliable(session, layerSeq, layerPkt)
+			session.udpSocket.send(layerPkt, session.simPort, session.simIp)
+			slog.info(session.ws, `→ MapLayerRequest (probe) seq=${layerSeq} pktLen=${layerPkt.length}`)
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeMapBlockRequest({
+			agentId:   session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			minX: d.minX, maxX: d.maxX, minY: d.minY, maxY: d.maxY,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MapBlockRequest minX=${d.minX} maxX=${d.maxX} minY=${d.minY} maxY=${d.maxY} pktLen=${pkt.length}`)
+		return
+	}
+
+	if (msg.t === C.MAP_NAME_QUERY) {
+		const d = msg.d as { name: string }
+		if (!d.name) return
+		const seq = nextSeq(session)
+		const pkt = encodeMapNameRequest({
+			agentId:   session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			name:      d.name,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MapNameRequest "${d.name}" pktLen=${pkt.length} hex=${pkt.toString('hex')}`)
+		return
+	}
+
+	if (msg.t === C.MAP_TELEPORT) {
+		const d = msg.d as { regionX: number; regionY: number; x: number; y: number; z: number }
+		// regionX/Y are sim grid coords; pack into RegionHandle (Y<<32)|X scaled by 256.
+		// regionX/Y from MapBlockReply are grid indices; meters = idx*256. Handle = (Y_m<<32)|X_m.
+		const handle = ((BigInt(d.regionY) * 256n) << 32n) | (BigInt(d.regionX) * 256n)
+		const x = Math.max(1, Math.min(255, d.x))
+		const y = Math.max(1, Math.min(255, d.y))
+		const z = Math.max(0.5, d.z)
+		const seq = nextSeq(session)
+		const pkt = encodeTeleportLocationRequest({
+			agentId:      session.agentId,
+			sessionId:    session.sessionId,
+			seq,
+			regionHandle: handle,
+			x, y, z,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MapTeleport: region(${d.regionX},${d.regionY}) pos=${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)} handle=${handle}`)
 		return
 	}
 
@@ -888,25 +991,90 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
  * = 64 ids/sec — ~75s to drain 4792-id region enumeration. Each packet is tracked as
  * reliable so UDP drops auto-retransmit.
  */
-function drainCacheMissQueue(s: CircuitState): void {
-	if (s.cacheMissPending.length === 0) return
+/**
+ * Dump per-set localId snapshot to disk once the cache-miss drain completes. Used to
+ * confirm whether a specific "missing" prim was ever enumerated by sim (asked-ever)
+ * vs whether sim ignored our cache-miss reply (unfulfilled). User greps prim-ids-snapshot.txt
+ * for the suspect localId — appearance in `asked` but absence from `distinct` = sim culled
+ * the reply; absence from `asked` = sim never enumerated the prim at all.
+ */
+function dumpPrimIdsSnapshot(s: CircuitState): void {
+	if (s.primIdsSnapshotDumped) return
+	if (s.cacheMissPending.length > 0) return
+	if (s.cacheMissAskedEver.size === 0) return
+	s.primIdsSnapshotDumped = true
+	const askedSorted = [...s.cacheMissAskedEver].sort((a, b) => a - b)
+	const distinctSorted = [...s.distinctLocalIds].sort((a, b) => a - b)
+	const unfulfilled = askedSorted.filter(id => !s.distinctLocalIds.has(id))
+	const lines: string[] = []
+	lines.push(`=== distinctLocalIds (${distinctSorted.length}) ===`)
+	lines.push(...distinctSorted.map(String))
+	lines.push(``)
+	lines.push(`=== cacheMissAskedEver (${askedSorted.length}) ===`)
+	lines.push(...askedSorted.map(String))
+	lines.push(``)
+	lines.push(`=== unfulfilled — asked but no ObjectUpdate received (${unfulfilled.length}) ===`)
+	lines.push(...unfulfilled.map(String))
+	try {
+		fs.writeFileSync('prim-ids-snapshot.txt', lines.join('\n'))
+		slog.info(s.ws, `[PrimIdsSnapshot] wrote prim-ids-snapshot.txt (distinct=${distinctSorted.length} asked=${askedSorted.length} unfulfilled=${unfulfilled.length})`)
+	} catch (e) {
+		slog.warn(s.ws, `[PrimIdsSnapshot] write failed: ${(e as Error).message}`)
+	}
+}
+
+function sendCacheMissBatch(s: CircuitState, queue: number[], cacheMissType: 0 | 1): void {
 	const BATCH = 16
 	const PER_TICK = 2
 	for (let p = 0; p < PER_TICK; p++) {
-		if (s.cacheMissPending.length === 0) break
-		const chunk = s.cacheMissPending.splice(0, BATCH)
+		if (queue.length === 0) break
+		const chunk = queue.splice(0, BATCH)
 		const seq = nextSeq(s)
 		const pkt = encodeRequestMultipleObjects({
 			agentId:   s.agentId,
 			sessionId: s.sessionId,
 			seq,
 			ids:       chunk,
+			cacheMissType,
 		})
 		trackReliable(s, seq, pkt)
 		s.udpSocket.send(pkt, s.simPort, s.simIp)
 		s.reqMultiOutCount++
 		s.reqMultiIdsCount += chunk.length
+		for (const id of chunk) s.cacheMissAskedEver.add(id)
 	}
+}
+
+function drainCacheMissQueue(s: CircuitState): void {
+	// Phase 1: primary queue with CacheMissType=0 (Full update).
+	if (s.cacheMissPending.length > 0) {
+		sendCacheMissBatch(s, s.cacheMissPending, 0)
+		return
+	}
+	// Primary drain done. Initiate retry pass once with CacheMissType=1 for any
+	// asked-but-unfulfilled ids. Hypothesis: sim may treat the two CacheMissTypes differently,
+	// so a second pass with type=1 might coax it into satisfying requests it ignored at type=0.
+	// WHY 5s silence gate: sim sends ObjectUpdateCached enum over time as we settle in. An
+	// early empty-pending window mid-enum used to trigger retry with 0 unfulfilled; new
+	// cached batches then arrived but never triggered retry again. Wait until sim has been
+	// silent on enum for 5s to be confident enumeration is done.
+	if (!s.cacheMissRetryStarted) {
+		if (s.lastCacheEnumAt === 0) return  // sim never sent any cached enum yet
+		if (Date.now() - s.lastCacheEnumAt < 5000) return  // enum may still be in-flight
+		s.cacheMissRetryStarted = true
+		const unfulfilled: number[] = []
+		for (const id of s.cacheMissAskedEver) {
+			if (!s.distinctLocalIds.has(id)) unfulfilled.push(id)
+		}
+		s.cacheMissRetryPending = unfulfilled
+		slog.info(s.ws, `[CacheMissRetry] primary drain done — retrying ${unfulfilled.length} unfulfilled ids with CacheMissType=1`)
+	}
+	if (s.cacheMissRetryPending.length > 0) {
+		sendCacheMissBatch(s, s.cacheMissRetryPending, 1)
+		return
+	}
+	// Both phases drained — safe to dump snapshot now.
+	dumpPrimIdsSnapshot(s)
 }
 
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */

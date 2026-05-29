@@ -270,20 +270,22 @@ export function encodeTeleportLocationRequest(p: {
  *  yield ObjectUpdate replies.
  */
 export function encodeRequestMultipleObjects(p: {
-  agentId:   string
-  sessionId: string
-  seq:       number
-  ids:       number[]  // localIds to request
+  agentId:       string
+  sessionId:     string
+  seq:           number
+  ids:           number[]   // localIds to request
+  cacheMissType?: 0 | 1     // 0 = Full (we have nothing), 1 = CrcMismatch (we have stale)
 }): Buffer {
   const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
   const MSG  = Buffer.from([0xFF, 0x03])  // Medium #3
   const body = Buffer.allocUnsafe(16 + 16 + 1 + p.ids.length * 5)
+  const missType = p.cacheMissType ?? 0
   let off = 0
   uuidToBytes(p.agentId).copy(body, off);   off += 16
   uuidToBytes(p.sessionId).copy(body, off); off += 16
   body[off++] = p.ids.length
   for (const id of p.ids) {
-    body[off++] = 0   // CacheMissType = 0 (full update)
+    body[off++] = missType
     body.writeUInt32LE(id, off); off += 4
   }
   return Buffer.concat([hdr, MSG, body])
@@ -1249,6 +1251,130 @@ export function decodeKillObject(buf: Buffer, dataOffset: number): number[] {
     ids.push(buf.readUInt32LE(off)); off += 4
   }
   return ids
+}
+
+// ── World Map (Low #405/#406/#407/#408/#409) ──────────────────────────────
+// MapLayerRequest body (Low 405): AgentData { AgentID, SessionID, Flags, EstateID, Godlike }.
+// Many OpenSim builds gate WorldMapModule on a prior MapLayerRequest. Firestorm sends one
+// at startup. Use as alive-probe — if sim replies with MapLayerReply (low:406), the map
+// pipeline is functional.
+export function encodeMapLayerRequest(p: {
+  agentId:   string
+  sessionId: string
+  seq:       number
+  flags?:    number
+}): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x95])  // Low #405 = 0x0195
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(p.flags ?? 0, off);    off += 4
+  body.writeUInt32LE(0, off);                off += 4
+  body[off++] = 0
+  return Buffer.concat([hdr, MSG, body])
+}
+
+
+// MapBlockRequest body per Firestorm indra/newview/llworldmap.cpp:
+//   AgentData { AgentID, SessionID, Flags U32, EstateID U32, Godlike Bool }
+//   PositionData { MinX U16, MaxX U16, MinY U16, MaxY U16 }
+// WHY flags = 0x10000: Firestorm sets `flags |= layer | (returnNonExistent ? 0x10000 : 0)`.
+// Layer 0 = GridLayerType.Objects (libomv default). The 0x10000 "return non-existent" bit
+// makes sim emit MapBlockReply entries even for empty grid slots — needed so map UI can
+// show "offline" tiles, not silently drop replies.
+export function encodeMapBlockRequest(p: {
+  agentId:   string
+  sessionId: string
+  seq:       number
+  minX:      number
+  maxX:      number
+  minY:      number
+  maxY:      number
+  flags?:    number
+}): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x97])  // Low #407 = 0x0197
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1 + 2 + 2 + 2 + 2)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(p.flags ?? 0x00010000, off); off += 4
+  body.writeUInt32LE(0, off);                     off += 4   // EstateID
+  body[off++] = 0                                              // Godlike
+  body.writeUInt16LE(p.minX, off);                off += 2
+  body.writeUInt16LE(p.maxX, off);                off += 2
+  body.writeUInt16LE(p.minY, off);                off += 2
+  body.writeUInt16LE(p.maxY, off);                off += 2
+  return Buffer.concat([hdr, MSG, body])
+}
+
+// MapNameRequest body per libomv / Firestorm llworldmap.cpp:
+//   AgentData { AgentID, SessionID, Flags U32, EstateID U32, Godlike Bool }
+//   NameData { Name Variable1 }
+// Flags same convention as MapBlockRequest.
+export function encodeMapNameRequest(p: {
+  agentId:   string
+  sessionId: string
+  seq:       number
+  name:      string
+  flags?:    number
+}): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x98])  // Low #408 = 0x0198
+  const nameBuf = Buffer.from(p.name + '\0', 'utf8')
+  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1 + 1 + nameBuf.length)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE(p.flags ?? 0x00010000, off); off += 4
+  body.writeUInt32LE(0, off);                     off += 4
+  body[off++] = 0
+  body[off++] = nameBuf.length
+  nameBuf.copy(body, off)
+  return Buffer.concat([hdr, MSG, body])
+}
+
+export interface MapBlock {
+  regionX:     number   // sim grid X (multiply by 256 for world metres)
+  regionY:     number
+  name:        string
+  access:      number   // 13=PG, 21=Mature, 42=Adult, 254=down/offline
+  regionFlags: number
+  waterHeight: number
+  agents:      number
+  mapImageId:  string
+}
+
+// MapBlockReply body per libomv:
+//   AgentData { AgentID, Flags U32 }
+//   Data Variable count of { X U16, Y U16, Name V1, Access U8, RegionFlags U32,
+//                            WaterHeight U8, Agents U8, MapImageID UUID }
+export function decodeMapBlockReply(buf: Buffer, dataOffset: number): MapBlock[] {
+  const out: MapBlock[] = []
+  let off = dataOffset
+  off += 16   // AgentID
+  off += 4    // Flags
+  if (off >= buf.length) return out
+  const count = buf[off++]
+  for (let i = 0; i < count && off < buf.length; i++) {
+    try {
+      const regionX = buf.readUInt16LE(off); off += 2
+      const regionY = buf.readUInt16LE(off); off += 2
+      if (off >= buf.length) break
+      const nLen = buf[off++]
+      if (off + nLen > buf.length) break
+      const name = buf.slice(off, off + nLen).toString('utf8').replace(/\0/g, ''); off += nLen
+      const access = buf[off++]
+      const regionFlags = buf.readUInt32LE(off); off += 4
+      const waterHeight = buf[off++]
+      const agents      = buf[off++]
+      const mapImageId  = bytesToUuid(buf, off); off += 16
+      out.push({ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId })
+    } catch { break }
+  }
+  return out
 }
 
 /** Decode TeleportLocal (Low #64) — sim's response to same-region TeleportLocationRequest.

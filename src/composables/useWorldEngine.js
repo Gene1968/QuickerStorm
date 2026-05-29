@@ -981,47 +981,61 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	// ── Mesh management ───────────────────────────────────────────────────────
-	// WHY: SL standard prim max = 10m. Linden megaprim spec extends to 64m. Compressed
-	// decoder is MVP; its 64-byte fixed-block parse can land on misaligned offsets for some
-	// prim variants, yielding NaN/Inf or absurd scale values. Without this guard the resulting
-	// THREE.Mesh extends "to infinity" along an axis — visible as flashing white walls into
-	// the sky. Also clamp position: SL regions are 0..256 (or up to 512 var-region); Z runs
-	// roughly -256 (underwater) to 4096 (high build). Anything beyond either bound is decode
-	// garbage. Skip the mesh entirely rather than render an out-of-region or huge object.
-	const MAX_PRIM_SCALE = 64
-	const MIN_PRIM_SCALE = 0.01
+	// WHY: SL standard prim max = 10m. Linden megaprim spec extends to 64m; OpenSim regions
+	// sometimes host genuine 256m megaprims (whole-region floors/walls). MAX raised to 256
+	// so legitimate megas render. Anything beyond is decode error or pathological — render
+	// as magenta placeholder (1m cube at obj.pos) so user can find/inspect rather than seeing
+	// the scene quietly drop prims. Position with NaN/Inf or far outside any plausible region
+	// range = no salvageable location → full skip. No MIN_PRIM_SCALE filter (Three.js handles
+	// tiny meshes fine; user reported a 0.01m BOM prim was missing — guard was conservative).
+	const MAX_PRIM_SCALE = 256
 	const POS_MIN = -64
-	const POS_MAX_XY = 1024// generous: var-region 512 + neighbour-sim slack
+	const POS_MAX_XY = 1024     // var-region 512 + neighbour-sim slack
 	const POS_MIN_Z = -512
 	const POS_MAX_Z = 8192
-	let skippedOversize = 0
-	function shouldSkipForSafety(obj) {
-		if (obj.pcode === PCODE_AVATAR) return false  // avatars don't carry scale; capsule fixed
+	const PLACEHOLDER_COLOR = 0xff1493   // hot pink — high-contrast marker, outside hashed-HSL palette
+	let skippedNoPos     = 0    // pos NaN/Inf or out of range — nowhere to draw
+	let placeholderCount = 0    // bad scale → magenta 1m cube at obj.pos
+	function classifySafety(obj) {
+		if (obj.pcode === PCODE_AVATAR) return { ok: true }
+		const p = obj.pos
+		// SL convention (Firestorm "world map" etc.): unrecoverable-pos objects park at region
+		// corner 0,0,0 so the owner can locate, edit, and recover them. We follow the same
+		// pattern — render a hot-pink placeholder at the corner rather than dropping silently.
+		if (p) {
+			if (!Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) return { placeholder: 'pos-nan', clampPos: [0, 0, 0] }
+			if (p[0] < POS_MIN || p[0] > POS_MAX_XY)  return { placeholder: 'pos-x',   clampPos: [0, 0, 0] }
+			if (p[1] < POS_MIN || p[1] > POS_MAX_XY)  return { placeholder: 'pos-y',   clampPos: [0, 0, 0] }
+			if (p[2] < POS_MIN_Z || p[2] > POS_MAX_Z) return { placeholder: 'pos-z',   clampPos: [0, 0, 0] }
+		}
 		const sc = obj.scale
 		if (sc) {
-			if (!Number.isFinite(sc[0]) || !Number.isFinite(sc[1]) || !Number.isFinite(sc[2])) return true
+			if (!Number.isFinite(sc[0]) || !Number.isFinite(sc[1]) || !Number.isFinite(sc[2])) return { placeholder: 'scale-nan' }
 			const maxS = Math.max(Math.abs(sc[0]), Math.abs(sc[1]), Math.abs(sc[2]))
-			const minS = Math.min(Math.abs(sc[0]), Math.abs(sc[1]), Math.abs(sc[2]))
-			if (maxS > MAX_PRIM_SCALE) return true
-			if (maxS < MIN_PRIM_SCALE && minS < MIN_PRIM_SCALE) return true
+			if (maxS > MAX_PRIM_SCALE) return { placeholder: `scale-${maxS.toFixed(0)}m` }
 		}
-		const p = obj.pos
-		if (p) {
-			if (!Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) return true
-			if (p[0] < POS_MIN || p[0] > POS_MAX_XY) return true
-			if (p[1] < POS_MIN || p[1] > POS_MAX_XY) return true
-			if (p[2] < POS_MIN_Z || p[2] > POS_MAX_Z) return true
-		}
-		return false
+		return { ok: true }
 	}
 	function upsertMesh(obj) {
-		if (shouldSkipForSafety(obj)) {
-			skippedOversize++
-			if (skippedOversize <= 10 || skippedOversize % 50 === 0) {
-				debugStore.push('warn',
-					`[3D] skip unsafe localId=${obj.localId} scale=${obj.scale?.map(v=>Number.isFinite(v)?v.toFixed(1):v).join(',')} pos=${obj.pos?.map(v=>Number.isFinite(v)?v.toFixed(0):v).join(',')} (#${skippedOversize})`)
+		const safety = classifySafety(obj)
+		if (safety.placeholder) {
+			// Shallow-copy so worldStore's original record stays intact. Clamp scale to 1m,
+			// drop shape so buildPrimGeometry returns a vanilla cube, drop defaultColor so
+			// placeholder color applies. clampPos (if present) parks the marker at region
+			// corner 0,0,0 — FS convention for unrecoverable-pos objects.
+			obj = {
+				...obj,
+				scale:        [1, 1, 1],
+				pos:          safety.clampPos ?? obj.pos,
+				shape:        undefined,
+				defaultColor: undefined,
+				_placeholder: safety.placeholder,
 			}
-			return
+			placeholderCount++
+			if (placeholderCount <= 10 || placeholderCount % 50 === 0) {
+				debugStore.push('warn',
+					`[3D] placeholder ${safety.placeholder} localId=${obj.localId} pos=${obj.pos?.map(v=>v.toFixed(0)).join(',')} (#${placeholderCount})`)
+			}
 		}
 		let mesh = meshMap.get(obj.localId)
 		const isNew = !mesh
@@ -1049,7 +1063,7 @@ export function useWorldEngine(canvasRef) {
 			const teColor = obj.defaultColor
 				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 				: null
-			const primColor = teColor ?? hashedColor
+			const primColor = obj._placeholder ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
 			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			mesh = new THREE.Mesh(geo, mat)
 			mesh.userData.localId  = obj.localId
@@ -1193,13 +1207,14 @@ export function useWorldEngine(canvasRef) {
 			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} upsertFails=${upsertMeshFailures}`)
 			// Mirror to server-log via WS so server-log.txt has full client+server picture.
 			wsEmit(C.CLIENT_DIAG, {
-				received:        objsReceivedTotal,
-				stored:          worldStore.objects.size,
-				prims:           primCount,
-				av:              avCount,
-				meshes:          meshMap.size,
-				upsertFails:     upsertMeshFailures,
-				skippedOversize,
+				received:     objsReceivedTotal,
+				stored:       worldStore.objects.size,
+				prims:        primCount,
+				av:           avCount,
+				meshes:       meshMap.size,
+				upsertFails:  upsertMeshFailures,
+				skippedNoPos,
+				placeholders: placeholderCount,
 			})
 		}
 		for (const obj of objs) {

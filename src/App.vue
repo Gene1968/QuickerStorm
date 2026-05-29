@@ -29,12 +29,13 @@ function onRegionInfo(d) {
 	// OSGrid (and many OpenSim grids) omit region_name from login response.
 	// The real name arrives via RegionHandshake UDP → S.REGION_INFO from server.
 	if (d.name) session.regionName = d.name
+	if (typeof d.access === 'number') session.regionAccess = d.access
 }
 
 function onDisconnected(d) {
 	// Sim terminated circuit (timeout, kick, teleport, etc.)
 	const reason = d?.reason ?? 'Disconnected from simulator'
-	debug.push('warn', `Disconnected: ${reason}`)
+	debug.push('warn', `[DISCONNECT] reason="${reason}" loginState=${grid.loginState} sessionConnected=${session.connected}`)
 	// WHY: Don't route immediately — show disconnection overlay on WorldView so user
 	// sees why they were dropped and chooses to return to login. session.clearSession()
 	// is called by the overlay's "Return to Login" button, not here.
@@ -64,7 +65,7 @@ function onWsOpen() {
 		clearTimeout(t)
 		off(S.CIRCUIT_STATUS, onStatus)
 		if (!d?.alive) {
-			debug.push('warn', 'Reconnect probe: server has no live circuit — disconnected')
+			debug.push('warn', `[DISCONNECT] probe alive=${d?.alive} loginState=${grid.loginState}`)
 			grid.setDisconnected('Server lost your session while disconnected')
 		}
 	}

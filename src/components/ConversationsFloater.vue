@@ -156,7 +156,7 @@ async function submitChat() {
 					</button>
 					<button
 						v-if="tab.closable"
-						class="absolute top-0.5 right-0.5 opacity-0 group-hover:opacity-100 text-white/40 hover:text-white"
+						class="absolute top-0.5 right-0.5 opacity-0 hover:opacity-100 text-gray-400 hover:text-gray-900"
 						title="Close conversation"
 						@click="closeImTab(tab.id, $event)"
 					>
