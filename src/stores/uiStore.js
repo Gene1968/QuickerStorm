@@ -46,6 +46,7 @@ export const useUiStore = defineStore('ui', () => {
 	const showAO             = ref(false)    // animation override floater (stub)
 	const showMovementHelp   = ref(false)    // movement help floater
 	const showPlaces         = ref(false)    // Places floater (landmarks + favorites)
+	const placesActiveTab    = ref('favorites') // 'favorites' | 'landmarks' | 'history'
 	const preferenceActiveTab = ref('appearance') // active tab id in Preferences floater
 	const showProfile        = ref(false)    // profile floater
 	const profileTargetId    = ref(null)     // null = self; UUID string = other user
@@ -96,6 +97,7 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleAO()             { showAO.value             = !showAO.value }
 	function toggleMovementHelp()   { showMovementHelp.value   = !showMovementHelp.value }
 	function togglePlaces()         { showPlaces.value         = !showPlaces.value }
+	function openPlacesOnTab(tabId) { placesActiveTab.value = tabId; showPlaces.value = true }
 	// WHY: FS parity — emit "Always Run enabled./disabled." into Nearby Chat on state change
 	function _notifyAlwaysRun() {
 		useChatStore().addMessage({
@@ -207,7 +209,7 @@ export const useUiStore = defineStore('ui', () => {
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,
-		toggleMovementHelp, togglePlaces, openPreferencesOnTab,
+		toggleMovementHelp, togglePlaces, openPlacesOnTab, placesActiveTab, openPreferencesOnTab,
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
 		openProfile, toggleProfile,

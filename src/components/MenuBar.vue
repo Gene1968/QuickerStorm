@@ -64,6 +64,19 @@ function onKey(e) {
 		e.preventDefault()
 		ui.toggleAlwaysRun()
 	}
+	// Ctrl+Shift+M — Toggle Mini-Map
+	if (e.ctrlKey && !e.altKey && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+		e.preventDefault()
+		ui.toggleMinimap()
+		return
+	}
+	// Alt+H — Toggle Places on Teleport History tab; close if already open
+	if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 'h' || e.key === 'H')) {
+		e.preventDefault()
+		if (ui.showPlaces) ui.togglePlaces()
+		else ui.openPlacesOnTab('history')
+		return
+	}
 	// Ctrl+Shift+I — Open next inventory floater (up to MAX_INVENTORY). Each press opens a new one.
 	// WHY: browser DevTools also uses Ctrl+Shift+I but we override here to match FS parity; user
 	// can still use F12 for DevTools.
@@ -149,9 +162,10 @@ const MENUS = [
 	{
 		id: 'world', label: 'World',
 		items: [
-			{ label: 'Mini-Map',										action: () => act(() => ui.toggleMinimap()) },
+			{ label: 'Mini-Map',			kbd: 'Ctrl+⇧+M',			action: () => act(() => ui.toggleMinimap()) },
 			{ label: 'World Map',			kbd: 'Ctrl+M',				action: () => act(() => ui.toggleMap()) },
 			{ label: 'Nearby Avatars',									action: () => act(() => ui.toggleAvatarList()) },
+			{ label: 'Places…',											action: () => act(() => ui.togglePlaces()) },
 			{ sep: true },
 			{ label: 'Teleport History',	disabled: true },
 			{ label: 'Landmark This Place',	disabled: true },

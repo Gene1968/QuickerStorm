@@ -29,7 +29,7 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 		:default-pos="defaultPos"
 		@close="close"
 	>
-		<div class="flex p-1"><input class="inv-search rounded-5 bg-brd2 w-full px-3 text-t1 text-sm font-light" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
+		<div class="flex p-1"><input class="bg-brd2 rounded-5 w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
 		<div class="flex flex-row align-items-center justify-content-evenly w-full mb-1 text-white">
 			<div class="flex flex-row align-items-center justify-content-start w-full overflow-hidden text-2xs">
 				<button class="me-2 py-0">Collapse</button>
