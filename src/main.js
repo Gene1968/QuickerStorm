@@ -1,5 +1,4 @@
 import './utils/devGlobal.js'
-import 'bootstrap/dist/css/bootstrap.min.css'
 import './index.css'
 
 import { createApp } from 'vue'

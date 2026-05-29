@@ -38,7 +38,7 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
 | 3D Engine | Three.js r183 — scene, avatar meshes, terrain mesh, GSAP tweening |
 | Voice (Phase 2) | WebRTC (browser native) + Bun WS server for signaling |
 | LLUDP bridge | Bun WebSocket server (`server/`); typed handlers under `server/handlers/` |
-| Styling | Tailwind utilities + Bootstrap helpers + `<style scoped>`; light/dark via `useTheme()` |
+| Styling | Tailwind utilities + helpers + `<style scoped>`; light/dark via `useTheme()` |
 | Hosting | Vite SPA (static); Bun server runs on Railway (staging) or locally on port 8787 |
 
 ---

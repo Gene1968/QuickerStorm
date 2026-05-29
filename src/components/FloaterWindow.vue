@@ -121,13 +121,13 @@ const outerStyle = computed(() => ({
 	>
 		<!-- Titlebar / drag handle -->
 		<div
-			class="flex items-center justify-between px-3 py-1 bg-card2 border-b border-brd shrink-0 select-none cursor-grab active:cursor-grabbing"
+			class="flex items-center justify-between p-1 ps-3 bg-card2 border-b border-brd shrink-0 select-none cursor-grab active:cursor-grabbing"
 			@mousedown.stop="onTitlebarMousedown"
 		>
 			<span class="text-sm font-semibold text-t1">{{ title }}</span>
 			<button
 				@click.stop="$emit('close')"
-				class="p-1 rounded text-tm hover:text-t1 hover:bg-white/10 transition-colors"
+				class="p-1 px-2 rounded text-tm hover:text-t1 hover:bg-white/10 transition-colors"
 				aria-label="Close"
 			>
 				<XIcon :size="14" />

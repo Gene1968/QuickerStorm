@@ -59,17 +59,6 @@ lerna-debug.log*
 /cypress/screenshots/
 
 
-#Bootstrap Override
-/compiled-bootstrap
-/compiled-bootstrap/
-compiled-bootstrap/
-override-bootstrap.css
-/compiled-bootstrap/override-bootstrap.css
-compiled-bootstrap/override-bootstrap.css
-/compiled-bootstrap/override-bootstrap.css.map
-compiled-bootstrap/override-bootstrap.css
-compiled-bootstrap/override-bootstrap.css.map
-
 #supabase
 supabase/.temp/**
 supabase/.temp/*

@@ -31,9 +31,8 @@
 Use this priority order; only go further down the list when the one above can't do it:
 
 1. **Tailwind utility classes in the template** — layout, spacing, flex/grid, positioning, border-radius, text size/weight, transitions, `z-index`. Use `bg-card`, `text-t1`, `border-brd2`, etc. — defined in `tailwind.config.js` as CSS-var references so they follow the light/dark theme.
-2. **Bootstrap utility / component classes** when they already help (grid helpers, visibility, etc.) — do not fight the theme; prefer TW theme tokens when both could work.
-3. **`ava-panel` / `ava-btn`** (and other classes in `src/index.css` `@layer components`) — repeated themed card/button patterns instead of duplicating the same TW cluster everywhere.
-4. **`<style scoped>`** — keep this **small**: one-off numbers, pseudo-elements, keyframes, gradients, Vue `<Transition>` classes, or `@apply` to bundle TW when the template would otherwise be noisy. **Do not** put ordinary layout, spacing, flexbox, or standard theme colors only in `<style>` — those belong in the template as TW (or Bootstrap) classes.
+2. **`qs-panel` / `qs-btn`** (and other classes in `src/index.css` `@layer components`) — repeated themed card/button patterns instead of duplicating the same TW cluster everywhere.
+3. **`<style scoped>`** — keep this **small**: one-off numbers, pseudo-elements, keyframes, gradients, Vue `<Transition>` classes, or `@apply` to bundle TW when the template would otherwise be noisy. **Do not** put ordinary layout, spacing, flexbox, or standard theme colors only in `<style>` — those belong in the template as TailWind classes.
 
 ### Theme-aware colors
 

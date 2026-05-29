@@ -97,7 +97,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - **Three.js** — 3D scene, avatar meshes, coordinate transform (SL Z-up → Three.js Y-up)
 - **Bun WebSocket server** — LLUDP bridge, presence relay, chat, WebRTC signaling (`server/`)
 - **WebRTC** — proximity voice; peer connections brokered by the WS server
-- **Tailwind CSS** + **Bootstrap 5**
+- **Tailwind CSS**
 
 ---
 
