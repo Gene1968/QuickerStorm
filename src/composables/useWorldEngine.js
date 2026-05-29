@@ -1003,17 +1003,24 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function positionGizmo() {
-		if (!gizmoGroup || !gizmoMeshId) return
+		if (!gizmoGroup || !gizmoMeshId || !camera) return
 		const mesh = meshMap.get(gizmoMeshId)
 		if (!mesh) { clearGizmo(); return }
 		mesh.updateWorldMatrix?.(true, false)
+		// WHY: world-axis bbox center sits dead-center of the selection on all 3 planes
+		// regardless of prim rotation — matches FS, which centers handles on the selection.
 		const bbox = new THREE.Box3().setFromObject(mesh)
-		const size = new THREE.Vector3(); bbox.getSize(size)
 		const ctr  = new THREE.Vector3(); bbox.getCenter(ctr)
-		// Scale gizmo to ~1.25× the prim's max half-extent so handles sit clear of the surface.
-		const halfMax = Math.max(0.4, Math.max(size.x, size.y, size.z) * 0.5)
-		const s = halfMax * 1.25
 		gizmoGroup.position.copy(ctr)
+		// WHY: constant on-screen size like FS — gizmo spans a fixed fraction of viewport
+		// height regardless of zoom or prim extent (old code scaled to the prim's max
+		// half-extent, so a 53m prim produced a 33m gizmo towering over the region). World
+		// height visible at distance d is 2·d·tan(fov/2); our gizmo's native full span is
+		// ~2 units, so scaling by frac·d·tan(fov/2) holds it at ~frac of the canvas tall.
+		const d = camera.position.distanceTo(ctr)
+		const halfFov = (camera.fov * Math.PI / 180) / 2
+		const SCREEN_FRAC = 0.18  // ~18% of viewport height, akin to FS handle sizing
+		const s = Math.max(0.05, SCREEN_FRAC * d * Math.tan(halfFov))
 		gizmoGroup.scale.set(s, s, s)
 	}
 
