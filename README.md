@@ -40,12 +40,12 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision & objects so you don't silently bump into invisible prims.
 - [~] **Map** — 80%. Pannable, smooth wheel zoom (zoom-toward-cursor, zoom 1–8 = 2–256 regions across), click to select (red disc + zoom-immune label), dbl-click TP, hovertip, search w/auto-retry, G/M/A maturity badges, ground-aware Z (flying preserves altitude). Real region snapshot tiles, agent dots on map, friends layer, Go Home, landmarks — Phase 3 cap-dependent.
 - [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating: transcript, muted transcript, options and search, tear-off, close
-- [~] **Instant Messaging (IM)** — 60%.  Sending and receiving works, emojis added. Need 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
+- [~] **Instant Messaging (IM)** — 60%.  Sending and receiving works, emojis added. Need some of the 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
 - [~] Scene — 55%.  Terrain & ocean to horizon are great. No neighboring sims yet. No environment / light sources
 - [~] Menus/floaters — 60%.  Some disabled placeholders as we implement features
 - [~] Minimap — 65%.  Good as a compass, shows avies, dbl-click teleports within current region
 - [~] Objects (prims) — 55%.  Cache-miss + ObjectUpdateCompressed decode now surface ~1500-1800 prims per region (14× pre-fix). Compressed prims default to cube until full shape decode lands. ~200-400 sim-silent prims still missing per region — sim's interest-list cap, not our bug?! - but it works in other clients!  Tiny color?  Linksets are not honored for selection, name...
-- [~] Avatars — 30%.  Capsule + face indicator + arm tubes. No appearance/baked textures yet
+- [~] Avatars — 30%.  Capsule + face indicator + arm tubes. Clothing/attachments make you a blocky robot at best. No appearance/baked textures yet
 - [~] **Right-click avatar menu** —  30%.  IM, View Profile, Face Toward.  No zoomto, call, invite, inspect, save.  Self - no appearance, community, sit/stand, fly/land
 - [~] **Right-click object menu (subset)** — 30%.  Edit (basic), Inspect (mock), Touch, Sit?? (no Take/Delete yet — those need Phase 3 caps)
 - [~] **Object Edit floater** - 30%.   Object Properties + TransformControls + `MultipleObjectUpdate`
