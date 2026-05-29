@@ -1,8 +1,9 @@
-import { useRealtimeSocket } from '@/composables/useRealtimeSocket.js'
-import { useAudio }          from '@/composables/useAudio.js'
-import { useSessionStore }   from '@/stores/sessionStore.js'
-import { useMapStore }       from '@/stores/mapStore.js'
-import { C, S }              from '@shared/protocol.js'
+import { useRealtimeSocket }  from '@/composables/useRealtimeSocket.js'
+import { useAudio }           from '@/composables/useAudio.js'
+import { useTeleportHistory } from '@/composables/useTeleportHistory.js'
+import { useSessionStore }    from '@/stores/sessionStore.js'
+import { useMapStore }        from '@/stores/mapStore.js'
+import { C, S }               from '@shared/protocol.js'
 
 /**
  * Canonical list of teleport entry points.
@@ -19,15 +20,17 @@ export const TELEPORT_SOURCES = {
 export function useTeleport() {
 	const { emit, on, off, connected } = useRealtimeSocket()
 	const { playSound }                = useAudio()
+	const { record: recordHistory }    = useTeleportHistory()
 	const session                      = useSessionStore()
 	const map                          = useMapStore()
 
 	/**
 	 * Request a teleport to (x, y, z) in the current region.
-	 * Clamps coords, plays whoosh, sends C.TELEPORT via WS.
-	 * No-op when disconnected.
+	 * Clamps coords, plays whoosh, sends C.TELEPORT via WS, logs to teleport history.
+	 * No-op when disconnected. Optional name/regionName label the history entry (Places passes
+	 * a friendly name; double-click land / LocationBar fall back to the current region name).
 	 */
-	function requestTeleport({ x, y, z }) {
+	function requestTeleport({ x, y, z, name, regionName }) {
 		if (!connected.value) return
 
 		const safeX = Math.max(1,   Math.min(255, x))
@@ -36,6 +39,7 @@ export function useTeleport() {
 
 		playSound('woosh.mp3')
 		emit(C.TELEPORT, { x: safeX, y: safeY, z: safeZ })
+		recordHistory({ name, regionName, x: safeX, y: safeY, z: safeZ })
 	}
 
 	/**
@@ -67,6 +71,7 @@ export function useTeleport() {
 					done = true
 					playSound('woosh.mp3')
 					emit(C.MAP_TELEPORT, { regionX: b.regionX, regionY: b.regionY, x, y, z })
+					recordHistory({ name, regionName: name, x, y, z })
 					resolve({ ok: true })
 					return
 				}
@@ -82,6 +87,7 @@ export function useTeleport() {
 				clearTimeout(timer)
 				playSound('woosh.mp3')
 				emit(C.MAP_TELEPORT, { regionX: hit.regionX, regionY: hit.regionY, x, y, z })
+				recordHistory({ name, regionName: name, x, y, z })
 				resolve({ ok: true })
 			}
 			on(S.MAP_BLOCKS, handler)

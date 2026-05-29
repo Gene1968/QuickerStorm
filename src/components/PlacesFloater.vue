@@ -6,7 +6,7 @@ import { usePlaces } from '@/composables/usePlaces'
 import { useUiStore } from '@/stores/uiStore'
 
 const ui = useUiStore()
-const { builtIns, favorites, teleportTo, addFavorite, removeFavorite, renameFavorite } = usePlaces()
+const { builtIns, favorites, history, teleportTo, addFavorite, removeFavorite, renameFavorite, clearHistory } = usePlaces()
 
 const filter  = ref('')
 const newName = ref('')
@@ -27,9 +27,14 @@ const filteredFavorites = computed(() => {
 	return q ? favorites.value.filter(p => p.name.toLowerCase().includes(q)) : favorites.value
 })
 
-const filteredHistory = computed(() => {
+const filteredLandmarks = computed(() => {
 	const q = filter.value.toLowerCase()
 	return q ? builtIns.value.filter(p => p.name.toLowerCase().includes(q)) : builtIns.value
+})
+
+const filteredHistory = computed(() => {
+	const q = filter.value.toLowerCase()
+	return q ? history.value.filter(p => (p.name + ' ' + (p.regionName || '')).toLowerCase().includes(q)) : history.value
 })
 </script>
 
@@ -105,8 +110,30 @@ const filteredHistory = computed(() => {
 				</template>
 
 				<!-- ── Landmarks ── -->
+				<!-- WHY: Phase 2 landmarks = built-in region anchors (Spawn / Region centre / Last
+				     position) from usePlaces. Inventory-asset landmarks need HTTP caps → Phase 3. -->
 				<template v-else-if="ui.placesActiveTab === 'landmarks'">
-					<div class="py-8 text-white/30 italic text-center">Landmarks coming in Phase 3.</div>
+					<ul v-if="filteredLandmarks.length" class="px-2 py-1">
+						<li
+							v-for="(p, i) in filteredLandmarks"
+							:key="`lm-${i}`"
+							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
+							@dblclick="teleportTo(p)"
+						>
+							<div class="flex items-center gap-2 min-w-0">
+								<MapPinIcon class="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+								<div class="min-w-0">
+									<div class="truncate">{{ p.name }}</div>
+									<div class="text-[0.6rem] text-white/40 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
+								</div>
+							</div>
+							<button class="inline-btn" @click.stop="teleportTo(p)">TP</button>
+						</li>
+					</ul>
+					<div v-else class="py-8 text-white/30 italic text-center">
+						{{ filter ? 'No matches.' : 'No landmarks.' }}
+					</div>
+					<p class="px-3 pb-2 text-[0.6rem] text-white/25 italic">Saved-asset landmarks arrive in Phase 3.</p>
 				</template>
 
 				<!-- ── Teleport History ── -->
@@ -132,6 +159,16 @@ const filteredHistory = computed(() => {
 						{{ filter ? 'No matches.' : 'No teleport history yet.' }}
 					</div>
 				</template>
+			</div>
+
+			<!-- History: clear log -->
+			<div
+				v-if="ui.placesActiveTab === 'history' && history.length"
+				class="flex justify-end px-3 py-2 border-t border-brd shrink-0"
+			>
+				<button class="save-btn" @click="clearHistory">
+					<Trash2Icon class="w-3 h-3" /> Clear history
+				</button>
 			</div>
 
 			<!-- Favorites: save current position -->

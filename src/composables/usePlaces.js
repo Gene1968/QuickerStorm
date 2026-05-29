@@ -4,6 +4,7 @@ import { ref, computed } from 'vue'
 import { useWorldStore } from '@/stores/worldStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useTeleport } from './useTeleport'
+import { useTeleportHistory } from './useTeleportHistory'
 
 const FAV_KEY = (agentId) => `qs_places_${agentId || 'anon'}`
 
@@ -24,6 +25,9 @@ export function usePlaces() {
 	const world   = useWorldStore()
 	const session = useSessionStore()
 	const { requestTeleport } = useTeleport()
+	// WHY: TP history lives in its own module so useTeleport (the writer for ALL teleport sources)
+	// can record without a circular import back through usePlaces. Here we only read + clear it.
+	const { history, clear: clearHistory } = useTeleportHistory()
 
 	if (session.agentId && favorites.value.length === 0) loadFor(session.agentId)
 
@@ -37,8 +41,10 @@ export function usePlaces() {
 		return items
 	})
 
+	// WHY: requestTeleport records history itself (single source of truth). Pass the place's
+	// friendly name/region so the History entry is labelled, not just bare coordinates.
 	function teleportTo(place) {
-		requestTeleport({ x: place.x, y: place.y, z: place.z })
+		requestTeleport({ x: place.x, y: place.y, z: place.z, name: place.name, regionName: place.regionName })
 	}
 
 	function addFavorite(name) {
@@ -65,7 +71,7 @@ export function usePlaces() {
 	}
 
 	return {
-		builtIns, favorites,
-		teleportTo, addFavorite, removeFavorite, renameFavorite,
+		builtIns, favorites, history,
+		teleportTo, addFavorite, removeFavorite, renameFavorite, clearHistory,
 	}
 }

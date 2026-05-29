@@ -111,7 +111,11 @@
       "Bash(timeout 5 bunx --bun bun check server/index.ts)",
       "Bash(where bun *)",
       "Bash(bun --version)",
-      "Bash(xargs grep -l \"context\\\\|menu\\\\|right-click\")"
+      "Bash(xargs grep -l \"context\\\\|menu\\\\|right-click\")",
+      "Bash(node --check src/composables/useWorldEngine.js)",
+      "Bash(node --check src/composables/usePlaces.js)",
+      "Bash(node --check src/composables/useTeleport.js)",
+      "Bash(node --check src/composables/useTeleportHistory.js)"
     ]
   }
 }
