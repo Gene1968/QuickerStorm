@@ -26,6 +26,8 @@ export const C = {
 	MAP_NAME_QUERY: 'map_name_query', // { name } — MapNameRequest by region name
 	MAP_TELEPORT:   'map_teleport',   // { regionX, regionY, x, y, z } — TeleportLocationRequest to (regionX*256+x,...)
 	TP_LANDMARK:    'tp_landmark',     // { landmarkId } — TeleportLandmarkRequest (Low 65); sim resolves the LM asset's location
+	TP_HOME:        'tp_home',         // {} — TeleportLandmarkRequest with zero UUID; sim sends avatar to stored home position
+	SET_HOME:       'set_home',        // { regionName, x, y, z } — SetStartLocationRequest (Low 204) LocationID=1
 	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } or { folderIds:[] } — fetch folder item(s) via FetchInventoryDescendents2 cap (batched)
 	// ── Social (Phase 3) ──
 	AVATAR_PROPS_REQ: 'avatar_props_req', // { avatarId } — AvatarPropertiesRequest (Low 169); sim replies Properties/Interests/Groups

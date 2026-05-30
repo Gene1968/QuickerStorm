@@ -13,6 +13,8 @@ import { useSessionStore }	from '@/stores/sessionStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
 import { useAudio }			from '@/composables/useAudio.js'
+import { useTeleport }		from '@/composables/useTeleport.js'
+import { usePlaces }			from '@/composables/usePlaces.js'
 import { C }					from '@shared/protocol.js'
 
 const ui			= useUiStore()
@@ -21,6 +23,16 @@ const grid		= useGridStore()
 const router	= useRouter()
 const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
+const { requestHomeTeleport, setHomeHere } = useTeleport()
+const { addFavorite } = usePlaces()
+
+// WHY: "Landmark This Place" saves the current location to Places favorites — it shows
+// immediately as a chip in FavoritesBar and an entry in the Places floater (renameable
+// there). Named after the region by default. A real SL inventory-landmark asset needs
+// server-side asset creation (future), so we use the local favorites store for now.
+function landmarkHere() {
+	addFavorite(session.regionName || 'Landmark')
+}
 
 // ── Active menu ───────────────────────────────────────────────────────────
 const openMenu = ref(null)	 // id of open top-level menu, or null
@@ -75,6 +87,12 @@ function onKey(e) {
 		e.preventDefault()
 		if (ui.showPlaces) ui.togglePlaces()
 		else ui.openPlacesOnTab('history')
+		return
+	}
+	// Ctrl+Shift+H — Teleport Home
+	if (e.ctrlKey && !e.altKey && e.shiftKey && (e.key === 'h' || e.key === 'H')) {
+		e.preventDefault()
+		act(requestHomeTeleport)
 		return
 	}
 	// Ctrl+Shift+I — Open next inventory floater (up to MAX_INVENTORY). Each press opens a new one.
@@ -167,9 +185,10 @@ const MENUS = [
 			{ label: 'Nearby Avatars',									action: () => act(() => ui.toggleAvatarList()) },
 			{ label: 'Places…',											action: () => act(() => ui.togglePlaces()) },
 			{ sep: true },
+			{ label: 'Teleport Home',		kbd: 'Ctrl+⇧+H',	action: () => act(requestHomeTeleport) },
 			{ label: 'Teleport History',	disabled: true },
-			{ label: 'Landmark This Place',	disabled: true },
-			{ label: 'Set Home to Here',	disabled: true },
+			{ label: 'Landmark This Place',				action: () => act(landmarkHere) },
+			{ label: 'Set Home to Here',					action: () => act(setHomeHere) },
 			{ sep: true },
 			{ label: 'Region Details',		disabled: true },
 			{ label: 'Parcel Details',		disabled: true },

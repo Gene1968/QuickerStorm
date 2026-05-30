@@ -24,8 +24,9 @@ const shortcutRows = [
 	{ keys: 'Ctrl+R',       desc: 'Always Run (toggle)' },
 	{ keys: 'Ctrl+Shift+I', desc: 'Inventory new (6 max)' },
 	{ keys: 'Ctrl+Shift+4', desc: 'Debug panel' },
+	{ keys: 'Ctrl+Shift+H', desc: 'Teleport Home now' },
+	{ keys: 'Alt+H',        desc: 'Teleport history (Places)' },
 	{ keys: 'Ctrl+Alt+R',   desc: 'Rebake avatar textures' },
-	{ keys: 'Alt+H',        desc: 'Teleport history (open/close)' },
 	{ keys: 'Shift+Alt+A',  desc: 'Mic mute (toggle TO-DO)' },
 	{ keys: 'Ctrl+Alt+F1',  desc: 'UI all hide/render (toggle)' },
 ]
@@ -33,7 +34,7 @@ const shortcutRows = [
 const cameraRows = [
 	{ keys: 'Alt+A/← / Alt+D/→ / Alt+Drag lft/rt',          desc: 'Orbit camera left/right' },
 	{ keys: 'Alt+W/↑ / Alt+S/↓ / Scroll / Alt+Drag up/dwn', desc: 'Zoom camera in/out' },
-	{ keys: 'Alt+E / Alt+C',              desc: 'Orbit camera up/down' },
+	{ keys: 'Alt+E / Alt+C',                                desc: 'Orbit camera up/down' },
 ]
 
 </script>

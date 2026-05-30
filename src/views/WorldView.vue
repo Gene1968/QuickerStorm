@@ -13,6 +13,7 @@ import WorldCanvas			from '@/components/WorldCanvas.vue'
 import SimpleWorldView		from '@/components/SimpleWorldView.vue'
 import LocationBar			from '@/components/LocationBar.vue'
 import MenuBar				from '@/components/MenuBar.vue'
+import FavoritesBar			from '@/components/FavoritesBar.vue'
 import AvatarList			from '@/components/AvatarList.vue'
 import MinimapOverlay		from '@/components/MinimapOverlay.vue'
 import ConversationsFloater	from '@/components/ConversationsFloater.vue'
@@ -95,6 +96,7 @@ watch(
 				<MenuBar />
 				<LocationBar />
 			</div>
+			<FavoritesBar v-show="ui.uiVisible" />
 			<SimpleWorldView class="flex-1" />
 			<BottomToolbar v-show="ui.uiVisible" />
 		</template>
@@ -107,6 +109,7 @@ watch(
 				<LocationBar />
 				<AudioControlsWidget class="hidden md:flex" />
 			</div>
+			<FavoritesBar v-show="ui.uiVisible" />
 
 			<!-- Middle: canvas area with overlays -->
 			<div class="flex-1 relative overflow-hidden">

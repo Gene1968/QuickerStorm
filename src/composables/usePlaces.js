@@ -28,7 +28,7 @@ export function usePlaces() {
 	const world   = useWorldStore()
 	const session = useSessionStore()
 	const inventory = useInventoryStore()
-	const { requestTeleport, requestLandmarkTeleport } = useTeleport()
+	const { requestTeleport, requestRegionTeleport, requestLandmarkTeleport } = useTeleport()
 	// WHY: TP history lives in its own module so useTeleport (the writer for ALL teleport sources)
 	// can record without a circular import back through usePlaces. Here we only read + clear it.
 	const { history, clear: clearHistory } = useTeleportHistory()
@@ -66,8 +66,14 @@ export function usePlaces() {
 
 	// WHY: requestTeleport records history itself (single source of truth). Pass the place's
 	// friendly name/region so the History entry is labelled, not just bare coordinates.
+	// Cross-region entries (history, saved favorites) use requestRegionTeleport when region differs.
 	function teleportTo(place) {
-		requestTeleport({ x: place.x, y: place.y, z: place.z, name: place.name, regionName: place.regionName })
+		const sameRegion = !place.regionName || place.regionName.toLowerCase() === session.regionName.toLowerCase()
+		if (sameRegion) {
+			requestTeleport({ x: place.x, y: place.y, z: place.z, name: place.name, regionName: place.regionName })
+		} else {
+			requestRegionTeleport({ regionName: place.regionName, x: place.x, y: place.y, z: place.z })
+		}
 	}
 
 	/** Teleport to a saved inventory landmark — sim resolves its stored location. */

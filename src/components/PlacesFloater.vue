@@ -95,7 +95,6 @@ const filteredHistory = computed(() => {
 									:value="p.name"
 									class="bg-transparent border-0 px-0 text-xs text-t1 focus:bg-white/10 focus:rounded focus:px-1 focus:outline-none min-w-0 flex-1"
 									@change="(e) => renameFavorite(i, e.target.value)"
-									@dblclick.stop
 									@click.stop
 								/>
 							</div>

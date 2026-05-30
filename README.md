@@ -47,47 +47,51 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] Type filter dropdown; sort by Name/Date/Type in the cog menu
 - [x] Favorites / Worn (Current Outfit) / Recent tabs from system folders
 - [x] Right-click menu — Properties, Copy Item/Asset/Folder UUID; Properties popover (type, UUIDs, perms, created date)
-- [ ] Drag/move, rename, wear/attach, thumbnails (need move + texture caps)
+- [ ] Drag/move, rename/F2, wear/attach, thumbnails (need move + texture caps)
 
 **🟡 Partially working**
-- [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision & objects so you don't silently bump into invisible prims.
+- [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing?: collision & objects so you don't silently bump into invisible prims.
 - [~] **Map** — 80%. Pannable, smooth wheel zoom (zoom-toward-cursor, zoom 1–8 = 2–256 regions across), click to select (red disc + zoom-immune label), dbl-click TP, hovertip, search w/auto-retry, G/M/A maturity badges, ground-aware Z (flying preserves altitude). Real region snapshot tiles, agent dots on map, friends layer, Go Home, landmarks — Phase 3 cap-dependent.
 - [~] Nearby chat — 75%.  Sending and receiving works, emoji picker/recent added. Deliberating: transcript, muted transcript, options and search, tear-off, close
-- [~] **Instant Messaging (IM)** — 60%.  Sending and receiving works, emoji picker/recent added. Need some of the 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
-- [~] Scene — 55%.  Terrain & ocean to horizon are great. No neighboring sims yet. No environment / light sources
-- [~] Menus/floaters — 60%.  Some disabled placeholders as we implement features
+- [~] Menus/floaters — 65%.  Some disabled placeholders as we implement features
+- [~] **Instant Messaging (IM)** — 65%.  Sending and receiving works, emoji picker/recent added. Need some of the 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
 - [~] Minimap — 65%.  Good as a compass, shows avies, dbl-click teleports within current region
-- [~] Objects (prims) — 55%.  Cache-miss + ObjectUpdateCompressed decode now surface ~1500-1800 prims per region (14× pre-fix). Compressed prims default to cube until full shape decode lands. ~200-400 sim-silent prims still missing per region — sim's interest-list cap, not our bug?! - but it works in other clients!  Tiny color?  Linksets are not honored for selection, name...
+- [~] Terrain scene — 55%.  Terrain & ocean to horizon are good. No neighboring sims yet. Need to Render the 4 terrain detail textures (J2C) using the corner blend bands — we now have the UUIDs.  Need sun/moon light source, gradient sky, reflections on water etc, shadows
+- [~] Objects: prims — 55%.  Cache-miss + ObjectUpdateCompressed decode now surface ~1500-1800 prims per region (14× pre-fix). Compressed prims default to cube until full shape decode lands. ~200-400 sim-silent prims still missing per region — sim's interest-list cap, "not our bug" - but it works in other clients!?  Tiny color?  Linksets are not honored for selection, name...
 - [~] Avatars — 30%.  Capsule + face indicator + arm tubes. Clothing/attachments make you a blocky robot at best. No appearance/baked textures yet
 - [~] **Right-click avatar menu** —  30%.  IM, View Profile, Face Toward.  No zoomto, call, invite, inspect, save.  Self - no appearance, community, sit/stand, fly/land
 - [~] **Right-click object menu (subset)** — 30%.  Edit (basic), Inspect (mock), Touch, Sit?? (no Take/Delete yet — those need Phase 3 caps)
 - [~] **Object Edit floater** - 30%.   Object Properties + TransformControls + `MultipleObjectUpdate`
 
-**🔜 Phase 3 finishing items**
-- [ ] **Hollow / PathScale / Shear / Skew / RadiusOffset** prim params decoded but not yet applied to geometry (Sculpt prims still bounding-box; full sculpt is Phase 3)
+**🔜 Phase 3 ("real assets + social", HTTP caps)**
+- [x] **HTTP-capability client foundation** — LLSD-XML parser, full cap dictionary from seed cap, server-side cap proxy (cap URLs never leave the server)
+- [x] **Inventory viewing** - 60%.  via `FetchInventoryDescendents2` cap — see the Inventory section above
+- [~] **Profile floater** - 60%.  via avatar properties cap
+- [~] **Places floater** — 65%.  Favorites, Landmarks, TP history.  Gear menu needs Teleport, Show on map,, share, view/edit lm, move to Favorites (if not), copy slurl, create pick?,, cut, copy, paste, rename, delete,, expand (folders only),, Remove from history (h only).  History gets accordion menu for Today and a few time periods (manual close),  Buttons at bottom persist for Teleport, Map, [Place] Profile. Items need drag, Favs appear in top favorites bar.  Needs to retrieve names, LM view w thumbnail & Edit btn (Title, My Notes), plus btn menu to LM curr loc or create folder,  delete, sort by date.  Teleport history (alt+h toggle), TP, copy SLurl, remove, clear, position, date.  Filter, detail view/Back, TP, show on map, region image
+- [~] Right-click object **Edit / Take / Copy / Delete / Export** (perms + caps)
+- [ ] **Friends / Contacts** floater with online status, IM, profile, teleport-to (with rights)
+- [ ] **Hollow / PathScale / Shear / Skew / RadiusOffset** prim params decoded but not yet applied to geometry (Sculpt prims still bounding-box; full sculpt is Phase 3).  This is just for rendering objects?
+- [ ] Objects: mesh — 5%.  Not yet decoding vertices and so forth.
+- [ ] Objects: trees, plants, system plants — 0%.  These need some sort of special handling?
+- [ ] Build and Edit inworld - many features - editing size, pos, rot, textures drag&drop, open/unpack boxes
+- [ ] Build and Edit floater - many features - editing name, desc, perms, size, pos, rot, contents, textures drag&drop, textures pos, sculpt textures, Edit linked, Select Face, create prims, link/unlink
+- [ ] Transfer inventory, drop, folder of 42, CMT?
+- [ ] Play inventory assets - sounds, animations, gestures - options for locally and in-world.
 - [ ] **Neighboring-sim terrain** — render adjacent regions at ±regionSize offset (EnableSimulator + second circuit / cap fetch)
 - [ ] **Object face raycast picking** — currently picks bounding box; need per-triangle for correct Edit selection
 - [ ] **Region size on cross-region TP** — RegionHandshake lacks size; needs cap fetch so var-region warps stop assuming 256×256
 - [ ] **Voice (WebRTC ↔ sim VoIP)** — peer signaling works; gateway wire-up + spatial pan still TODO
-
-**🔜 Up next later — Phase 3 ("real assets + social", HTTP caps)**
-- [x] **HTTP-capability client foundation** — LLSD-XML parser, full cap dictionary from seed cap, server-side cap proxy (cap URLs never leave the server)
-- [x] **Inventory viewing** via `FetchInventoryDescendents2` cap — see the Inventory section above
-- [ ] **Friends / Contacts** floater with online status, IM, profile, teleport-to (with rights)
 - [ ] **Media** sound assets first, object/script sounds, parcel media, stream audio, object texture video media
 - [ ] Object script basics - touch, hovertext, rotate, general LSL functions
 - [ ] Scripting textures behavior and advanced
-- [ ] **Texture asset pipeline** — `GetTexture` cap → J2C (JPEG2000) decode in browser → real prim textures + inventory thumbnails (next up; cap already in the dictionary)
+- [ ] **Texture asset pipeline** — `GetTexture` cap → J2C (JPEG2000) decode in browser → real prim textures + inventory thumbnails (next up; cap already in the dictionary).  Cache??
 - [ ] **Texture Inspect floater** — per-face UUID, dimensions, repeat/offset
 - [ ] **Mesh export/import** via `GetMesh2` cap; Both Dae and GLTF/OBJ on the export side
 - [ ] **Groups** + **Group IM** (group chat is `ChatSessionRequest` cap + IM hybrid)
-- [ ] **Profile floater** via avatar properties cap
-- [ ] **Places floater** — Favorites, drag, manages favorites bar.  Landmark list, add, delete, sort by date.  Teleport history (alt+h toggle), TP, copy SLurl, remove, clear, position, date.  Filter, detail view/Back, TP, show on map, region image
-- [ ] Right-click object **Edit / Take / Copy / Delete / Export** (perms + caps)
-- [ ] Web-on-prim (`ObjectMedia` cap)
-- [ ] Transfer inventory, drop, folder of 42, CMT?
+- [ ] Web-on-prim (`ObjectMedia` cap) HTML
+- [ ] Environment - 0%.  No environment settings yet.  Day/night, sky colors, wind?
 
-**⚠️ May be tricky**
+**⚠️ Phase 3B or May be tricky**
 - Cross-region teleport — requires tearing down and rebuilding the UDP circuit mid-session
 - Avatar appearance — `AgentSetAppearance` with empty bake data destroys appearance globally; very risky to wire without thorough test grid validation
 - J2C (JPEG2000) decode in the browser — needs WASM port of OpenJPEG or similar
