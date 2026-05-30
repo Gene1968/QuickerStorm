@@ -7,7 +7,8 @@ import { parseLLSD, llsdNum, llsdStr } from '../lib/llsd'
 import { slog } from '../lib/serverLog'
 import { S } from '../../shared/protocol.js'
 
-const INV_CAP = 'FetchInventoryDescendents2'
+// WHY: grids expose the folder-descendents cap under either name (modern / legacy).
+const INV_CAPS = ['FetchInventoryDescendents2', 'WebFetchInventoryDescendents']
 
 export async function handleInventoryFetch(circuitId: string, folderIds: string[]): Promise<void> {
 	const s = getSession(circuitId)
@@ -15,7 +16,8 @@ export async function handleInventoryFetch(circuitId: string, folderIds: string[
 	const ids = (folderIds || []).filter(Boolean)
 	if (ids.length === 0) return
 
-	const cap = s.caps.get(INV_CAP)
+	const capName = INV_CAPS.find(n => s.caps.get(n))
+	const cap = capName ? s.caps.get(capName) : undefined
 	if (!cap) {
 		// WHY: seed-cap fetch (login.ts) may not have completed yet, or the grid doesn't offer it.
 		// Tell the client so it can clear its "fetching" flags and retry on CAPS_READY.
@@ -32,7 +34,7 @@ export async function handleInventoryFetch(circuitId: string, folderIds: string[
 		`<map>` +
 		`<key>folder_id</key><uuid>${id}</uuid>` +
 		`<key>owner_id</key><uuid>${s.agentId}</uuid>` +
-		`<key>fetch_folders</key><boolean>0</boolean>` +
+		`<key>fetch_folders</key><boolean>1</boolean>` +
 		`<key>fetch_items</key><boolean>1</boolean>` +
 		`<key>sort_order</key><integer>0</integer>` +
 		`</map>`).join('')
@@ -47,6 +49,11 @@ export async function handleInventoryFetch(circuitId: string, folderIds: string[
 		const text = await res.text()
 		const parsed = parseLLSD(text) as any
 		const respFolders = Array.isArray(parsed?.folders) ? parsed.folders : []
+		// WHY: diagnostic — if the grid returns no folders/items, surface status + a body sample so
+		// we can tell apart "cap rejected request" vs "parser missed the shape" vs "empty folders".
+		if (respFolders.length === 0) {
+			slog.warn(s.ws, `[Inv] empty response for ${ids.length} folder(s) — HTTP ${res.status}, ${text.length}B, sample: ${text.slice(0, 300).replace(/\s+/g, ' ')}`)
+		}
 		const seen = new Set<string>()
 		let total = 0
 		for (const f of respFolders) {

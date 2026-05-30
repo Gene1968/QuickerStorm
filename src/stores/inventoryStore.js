@@ -16,12 +16,16 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const fetched   = ref(new Set())  // folderIds whose contents have been fetched
 	const fetching  = ref(new Set())  // folderIds with an in-flight fetch
 	const caps      = ref(new Set())  // HTTP cap names the sim offered (after seed-cap fetch)
-	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2'))
+	// WHY: grids name the descendents cap differently (modern vs legacy). Accept either.
+	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2') || caps.value.has('WebFetchInventoryDescendents'))
 	const filterText = ref('')        // tree search box (matches folder + loaded item names + perms)
 	const filtering  = computed(() => filterText.value.trim().length > 0)
 	const typeFilter = ref('all')     // TYPE_FILTERS id; 'all' = no type restriction
 	const selectedId = ref('')        // selected folder/item id (drives footer + highlight)
 	const filtersActive = computed(() => filtering.value || typeFilter.value !== 'all')
+	const sortMode   = ref('name')    // item sort within a folder: 'name' | 'date' | 'type'
+	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
+	const propsTarget = ref(null)     // { kind, obj } shown in the Properties popover | null
 
 	function loadFromLogin(d) {
 		const m = new Map()
@@ -40,6 +44,9 @@ export const useInventoryStore = defineStore('inventory', () => {
 		filterText.value = ''
 		typeFilter.value = 'all'
 		selectedId.value = ''
+		sortMode.value   = 'name'
+		contextMenu.value = null
+		propsTarget.value = null
 	}
 
 	// Direct child folders of a folder, sorted to match Firestorm's default inventory order
@@ -117,6 +124,22 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	function select(id) { selectedId.value = id }
 
+	// ── Sort (folders stay system-then-name; items sort by the chosen mode) ──
+	function setSort(m) { sortMode.value = m }
+	function sortItems(list) {
+		const arr = [...list]
+		if (sortMode.value === 'date')      arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+		else if (sortMode.value === 'type') arr.sort((a, b) => (a.assetType - b.assetType) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+		else                                arr.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+		return arr
+	}
+
+	// ── Context menu + Properties popover ──
+	function openContextMenu(x, y, kind, obj) { contextMenu.value = { x, y, kind, obj } }
+	function closeContextMenu() { contextMenu.value = null }
+	function showProperties(kind, obj) { propsTarget.value = { kind, obj }; contextMenu.value = null }
+	function closeProperties() { propsTarget.value = null }
+
 	// Recursive descendant counts (items + subfolders) for the FS "(items/folders)" badge + footer.
 	function descendantCounts(folderId) {
 		let items = folderItems(folderId).length
@@ -176,9 +199,11 @@ export const useInventoryStore = defineStore('inventory', () => {
 	return {
 		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady,
 		filterText, filtering, typeFilter, selectedId, filtersActive,
+		sortMode, contextMenu, propsTarget,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, toggle, expandAll, collapseAll, findSystemFolder,
 		nameMatches, folderNameMatches, folderHasMatch, itemVisible, select, descendantCounts,
+		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties,
 		setItems, folderCount, itemCount, clear,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
 		pendingAgentFolders,

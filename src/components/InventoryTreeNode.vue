@@ -25,10 +25,11 @@ const selected = computed(() => inv.selectedId === props.folderId)
 const counts   = computed(() => inv.descendantCounts(props.folderId))
 // Item list: when filters active show only matching items; if folder name matched (text only), all.
 const items    = computed(() => {
-	const all = inv.folderItems(props.folderId)
-	if (!inv.filtersActive) return all
-	if (inv.filtering && inv.typeFilter === 'all' && inv.folderNameMatches(props.folderId)) return all
-	return all.filter(it => inv.itemVisible(it))
+	let all = inv.folderItems(props.folderId)
+	if (inv.filtersActive && !(inv.filtering && inv.typeFilter === 'all' && inv.folderNameMatches(props.folderId))) {
+		all = all.filter(it => inv.itemVisible(it))
+	}
+	return inv.sortItems(all)
 })
 const empty    = computed(() => !inv.filtersActive && inv.isFetched(props.folderId) && children.value.length === 0 && inv.folderItems(props.folderId).length === 0)
 
@@ -45,8 +46,10 @@ function permTags(it) {
 	return t
 }
 
-// WHY: fetch items lazily when a folder is opened (skeleton has folders, not items).
-function toggle() {
+// WHY: single-click selects (highlight); expand is via the chevron or a double-click — matches FS,
+// so browsing/selecting doesn't keep collapsing folders. Fetch items lazily on expand.
+function onSelect() { inv.select(props.folderId) }
+function toggleExpand() {
 	inv.select(props.folderId)
 	inv.toggle(props.folderId)
 	if (inv.isExpanded(props.folderId)) fetchFolder(props.folderId)
@@ -59,12 +62,15 @@ function toggle() {
 			class="flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer text-xs text-t1 select-none"
 			:class="selected ? 'bg-accent/30' : 'hover:bg-white/10'"
 			:style="{ paddingLeft: padLeft }"
-			@click="toggle"
+			@click="onSelect"
+			@dblclick="toggleExpand"
+			@contextmenu.prevent.stop="inv.select(folderId); inv.openContextMenu($event.clientX, $event.clientY, 'folder', folder)"
 		>
-			<component :is="open ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 shrink-0 opacity-60" />
+			<component :is="open ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 shrink-0 opacity-60 hover:opacity-100" @click.stop="toggleExpand" />
 			<span class="shrink-0">{{ fIcon }}</span>
 			<span class="truncate">{{ folder.name }}</span>
-			<span class="shrink-0 ml-auto pl-1 text-2xs text-white/35 tabular-nums">{{ counts.items }}/{{ counts.folders }}</span>
+			<!-- FS-style count shown only for the selected folder, in parens. -->
+			<span v-if="selected" class="shrink-0 ml-auto pl-1 text-2xs text-white/55 tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
 		</div>
 
 		<template v-if="open">
@@ -83,6 +89,7 @@ function toggle() {
 				:style="{ paddingLeft: itemPad }"
 				:title="it.desc || it.name"
 				@click="inv.select(it.itemId)"
+				@contextmenu.prevent.stop="inv.select(it.itemId); inv.openContextMenu($event.clientX, $event.clientY, 'item', it)"
 			>
 				<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 				<span class="truncate">{{ it.name }}</span>

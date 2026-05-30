@@ -63,16 +63,19 @@ const nextOpen    = computed(() => ui.inventoryInstances.includes(props.index + 
 function close()        { ui.closeInventoryAt(props.index) }
 function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 1) }
 
+// ── Cog menu (bottom-left) — holds sort options, FS-style ────────────────────────
+const showCogMenu = ref(false)
+const SORT_OPTIONS = [
+	{ id: 'name', label: 'Sort by Name' },
+	{ id: 'date', label: 'Sort by Date' },
+	{ id: 'type', label: 'Sort by Type' },
+]
+function pickSort(id) { inv.setSort(id); showCogMenu.value = false }
+
 // ── Type-filter dropdown ───────────────────────────────────────────────────────
 const showTypeMenu = ref(false)
 const typeLabel    = computed(() => typeFilterLabel(inv.typeFilter))
 function setType(id) { inv.typeFilter = id; showTypeMenu.value = false }
-
-// ── Footer counts: selected folder's recursive count, else the agent grand total ──
-const selectedCounts = computed(() => {
-	const id = inv.selectedId
-	return id && inv.folders.get(id) ? inv.descendantCounts(id) : null
-})
 
 // ── Horizontal tab strip: wheel-scroll + edge arrows only when overflowing ───────
 const tabScrollEl = ref(null)
@@ -105,7 +108,7 @@ function scrollTabs(kind) {
 	setTimeout(updateTabOverflow, 250)
 }
 
-function closeTypeMenu() { showTypeMenu.value = false }
+function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false }
 
 onMounted(() => {
 	nextTick(updateTabOverflow)
@@ -113,11 +116,11 @@ onMounted(() => {
 		tabRo = new ResizeObserver(updateTabOverflow)
 		tabRo.observe(tabScrollEl.value)
 	}
-	document.addEventListener('click', closeTypeMenu)
+	document.addEventListener('click', closeMenus)
 })
 onUnmounted(() => {
 	tabRo?.disconnect()
-	document.removeEventListener('click', closeTypeMenu)
+	document.removeEventListener('click', closeMenus)
 })
 </script>
 
@@ -128,7 +131,7 @@ onUnmounted(() => {
 		:wrap-style="{ width: '15.5vw', height: '47vh', resize: 'both' }"
 		:default-pos="defaultPos"
 		@close="close"
-		class="min-w-[18rem]"
+		class="min-w-[16.5rem]"
 	>
 		<div class="flex p-1"><input v-model="inv.filterText" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" /></div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-white">
@@ -223,7 +226,19 @@ onUnmounted(() => {
 		<!-- WHY: spacer only when the active tab isn't already filling the column (flex-1). -->
 		<div v-if="!tabFills" class="flex-1"/>
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-white">
-			<button title="Show additional options (TO-DO)" class="ui-btn px-1"><CogIcon /><ChevronDownIcon class="w-3" /></button>
+			<div class="relative">
+				<button class="ui-btn px-1" title="Options" @click.stop="showCogMenu = !showCogMenu"><CogIcon /><ChevronDownIcon class="w-3" /></button>
+				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-card border border-brd rounded shadow-lg" @click.stop>
+					<div class="px-2 py-1 text-2xs text-tm border-b border-brd">Sort</div>
+					<button
+						v-for="o in SORT_OPTIONS"
+						:key="o.id"
+						class="block w-full text-left px-2 py-1 hover:bg-white/10"
+						:class="inv.sortMode === o.id ? 'text-accent' : 'text-t1'"
+						@click="pickSort(o.id)"
+					>{{ inv.sortMode === o.id ? '✓ ' : '   ' }}{{ o.label }}</button>
+				</div>
+			</div>
 			<button class="ui-btn" title="Add new item (TO-DO)"><PlusIcon /></button>
 			<button
 				:title="isLast
@@ -238,13 +253,11 @@ onUnmounted(() => {
 			<button v-if="true" class="ui-btn" title="Switch between views (TO-DO)"><ListIcon /></button>
 			<button v-else class="ui-btn" title="Switch between views (TO-DO)"><TableOfContentsIcon /></button>
 			<div
-				:title="selectedCounts
-					? `Selected folder: ${selectedCounts.items} items / ${selectedCounts.folders} folders`
-					: (inv.allAgentFetched
-						? `${inv.agentItemCount} items, ${inv.agentFolderCount} folders (complete)`
-						: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`)"
+				:title="inv.allAgentFetched
+					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
+					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
 				class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none"
-			><template v-if="selectedCounts">{{ selectedCounts.items.toLocaleString() }}/{{ selectedCounts.folders.toLocaleString() }} elements</template><template v-else>{{ inv.agentItemCount.toLocaleString() }} items, {{ inv.agentFolderCount.toLocaleString() }} folders<span v-if="!inv.allAgentFetched" class="opacity-60"> · loading {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></template></div>
+			>{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
 			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon /></button>
 		</div>
 	</FloaterWindow>

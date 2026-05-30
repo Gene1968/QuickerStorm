@@ -16,6 +16,7 @@ import { parseLLSD } from '../lib/llsd'
 // so we request the full set we'll use across Phase 3 — not just RebakeAvatarTextures.
 const REQUESTED_CAPS = [
 	'FetchInventoryDescendents2',
+	'WebFetchInventoryDescendents',
 	'FetchInventory2',
 	'FetchLib2',
 	'FetchLibDescendents2',

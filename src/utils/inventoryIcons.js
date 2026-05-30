@@ -87,6 +87,13 @@ export function itemMatchesType(item, typeId) {
 	return !!(f && f.types && f.types.includes(item.assetType))
 }
 
+const ASSET_TYPE_NAMES = {
+	0: 'Texture', 1: 'Sound', 2: 'Calling Card', 3: 'Landmark', 5: 'Clothing', 6: 'Object',
+	7: 'Notecard', 10: 'Script', 11: 'Script (bytecode)', 13: 'Body Part', 20: 'Animation',
+	21: 'Gesture', 24: 'Link', 25: 'Folder Link', 49: 'Mesh', 56: 'Settings', 57: 'Material',
+}
+export function assetTypeName(t) { return ASSET_TYPE_NAMES[t] ?? `Type ${t}` }
+
 export function itemIcon(assetType, invType) {
 	return ITEM_ICONS[assetType] ?? INVTYPE_ICONS[invType] ?? '📄'
 }

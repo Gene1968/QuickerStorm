@@ -22,6 +22,8 @@ import ObjectEditFloater	from '@/components/ObjectEditFloater.vue'
 import BottomToolbar		from '@/components/BottomToolbar.vue'
 import MapFloater			from '@/components/MapFloater.vue'
 import InventoryFloater		from '@/components/InventoryFloater.vue'
+import InventoryContextMenu	from '@/components/InventoryContextMenu.vue'
+import InventoryItemProperties	from '@/components/InventoryItemProperties.vue'
 import AppearanceFloater	from '@/components/AppearanceFloater.vue'
 import MoveControlsFloater	from '@/components/MoveControlsFloater.vue'
 import CameraControlsFloater	from '@/components/CameraControlsFloater.vue'
@@ -131,6 +133,8 @@ watch(
 					<MovementHelpFloater	v-if="ui.showMovementHelp" />
 					<AvatarContextMenu />
 					<ObjectContextMenu />
+					<InventoryContextMenu />
+					<InventoryItemProperties />
 				</div>
 			</div>
 
