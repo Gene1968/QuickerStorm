@@ -3,8 +3,11 @@
 import { ref, computed } from 'vue'
 import { useWorldStore } from '@/stores/worldStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useInventoryStore } from '@/stores/inventoryStore'
 import { useTeleport } from './useTeleport'
 import { useTeleportHistory } from './useTeleportHistory'
+
+const AT_LANDMARK = 3   // SL AssetType for landmark inventory items
 
 const FAV_KEY = (agentId) => `qs_places_${agentId || 'anon'}`
 
@@ -24,7 +27,8 @@ function persistFor(agentId) {
 export function usePlaces() {
 	const world   = useWorldStore()
 	const session = useSessionStore()
-	const { requestTeleport } = useTeleport()
+	const inventory = useInventoryStore()
+	const { requestTeleport, requestLandmarkTeleport } = useTeleport()
 	// WHY: TP history lives in its own module so useTeleport (the writer for ALL teleport sources)
 	// can record without a circular import back through usePlaces. Here we only read + clear it.
 	const { history, clear: clearHistory } = useTeleportHistory()
@@ -41,11 +45,33 @@ export function usePlaces() {
 		return items
 	})
 
+	// Inventory landmark assets (assetType 3). Gathered across every fetched folder — the
+	// background inventory loader (useInventory.fetchAll) walks all folders after caps land, so
+	// this fills in as folders load. Each carries the LM asset id used by TeleportLandmarkRequest.
+	const landmarks = computed(() => {
+		const out = []
+		inventory.items.forEach(list => {
+			for (const it of list) {
+				if (it.assetType === AT_LANDMARK && it.assetId) {
+					out.push({ name: it.name || '(landmark)', landmarkId: it.assetId, itemId: it.itemId })
+				}
+			}
+		})
+		// dedup by asset id (a landmark may be linked into multiple folders) + sort by name
+		const seen = new Set()
+		return out
+			.filter(l => (seen.has(l.landmarkId) ? false : seen.add(l.landmarkId)))
+			.sort((a, b) => a.name.localeCompare(b.name))
+	})
+
 	// WHY: requestTeleport records history itself (single source of truth). Pass the place's
 	// friendly name/region so the History entry is labelled, not just bare coordinates.
 	function teleportTo(place) {
 		requestTeleport({ x: place.x, y: place.y, z: place.z, name: place.name, regionName: place.regionName })
 	}
+
+	/** Teleport to a saved inventory landmark — sim resolves its stored location. */
+	function teleportToLandmark(lm) { requestLandmarkTeleport({ landmarkId: lm.landmarkId }) }
 
 	function addFavorite(name) {
 		favorites.value.push({
@@ -71,7 +97,7 @@ export function usePlaces() {
 	}
 
 	return {
-		builtIns, favorites, history,
-		teleportTo, addFavorite, removeFavorite, renameFavorite, clearHistory,
+		builtIns, favorites, history, landmarks,
+		teleportTo, teleportToLandmark, addFavorite, removeFavorite, renameFavorite, clearHistory,
 	}
 }

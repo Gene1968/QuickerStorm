@@ -25,6 +25,7 @@ const shortcutRows = [
 	{ keys: 'Ctrl+Shift+I', desc: 'Inventory new (6 max)' },
 	{ keys: 'Ctrl+Shift+4', desc: 'Debug panel' },
 	{ keys: 'Ctrl+Alt+R',   desc: 'Rebake avatar textures' },
+	{ keys: 'Alt+H',        desc: 'Teleport history (open/close)' },
 	{ keys: 'Shift+Alt+A',  desc: 'Mic mute (toggle TO-DO)' },
 	{ keys: 'Ctrl+Alt+F1',  desc: 'UI all hide/render (toggle)' },
 ]

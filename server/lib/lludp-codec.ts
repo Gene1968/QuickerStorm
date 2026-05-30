@@ -1490,6 +1490,18 @@ function readV2(buf: Buffer, off: number): [string, number] {
 
 // ── Outbound requests ─────────────────────────────────────────────────────
 
+/** TeleportLandmarkRequest (Low 65) — teleport to a saved inventory landmark. The sim resolves
+ *  the landmark ASSET's stored region+position, so we only send its asset UUID (LandmarkID).
+ *  Info{AgentID, SessionID, LandmarkID}. A zero LandmarkID means "teleport home". */
+export function encodeTeleportLandmarkRequest(p: { agentId: string; sessionId: string; landmarkId: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 16)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  uuidToBytes(p.landmarkId).copy(body, 32)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x41]), body])  // Low 65
+}
+
 /** AvatarPropertiesRequest (Low 169) — ask for an avatar's profile. Sim replies with
  *  AvatarPropertiesReply (+Interests +Groups). Body: AgentData{AgentID, SessionID, AvatarID}. */
 export function encodeAvatarPropertiesRequest(p: { agentId: string; sessionId: string; avatarId: string; seq: number }): Buffer {

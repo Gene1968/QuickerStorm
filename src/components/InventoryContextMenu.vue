@@ -2,6 +2,7 @@
 // Right-click menu for inventory folders + items. State lives in inventoryStore.contextMenu.
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { assetTypeName } from '@/utils/inventoryIcons'
 
 const inv  = useInventoryStore()
 const menu = computed(() => inv.contextMenu)
@@ -59,6 +60,7 @@ onUnmounted(() => {
 		<template v-if="menu.kind === 'item'">
 			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="copy(menu.obj.itemId)">Copy Item UUID</button>
 			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" :class="{ 'text-white/40 cursor-not-allowed': !menu.obj.assetId }" :disabled="!menu.obj.assetId" @click="copy(menu.obj.assetId)">Copy Asset UUID</button>
+			<button v-if="menu.obj.assetType == 1 || menu.obj.assetType == 20 || menu.obj.assetType == 21" class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Play {{ assetTypeName(menu.obj.assetType) }} (Phase 3)</button>
 			<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Wear / Attach (Phase 3)</button>
 		</template>
 		<template v-else>

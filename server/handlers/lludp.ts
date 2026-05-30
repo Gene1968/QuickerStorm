@@ -23,6 +23,7 @@ import {
 	decodeAgentGroupDataUpdate, decodeAgentDataUpdate, decodeParcelInfoReply,
 	encodeAvatarPropertiesRequest, encodeParcelInfoRequest, encodeUUIDNameRequest,
 	encodeAcceptFriendship, encodeDeclineFriendship, encodeTerminateFriendship, encodeChangeUserRights,
+	encodeTeleportLandmarkRequest,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -870,6 +871,17 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ TeleportLocationRequest: ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`)
+		return
+	}
+
+	if (msg.t === C.TP_LANDMARK) {
+		const d = msg.d as { landmarkId: string }
+		if (!d.landmarkId) return
+		const seq = nextSeq(session)
+		const pkt = encodeTeleportLandmarkRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, landmarkId: d.landmarkId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ TeleportLandmarkRequest lm=${d.landmarkId.slice(0, 8)}…`)
 		return
 	}
 

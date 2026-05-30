@@ -212,7 +212,7 @@ function saveNotes() {
 				</div>
 
 				<div>
-					<p class="text-2xs text-t1 mb-1">Groups</p>
+					<p class="text-2xs text-t1 mb-1">Groups:</p>
 					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs min-h-[2rem]">
 						<div v-if="shownGroups.length === 0" class="text-t1 italic">(none)</div>
 						<ul v-else class="flex flex-col gap-0.5">
@@ -228,7 +228,7 @@ function saveNotes() {
 				</div>
 
 				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-t1">About</p>
+					<p class="text-2xs text-t1">About:</p>
 					<textarea
 						v-if="isSelf"
 						v-model="bioEdit"
@@ -281,28 +281,36 @@ function saveNotes() {
 			</div>
 		</div>
 
-		<!-- Other-user action buttons -->
-		<div v-if="!isSelf" class="shrink-0 border-t border-brd px-4 py-2 flex gap-2 flex-wrap">
+		<div class="flex flex-col gap-1 px-4 py-2">
+			<p class="text-2xs text-t1">Share:</p>
+				<button
+					disabled
+					class="px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+				>Drop inventory item here.</button>
+		</div>
+
+			<!-- Other-user action buttons -->
+		<div v-if="!isSelf" class="flex flex-row flex-wrap gap-2 shrink-0 border-t border-brd px-4 py-2">
 			<button
-				class="px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
+				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
 				@click="actIM"
-			>IM</button>
+			>Instant Message</button>
 			<button
 				v-if="!isFriend"
-				class="px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
+				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
 				@click="actOfferFriend"
 			>Add Friend</button>
 			<button
 				v-else
-				class="px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
+				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
 				@click="actRemoveFriend"
 			>Remove Friend</button>
 			<!-- Still gated on extra packets (Phase 3 later): Pay, Block, Find on Map, Offer TP -->
 			<button
-				v-for="btn in ['Pay', 'Block', 'Find on Map', 'Offer TP']"
+				v-for="btn in ['Find on Map', 'Offer Teleport','Pay', 'Block']"
 				:key="btn"
 				disabled
-				class="px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
 			>{{ btn }}</button>
 		</div>
 	</FloaterWindow>

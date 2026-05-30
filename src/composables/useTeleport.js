@@ -13,7 +13,7 @@ export const TELEPORT_SOURCES = {
 	LOCATION_BAR: { label: 'LocationBar',      status: 'implemented' },
 	MAP_FLOATER:  { label: 'MapFloater',        status: 'stub'        },  // Phase 2
 	MINIMAP:      { label: 'Minimap',           status: 'placeholder' },
-	LANDMARK:     { label: 'Landmark',          status: 'placeholder' },
+	LANDMARK:     { label: 'Landmark',          status: 'implemented' },
 	DOUBLE_CLICK: { label: 'Double-click land', status: 'implemented' },
 }
 
@@ -102,5 +102,18 @@ export function useTeleport() {
 		})
 	}
 
-	return { requestTeleport, requestRegionTeleport }
+	/**
+	 * Teleport to a saved inventory landmark by its ASSET id. The sim resolves the landmark's
+	 * stored region + position, so no coords are needed here. Arrival is reported via the normal
+	 * TeleportLocal / TeleportFinish path (handled server-side → AGENT_SPAWN_POS).
+	 * WHY: no history record here — we don't know the destination coords until the sim teleports us;
+	 * the landmark name is logged for traceability instead.
+	 */
+	function requestLandmarkTeleport({ landmarkId }) {
+		if (!connected.value || !landmarkId) return
+		playSound('woosh.mp3')
+		emit(C.TP_LANDMARK, { landmarkId })
+	}
+
+	return { requestTeleport, requestRegionTeleport, requestLandmarkTeleport }
 }

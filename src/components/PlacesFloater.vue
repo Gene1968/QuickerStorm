@@ -6,7 +6,7 @@ import { usePlaces } from '@/composables/usePlaces'
 import { useUiStore } from '@/stores/uiStore'
 
 const ui = useUiStore()
-const { builtIns, favorites, history, teleportTo, addFavorite, removeFavorite, renameFavorite, clearHistory } = usePlaces()
+const { builtIns, favorites, history, landmarks, teleportTo, teleportToLandmark, addFavorite, removeFavorite, renameFavorite, clearHistory } = usePlaces()
 
 const filter  = ref('')
 const newName = ref('')
@@ -30,6 +30,11 @@ const filteredFavorites = computed(() => {
 const filteredLandmarks = computed(() => {
 	const q = filter.value.toLowerCase()
 	return q ? builtIns.value.filter(p => p.name.toLowerCase().includes(q)) : builtIns.value
+})
+
+const filteredInvLandmarks = computed(() => {
+	const q = filter.value.toLowerCase()
+	return q ? landmarks.value.filter(l => l.name.toLowerCase().includes(q)) : landmarks.value
 })
 
 const filteredHistory = computed(() => {
@@ -109,18 +114,21 @@ const filteredHistory = computed(() => {
 				</template>
 
 				<!-- ── Landmarks ── -->
-				<!-- WHY: Phase 2 landmarks = built-in region anchors (Spawn / Region centre / Last
-					position) from usePlaces. Inventory-asset landmarks need HTTP caps → Phase 3. -->
+				<!-- WHY: two groups — built-in region anchors (Spawn / Region centre / Last position,
+					computed live) and real saved-asset landmarks from inventory. The latter teleport
+					via TeleportLandmarkRequest (sim resolves the LM asset's stored location). -->
 				<template v-else-if="ui.placesActiveTab === 'landmarks'">
-					<ul v-if="filteredLandmarks.length" class="px-2 py-1">
+					<!-- Region anchors -->
+					<p class="px-3 pt-2 pb-1 text-[0.6rem] uppercase tracking-widest text-white/40">This region</p>
+					<ul v-if="filteredLandmarks.length" class="px-2">
 						<li
 							v-for="(p, i) in filteredLandmarks"
-							:key="`lm-${i}`"
+							:key="`anchor-${i}`"
 							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
-								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
+								<span class="mb-1 w-3.5 h-3.5 shrink-0">📍</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
 									<div class="text-[0.6rem] text-white/40 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
@@ -129,10 +137,26 @@ const filteredHistory = computed(() => {
 							<button class="inline-btn" @click.stop="teleportTo(p)">TP</button>
 						</li>
 					</ul>
-					<div v-else class="py-8 text-white/30 italic text-center">
-						{{ filter ? 'No matches.' : 'No landmarks.' }}
+
+					<!-- Saved inventory landmarks -->
+					<p class="px-3 pt-3 pb-1 text-[0.6rem] uppercase tracking-widest text-white/40">My landmarks</p>
+					<ul v-if="filteredInvLandmarks.length" class="px-2 pb-2">
+						<li
+							v-for="lm in filteredInvLandmarks"
+							:key="`lm-${lm.itemId}`"
+							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
+							@dblclick="teleportToLandmark(lm)"
+						>
+							<div class="flex items-center gap-2 min-w-0">
+								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
+								<div class="truncate min-w-0">{{ lm.name }}</div>
+							</div>
+							<button class="inline-btn" @click.stop="teleportToLandmark(lm)">TP</button>
+						</li>
+					</ul>
+					<div v-else class="px-3 pb-2 text-white/30 italic text-[0.7rem]">
+						{{ filter ? 'No matches.' : 'No saved landmarks (still loading inventory, or none in this account).' }}
 					</div>
-					<p class="px-3 pb-2 text-[0.6rem] text-white/25 italic">Saved-asset landmarks arrive in Phase 3.</p>
 				</template>
 
 				<!-- ── Teleport History ── -->
