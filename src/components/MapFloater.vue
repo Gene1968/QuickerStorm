@@ -434,12 +434,29 @@ function accessBadge(access) {
 	return { label: '?', text: 'unknown', cls: 'bg-gray-700/60 text-white/70' }
 }
 
+let _panRaf = null
 function selectResult(r) {
 	selectedResult.value = r
 	selectedSpot.value = { rx: r.regionX + 0.5, ry: r.regionY + 0.5, block: r, lx: 128, ly: 128 }
 	coordX.value = 128
 	coordY.value = 128
-	map.setCenter(r.regionX + 0.5, r.regionY + 0.5)
+
+	const targetX = r.regionX + 0.5
+	const targetY = r.regionY + 0.5
+	const startX  = map.viewCenterX
+	const startY  = map.viewCenterY
+	const dur = 900 // ms
+	const t0  = performance.now()
+
+	if (_panRaf) cancelAnimationFrame(_panRaf)
+	function step(now) {
+		const p = Math.min(1, (now - t0) / dur)
+		const e = p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2 // ease-in-out quad
+		map.viewCenterX = startX + (targetX - startX) * e
+		map.viewCenterY = startY + (targetY - startY) * e
+		if (p < 1) _panRaf = requestAnimationFrame(step)
+	}
+	_panRaf = requestAnimationFrame(step)
 }
 
 onMounted(() => {

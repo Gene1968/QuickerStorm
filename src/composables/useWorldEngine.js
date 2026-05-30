@@ -233,6 +233,19 @@ export function useWorldEngine(canvasRef) {
 	// Flag set in onKeyDown (Escape) or detected via distance in animate().
 	let cameraSnapRequested = false
 
+	// WHY: Smoothed lookAt target. avatarSLPos jitters every frame (gravity re-samples
+	// terrain, terse blend fights dead reckoning). Pointing the camera at the RAW point
+	// each frame snapped the view angle → whole scene bobbed up/down. Lerp the focus point
+	// separately (slower than position) so the view glides. Mirrors Firestorm, which smooths
+	// the camera focus in avatar space because "the avatar moves too jerkily in global space".
+	let camLook     = new THREE.Vector3()
+	let camLookInit = false
+	const _v3a      = new THREE.Vector3()  // scratch — reused for per-frame lookAt target
+	// Frame-rate-independent lerp rates (larger = snappier). POS faster than LOOK so the
+	// camera tracks position while the view angle eases. Half-life ≈ ln(2)/rate seconds.
+	const CAM_POS_RATE  = 12  // ~0.06s half-life
+	const CAM_LOOK_RATE = 8   // ~0.09s half-life — slower glide on rotation
+
 	// Alt-orbit (third-person camera): alt+drag orbits around a pivot
 	let isAltOrbit  = false
 	let orbitPivot  = new THREE.Vector3(128, 0, -128)  // SL center in Three.js coords
@@ -1816,13 +1829,21 @@ export function useWorldEngine(canvasRef) {
 			// smooth 0.15 glide (~0.25s).
 			const snap = cameraSnapRequested
 			cameraSnapRequested = false
-			const lerpFactor = snap ? 1.0
-				: isMoving ? Math.min(0.35, 0.15 + distToTarget * 0.02)
-				: 0.15
-			camera.position.lerp(target, lerpFactor)
+			// WHY: frame-rate-independent lerp — 1 - exp(-rate*dt) gives the same smoothing
+			// at 30 or 144 fps. The old fixed 0.15/frame factor under-smoothed at low fps
+			// (visible stutter) and over-smoothed at high fps. Movement bumps the rate up a
+			// bit so the camera keeps pace with a walking avatar.
+			const posRate = isMoving ? CAM_POS_RATE + distToTarget * 1.5 : CAM_POS_RATE
+			const posF = snap ? 1.0 : 1 - Math.exp(-posRate * dt)
+			camera.position.lerp(target, posF)
 			// WHY: lookAt at LOOKAT_Y above avatar feet. Camera at FOLLOW_HEIGHT looking
 			// down at this lower point pushes avatar into lower portion of frame.
-			camera.lookAt(t.x, t.y + LOOKAT_Y, t.z)
+			// Smooth the focus point separately so jitter in avatarSLPos doesn't snap the
+			// view angle every frame (the main cause of the scene bobbing up/down).
+			const lookTarget = _v3a.set(t.x, t.y + LOOKAT_Y, t.z)
+			if (snap || !camLookInit) { camLook.copy(lookTarget); camLookInit = true }
+			else camLook.lerp(lookTarget, 1 - Math.exp(-CAM_LOOK_RATE * dt))
+			camera.lookAt(camLook)
 
 			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
 			// Capsule is symmetric so visual diff is subtle, but sets up correct orientation
