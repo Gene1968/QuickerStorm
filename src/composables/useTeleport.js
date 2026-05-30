@@ -3,6 +3,7 @@ import { useAudio }           from '@/composables/useAudio.js'
 import { useTeleportHistory } from '@/composables/useTeleportHistory.js'
 import { useSessionStore }    from '@/stores/sessionStore.js'
 import { useMapStore }        from '@/stores/mapStore.js'
+import { useWorldStore }      from '@/stores/worldStore.js'
 import { C, S }               from '@shared/protocol.js'
 
 /**
@@ -23,6 +24,7 @@ export function useTeleport() {
 	const { record: recordHistory }    = useTeleportHistory()
 	const session                      = useSessionStore()
 	const map                          = useMapStore()
+	const world                        = useWorldStore()
 
 	/**
 	 * Request a teleport to (x, y, z) in the current region.
@@ -33,8 +35,13 @@ export function useTeleport() {
 	function requestTeleport({ x, y, z, name, regionName }) {
 		if (!connected.value) return
 
-		const safeX = Math.max(1,   Math.min(255, x))
-		const safeY = Math.max(1,   Math.min(255, y))
+		// WHY: clamp to the region's actual dimensions, not a hardcoded 255. Var-regions are
+		// 512/1024m etc — clamping to 255 made coords past the SW quarter un-teleportable.
+		// regionSize defaults to 256 (→ max 255) for standard regions.
+		const maxX = (session.regionSizeX || 256) - 1
+		const maxY = (session.regionSizeY || 256) - 1
+		const safeX = Math.max(1,   Math.min(maxX, x))
+		const safeY = Math.max(1,   Math.min(maxY, y))
 		const safeZ = Math.max(0.5, z)
 
 		playSound('woosh.mp3')
@@ -115,5 +122,17 @@ export function useTeleport() {
 		emit(C.TP_LANDMARK, { landmarkId })
 	}
 
-	return { requestTeleport, requestRegionTeleport, requestLandmarkTeleport }
+	function requestHomeTeleport() {
+		if (!connected.value) return
+		playSound('woosh.mp3')
+		emit(C.TP_HOME, {})
+	}
+
+	function setHomeHere() {
+		if (!connected.value) return
+		const pos = world.avatarPos
+		emit(C.SET_HOME, { regionName: session.regionName, x: pos.x, y: pos.y, z: pos.z })
+	}
+
+	return { requestTeleport, requestRegionTeleport, requestLandmarkTeleport, requestHomeTeleport, setHomeHere }
 }
