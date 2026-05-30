@@ -3,6 +3,7 @@ import { computed, onMounted, watch }	from 'vue'
 import { useRouter }		from 'vue-router'
 import { use2DFallback }	from '@/composables/use2DFallback'
 import { useProximityVoice }from '@/composables/useProximityVoice.js'
+import { useInventory }		from '@/composables/useInventory'
 import { useUiStore }		from '@/stores/uiStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useSessionStore }	from '@/stores/sessionStore'
@@ -39,6 +40,9 @@ const session      = useSessionStore()
 const presenceStore= usePresenceStore()
 const router       = useRouter()
 const voice        = useProximityVoice()
+// WHY: register inventory cap handlers (S.INV_FOLDER / S.CAPS_READY) for the whole session so
+// folder items load when caps arrive even before the Inventory floater is opened.
+useInventory()
 
 // WHY: Mark this tab as "in world" so LandingView gate 1 passes on page reload.
 // sessionStorage persists across reloads within the same tab session but clears

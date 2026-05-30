@@ -115,7 +115,10 @@
       "Bash(node --check src/composables/useWorldEngine.js)",
       "Bash(node --check src/composables/usePlaces.js)",
       "Bash(node --check src/composables/useTeleport.js)",
-      "Bash(node --check src/composables/useTeleportHistory.js)"
+      "Bash(node --check src/composables/useTeleportHistory.js)",
+      "Bash(node --check src/stores/inventoryStore.js)",
+      "Bash(node --check src/composables/useInventory.js)",
+      "Bash(node --check src/utils/inventoryIcons.js)"
     ]
   }
 }

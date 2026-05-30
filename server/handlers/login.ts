@@ -10,6 +10,21 @@ import { handleUdpMessage, startCircuitTimers } from './lludp'
 import { slog } from '../lib/serverLog'
 import { S } from '../../shared/protocol.js'
 import { replayCachedWorld } from '../lib/resync'
+import { parseLLSD } from '../lib/llsd'
+
+// WHY: caps we ask the seed for. The seed POST doubles as OpenSim's SentSeeds trigger (world init),
+// so we request the full set we'll use across Phase 3 — not just RebakeAvatarTextures.
+const REQUESTED_CAPS = [
+	'FetchInventoryDescendents2',
+	'FetchInventory2',
+	'FetchLib2',
+	'FetchLibDescendents2',
+	'GetTexture',
+	'GetMesh2',
+	'RebakeAvatarTextures',
+	'AgentPreferences',
+	'UpdateAgentInformation',
+]
 
 export async function handleLogin(
 	ws: ServerWebSocket<unknown>,
@@ -53,6 +68,11 @@ export async function handleLogin(
 					agentAccess:   '',
 				},
 			}))
+		}
+		// WHY: resume skips the seed-cap fetch (caps already stored on the held circuit). Re-send
+		// the cap list so the client re-arms inventory fetching after loadFromLogin cleared it.
+		if (circuit.caps && circuit.caps.size) {
+			ws.send(JSON.stringify({ t: S.CAPS_READY, d: { caps: [...circuit.caps.keys()] } }))
 		}
 		// WHY: Replay cached world snapshot immediately on resume so terrain, region name,
 		// and spawn position are restored without the user clicking anything. Sim won't
@@ -262,25 +282,31 @@ export async function handleLogin(
 		if (seedCapUrl) {
 			setTimeout(async () => {
 				try {
+					const reqBody = '<?xml version="1.0"?>\n<llsd><array>' +
+						REQUESTED_CAPS.map(c => `<string>${c}</string>`).join('') +
+						'</array></llsd>'
 					const res = await fetch(seedCapUrl, {
 						method: 'POST',
-						headers: { 'Content-Type': 'application/llsd+xml' },
-						body: '<?xml version="1.0"?>\n<llsd><array><string>RebakeAvatarTextures</string></array></llsd>',
+						headers: { 'Content-Type': 'application/llsd+xml', 'Accept': 'application/llsd+xml' },
+						body: reqBody,
 					})
 					slog.info(ws, `✓ Seed cap fetched (${res.status}) → SentSeeds set in OpenSim`)
-					// WHY: Parse RebakeAvatarTextures URL from LLSD XML response so the client
-					// can trigger server-side avatar rebake (Force Appearance Update, Ctrl+Alt+R).
-					// OpenSim returns LLSD map: <key>RebakeAvatarTextures</key><string>URL</string>
+					// WHY: response is an LLSD map { capName: url }. Store every offered cap so
+					// inventory/texture/rebake handlers can resolve their URL server-side (URLs carry
+					// session tokens → never sent to the browser).
 					const xml = await res.text()
-					const m = xml.match(/RebakeAvatarTextures<\/key>\s*<string>([^<]+)<\/string>/)
-					if (m) {
-						const s = getSession(wsId)
-						if (s) {
-							s.caps.set('RebakeAvatarTextures', m[1].trim())
-							slog.info(ws, `✓ RebakeAvatarTextures cap stored → rebake available`)
+					const map = parseLLSD(xml) as Record<string, unknown> | null
+					const s = getSession(wsId)
+					if (s && map && typeof map === 'object') {
+						const offered: string[] = []
+						for (const [name, url] of Object.entries(map)) {
+							if (typeof url === 'string' && url) { s.caps.set(name, url); offered.push(name) }
 						}
+						slog.info(ws, `✓ ${offered.length} caps stored: ${offered.join(', ')}`)
+						// Notify browser which caps are usable (enables Inventory fetch, etc.).
+						s.ws.send(JSON.stringify({ t: S.CAPS_READY, d: { caps: offered } }))
 					} else {
-						slog.info(ws, `ℹ RebakeAvatarTextures cap not offered by this grid`)
+						slog.info(ws, `ℹ Seed cap returned no usable map`)
 					}
 				} catch (e) {
 					slog.warn(ws, `Seed cap fetch failed: ${(e as Error).message}`)

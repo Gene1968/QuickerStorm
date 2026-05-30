@@ -25,6 +25,7 @@ export const C = {
 	MAP_QUERY:      'map_query',      // { minX, maxX, minY, maxY } — MapBlockRequest range
 	MAP_NAME_QUERY: 'map_name_query', // { name } — MapNameRequest by region name
 	MAP_TELEPORT:   'map_teleport',   // { regionX, regionY, x, y, z } — TeleportLocationRequest to (regionX*256+x,...)
+	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } — fetch a folder's items via FetchInventoryDescendents2 cap
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -48,6 +49,8 @@ export const S = {
 	IM_RECV:         'im_recv',       // { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp } — incoming IM
 	OBJECT_PROPS:    'object_props',  // { items: [{ fullId, creatorId, ownerId, name, description, ... }] } — sim's ObjectProperties reply
 	MAP_BLOCKS:      'map_blocks',    // { blocks: [{ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId }] }
+	CAPS_READY:      'caps_ready',    // { caps: string[] } — HTTP cap names available after seed-cap fetch
+	INV_FOLDER:      'inv_folder',    // { folderId, items: [{ itemId, parentId, name, desc, assetType, invType, assetId, flags }], error? } — FetchInventoryDescendents2 reply
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

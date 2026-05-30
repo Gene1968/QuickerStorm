@@ -10,6 +10,7 @@ import { join, normalize, extname } from 'path'
 import { handleLogin, handleLogout } from './handlers/login'
 import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
+import { handleInventoryFetch } from './handlers/inventory'
 import { deleteSession, resolveCircuitId, attachWs, detachWs, scheduleExpire, findCircuitByUser } from './state/sessions'
 import { C, S } from '../shared/protocol.js'
 import type { ServerWebSocket } from 'bun'
@@ -215,6 +216,11 @@ const server = Bun.serve<WSData>({
 				case C.CAPS_FETCH: {
 					const d = msg.d as { id: string; url: string; method?: string; body?: string }
 					handleCapsFetch(ws, d.id, d.url, d.method, d.body)
+					break
+				}
+				case C.INV_FETCH_FOLDER: {
+					const d = msg.d as { folderId: string }
+					handleInventoryFetch(circuitId, d.folderId)
 					break
 				}
 				default:

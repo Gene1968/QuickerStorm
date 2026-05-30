@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useInventory } from '@/composables/useInventory'
+import { itemIcon, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT } from '@/utils/inventoryIcons'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
 import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon } from '@lucide/vue'
@@ -12,6 +14,7 @@ const props = defineProps({
 
 const ui  = useUiStore()
 const inv = useInventoryStore()
+const { fetchFolder } = useInventory()
 
 const tabs = [
 	{ id: 'inventory',  label: 'Inventory' },
@@ -20,6 +23,33 @@ const tabs = [
 	{ id: 'favorites',  label: 'Favorites' },
 ]
 const activeTab = ref('inventory')
+
+// ── Special-folder tabs (use existing data — Favorites + Current Outfit are system folders) ──
+const favFolderId = computed(() => inv.findSystemFolder(FOLDER_FAVORITES))
+const cofFolderId = computed(() => inv.findSystemFolder(FOLDER_CURRENT_OUTFIT))
+const favItems    = computed(() => inv.folderItems(favFolderId.value))
+const wornItems   = computed(() => inv.folderItems(cofFolderId.value))
+// Recent: newest items across already-fetched folders (created_at desc).
+const recentItems = computed(() => {
+	const all = []
+	inv.items.forEach(list => all.push(...list))
+	return all.filter(i => i.createdAt).sort((a, b) => b.createdAt - a.createdAt).slice(0, 40)
+})
+
+// Fetch the backing folder when its tab is opened (lazy, like tree expand).
+watch(activeTab, (t) => {
+	if (t === 'favorites' && favFolderId.value) fetchFolder(favFolderId.value)
+	if (t === 'worn'      && cofFolderId.value) fetchFolder(cofFolderId.value)
+}, { immediate: true })
+
+// WHY: true when the active tab renders a flex-1 scroll list (so the footer spacer is omitted).
+const tabFills = computed(() => {
+	if (activeTab.value === 'inventory') return !!inv.rootId
+	if (activeTab.value === 'recent')    return recentItems.value.length > 0
+	if (activeTab.value === 'worn')      return wornItems.value.length > 0
+	if (activeTab.value === 'favorites') return favItems.value.length > 0
+	return false
+})
 
 
 // WHY: per-instance id so each floater has its own focus/z-index slot in the floater stack.
@@ -43,11 +73,11 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 		@close="close"
 		class="min-w-[18rem]"
 	>
-		<div class="flex p-1"><input class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory (TO-DO)" type="search" /></div>
+		<div class="flex p-1"><input v-model="inv.filterText" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" /></div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-white">
 			<div class="flex flex-row items-center justify-start w-full overflow-hidden text-2xs">
-				<button class="me-2 py-0">Collapse</button>
-				<button class="me-2 py-0">Expand</button>
+				<button class="me-2 py-0" @click="inv.collapseAll()">Collapse</button>
+				<button class="me-2 py-0" @click="inv.expandAll()">Expand</button>
 				<span class="me-1">Filter:</span>
 				<button class="flex grow items-center justify-between me-1 py-0 whitespace-nowrap">All Types<ChevronDownIcon class="w-3" /></button>
 			</div>
@@ -67,7 +97,7 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 							: ''"
 						@click="activeTab = tab.id"
 					>{{ tab.label }}</button>
-					<button class="sq max-w-[1.875rem] p-1"><PlusIcon /></button>
+					<button class="sq max-w-[1.875rem] p-1" title="Add a custom tab (TO-DO)"><PlusIcon /></button>
 				</nav>
 			</div>
 			<button v-if="true" class="arrowctrl"><ChevronRightIcon /></button>
@@ -86,27 +116,43 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'recent'">
-			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
-				<p class="mt-8 text-2xl">📦</p>
-				<p>Recent items tree coming in Phase 3.</p>
+			<div v-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-white/10 text-xs text-t1/90 select-none" :title="it.desc || it.name">
+					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
+					<span class="truncate">{{ it.name }}</span>
+				</div>
+			</div>
+			<div v-else class="p-4 text-center text-tm text-sm italic pt-12">
+				<p>No recent items yet.</p>
+				<p class="text-xs mt-2 opacity-60">Expand folders in the Inventory tab to populate recent items.</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'worn'">
-			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
-				<p class="mt-8 text-2xl">📦</p>
-				<p>Worn items tree coming in Phase 3.</p>
+			<div v-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-white/10 text-xs text-t1/90 select-none" :title="it.desc || it.name">
+					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
+					<span class="truncate">{{ it.name }}</span>
+				</div>
+			</div>
+			<div v-else class="p-4 text-center text-tm text-sm italic pt-12">
+				<p>{{ cofFolderId ? 'Nothing worn (or still loading).' : 'No Current Outfit folder.' }}</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'favorites'">
-			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
-				<p class="mt-8 text-2xl">📦</p>
-				<p>Favorite items coming in Phase 3.</p>
-				<p class="text-xs mt-2 opacity-60">You haven't marked any items as favorites.</p>
+			<div v-if="favItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-white/10 text-xs text-t1/90 select-none" :title="it.desc || it.name">
+					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
+					<span class="truncate">{{ it.name }}</span>
+				</div>
+			</div>
+			<div v-else class="p-4 text-center text-tm text-sm italic pt-12">
+				<p>No favorites.</p>
+				<p class="text-xs mt-2 opacity-60">Items in your Favorites folder appear here.</p>
 			</div>
 		</template>
 
-		<!-- WHY: spacer only when the inventory tree isn't already filling the column (flex-1). -->
-		<div v-if="!(activeTab === 'inventory' && inv.rootId)" class="flex-1"/>
+		<!-- WHY: spacer only when the active tab isn't already filling the column (flex-1). -->
+		<div v-if="!tabFills" class="flex-1"/>
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-white">
 			<button title="Show additional options (TO-DO)" class="px-1"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 			<button title="Add new item (TO-DO)"><PlusIcon /></button>

@@ -6,7 +6,18 @@
  * Sound mute button with chevron — hover opens mixer dropdown.
  */
 import { ref } from 'vue'
-import { VideoIcon, MonitorIcon, MusicIcon, TvIcon, Mic, MicOff, Volume2, VolumeX, ChevronDown, Settings } from '@lucide/vue'
+import {
+	VideoIcon,
+	MonitorIcon,
+	MusicIcon,
+	TvIcon,
+	Mic,
+	MicOff,
+	Volume2,
+	VolumeX,
+	ChevronDown,
+	Settings,
+} from '@lucide/vue'
 import {
 	useAudio,
 	isAllAudioMuted,
@@ -15,11 +26,12 @@ import {
 import { useProximityVoice } from '@/composables/useProximityVoice.js'
 import { useUiStore } from '@/stores/uiStore.js'
 
-const ui    = useUiStore()
+const ui = useUiStore()
 const voice = useProximityVoice()
 const {
 	masterVolume,
-	interfaceVolume, interfaceMuted,
+	interfaceVolume,
+	interfaceMuted,
 	ambientVolume,
 	soundsVolume,
 	musicVolume,
@@ -37,7 +49,9 @@ function onEnter() {
 }
 
 function onLeave() {
-	hoverTimer = setTimeout(() => { showDropdown.value = false }, 150)
+	hoverTimer = setTimeout(() => {
+		showDropdown.value = false
+	}, 150)
 }
 
 function openSoundPrefs() {
@@ -46,57 +60,93 @@ function openSoundPrefs() {
 }
 
 // Slider helpers — volume refs are 0-1; slider shows 0-100
-function toSlider(vol) { return Math.round(vol * 100) }
-function fromSlider(e, volRef) { volRef.value = e.target.valueAsNumber / 100 }
+function toSlider(vol) {
+	return Math.round(vol * 100)
+}
+function fromSlider(e, volRef) {
+	volRef.value = e.target.valueAsNumber / 100
+}
 
 // Stub channels — static display only (no routing yet)
 const stubChannels = [
 	{ label: 'Ambient', vol: ambientVolume },
-	{ label: 'Sounds',  vol: soundsVolume  },
-	{ label: 'Music',   vol: musicVolume   },
-	{ label: 'Media',   vol: mediaVolume   },
-	{ label: 'Voice',   vol: voiceVolume   },
+	{ label: 'Sounds', vol: soundsVolume },
+	{ label: 'Music', vol: musicVolume },
+	{ label: 'Media', vol: mediaVolume },
+	{ label: 'Voice', vol: voiceVolume },
 ]
 </script>
 
 <template>
 	<div
 		class="relative flex items-center gap-1 pe-3"
-		@mouseenter="onEnter"
-		@mouseleave="onLeave"
 	>
-	<div class="flex items-center gap-2 me-6">
-		<div class="mx-1.5"></div>
-		<div title="Click to refresh your X$ balance (TO-DO)" class="mx-4 text-xs text-white/60">X$ 0</div>
-		<div title="Monday, May 25, 2026 (TO-DO)" class="me-7 ms-3 text-xs text-white/60">23:59PDT</div>
-		<VideoIcon title="Camera presets (TO-DO)" class="w-4 h-4 text-white/20" />
-		<MonitorIcon title="Graphics presets (TO-DO)" class="w-4 h-4 text-white/20" />
-		<MusicIcon title="Start/stop parcel audio stream (TO-DO)" class="w-4 h-4 text-white/20" />
-		<TvIcon title="Start/stop all media (music, video, Web pages) (TO-DO)" class="w-4 h-4 text-white/20" />
-	</div>
+		<div class="flex items-center gap-2 me-6">
+			<div class="mx-1.5"></div>
+			<div
+				title="Click to refresh your X$ balance (TO-DO)"
+				class="mx-4 text-xs text-white/60"
+			>
+				X$ 0
+			</div>
+			<div
+				title="Monday, May 25, 2026 (TO-DO)"
+				class="me-7 ms-3 text-xs text-white/60"
+			>
+				23:59PDT
+			</div>
+			<VideoIcon
+				title="Camera presets (TO-DO)"
+				class="w-4 h-4 text-white/20"
+			/>
+			<MonitorIcon
+				title="Graphics presets (TO-DO)"
+				class="w-4 h-4 text-white/20"
+			/>
+			<MusicIcon
+				title="Start/stop parcel audio stream (TO-DO)"
+				class="w-4 h-4 text-white/20"
+			/>
+			<TvIcon
+				title="Start/stop all media (music, video, Web pages) (TO-DO)"
+				class="w-4 h-4 text-white/20"
+			/>
+		</div>
 
 		<!-- Mic mute button -->
 		<button
 			class="h-7 w-7 flex items-center justify-center rounded hover:bg-white/15 transition-colors"
 			:class="voice.isMuted.value ? 'text-red-400' : 'text-white/80'"
 			:disabled="!voice.isEnabled.value"
-			:style="!voice.isEnabled.value ? { opacity: 0.35, cursor: 'default' } : {}"
-			:title="voice.isMuted.value ? 'Unmute mic (Shift+Alt+A)' : 'Mute mic (Shift+Alt+A)'"
+			:style="
+				!voice.isEnabled.value
+					? { opacity: 0.35, cursor: 'default' }
+					: {}
+			"
+			:title="
+				voice.isMuted.value
+					? 'Unmute mic (Shift+Alt+A)'
+					: 'Mute mic (Shift+Alt+A)'
+			"
 			@click="voice.isEnabled.value && voice.toggleMute()"
 		>
 			<MicOff v-if="voice.isMuted.value" :size="15" />
-			<Mic    v-else                       :size="15" />
+			<Mic v-else :size="15" />
 		</button>
 
 		<!-- Sound mute button + chevron -->
 		<button
 			class="h-7 flex items-center gap-0.5 px-1.5 rounded hover:bg-white/15 transition-colors"
 			:class="isAllAudioMuted ? 'text-red-400' : 'text-white/80'"
-			:title="isAllAudioMuted ? 'Unmute sound' : 'Mute sound / Sound settings'"
+			:title="
+				isAllAudioMuted ? 'Unmute sound' : 'Mute sound / Sound settings'
+			"
 			@click="toggleAllAudioMute"
+			@mouseenter="onEnter"
+			@mouseleave="onLeave"
 		>
 			<VolumeX v-if="isAllAudioMuted" :size="15" />
-			<Volume2 v-else                  :size="15" />
+			<Volume2 v-else :size="15" />
 			<ChevronDown :size="10" class="opacity-60" />
 		</button>
 
@@ -109,23 +159,28 @@ const stubChannels = [
 				@mouseleave="onLeave"
 			>
 				<div class="flex flex-col gap-2">
-
 					<!-- Master row -->
 					<div class="flex items-center gap-2">
-						<span class="text-xs text-t1 w-20 shrink-0">Master</span>
+						<span class="text-xs text-t1 w-20 shrink-0">
+							Master
+						</span>
 						<input
-							type="range" min="0" max="100"
+							type="range"
+							min="0"
+							max="100"
 							:value="toSlider(masterVolume)"
 							@input="fromSlider($event, masterVolume)"
 							class="flex-1 accent-accent h-1"
 						/>
 						<button
 							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded hover:bg-white/10 transition-colors"
-							:class="isAllAudioMuted ? 'text-red-400' : 'text-t2'"
+							:class="
+								isAllAudioMuted ? 'text-red-400' : 'text-t2'
+							"
 							@click="toggleAllAudioMute"
 						>
 							<VolumeX v-if="isAllAudioMuted" :size="16" />
-							<Volume2 v-else                  :size="16" />
+							<Volume2 v-else :size="16" />
 						</button>
 					</div>
 
@@ -133,9 +188,13 @@ const stubChannels = [
 
 					<!-- Interface row (wired) -->
 					<div class="flex items-center gap-2">
-						<span class="text-xs text-t1 w-20 shrink-0">Interface</span>
+						<span class="text-xs text-t1 w-20 shrink-0">
+							Interface
+						</span>
 						<input
-							type="range" min="0" max="100"
+							type="range"
+							min="0"
+							max="100"
 							:value="toSlider(interfaceVolume)"
 							@input="fromSlider($event, interfaceVolume)"
 							class="flex-1 accent-accent h-1"
@@ -146,7 +205,7 @@ const stubChannels = [
 							@click="interfaceMuted = !interfaceMuted"
 						>
 							<VolumeX v-if="interfaceMuted" :size="16" />
-							<Volume2 v-else                :size="16" />
+							<Volume2 v-else :size="16" />
 						</button>
 					</div>
 
@@ -156,16 +215,19 @@ const stubChannels = [
 						:key="ch.label"
 						class="flex items-center gap-2 opacity-40"
 					>
-						<span class="text-xs text-t1 w-20 shrink-0">{{ ch.label }}</span>
+						<span class="text-xs text-t1 w-20 shrink-0">
+							{{ ch.label }}
+						</span>
 						<input
-							type="range" min="0" max="100"
+							type="range"
+							min="0"
+							max="100"
 							:value="toSlider(ch.vol.value)"
 							disabled
 							class="flex-1 h-1"
 						/>
 						<div class="w-5 h-5 shrink-0" />
 					</div>
-
 				</div>
 
 				<!-- Gear → Preferences Sound & Media -->
@@ -184,10 +246,22 @@ const stubChannels = [
 </template>
 
 <style scoped>
-.dd-enter-active { transition: opacity 0.12s, transform 0.12s; }
-.dd-leave-active { transition: opacity 0.08s, transform 0.08s; }
-.dd-enter-from, .dd-leave-to { opacity: 0; transform: translateY(-0.25rem); }
-input[type="range"] {
+.dd-enter-active {
+	transition:
+		opacity 0.12s,
+		transform 0.12s;
+}
+.dd-leave-active {
+	transition:
+		opacity 0.08s,
+		transform 0.08s;
+}
+.dd-enter-from,
+.dd-leave-to {
+	opacity: 0;
+	transform: translateY(-0.25rem);
+}
+input[type='range'] {
 	width: 5rem;
 }
 </style>
