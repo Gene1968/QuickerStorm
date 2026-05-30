@@ -24,6 +24,7 @@ import {
 	encodeAvatarPropertiesRequest, encodeParcelInfoRequest, encodeUUIDNameRequest,
 	encodeAcceptFriendship, encodeDeclineFriendship, encodeTerminateFriendship, encodeChangeUserRights,
 	encodeTeleportLandmarkRequest, encodeSetStartLocationRequest,
+	encodeCreateInventoryItem, encodeCreateInventoryFolder, decodeUpdateCreateInventoryItem,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -65,6 +66,7 @@ const LOW_ONLINE_NOTIFICATION       = 322  // OnlineNotification
 const LOW_OFFLINE_NOTIFICATION      = 323  // OfflineNotification
 const LOW_AGENT_DATA_UPDATE         = 387  // AgentDataUpdate (Zerocoded) — self active group/title
 const LOW_AGENT_GROUP_DATA_UPDATE   = 389  // AgentGroupDataUpdate (Zerocoded) — self group list
+const LOW_UPDATE_CREATE_INV_ITEM    = 267  // UpdateCreateInventoryItem — sim's reply after CreateInventoryItem
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
@@ -738,6 +740,17 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `low:${LOW_UPDATE_CREATE_INV_ITEM}`) {
+		try {
+			const items = decodeUpdateCreateInventoryItem(buf, dataOffset)
+			if (items.length) {
+				slog.info(session.ws, `← UpdateCreateInventoryItem: ${items.length} item(s) [${items.map(i => `${i.name}→${i.parentId.slice(0, 8)}`).join(', ')}]`)
+				session.ws.send(JSON.stringify({ t: S.INV_ITEM_CREATED, d: { items } }))
+			}
+		} catch (e) { slog.warn(session.ws, `UpdateCreateInventoryItem decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	if (type === `low:${LOW_AVATAR_PROPERTIES_REPLY}`) {
 		try {
 			const props = decodeAvatarPropertiesReply(buf, dataOffset)
@@ -919,6 +932,37 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ SetStartLocationRequest home @ ${d.regionName} ${d.x.toFixed(0)},${d.y.toFixed(0)},${d.z.toFixed(0)}`)
+		return
+	}
+
+	if (msg.t === C.CREATE_LANDMARK) {
+		const d = msg.d as { name: string; desc?: string; folderId: string }
+		if (!d.folderId) { slog.warn(session.ws, 'CreateLandmark: missing folderId'); return }
+		const seq = nextSeq(session)
+		// WHY: Type=InvType=3 (Landmark) + zero TransactionID → sim creates the LM from the agent's
+		// current position. Reply (UpdateCreateInventoryItem) is forwarded as S.INV_ITEM_CREATED.
+		const pkt = encodeCreateInventoryItem({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, type: 3, invType: 3,
+			name: d.name || 'Landmark', description: d.desc || '',
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ CreateInventoryItem (landmark) "${d.name}" → folder ${d.folderId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.CREATE_INV_FOLDER) {
+		const d = msg.d as { folderId: string; parentId: string; name: string }
+		if (!d.folderId || !d.parentId) { slog.warn(session.ws, 'CreateInvFolder: missing ids'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeCreateInventoryFolder({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, parentId: d.parentId, name: d.name || 'New Folder',
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ CreateInventoryFolder "${d.name}" ${d.folderId.slice(0, 8)}… under ${d.parentId.slice(0, 8)}…`)
 		return
 	}
 

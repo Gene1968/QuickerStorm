@@ -260,6 +260,120 @@ export function encodeTeleportLocationRequest(p: {
   return Buffer.concat([hdr, MSG, body])
 }
 
+/** CreateInventoryItem (Low #305) — ask the sim to create an inventory item.
+ *  WHY: For a Landmark (Type=InvType=3) sent with a ZERO TransactionID, the sim builds the
+ *  landmark asset from the agent's CURRENT region + position automatically — no asset upload.
+ *  The sim replies with UpdateCreateInventoryItem (Low #267) carrying the new ItemID + AssetID.
+ *  Block layout (message_template.msg): AgentData{AgentID,SessionID} +
+ *    InventoryBlock{CallbackID U32, FolderID, TransactionID, NextOwnerMask U32, Type S8,
+ *                   InvType S8, WearableType U8, Name Var1, Description Var1}.
+ */
+export function encodeCreateInventoryItem(p: {
+  agentId: string; sessionId: string; seq: number
+  callbackId?: number; folderId: string; transactionId?: string
+  nextOwnerMask?: number; type: number; invType: number; wearableType?: number
+  name: string; description?: string
+}): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x31])  // Low #305 = 0x131
+  const nameBuf = Buffer.from((p.name || '') + '\0', 'utf8')          // Variable1: null-terminated
+  const descBuf = Buffer.from((p.description || '') + '\0', 'utf8')
+  const txn = p.transactionId ?? '00000000-0000-0000-0000-000000000000'
+  const body = Buffer.allocUnsafe(32 + 4 + 16 + 16 + 4 + 1 + 1 + 1 + 1 + nameBuf.length + 1 + descBuf.length)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  body.writeUInt32LE((p.callbackId ?? 0) >>> 0, off); off += 4
+  uuidToBytes(p.folderId).copy(body, off);  off += 16
+  uuidToBytes(txn).copy(body, off);         off += 16
+  body.writeUInt32LE((p.nextOwnerMask ?? 0x7FFFFFFF) >>> 0, off); off += 4
+  body.writeInt8(p.type, off);    off += 1
+  body.writeInt8(p.invType, off); off += 1
+  body.writeUInt8(p.wearableType ?? 0, off); off += 1
+  body.writeUInt8(nameBuf.length, off); off += 1
+  nameBuf.copy(body, off); off += nameBuf.length
+  body.writeUInt8(descBuf.length, off); off += 1
+  descBuf.copy(body, off); off += descBuf.length
+  return Buffer.concat([hdr, MSG, body])
+}
+
+/** CreateInventoryFolder (Low #273) — create a new folder. Client generates the FolderID UUID
+ *  (so it can optimistically show the folder immediately). Type S8 = -1 for a plain user folder.
+ *  Block: AgentData{AgentID,SessionID} + FolderData{FolderID, ParentID, Type S8, Name Var1}.
+ */
+export function encodeCreateInventoryFolder(p: {
+  agentId: string; sessionId: string; seq: number
+  folderId: string; parentId: string; type?: number; name: string
+}): Buffer {
+  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x11])  // Low #273 = 0x111
+  const nameBuf = Buffer.from((p.name || '') + '\0', 'utf8')
+  const body = Buffer.allocUnsafe(32 + 16 + 16 + 1 + 1 + nameBuf.length)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  uuidToBytes(p.folderId).copy(body, off);  off += 16
+  uuidToBytes(p.parentId).copy(body, off);  off += 16
+  body.writeInt8(p.type ?? -1, off); off += 1
+  body.writeUInt8(nameBuf.length, off); off += 1
+  nameBuf.copy(body, off); off += nameBuf.length
+  return Buffer.concat([hdr, MSG, body])
+}
+
+export interface CreatedInventoryItem {
+  itemId:    string
+  parentId:  string   // FolderID the item landed in
+  assetId:   string
+  name:      string
+  desc:      string
+  assetType: number
+  invType:   number
+  flags:     number
+  createdAt: number
+  ownerMask: number
+}
+
+/** Decode UpdateCreateInventoryItem (Low #267) — the sim's reply after creating an item.
+ *  AgentData{AgentID, SimApproved BOOL, TransactionID} + InventoryData Variable (U8 count) of
+ *  full item blocks. We extract the fields the client inventory list needs and shape them to
+ *  match the FetchInventoryDescendents2 item rows so the UI renders them identically.
+ *  NOTE: Zerocoded on the wire, but the dispatcher hands us the already-expanded buffer.
+ */
+export function decodeUpdateCreateInventoryItem(buf: Buffer, dataOffset: number): CreatedInventoryItem[] {
+  let off = dataOffset
+  off += 16  // AgentID
+  off += 1   // SimApproved BOOL
+  off += 16  // TransactionID
+  const count = buf[off++]
+  const items: CreatedInventoryItem[] = []
+  for (let i = 0; i < count && off + 16 <= buf.length; i++) {
+    const itemId    = bytesToUuid(buf, off); off += 16
+    const parentId  = bytesToUuid(buf, off); off += 16   // FolderID
+    off += 4   // CallbackID
+    off += 16  // CreatorID
+    off += 16  // OwnerID
+    off += 16  // GroupID
+    off += 4   // BaseMask
+    const ownerMask = buf.readUInt32LE(off); off += 4
+    off += 4   // GroupMask
+    off += 4   // EveryoneMask
+    off += 4   // NextOwnerMask
+    off += 1   // GroupOwned BOOL
+    const assetId   = bytesToUuid(buf, off); off += 16
+    const assetType = buf.readInt8(off); off += 1
+    const invType   = buf.readInt8(off); off += 1
+    const flags     = buf.readUInt32LE(off); off += 4
+    off += 1   // SaleType
+    off += 4   // SalePrice
+    const nameLen = buf[off++]; const name = buf.slice(off, off + nameLen).toString('utf8').replace(/\0/g, ''); off += nameLen
+    const descLen = buf[off++]; const desc = buf.slice(off, off + descLen).toString('utf8').replace(/\0/g, ''); off += descLen
+    const createdAt = buf.readInt32LE(off); off += 4
+    off += 4   // CRC
+    items.push({ itemId, parentId, assetId, name, desc, assetType, invType, flags, createdAt, ownerMask })
+  }
+  return items
+}
+
 /** RequestMultipleObjects (Medium #3 = 0xFF 0x03) — ask sim for full ObjectUpdate for
  *  objects we have in ObjectUpdateCached but don't know about.
  *  WHY: Sims send ObjectUpdateCached (high:14) for objects they think the viewer has cached.

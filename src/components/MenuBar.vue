@@ -177,7 +177,7 @@ const MENUS = [
 			{ sep: true },
 			{ label: 'Teleport Home',		kbd: 'Ctrl+⇧+H',	action: () => act(requestHomeTeleport) },
 			{ label: 'Teleport History',	kbd: 'Alt+H',	action: () => act(() => { if (ui.showPlaces) ui.togglePlaces(); else ui.openPlacesOnTab('history') }) },
-			{ label: 'Landmark This Place',	disabled: true },
+			{ label: 'Landmark This Place',				action: () => act(() => ui.openCreateLandmark({ name: session.regionName })) },
 			{ label: 'Set Home to Here',					action: () => act(setHomeHere) },
 			{ sep: true },
 			{ label: 'Region Details',		disabled: true },

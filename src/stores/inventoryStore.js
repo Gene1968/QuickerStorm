@@ -174,6 +174,47 @@ export const useInventoryStore = defineStore('inventory', () => {
 		return agentFolderIds.value.filter(id => !fetched.value.has(id) && !fetching.value.has(id))
 	}
 
+	// Insert newly-created items (from UpdateCreateInventoryItem) into their parent folder's list,
+	// so a fresh landmark shows up immediately without a re-fetch. De-dupes by itemId.
+	function addCreatedItems(list) {
+		if (!Array.isArray(list) || !list.length) return
+		const m = new Map(items.value)
+		for (const it of list) {
+			if (!it?.parentId) continue
+			const cur = m.get(it.parentId) || []
+			if (cur.some(x => x.itemId === it.itemId)) continue
+			m.set(it.parentId, [...cur, it])
+		}
+		items.value = m
+	}
+
+	// Optimistically add a folder the client just asked the sim to create (CreateInventoryFolder
+	// has no reply message — the viewer owns the new FolderID). source:'agent' so totals count it.
+	function addFolderOptimistic({ folderId, parentId, name, typeDefault = -1 }) {
+		if (!folderId || folders.value.has(folderId)) return
+		const m = new Map(folders.value)
+		m.set(folderId, { folderId, parentId, name, typeDefault, version: 0, source: 'agent' })
+		folders.value = m
+	}
+
+	// Folders a landmark can be saved into, FS-style: Favorites (type 23) first, then the
+	// Landmarks system folder (type 3) and all its descendant folders (indented by depth).
+	function landmarkTargetFolders() {
+		const out = []
+		const favId = findSystemFolder(23)
+		if (favId) out.push({ folderId: favId, name: 'Favorites', depth: 0, favorite: true })
+		const lmId = findSystemFolder(3)
+		if (lmId) {
+			const walk = (id, depth) => {
+				const f = folders.value.get(id)
+				out.push({ folderId: id, name: f ? f.name : 'Landmarks', depth })
+				for (const c of childFolders(id)) walk(c.folderId, depth + 1)
+			}
+			walk(lmId, 0)
+		}
+		return out
+	}
+
 	function clear() { loadFromLogin(null) }
 
 	return {
@@ -185,6 +226,6 @@ export const useInventoryStore = defineStore('inventory', () => {
 		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties, addToFavorites,
 		setItems, folderCount, itemCount, clear,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
-		pendingAgentFolders,
+		pendingAgentFolders, addCreatedItems, addFolderOptimistic, landmarkTargetFolders,
 	}
 })

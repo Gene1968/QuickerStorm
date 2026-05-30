@@ -64,15 +64,36 @@ export function useInventory() {
 		fetchAll()
 	}
 
+	// UpdateCreateInventoryItem reply → drop the new item(s) into their folder list immediately.
+	function onItemCreated(d) { inv.addCreatedItems(d?.items || []) }
+
+	// Ask the sim to create a landmark of the current location in `folderId`. The reply
+	// (S.INV_ITEM_CREATED) lands the item in the store. desc = the user's "My notes".
+	function createLandmark({ name, desc, folderId }) {
+		if (!folderId) return
+		emit(C.CREATE_LANDMARK, { name: name || 'Landmark', desc: desc || '', folderId })
+	}
+
+	// Create a new folder. The client owns the FolderID (CreateInventoryFolder has no reply),
+	// so we generate it, tell the sim, and optimistically add it to the tree. Returns the id.
+	function createFolder({ name, parentId, typeDefault = -1 }) {
+		if (!parentId) return ''
+		const folderId = crypto.randomUUID()
+		emit(C.CREATE_INV_FOLDER, { folderId, parentId, name: name || 'New Folder' })
+		inv.addFolderOptimistic({ folderId, parentId, name: name || 'New Folder', typeDefault })
+		return folderId
+	}
+
 	onMounted(() => {
 		if (!registered) {
-			on(S.INV_FOLDER,  onInvFolder)
-			on(S.CAPS_READY,  onCapsReady)
+			on(S.INV_FOLDER,       onInvFolder)
+			on(S.CAPS_READY,       onCapsReady)
+			on(S.INV_ITEM_CREATED, onItemCreated)
 			registered = true
 		}
 	})
 	// Keep handlers registered for the session — module-level state survives component unmount.
 	onUnmounted(() => {})
 
-	return { fetchFolder, fetchFolders, fetchAll, stopFetchAll }
+	return { fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder }
 }

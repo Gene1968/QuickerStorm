@@ -154,6 +154,17 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 @layer components {
 
 	/*
+	 * Menu entry for a feature that is recognised but NOT yet implemented (red), as opposed to
+	 * one disabled for context reasons (use text-white/40). WHY: gives the user a clear signal
+	 * that a red item is "coming / not working" rather than "not applicable right now".
+	 */
+	.inv-todo {
+		color: #f87171;        /* red-400 */
+		opacity: 0.8;
+		cursor: not-allowed;
+	}
+
+	/*
 	 * Themed text fields — pair with TW layout/focus classes (rounded, px-*, py-*, focus:ring-*).
 	 * WHY: TW bg-card2 on <input> is ignored by the native appearance layer; <select> is fine.
 	 */

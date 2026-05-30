@@ -34,6 +34,7 @@ import SettingsFloater		from '@/components/SettingsFloater.vue'
 import DebugPanel			from '@/components/DebugPanel.vue'
 import AudioControlsWidget	from '@/components/AudioControlsWidget.vue'
 import MovementHelpFloater	from '@/components/MovementHelpFloater.vue'
+import CreateLandmarkFloater	from '@/components/CreateLandmarkFloater.vue'
 import ResyncBanner			from '@/components/ResyncBanner.vue'
 
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
@@ -139,6 +140,7 @@ watch(
 					<SettingsFloater		v-if="ui.showSettings" />
 					<DebugPanel				v-if="ui.showDebug" />
 					<MovementHelpFloater	v-if="ui.showMovementHelp" />
+				<CreateLandmarkFloater	v-if="ui.showCreateLandmark" />
 					<AvatarContextMenu />
 					<ObjectContextMenu />
 					<InventoryContextMenu />

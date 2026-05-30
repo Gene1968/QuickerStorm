@@ -14,7 +14,18 @@ const props = defineProps({
 
 const ui  = useUiStore()
 const inv = useInventoryStore()
-const { fetchFolder } = useInventory()
+const { fetchFolder, createFolder } = useInventory()
+
+const showAddMenu = ref(false)
+
+// New Folder from the + menu: nest under the selected folder if one is selected, else My Inventory root.
+function newFolderHere() {
+	const parentId = inv.folders.has(inv.selectedId) ? inv.selectedId : inv.rootId
+	if (!parentId) return
+	createFolder({ name: 'New Folder', parentId })
+	if (!inv.isExpanded(parentId)) inv.toggle(parentId)
+	showAddMenu.value = false
+}
 
 const tabs = [
 	{ id: 'inventory',  label: 'Inventory' },
@@ -153,7 +164,7 @@ function scrollTabs(kind) {
 	setTimeout(updateTabOverflow, 250)
 }
 
-function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false }
+function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false; showAddMenu.value = false }
 
 onMounted(() => {
 	nextTick(updateTabOverflow)
@@ -277,7 +288,7 @@ onUnmounted(() => {
 		<div v-if="!tabFills" class="flex-1"/>
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-white">
 			<div class="relative">
-				<button class="ui-btn px-1" title="Options" @click.stop="showCogMenu = !showCogMenu"><CogIcon /><ChevronDownIcon class="w-3" /></button>
+				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-card border border-brd rounded shadow-lg" @click.stop>
 					<div class="px-2 py-1 text-2xs text-tm border-b border-brd">Sort</div>
 					<button
@@ -289,7 +300,20 @@ onUnmounted(() => {
 					>{{ inv.sortMode === o.id ? '✓ ' : '   ' }}{{ o.label }}</button>
 				</div>
 			</div>
-			<button class="ui-btn" title="Add new item (TO-DO)"><PlusIcon /></button>
+			<div class="relative">
+				<button class="ui-btn px-1" title="Add new item" @click.stop="showAddMenu = !showAddMenu"><PlusIcon /></button>
+				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-card border border-brd rounded shadow-lg text-xs" @click.stop>
+					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-t1" @click="newFolderHere">New Folder</button>
+					<div class="border-t border-brd"></div>
+					<!-- red = recognised but not yet implemented -->
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Script</button>
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Notecard</button>
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Gesture</button>
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Clothing</button>
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Body Part</button>
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Settings</button>
+				</div>
+			</div>
 			<button
 				:title="isLast
 					? `Maximum of ${MAX_INVENTORY} inventory floaters reached`

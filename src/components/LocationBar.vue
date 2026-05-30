@@ -3,6 +3,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useGridStore } from '@/stores/gridStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useTeleport } from '@/composables/useTeleport.js'
 import { useAudio }			from '@/composables/useAudio.js'
@@ -11,6 +12,7 @@ import { MicVocalIcon, BirdIcon, SwordIcon, CuboidIcon, ScrollTextIcon, StarIcon
 const session = useSessionStore()
 const world	 = useWorldStore()
 const grid		= useGridStore()
+const ui		= useUiStore()
 const { connected } = useRealtimeSocket()
 const { requestTeleport, requestRegionTeleport } = useTeleport()
 
@@ -184,7 +186,7 @@ function onEditKeydown(e) {
 		<SwordIcon v-if="false" title="Pushing (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
 		<CuboidIcon title="Building (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
 		<ScrollTextIcon title="Scripts (TO-DO)" class="w-5 h-5 me-2 text-gray-400" />
-		<button title="Add to landmarks (TO-DO)" class="me-3"><StarIcon class="w-5 h-5 text-gray-400 hover:text-yellow-500" /></button>
+		<button title="Create landmark of this place" class="me-3" @click="playSound('tick.mp3', 0.6); ui.openCreateLandmark({ name: session.regionName })"><StarIcon class="w-5 h-5 text-gray-400 hover:text-yellow-500" /></button>
 		<button @click="playSound('tick.mp3', 0.6); showLocationHistory = !showLocationHistory" title="Location history (TO-DO)" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-white" /></button>
 
 	</div>

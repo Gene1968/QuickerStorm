@@ -50,6 +50,8 @@ export const useUiStore = defineStore('ui', () => {
 	const preferenceActiveTab = ref('appearance') // active tab id in Preferences floater
 	const showProfile        = ref(false)    // profile floater
 	const profileTargetId    = ref(null)     // null = self; UUID string = other user
+	const showCreateLandmark = ref(false)    // "Create Landmark" dialog (World→Landmark This Place / star)
+	const createLandmarkPrefill = ref(null)  // { name } default for the dialog (region name)
 	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
 	const alwaysRun          = ref(false)    // SL AGENT_CONTROL_ALWAYS_RUN flag — Ctrl+R toggle
 	const flying             = ref(false)    // mirrors engine isFlying for UI button state
@@ -124,6 +126,7 @@ export const useUiStore = defineStore('ui', () => {
 	}
 	function openProfile(id = null) { profileTargetId.value = id; showProfile.value = true }
 	function toggleProfile()        { showProfile.value = !showProfile.value }
+	function openCreateLandmark(prefill = null) { createLandmarkPrefill.value = prefill; showCreateLandmark.value = true }
 	// WHY: push to top of stack on focus; remove+re-add keeps order clean
 	function focusFloater(id) {
 		floaterStack.value = [...floaterStack.value.filter(f => f !== id), id]
@@ -145,6 +148,7 @@ export const useUiStore = defineStore('ui', () => {
 		'object-edit':   () => { showObjectEdit.value    = false },
 		preferences:     () => { showPreferences.value   = false },
 		profile:         () => { showProfile.value       = false },
+		'create-landmark': () => { showCreateLandmark.value = false },
 		'movement-help': () => { showMovementHelp.value  = false },
 	}
 	function closeActiveFloater() {
@@ -213,6 +217,7 @@ export const useUiStore = defineStore('ui', () => {
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
 		openProfile, toggleProfile,
+		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,
 		uiVisible, toggleUiVisible, closeActiveFloater,
 		cameraPos, setCameraPos,
