@@ -118,7 +118,19 @@
       "Bash(node --check src/composables/useTeleportHistory.js)",
       "Bash(node --check src/stores/inventoryStore.js)",
       "Bash(node --check src/composables/useInventory.js)",
-      "Bash(node --check src/utils/inventoryIcons.js)"
+      "Bash(node --check src/utils/inventoryIcons.js)",
+      "Bash(xargs grep -l \"OnlineNotification\\\\|OfflineNotification\\\\|AgentGroupDataUpdate\\\\|AvatarGroupsReply\\\\|GroupMembersReply\\\\|AvatarPropertiesReply\\\\|AvatarPicksReply\\\\|ParcelInfoReply\\\\|AvatarTrackerUpdate\\\\|ChangeUserRights\\\\|OnlineStatus\")",
+      "Bash(xargs grep -l -i \"friend\\\\|contact\\\\|buddy\")",
+      "Bash(xargs grep -l -i \"group\")",
+      "Bash(xargs grep -l -i \"landmark\\\\|location.*history\\\\|teleport.*history\\\\|recent.*place\")",
+      "Bash(xargs grep -l \"List\\\\|list\\\\|display\\\\|component\\\\|floater\")",
+      "Bash(xargs grep -l \"MinimapOverlay\")",
+      "WebFetch(domain:secondlife.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh search *)",
+      "Bash(gh api *)",
+      "Read(//c/tmp/**)",
+      "Bash(grep -n -A 30 '^\t__TRACKED_VAR__ ' message_template.msg)"
     ]
   }
 }

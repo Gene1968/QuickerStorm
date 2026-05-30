@@ -415,6 +415,7 @@ export interface ImprovedInstantMessageData {
   message:       string
   timestamp:     number
   position:      [number, number, number]
+  imId:          string   // message UUID — for friendship dialogs this is the transaction id echoed in Accept/Decline
 }
 
 export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): ImprovedInstantMessageData {
@@ -432,14 +433,14 @@ export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): I
   const pz = buf.readFloatLE(off); off += 4
   off += 1   // Offline
   const dialog = buf[off++]
-  off += 16  // ID (message UUID)
+  const imId = bytesToUuid(buf, off); off += 16  // ID (message UUID) — friendship transaction id
   const timestamp = buf.readUInt32LE(off); off += 4
   const nameLen = buf[off++]
   const fromAgentName = buf.slice(off, off + nameLen).toString('utf8').replace(/\0/g, '')
   off += nameLen
   const msgLen = buf.readUInt16LE(off); off += 2
   const message = buf.slice(off, off + msgLen).toString('utf8').replace(/\0/g, '')
-  return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz] }
+  return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz], imId }
 }
 
 // ── ObjectSelect / ObjectDeselect (Low #110 / #111) — selection set ──────
@@ -1467,4 +1468,253 @@ export function encodeRegionHandshakeReply(p: { agentId: string; sessionId: stri
   uuidToBytes(p.sessionId).copy(body, 16)
   body.writeUInt32LE(0, 32)  // Flags = 0
   return Buffer.concat([hdr, MSG_ID.RegionHandshakeReply, body])
+}
+
+// ══ Social (Phase 3) — friends / profile / groups / parcel ════════════════
+// Message numbers verified against data/message_template.msg. Reply packets marked
+// "Zerocoded" in the template are zero-DECODED by the handler (handleUdpMessage) before
+// these decoders run, so they parse straight from the already-expanded buffer.
+
+/** Variable1 string: U8 length prefix. Returns [string, nextOffset]. */
+function readV1(buf: Buffer, off: number): [string, number] {
+  const n = buf[off]
+  const s = buf.slice(off + 1, off + 1 + n).toString('utf8').replace(/\0/g, '')
+  return [s, off + 1 + n]
+}
+/** Variable2 string: U16-LE length prefix. Returns [string, nextOffset]. */
+function readV2(buf: Buffer, off: number): [string, number] {
+  const n = buf.readUInt16LE(off)
+  const s = buf.slice(off + 2, off + 2 + n).toString('utf8').replace(/\0/g, '')
+  return [s, off + 2 + n]
+}
+
+// ── Outbound requests ─────────────────────────────────────────────────────
+
+/** AvatarPropertiesRequest (Low 169) — ask for an avatar's profile. Sim replies with
+ *  AvatarPropertiesReply (+Interests +Groups). Body: AgentData{AgentID, SessionID, AvatarID}. */
+export function encodeAvatarPropertiesRequest(p: { agentId: string; sessionId: string; avatarId: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 16)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  uuidToBytes(p.avatarId).copy(body, 32)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0xA9]), body])  // Low 169
+}
+
+/** ParcelInfoRequest (Low 54). Body: AgentData{AgentID, SessionID}; Data{ParcelID}. */
+export function encodeParcelInfoRequest(p: { agentId: string; sessionId: string; parcelId: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 16)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  uuidToBytes(p.parcelId).copy(body, 32)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x36]), body])  // Low 54
+}
+
+/** UUIDNameRequest (Low 235) — resolve avatar UUIDs to names. UUIDNameBlock Variable{ID}×N.
+ *  Note: no AgentData block in this message (per template). */
+export function encodeUUIDNameRequest(p: { ids: string[]; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const ids  = p.ids.slice(0, 255)  // U8 count cap
+  const body = Buffer.allocUnsafe(1 + ids.length * 16)
+  body[0] = ids.length
+  ids.forEach((id, i) => uuidToBytes(id).copy(body, 1 + i * 16))
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0xEB]), body])  // Low 235
+}
+
+/** AcceptFriendship (Low 297). AgentData{AgentID,SessionID}; TransactionBlock{TransactionID};
+ *  FolderData Variable{FolderID} — where the calling card goes. */
+export function encodeAcceptFriendship(p: { agentId: string; sessionId: string; transactionId: string; folderId: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 16 + 1 + 16)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);       off += 16
+  uuidToBytes(p.sessionId).copy(body, off);     off += 16
+  uuidToBytes(p.transactionId).copy(body, off); off += 16
+  body[off++] = 1  // FolderData count = 1
+  uuidToBytes(p.folderId).copy(body, off)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x29]), body])  // Low 297
+}
+
+/** DeclineFriendship (Low 298). AgentData{AgentID,SessionID}; TransactionBlock{TransactionID}. */
+export function encodeDeclineFriendship(p: { agentId: string; sessionId: string; transactionId: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 16)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  uuidToBytes(p.transactionId).copy(body, 32)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x2A]), body])  // Low 298
+}
+
+/** TerminateFriendship (Low 300). AgentData{AgentID,SessionID}; ExBlock{OtherID}. */
+export function encodeTerminateFriendship(p: { agentId: string; sessionId: string; otherId: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 16 + 16)
+  uuidToBytes(p.agentId).copy(body, 0)
+  uuidToBytes(p.sessionId).copy(body, 16)
+  uuidToBytes(p.otherId).copy(body, 32)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x2C]), body])  // Low 300
+}
+
+/** ChangeUserRights (Low 321) — change rights I grant a friend. AgentData{AgentID};
+ *  Rights Variable{AgentRelated LLUUID, RelatedRights S32}. rights bits: 1=online,2=map,4=modify. */
+export function encodeChangeUserRights(p: { agentId: string; agentRelated: string; relatedRights: number; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const body = Buffer.allocUnsafe(16 + 1 + 16 + 4)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off); off += 16
+  body[off++] = 1  // Rights count = 1
+  uuidToBytes(p.agentRelated).copy(body, off); off += 16
+  body.writeInt32LE(p.relatedRights, off)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x41]), body])  // Low 321
+}
+
+// ── Inbound decoders ──────────────────────────────────────────────────────
+
+/** OnlineNotification (322) / OfflineNotification (323): AgentBlock Variable{AgentID}×N. */
+export function decodeOnlineNotification(buf: Buffer, dataOffset: number): string[] {
+  const count = buf[dataOffset]
+  const ids: string[] = []
+  let off = dataOffset + 1
+  for (let i = 0; i < count && off + 16 <= buf.length; i++, off += 16) ids.push(bytesToUuid(buf, off))
+  return ids
+}
+
+/** UUIDNameReply (236): UUIDNameBlock Variable{ID, FirstName V1, LastName V1}×N. */
+export function decodeUUIDNameReply(buf: Buffer, dataOffset: number): { id: string; name: string }[] {
+  const count = buf[dataOffset]
+  const out: { id: string; name: string }[] = []
+  let off = dataOffset + 1
+  for (let i = 0; i < count; i++) {
+    const id = bytesToUuid(buf, off); off += 16
+    let first: string, last: string
+    ;[first, off] = readV1(buf, off)
+    ;[last,  off] = readV1(buf, off)
+    out.push({ id, name: [first, last].filter(Boolean).join(' ') })
+  }
+  return out
+}
+
+export interface AvatarPropertiesData {
+  avatarId: string; imageId: string; flImageId: string; partnerId: string
+  aboutText: string; flAboutText: string; bornOn: string; profileURL: string
+  charterMember: string; flags: number
+}
+/** AvatarPropertiesReply (171). */
+export function decodeAvatarPropertiesReply(buf: Buffer, dataOffset: number): AvatarPropertiesData {
+  let off = dataOffset + 16            // skip AgentID
+  const avatarId = bytesToUuid(buf, off); off += 16
+  const imageId   = bytesToUuid(buf, off); off += 16
+  const flImageId = bytesToUuid(buf, off); off += 16
+  const partnerId = bytesToUuid(buf, off); off += 16
+  let aboutText: string, flAboutText: string, bornOn: string, profileURL: string, charterMember: string
+  ;[aboutText,     off] = readV2(buf, off)
+  ;[flAboutText,   off] = readV1(buf, off)
+  ;[bornOn,        off] = readV1(buf, off)
+  ;[profileURL,    off] = readV1(buf, off)
+  ;[charterMember, off] = readV1(buf, off)
+  const flags = buf.readUInt32LE(off)
+  return { avatarId, imageId, flImageId, partnerId, aboutText, flAboutText, bornOn, profileURL, charterMember, flags }
+}
+
+export interface AvatarInterestsData {
+  avatarId: string; wantToMask: number; wantToText: string
+  skillsMask: number; skillsText: string; languagesText: string
+}
+/** AvatarInterestsReply (172). */
+export function decodeAvatarInterestsReply(buf: Buffer, dataOffset: number): AvatarInterestsData {
+  let off = dataOffset + 16            // skip AgentID
+  const avatarId = bytesToUuid(buf, off); off += 16
+  const wantToMask = buf.readUInt32LE(off); off += 4
+  let wantToText: string, skillsText: string, languagesText: string
+  ;[wantToText, off] = readV1(buf, off)
+  const skillsMask = buf.readUInt32LE(off); off += 4
+  ;[skillsText,    off] = readV1(buf, off)
+  ;[languagesText, off] = readV1(buf, off)
+  return { avatarId, wantToMask, wantToText, skillsMask, skillsText, languagesText }
+}
+
+export interface AvatarGroupEntry { id: string; name: string; title: string; insignia: string; powers: string; acceptNotices: boolean }
+/** AvatarGroupsReply (173). GroupData field order: Powers,Notices,Title,ID,Name,Insignia. */
+export function decodeAvatarGroupsReply(buf: Buffer, dataOffset: number): { avatarId: string; groups: AvatarGroupEntry[] } {
+  let off = dataOffset + 16            // skip AgentID
+  const avatarId = bytesToUuid(buf, off); off += 16
+  const count = buf[off++]
+  const groups: AvatarGroupEntry[] = []
+  for (let i = 0; i < count; i++) {
+    const powers = buf.readBigUInt64LE(off).toString(); off += 8
+    const acceptNotices = buf[off++] !== 0
+    let title: string, name: string
+    ;[title, off] = readV1(buf, off)
+    const id = bytesToUuid(buf, off); off += 16
+    ;[name, off] = readV1(buf, off)
+    const insignia = bytesToUuid(buf, off); off += 16
+    groups.push({ id, name, title, insignia, powers, acceptNotices })
+  }
+  return { avatarId, groups }
+}
+
+export interface SelfGroupEntry { id: string; name: string; insignia: string; powers: string; acceptNotices: boolean; contribution: number }
+/** AgentGroupDataUpdate (389) — self group list. GroupData order: ID,Powers,Notices,Insignia,Contribution,Name. */
+export function decodeAgentGroupDataUpdate(buf: Buffer, dataOffset: number): { agentId: string; groups: SelfGroupEntry[] } {
+  let off = dataOffset
+  const agentId = bytesToUuid(buf, off); off += 16
+  const count = buf[off++]
+  const groups: SelfGroupEntry[] = []
+  for (let i = 0; i < count; i++) {
+    const id = bytesToUuid(buf, off); off += 16
+    const powers = buf.readBigUInt64LE(off).toString(); off += 8
+    const acceptNotices = buf[off++] !== 0
+    const insignia = bytesToUuid(buf, off); off += 16
+    const contribution = buf.readInt32LE(off); off += 4
+    let name: string
+    ;[name, off] = readV1(buf, off)
+    groups.push({ id, name, insignia, powers, acceptNotices, contribution })
+  }
+  return { agentId, groups }
+}
+
+/** AgentDataUpdate (387) — self active group + title. */
+export function decodeAgentDataUpdate(buf: Buffer, dataOffset: number): {
+  agentId: string; firstName: string; lastName: string; groupTitle: string
+  activeGroupId: string; groupPowers: string; groupName: string
+} {
+  let off = dataOffset
+  const agentId = bytesToUuid(buf, off); off += 16
+  let firstName: string, lastName: string, groupTitle: string, groupName: string
+  ;[firstName,  off] = readV1(buf, off)
+  ;[lastName,   off] = readV1(buf, off)
+  ;[groupTitle, off] = readV1(buf, off)
+  const activeGroupId = bytesToUuid(buf, off); off += 16
+  const groupPowers = buf.readBigUInt64LE(off).toString(); off += 8
+  ;[groupName, off] = readV1(buf, off)
+  return { agentId, firstName, lastName, groupTitle, activeGroupId, groupPowers, groupName }
+}
+
+export interface ParcelInfoData {
+  parcelId: string; ownerId: string; name: string; desc: string
+  actualArea: number; billableArea: number; flags: number
+  globalX: number; globalY: number; globalZ: number
+  simName: string; snapshotId: string; dwell: number; salePrice: number; auctionId: number
+}
+/** ParcelInfoReply (55). */
+export function decodeParcelInfoReply(buf: Buffer, dataOffset: number): ParcelInfoData {
+  let off = dataOffset + 16            // skip AgentID
+  const parcelId = bytesToUuid(buf, off); off += 16
+  const ownerId  = bytesToUuid(buf, off); off += 16
+  let name: string, desc: string, simName: string
+  ;[name, off] = readV1(buf, off)
+  ;[desc, off] = readV1(buf, off)
+  const actualArea   = buf.readInt32LE(off); off += 4
+  const billableArea = buf.readInt32LE(off); off += 4
+  const flags = buf[off++]
+  const globalX = buf.readFloatLE(off); off += 4
+  const globalY = buf.readFloatLE(off); off += 4
+  const globalZ = buf.readFloatLE(off); off += 4
+  ;[simName, off] = readV1(buf, off)
+  const snapshotId = bytesToUuid(buf, off); off += 16
+  const dwell = buf.readFloatLE(off); off += 4
+  const salePrice = buf.readInt32LE(off); off += 4
+  const auctionId = buf.readInt32LE(off)
+  return { parcelId, ownerId, name, desc, actualArea, billableArea, flags, globalX, globalY, globalZ, simName, snapshotId, dwell, salePrice, auctionId }
 }

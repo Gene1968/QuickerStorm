@@ -3,6 +3,7 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { useGridStore } from '@/stores/gridStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useGridSocialStore } from '@/stores/gridSocialStore'
 import { useRouter } from 'vue-router'
 import { S, C } from '@shared/protocol.js'
 
@@ -14,6 +15,7 @@ export function useGridLogin() {
 	const gridStore     = useGridStore()
 	const sessionStore  = useSessionStore()
 	const inventoryStore = useInventoryStore()
+	const gridSocialStore = useGridSocialStore()
 	const router        = useRouter()
 
 	// WHY: Ask server whether a live circuit exists for this user WITHOUT triggering login.
@@ -103,6 +105,8 @@ export function useGridLogin() {
 				sessionStore.setSession({ ...d, username })
 				// WHY: folder skeleton ships in LOGIN_OK (fresh + resume) — populate the tree now.
 				inventoryStore.loadFromLogin(d)
+				// WHY: social harvest (friends/gestures/textures/flags) also ships in LOGIN_OK.
+				gridSocialStore.loadFromLogin(d?.social)
 				gridStore.setLoginState('connected')
 				router.push('/world')
 				resolve(d)

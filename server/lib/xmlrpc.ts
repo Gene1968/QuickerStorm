@@ -32,7 +32,26 @@ export interface LoginResult {
 	inventory_skeleton?: InvFolder[]    // every agent folder (no items)
 	inventory_lib_root?: string         // UUID of the shared Library root folder
 	inventory_skeleton_lib?: InvFolder[]// Library folders (read-only shared inventory)
+	// WHY: the login response also carries the buddy (friends) list, gestures, default sky/water
+	// textures and feature flags — all free, no cap/UDP. Surfaced for the social UI (Phase 3).
+	buddy_list?: BuddyEntry[]
+	gestures?: GestureEntry[]
+	global_textures?: Record<string, string>
+	login_flags?: Record<string, string>
 	message?: string
+}
+
+/** One friend from the login buddy-list. rights bits: 1=see online, 2=see on map, 4=modify objects. */
+export interface BuddyEntry {
+	buddyId: string
+	rightsGiven: number   // rights I granted them
+	rightsHas: number     // rights they granted me
+}
+
+/** One worn/active gesture from the login response (asset references only). */
+export interface GestureEntry {
+	itemId: string
+	assetId: string
 }
 
 /** One inventory folder from the login skeleton (no items — those need a cap fetch). */
@@ -161,7 +180,14 @@ export function parseLoginResponse(xml: string): LoginResult {
 		inventory_skeleton:     parseInventorySkeleton(xml, 'inventory-skeleton'),
 		inventory_lib_root:     parseInventoryRoot(xml, 'inventory-lib-root'),
 		inventory_skeleton_lib: parseInventorySkeleton(xml, 'inventory-skeleton-lib'),
+		// Social harvest — all optional; tolerate grids that omit them.
+		buddy_list:             parseBuddyList(xml),
+		gestures:               parseGestures(xml),
+		global_textures:        parseFlatStructMember(xml, 'global-textures'),
+		login_flags:            parseFlatStructMember(xml, 'login-flags'),
 	}
+
+	console.log(`[xmlrpc] social: ${result.buddy_list?.length ?? 0} buddies, ${result.gestures?.length ?? 0} gestures`)
 
 	console.log(`[xmlrpc] inventory skeleton: ${result.inventory_skeleton?.length ?? 0} folders, lib: ${result.inventory_skeleton_lib?.length ?? 0}, root=${result.inventory_root?.slice(0, 8)}`)
 
@@ -234,6 +260,63 @@ export function parseInventoryRoot(xml: string, memberName = 'inventory-root'): 
 	if (!arrXml) return ''
 	const s = /<struct>([\s\S]*?)<\/struct>/.exec(arrXml)
 	return s ? structMember(s[1], 'folder_id') : ''
+}
+
+/**
+ * Parse the login buddy-list (friends). Array of flat structs:
+ *   { buddy_id, buddy_rights_given, buddy_rights_has }.
+ * Online status is NOT in the login response — it arrives later via
+ * OnlineNotification/OfflineNotification LLUDP. Friends start assumed-offline.
+ */
+export function parseBuddyList(xml: string): BuddyEntry[] {
+	const arrXml = sliceMemberArray(xml, 'buddy-list')
+	if (!arrXml) return []
+	const out: BuddyEntry[] = []
+	const structRe = /<struct>([\s\S]*?)<\/struct>/g
+	let s: RegExpExecArray | null
+	while ((s = structRe.exec(arrXml)) !== null) {
+		const body = s[1]
+		const id = structMember(body, 'buddy_id')
+		if (!id) continue
+		const given = parseInt(structMember(body, 'buddy_rights_given') || '0', 10)
+		const has   = parseInt(structMember(body, 'buddy_rights_has')   || '0', 10)
+		out.push({ buddyId: id, rightsGiven: Number.isNaN(given) ? 0 : given, rightsHas: Number.isNaN(has) ? 0 : has })
+	}
+	return out
+}
+
+/** Parse the login gestures array (item_id + asset_id pairs). */
+export function parseGestures(xml: string): GestureEntry[] {
+	const arrXml = sliceMemberArray(xml, 'gestures')
+	if (!arrXml) return []
+	const out: GestureEntry[] = []
+	const structRe = /<struct>([\s\S]*?)<\/struct>/g
+	let s: RegExpExecArray | null
+	while ((s = structRe.exec(arrXml)) !== null) {
+		const body = s[1]
+		const itemId = structMember(body, 'item_id')
+		if (!itemId) continue
+		out.push({ itemId, assetId: structMember(body, 'asset_id') })
+	}
+	return out
+}
+
+/**
+ * Parse a login member that is an array-of-one-struct of flat string/int members
+ * (global-textures, login-flags) into a plain key→value map. Returns {} if absent.
+ */
+export function parseFlatStructMember(xml: string, memberName: string): Record<string, string> {
+	const arrXml = sliceMemberArray(xml, memberName)
+	if (!arrXml) return {}
+	const s = /<struct>([\s\S]*?)<\/struct>/.exec(arrXml)
+	if (!s) return {}
+	const out: Record<string, string> = {}
+	const memberRe = /<member>\s*<name>\s*([\s\S]*?)\s*<\/name>\s*<value>\s*(?:<[^>]+>)?\s*([\s\S]*?)\s*(?:<\/[^>]+>)?\s*<\/value>\s*<\/member>/g
+	let m: RegExpExecArray | null
+	while ((m = memberRe.exec(s[1])) !== null) {
+		out[m[1].trim()] = m[2].trim()
+	}
+	return out
 }
 
 /** POST an XML-RPC request; returns parsed body string */

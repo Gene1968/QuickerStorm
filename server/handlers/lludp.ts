@@ -18,6 +18,11 @@ import {
 	encodeSetAlwaysRun,
 	encodeMapBlockRequest, encodeMapNameRequest, decodeMapBlockReply,
 	encodeMapLayerRequest,
+	decodeOnlineNotification, decodeUUIDNameReply,
+	decodeAvatarPropertiesReply, decodeAvatarInterestsReply, decodeAvatarGroupsReply,
+	decodeAgentGroupDataUpdate, decodeAgentDataUpdate, decodeParcelInfoReply,
+	encodeAvatarPropertiesRequest, encodeParcelInfoRequest, encodeUUIDNameRequest,
+	encodeAcceptFriendship, encodeDeclineFriendship, encodeTerminateFriendship, encodeChangeUserRights,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -49,6 +54,16 @@ const LOW_MAP_LAYER_REPLY     = 406   // Sim → viewer: map layer info — aliv
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
 const MEDIUM_OBJECT_PROPERTIES      = 9  // ObjectProperties — sim's reply to ObjectSelect (Medium freq)
+// ── Social (Phase 3) inbound Low-freq message IDs ──
+const LOW_PARCEL_INFO_REPLY         = 55   // ParcelInfoReply (Zerocoded)
+const LOW_AVATAR_PROPERTIES_REPLY   = 171  // AvatarPropertiesReply (Zerocoded)
+const LOW_AVATAR_INTERESTS_REPLY    = 172  // AvatarInterestsReply (Zerocoded)
+const LOW_AVATAR_GROUPS_REPLY       = 173  // AvatarGroupsReply (Zerocoded)
+const LOW_UUID_NAME_REPLY           = 236  // UUIDNameReply
+const LOW_ONLINE_NOTIFICATION       = 322  // OnlineNotification
+const LOW_OFFLINE_NOTIFICATION      = 323  // OfflineNotification
+const LOW_AGENT_DATA_UPDATE         = 387  // AgentDataUpdate (Zerocoded) — self active group/title
+const LOW_AGENT_GROUP_DATA_UPDATE   = 389  // AgentGroupDataUpdate (Zerocoded) — self group list
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
@@ -686,6 +701,87 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	// ══ Social (Phase 3) — friends / profile / groups / parcel ════════════════
+	if (type === `low:${LOW_ONLINE_NOTIFICATION}` || type === `low:${LOW_OFFLINE_NOTIFICATION}`) {
+		try {
+			const online = type === `low:${LOW_ONLINE_NOTIFICATION}`
+			const ids = decodeOnlineNotification(buf, dataOffset)
+			if (ids.length) {
+				slog.info(session.ws, `[Friends] ${online ? 'online' : 'offline'}: ${ids.length} id(s)`)
+				session.ws.send(JSON.stringify({ t: S.FRIEND_STATUS, d: { online, ids } }))
+			}
+		} catch (e) { slog.warn(session.ws, `OnlineNotification decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_UUID_NAME_REPLY}`) {
+		try {
+			const pairs = decodeUUIDNameReply(buf, dataOffset)
+			if (pairs.length) {
+				const names: Record<string, string> = {}
+				for (const p of pairs) names[p.id] = p.name
+				session.ws.send(JSON.stringify({ t: S.NAME_REPLY, d: { names } }))
+			}
+		} catch (e) { slog.warn(session.ws, `UUIDNameReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_AVATAR_PROPERTIES_REPLY}`) {
+		try {
+			const props = decodeAvatarPropertiesReply(buf, dataOffset)
+			session.ws.send(JSON.stringify({ t: S.AVATAR_PROPS, d: { avatarId: props.avatarId, properties: props } }))
+		} catch (e) { slog.warn(session.ws, `AvatarPropertiesReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_AVATAR_INTERESTS_REPLY}`) {
+		try {
+			const interests = decodeAvatarInterestsReply(buf, dataOffset)
+			session.ws.send(JSON.stringify({ t: S.AVATAR_PROPS, d: { avatarId: interests.avatarId, interests } }))
+		} catch (e) { slog.warn(session.ws, `AvatarInterestsReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_AVATAR_GROUPS_REPLY}`) {
+		try {
+			const { avatarId, groups } = decodeAvatarGroupsReply(buf, dataOffset)
+			session.ws.send(JSON.stringify({ t: S.AVATAR_PROPS, d: { avatarId, groups } }))
+		} catch (e) { slog.warn(session.ws, `AvatarGroupsReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_AGENT_GROUP_DATA_UPDATE}`) {
+		try {
+			const { groups } = decodeAgentGroupDataUpdate(buf, dataOffset)
+			slog.info(session.ws, `[Groups] self group list: ${groups.length} group(s)`)
+			session.ws.send(JSON.stringify({ t: S.SELF_GROUPS, d: { groups } }))
+		} catch (e) { slog.warn(session.ws, `AgentGroupDataUpdate decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_AGENT_DATA_UPDATE}`) {
+		try {
+			const d = decodeAgentDataUpdate(buf, dataOffset)
+			// WHY: only forward when it concerns our own agent (sim also routes others' updates).
+			// Compare case-insensitively — login agentId casing may differ from decoded UUID.
+			if (d.agentId.toLowerCase() === session.agentId.toLowerCase()) {
+				session.ws.send(JSON.stringify({ t: S.AGENT_DATA, d: {
+					activeGroupId: d.activeGroupId, groupTitle: d.groupTitle, groupName: d.groupName, groupPowers: d.groupPowers,
+				} }))
+			}
+		} catch (e) { slog.warn(session.ws, `AgentDataUpdate decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_PARCEL_INFO_REPLY}`) {
+		try {
+			const parcel = decodeParcelInfoReply(buf, dataOffset)
+			slog.info(session.ws, `[Parcel] "${parcel.name}" area=${parcel.actualArea} sim="${parcel.simName}"`)
+			session.ws.send(JSON.stringify({ t: S.PARCEL_INFO, d: { parcel } }))
+		} catch (e) { slog.warn(session.ws, `ParcelInfoReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	// WHY: Log each unknown packet type once so we can detect unhandled messages.
 	// Handled: high:1,11,12,14,15,16 med:6 low:64,69,139,148,152,250 fixed:251.
 	if (!session.loggedTypes.has(type)) {
@@ -864,6 +960,105 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ IM to ${d.toAgentId.slice(0, 8)}: "${d.message.slice(0, 40)}"`)
+		return
+	}
+
+	// ══ Social (Phase 3) ══════════════════════════════════════════════════════
+	if (msg.t === C.AVATAR_PROPS_REQ) {
+		const d = msg.d as { avatarId: string }
+		if (!d.avatarId) return
+		const seq = nextSeq(session)
+		const pkt = encodeAvatarPropertiesRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, avatarId: d.avatarId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ AvatarPropertiesRequest ${d.avatarId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.PARCEL_INFO_REQ) {
+		const d = msg.d as { parcelId: string }
+		if (!d.parcelId) return
+		const seq = nextSeq(session)
+		const pkt = encodeParcelInfoRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, parcelId: d.parcelId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ParcelInfoRequest ${d.parcelId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.NAME_REQ) {
+		const d = msg.d as { ids: string[] }
+		const ids = (d.ids ?? []).filter(Boolean)
+		if (!ids.length) return
+		const seq = nextSeq(session)
+		const pkt = encodeUUIDNameRequest({ ids, seq })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ UUIDNameRequest ${ids.length} id(s)`)
+		return
+	}
+
+	if (msg.t === C.FRIEND_OFFER) {
+		const d = msg.d as { toAgentId: string; toAgentName?: string; message?: string }
+		if (!d.toAgentId) return
+		const seq = nextSeq(session)
+		// WHY: a friendship offer is an ImprovedInstantMessage with dialog 38 (IM_FRIENDSHIP_OFFERED).
+		// The IM's message-id becomes the transaction id the peer echoes in Accept/DeclineFriendship.
+		const pkt = encodeImprovedInstantMessage({
+			agentId:       session.agentId,
+			sessionId:     session.sessionId,
+			seq,
+			toAgentId:     d.toAgentId,
+			fromAgentName: session.agentName || 'User',
+			message:       d.message || 'Will you be my friend?',
+			dialog:        38,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ OfferFriendship (IM dialog 38) to ${d.toAgentId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.FRIEND_RESPOND) {
+		const d = msg.d as { transactionId: string; accept: boolean; folderId?: string }
+		if (!d.transactionId) return
+		const seq = nextSeq(session)
+		const pkt = d.accept
+			? encodeAcceptFriendship({
+				agentId: session.agentId, sessionId: session.sessionId, seq,
+				transactionId: d.transactionId,
+				// WHY: AcceptFriendship needs a folder for the new calling card. Empty UUID lets
+				// the sim drop it in the default Calling Cards folder.
+				folderId: d.folderId || '00000000-0000-0000-0000-000000000000',
+			})
+			: encodeDeclineFriendship({
+				agentId: session.agentId, sessionId: session.sessionId, seq, transactionId: d.transactionId,
+			})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ${d.accept ? 'Accept' : 'Decline'}Friendship tx=${d.transactionId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.FRIEND_REMOVE) {
+		const d = msg.d as { agentId: string }
+		if (!d.agentId) return
+		const seq = nextSeq(session)
+		const pkt = encodeTerminateFriendship({ agentId: session.agentId, sessionId: session.sessionId, seq, otherId: d.agentId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ TerminateFriendship ${d.agentId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.FRIEND_RIGHTS) {
+		const d = msg.d as { agentId: string; rights: number }
+		if (!d.agentId) return
+		const seq = nextSeq(session)
+		const pkt = encodeChangeUserRights({ agentId: session.agentId, seq, agentRelated: d.agentId, relatedRights: d.rights | 0 })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ChangeUserRights ${d.agentId.slice(0, 8)}… rights=${d.rights}`)
 		return
 	}
 

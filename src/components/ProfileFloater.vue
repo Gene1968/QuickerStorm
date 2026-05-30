@@ -9,35 +9,63 @@ import { useUiStore }       from '@/stores/uiStore.js'
 import { useAvatarStore }   from '@/stores/avatarStore.js'
 import { usePresenceStore } from '@/stores/presenceStore.js'
 import { useSessionStore }  from '@/stores/sessionStore.js'
+import { useGridSocialStore } from '@/stores/gridSocialStore.js'
+import { useSocial }        from '@/composables/useSocial.js'
+import { useInstantMessage } from '@/composables/useInstantMessage.js'
 import FloaterWindow        from '@/components/FloaterWindow.vue'
 
 const ui       = useUiStore()
 const avatar   = useAvatarStore()
 const presence = usePresenceStore()
 const session  = useSessionStore()
+const social   = useGridSocialStore()
+const { requestProfile, requestNames, offerFriendship, removeFriend } = useSocial()
+const im       = useInstantMessage()
 
 // ── Computed ─────────────────────────────────────────────────────────────────
 const isSelf = computed(() => ui.profileTargetId === null)
 
-const displayName = computed(() =>
-	isSelf.value ? avatar.displayName : '(Other User)'
-)
+// Resolved profile fragment for the current target (other users only).
+const profile = computed(() => isSelf.value ? null : social.profileFor(ui.profileTargetId))
+const props   = computed(() => profile.value?.properties ?? null)
+
+const displayName = computed(() => {
+	if (isSelf.value) return avatar.displayName
+	return social.nameFor(ui.profileTargetId) || '(Other User)'
+})
 
 // WHY: agentId from sessionStore is the live grid-assigned UUID (most authoritative for self)
 const profileUUID = computed(() =>
 	isSelf.value ? (session.agentId ?? avatar.authUserId ?? '—') : (ui.profileTargetId ?? '—')
 )
 
+// WHY: grid online status — prefer the friend's live OnlineNotification flag, fall back to
+// web-collab presence for users who are in-scene but not grid friends.
 const onlineStatus = computed(() => {
 	if (isSelf.value) return null
+	const friend = social.friendById(ui.profileTargetId)
+	if (friend) return friend.online ? 'online' : 'offline'
 	const user = presence.users.find(u => u.id === ui.profileTargetId)
 	return user?.status ?? 'offline'
 })
 
+const isFriend = computed(() => !isSelf.value && social.isFriend(ui.profileTargetId))
+
+// ── Profile field values ───────────────────────────────────────────────────
+const bornValue    = computed(() => props.value?.bornOn || 'N/A')
+const partnerValue = computed(() => {
+	const pid = props.value?.partnerId
+	if (!pid || pid === '00000000-0000-0000-0000-000000000000') return 'None'
+	return social.nameFor(pid) || `${pid.slice(0, 8)}…`
+})
+const aboutValue   = computed(() => props.value?.aboutText || '')
+// Groups shown: self → my group list; other → their AvatarGroupsReply groups.
+const shownGroups  = computed(() => isSelf.value ? social.groups : (profile.value?.groups ?? []))
+
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
 	{ id: 'profile',    label: 'Profile',   soon: false },
-	{ id: 'interests',  label: 'Interests', soon: true  },
+	{ id: 'interests',  label: 'Interests', soon: false },
 	{ id: 'picks',      label: 'Picks',     soon: true  },
 	{ id: 'first_life', label: '1st Life',  soon: true  },
 	{ id: 'notes',      label: 'Notes',     soon: false },
@@ -48,6 +76,40 @@ const activeTab = ref('profile')
 function selectTab(tab) {
 	if (tab.soon) return
 	activeTab.value = tab.id
+}
+
+// ── Fetch profile data when opening another user's profile ──────────────────
+watch(
+	[() => ui.showProfile, () => ui.profileTargetId],
+	([open, id]) => {
+		if (!open || isSelf.value || !id) return
+		requestProfile(id)        // → AvatarProperties/Interests/Groups replies
+		requestNames([id])        // resolve their display name
+	},
+	{ immediate: true },
+)
+// Resolve partner name once properties arrive.
+watch(() => props.value?.partnerId, (pid) => {
+	if (pid && pid !== '00000000-0000-0000-0000-000000000000') requestNames([pid])
+})
+
+// ── Actions (gated — change the real grid account) ──────────────────────────
+function actIM() {
+	if (isSelf.value) return
+	im.openWith(ui.profileTargetId, displayName.value)
+	ui.showChat = true
+}
+function actOfferFriend() {
+	if (isSelf.value) return
+	if (window.confirm(`Offer friendship to ${displayName.value}?`)) {
+		offerFriendship(ui.profileTargetId, displayName.value)
+	}
+}
+function actRemoveFriend() {
+	if (isSelf.value) return
+	if (window.confirm(`Remove ${displayName.value} from your friends? This cannot be undone.`)) {
+		removeFriend(ui.profileTargetId)
+	}
 }
 
 // ── Bio editing (self only) ───────────────────────────────────────────────────
@@ -132,9 +194,9 @@ function saveNotes() {
 					<div class="flex flex-col gap-1 pt-0.5">
 						<div
 							v-for="field in [
-								{ label: 'Born',    value: 'N/A' },
+								{ label: 'Born',    value: bornValue },
 								{ label: 'Account', value: 'Resident' },
-								{ label: 'Partner', value: 'None' },
+								{ label: 'Partner', value: partnerValue },
 							]"
 							:key="field.label"
 							class="flex items-baseline gap-2"
@@ -142,12 +204,27 @@ function saveNotes() {
 							<span class="text-2xs text-t1 w-14 shrink-0">{{ field.label }}</span>
 							<span class="text-2xs text-t1 font-mono">{{ field.value }}</span>
 						</div>
+						<div v-if="isSelf && social.groupTitle" class="flex items-baseline gap-2">
+							<span class="text-2xs text-t1 w-14 shrink-0">Title</span>
+							<span class="text-2xs text-accent font-mono">{{ social.groupTitle }}</span>
+						</div>
 					</div>
 				</div>
 
 				<div>
 					<p class="text-2xs text-t1 mb-1">Groups</p>
-					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 italic min-h-[2rem]">(none)</div>
+					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs min-h-[2rem]">
+						<div v-if="shownGroups.length === 0" class="text-t1 italic">(none)</div>
+						<ul v-else class="flex flex-col gap-0.5">
+							<li
+								v-for="g in shownGroups"
+								:key="g.id"
+								class="text-t1 truncate"
+								:class="isSelf && g.id === social.activeGroupId ? 'text-accent font-semibold' : ''"
+								:title="g.title || g.name"
+							>{{ g.name }}</li>
+						</ul>
+					</div>
 				</div>
 
 				<div class="flex flex-col gap-1">
@@ -159,7 +236,7 @@ function saveNotes() {
 						placeholder="Write something about yourself…"
 						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
 					/>
-					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">(no about text)</div>
+					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">{{ aboutValue || '(no about text)' }}</div>
 				</div>
 
 				<div v-if="isSelf && bioDirty" class="flex justify-end gap-2 mt-1">
@@ -180,6 +257,23 @@ function saveNotes() {
 				/>
 			</div>
 
+			<!-- Interests tab -->
+			<div v-else-if="activeTab === 'interests'" class="flex flex-col gap-3">
+				<div v-if="isSelf" class="text-xs text-t1 italic">Interests shown here come from the grid profile.</div>
+				<div class="flex flex-col gap-1">
+					<p class="text-2xs text-t1">Wants to</p>
+					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.wantToText || '—' }}</div>
+				</div>
+				<div class="flex flex-col gap-1">
+					<p class="text-2xs text-t1">Skills</p>
+					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.skillsText || '—' }}</div>
+				</div>
+				<div class="flex flex-col gap-1">
+					<p class="text-2xs text-t1">Languages</p>
+					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.languagesText || '—' }}</div>
+				</div>
+			</div>
+
 			<!-- Coming soon -->
 			<div v-else class="flex flex-col items-center justify-center h-40 gap-2">
 				<span class="text-2xl text-t1">🚧</span>
@@ -187,10 +281,25 @@ function saveNotes() {
 			</div>
 		</div>
 
-		<!-- Other-user action buttons (all disabled Phase 1) -->
+		<!-- Other-user action buttons -->
 		<div v-if="!isSelf" class="shrink-0 border-t border-brd px-4 py-2 flex gap-2 flex-wrap">
 			<button
-				v-for="btn in ['IM', 'Pay', 'Block', 'Find on Map', 'Offer TP', 'Remove Friend']"
+				class="px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
+				@click="actIM"
+			>IM</button>
+			<button
+				v-if="!isFriend"
+				class="px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
+				@click="actOfferFriend"
+			>Add Friend</button>
+			<button
+				v-else
+				class="px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
+				@click="actRemoveFriend"
+			>Remove Friend</button>
+			<!-- Still gated on extra packets (Phase 3 later): Pay, Block, Find on Map, Offer TP -->
+			<button
+				v-for="btn in ['Pay', 'Block', 'Find on Map', 'Offer TP']"
 				:key="btn"
 				disabled
 				class="px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"

@@ -4,6 +4,8 @@ import { useLocalChat }  from '@/composables/useLocalChat'
 import { useInstantMessage } from '@/composables/useInstantMessage'
 import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
+import { useGridSocialStore } from '@/stores/gridSocialStore'
+import { useSocial }     from '@/composables/useSocial'
 import { playSound } from '@/composables/useAudio'
 import { ChevronDownIcon, XIcon } from '@lucide/vue'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
@@ -11,8 +13,36 @@ import 'emoji-picker-element'
 
 const avatar = useAvatarStore()
 const ui     = useUiStore()
+const social = useGridSocialStore()
+const { removeFriend } = useSocial()
 const { messages, send } = useLocalChat()
 const im     = useInstantMessage()
+
+// ── Contacts (grid friends) ──────────────────────────────────────────────
+// WHY: friends come from the login buddy-list (gridSocialStore); names resolve via UUIDNameReply
+// and online status via OnlineNotification — both handled session-wide by useSocial().
+const contactSearch = ref('')
+const sortedFriends = computed(() => {
+	const q = contactSearch.value.trim().toLowerCase()
+	const list = social.friends.filter(f => {
+		if (!q) return true
+		return (f.name || f.id).toLowerCase().includes(q)
+	})
+	// online first, then by name (fallback to UUID)
+	return [...list].sort((a, b) => {
+		if (a.online !== b.online) return a.online ? -1 : 1
+		return (a.name || a.id).localeCompare(b.name || b.id)
+	})
+})
+function friendLabel(f) { return f.name || `${f.id.slice(0, 8)}…` }
+function openProfile(id) { ui.profileTargetId = id; ui.showProfile = true }
+function openIM(f)       { im.openWith(f.id, friendLabel(f)); activeTab.value = f.id }
+function confirmRemove(f) {
+	// WHY: TerminateFriendship changes the real grid account and can't be undone by us — confirm.
+	if (window.confirm(`Remove ${friendLabel(f)} from your friends list? This cannot be undone.`)) {
+		removeFriend(f.id)
+	}
+}
 
 const activeTab  = ref('nearby')
 const chatInput  = ref('')
@@ -169,8 +199,37 @@ async function submitChat() {
 
 				<!-- Contacts ───────────────────────────────────────── -->
 				<template v-if="activeTab === 'contacts'">
-					<div class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
-						Contacts — coming soon
+					<div class="px-2 py-1.5 border-b border-brd shrink-0 flex items-center gap-2">
+						<input
+							v-model="contactSearch"
+							type="text"
+							placeholder="Filter friends…"
+							class="flex-1 min-w-0 bg-card2 border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+						/>
+						<span class="text-2xs text-tm shrink-0">{{ social.onlineCount }}/{{ social.friendCount }} online</span>
+					</div>
+					<div v-if="social.friendCount === 0" class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
+						No friends on this account
+					</div>
+					<div v-else class="flex-1 overflow-y-auto min-h-0">
+						<div
+							v-for="f in sortedFriends"
+							:key="f.id"
+							class="group flex items-center gap-2 px-2 py-1 hover:bg-white/5 cursor-default"
+							@dblclick="openIM(f)"
+						>
+							<span
+								class="w-2 h-2 rounded-full shrink-0"
+								:class="f.online ? 'bg-green-500' : 'bg-gray-500/50'"
+								:title="f.online ? 'Online' : 'Offline'"
+							/>
+							<span class="flex-1 min-w-0 truncate text-xs" :class="f.online ? 'text-t1' : 'text-tm'">{{ friendLabel(f) }}</span>
+							<div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+								<button class="px-1.5 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10" title="Profile" @click="openProfile(f.id)">ℹ</button>
+								<button class="px-1.5 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10" title="IM" @click="openIM(f)">💬</button>
+								<button class="px-1.5 py-0.5 text-2xs rounded border border-brd text-red-400 hover:bg-red-500/10" title="Remove friend" @click="confirmRemove(f)">✕</button>
+							</div>
+						</div>
 					</div>
 				</template>
 

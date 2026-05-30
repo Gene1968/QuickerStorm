@@ -149,6 +149,22 @@ export async function handleLogin(
 		inventorySkeleton:    loginResult.inventory_skeleton ?? [],
 		inventoryLibRoot:     loginResult.inventory_lib_root ?? '',
 		inventorySkeletonLib: loginResult.inventory_skeleton_lib ?? [],
+		// WHY: social harvest ships free in the login response — friends (UUIDs + rights),
+		// gestures, default textures, flags. Folded into LOGIN_OK so it survives session resume
+		// (mirrors inventory skeleton). Friend names + online status resolve later (UUIDNameReply,
+		// OnlineNotification); groups arrive via AgentGroupDataUpdate post-login.
+		social: {
+			friends: (loginResult.buddy_list ?? []).map(b => ({
+				id:          b.buddyId,
+				name:        '',          // resolved via UUIDNameReply
+				rightsGiven: b.rightsGiven,
+				rightsHas:   b.rightsHas,
+				online:      false,       // updated by OnlineNotification
+			})),
+			gestures:       loginResult.gestures ?? [],
+			globalTextures: loginResult.global_textures ?? {},
+			loginFlags:     loginResult.login_flags ?? {},
+		},
 	}
 
 	const fullName = [loginResult.first_name, loginResult.last_name].filter(Boolean).join(' ')
