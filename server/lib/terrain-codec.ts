@@ -6,8 +6,8 @@ export const PATCH_SIZE = 16
 const END_OF_PATCHES = 97  // quant_wbits sentinel value marking no more patches
 
 export interface TerrainPatch {
-	x: number          // 0–15: patch column in 16×16 patch grid
-	y: number          // 0–15: patch row
+	x: number          // patch column: 0–15 (legacy 256m) or 0–(edge-1) for var-regions
+	y: number          // patch row
 	heights: Float32Array  // PATCH_SIZE×PATCH_SIZE = 256 height values, metres
 }
 
@@ -112,20 +112,34 @@ function readGroupHeader(data: Buffer, offset: number): { hdr: GroupHeader; next
 // Original codec had dcOffset→range→quantWbits which shifted the field window by 48 bits,
 // causing range=16000+ (should be ≤1023), heights in thousands of metres, and 500+ "patches"
 // because END_OF_PATCHES sentinel was never hit at the correct bit position.
-function readPatchHeader(reader: BitReader): PatchHeader | null {
+function readPatchHeader(reader: BitReader, largeRegion: boolean): PatchHeader | null {
 	const quantWbits = reader.readU8()
 	if (quantWbits === END_OF_PATCHES) return null  // sentinel: no more patches
 	const dcOffset   = reader.readFloat32LE()        // LE float (LSByte first in stream)
 	const range      = reader.readU16LE()             // LE U16  (LSByte first in stream)
-	const patchIds   = reader.readBits(10)            // 10-bit patch grid ID
-	// WHY: libomv TerrainCompressor encodes patchids as `(patchX << 5) | patchY`
-	// (see CreatePatchFromHeightmap), and decodes with X = patchIds >> 5,
-	// Y = patchIds & 0x1F. Upper 5 bits = X (column), lower 5 bits = Y (row).
-	// Earlier "swap fix" had this inverted — combined with broken readBits(10)
-	// it happened to produce small in-range values for some flat patches, hiding
-	// the issue. With LE-chunked readBits the libomv convention is required.
-	const patchX = (patchIds >> 5) & 0x1f
-	const patchY = patchIds & 0x1f
+	// WHY: patch-ID width depends on region size. libomv/OpenSim TerrainCompressor:
+	//   • Legacy (≤256m, LayerType 0x4C 'L'): 10-bit ID = (x<<5)|y → X=id>>5, Y=id&0x1F.
+	//     5 bits each caps the grid at 32×32, which is fine for 256m (16×16).
+	//   • Var-region (>256m, LayerType 0x4D 'M' LandExtended): 32-bit ID = (x<<16)|y
+	//     → X=id>>16, Y=id&0xFFFF. NeverWorld's 512m region is a 32×32 patch grid;
+	//     reading only 10 bits here consumed 10 of the 32 written bits and desynced
+	//     the bitstream after the first patch in every packet — the cause of the
+	//     scattered 36–164/1024 decodes. See [[terrain-decoder-missing-patches]].
+	let patchX: number
+	let patchY: number
+	if (largeRegion) {
+		// WHY: OpenSim large-region encoder packs (x<<16)|y — X high, Y low — matching the
+		// legacy 10-bit (x<<5)|y nibble order. Verified on NeverWorld 512m: this places
+		// patches at correct elevations. (The colour transpose seen there is a separate
+		// vertex-indexing issue in onTerrainPatch, not a patch-ID swap.)
+		const patchIds = reader.readBits(32)
+		patchX = (patchIds >>> 16) & 0xffff
+		patchY = patchIds & 0xffff
+	} else {
+		const patchIds = reader.readBits(10)
+		patchX = (patchIds >> 5) & 0x1f
+		patchY = patchIds & 0x1f
+	}
 	return { dcOffset, range, quantWbits, patchX, patchY }
 }
 
@@ -335,8 +349,9 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		//   0x38 ('8') = WATER — water field (not terrain, skip)
 		// NOTE: 0x06 was briefly added as "OSGrid LAND int enum" but that was wrong — Medium 6
 		// is CoarseLocationUpdate; those packets were never LayerData. Removed 2026-05-25.
-		const isLand = layerTypeByte === 0x4C   // ASCII 'L' — LAND (standard regions)
-		            || layerTypeByte === 0x4D    // ASCII 'M' — LandExtended (var-regions, unsupported patchSize=32)
+		const isLandExtended = layerTypeByte === 0x4D  // ASCII 'M' — LandExtended (var-regions >256m, 32-bit patch IDs)
+		const isLand = layerTypeByte === 0x4C          // ASCII 'L' — LAND (standard ≤256m, 10-bit patch IDs)
+		            || isLandExtended
 		const type = isLand ? 'LAND' : null
 		if (!type) {
 			const label = layerTypeByte === 0x37 ? 'OSGrid-water-floor(0x37)'
@@ -355,28 +370,36 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		const { hdr: groupHdr, next: patchDataOffset } = readGroupHeader(data, 0)
 
 		if (groupHdr.patchSize !== PATCH_SIZE) {
-			// WHY: Var-regions (512×512, 1024×1024) use 32×32 patches; standard regions use 16×16.
-			// 32×32 IDCT not yet implemented. Log patchSize so we can verify and add support.
-			dbg(`unsupported patchSize=${groupHdr.patchSize} (expected ${PATCH_SIZE}) — var-region?`)
+			// WHY: Var-regions keep 16×16-sample patches (just MORE of them — a 512m region is a
+			// 32×32 grid of 16-sample patches, signaled via LandExtended + 32-bit patch IDs, not a
+			// bigger patchSize). A patchSize other than 16 would be the rare LARGE_PATCH_SIZE (32)
+			// DCT variant, whose IDCT we don't implement. Log it so we can verify if ever seen.
+			dbg(`unsupported patchSize=${groupHdr.patchSize} (expected ${PATCH_SIZE}) — LARGE_PATCH_SIZE DCT?`)
 			return null
 		}
 
 		// Decode patches via bit reader
 		const reader  = new BitReader(data.slice(patchDataOffset))
 		const patches: TerrainPatch[] = []
-		// WHY: minimum header size = 8+32+16+10 = 66 bits; bail before buffer exhaustion to
-		// prevent readBits returning 0 for all fields (quantWbits=0 ≠ END_OF_PATCHES=97 → infinite fake [0,0] patches).
-		const MIN_HEADER_BITS = 66
+		// WHY: minimum header size = 8(qw)+32(dc)+16(range)+patchId bits. Legacy patchId=10
+		// (→66), extended=32 (→88). Bail before buffer exhaustion to prevent readBits returning
+		// 0 for all fields (quantWbits=0 ≠ END_OF_PATCHES=97 → infinite fake [0,0] patches).
+		const MIN_HEADER_BITS = isLandExtended ? 88 : 66
+		// WHY: OOB guard catches bitstream desync (garbage coords). Legacy 256m = 16×16 grid,
+		// so any coord >15 is invalid. Var-regions can be up to 8192m (512×512 patches); 256 is
+		// a generous upper bound that still rejects gross desync garbage. Client clamps coords
+		// outside the actual region (setTerrainPatch slX/slY > region size → skip) regardless.
+		const maxPatchEdge = isLandExtended ? 256 : PATCH_SIZE
 		let exitReason = 'sentinel'
 		let oobCount = 0
 		let attemptCount = 0
 
-		for (let attempt = 0; attempt < 512; attempt++) {
+		for (let attempt = 0; attempt < 2048; attempt++) {
 			attemptCount = attempt
 			if (reader.bitsRemaining < MIN_HEADER_BITS) { exitReason = `buf-exhausted bitsLeft=${reader.bitsRemaining}`; break }
-			const ph = readPatchHeader(reader)
+			const ph = readPatchHeader(reader, isLandExtended)
 			if (!ph) break  // END_OF_PATCHES sentinel (quantWbits=97)
-			if (ph.patchX > 15 || ph.patchY > 15) {
+			if (ph.patchX >= maxPatchEdge || ph.patchY >= maxPatchEdge) {
 				// Out-of-range coord (header misaligned or sim sent a stray ID).
 				// MUST still consume coefficient bits — encoder always writes at
 				// least ZERO_EOB (2 bits) per patch, so skipping the drain shifts
