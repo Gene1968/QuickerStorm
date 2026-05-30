@@ -29,7 +29,7 @@ export function replayCachedWorld(session: CircuitState): void {
 	if (session.cachedRegionName) {
 		ws.send(JSON.stringify({
 			t: S.REGION_INFO,
-			d: { name: session.cachedRegionName, access: session.cachedRegionAccess },
+			d: { name: session.cachedRegionName, access: session.cachedRegionAccess, ...session.cachedRegionEnv },
 		}))
 	}
 

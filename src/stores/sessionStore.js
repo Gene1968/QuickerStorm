@@ -21,6 +21,11 @@ export const useSessionStore = defineStore('session', () => {
 	const startLocation = ref('')   // 'last', 'home', or 'uri:...' as echoed by grid
 	const agentAccess   = ref('')   // 'M', 'A', etc — agent's account access cap (XML-RPC)
 	const regionAccess  = ref(0)    // SL access code from RegionHandshake: 13=PG, 21=Mature, 42=Adult, 254=down
+	// WHY: render-critical environment from RegionHandshake. waterHeight anchors the water plane
+	// and the terrain colour palette (sea level varies per region). terrainTextures holds the 4
+	// detail-texture UUIDs + per-corner blend heights for future textured terrain (J2C pipeline).
+	const waterHeight   = ref(20)
+	const terrainTextures = ref({ detail: ['', '', '', ''], startHeight: [0, 0, 0, 0], heightRange: [0, 0, 0, 0] })
 	const connected     = ref(false)
 
 	function setSession(data) {
@@ -46,12 +51,15 @@ export const useSessionStore = defineStore('session', () => {
 		regionName.value = startLocation.value = agentAccess.value = ''
 		simPort.value = regionX.value = regionY.value = 0
 		regionSizeX.value = regionSizeY.value = 256
+		waterHeight.value = 20
+		terrainTextures.value = { detail: ['', '', '', ''], startHeight: [0, 0, 0, 0], heightRange: [0, 0, 0, 0] }
 		connected.value = false
 	}
 
 	return {
 		agentId, sessionId, username, simIp, simPort, seedCap,
 		regionName, regionX, regionY, regionSizeX, regionSizeY,
-		startLocation, agentAccess, regionAccess, connected, setSession, clearSession,
+		startLocation, agentAccess, regionAccess, waterHeight, terrainTextures,
+		connected, setSession, clearSession,
 	}
 })

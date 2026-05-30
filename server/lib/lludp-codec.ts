@@ -1223,12 +1223,29 @@ export function decodeImprovedTerseObjectUpdate(
 export interface RegionHandshakeData {
   simName:    string
   simAccess:  number  // 13=PG, 21=Mature, 42=Adult
+  // ── Render-critical fields from the RegionInfo block (default-safe if the sim
+  //    sends a truncated packet — older OpenSim builds omit the trailing blocks) ──
+  waterHeight:        number    // sea level in metres (SL default 20); anchors water plane + terrain palette
+  terrainDetail:      string[]  // 4 detail-texture UUIDs (sand/grass/rock/mountain); '' if absent
+  terrainStartHeight: number[]  // 4 corner start heights for texture blending (SW,NW,SE,NE order on wire)
+  terrainHeightRange: number[]  // 4 corner height ranges
+  regionId:           string    // RegionInfo2.RegionID UUID; '' if absent
 }
 
 /**
  * Decode RegionHandshake — sent by sim right after circuit establishment.
- * Contains the region name (SimName) among other terrain/flag data.
  * We MUST reply with RegionHandshakeReply or the sim won't fully initialize our avatar.
+ *
+ * RegionInfo block layout (message_template.msg, in wire order):
+ *   RegionFlags U32 | SimAccess U8 | SimName Var1 | SimOwner UUID | IsEstateManager U8 |
+ *   WaterHeight F32 | BillableFactor F32 | CacheID UUID |
+ *   TerrainBase0..3 UUID (legacy, usually null) | TerrainDetail0..3 UUID |
+ *   TerrainStartHeight00/01/10/11 F32 | TerrainHeightRange00/01/10/11 F32
+ * RegionInfo2 block: RegionID UUID. Trailing blocks (RegionInfo3/4) ignored.
+ *
+ * WHY default-safe: variable-length SimName means absolute offsets aren't fixed, and some
+ * grids send shorter packets. Every read past SimName is bounds-checked; on overrun we
+ * return SL-default waterHeight=20 and empty texture fields so render still works.
  */
 export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHandshakeData {
   let off = dataOffset
@@ -1237,7 +1254,40 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
   // SimName: Variable1 (1-byte length prefix)
   const nameLen = buf[off++]
   const simName = buf.slice(off, off + nameLen).toString('utf8').replace(/\x00/g, '').trim()
-  return { simName, simAccess }
+  off += nameLen
+
+  // Defaults used if the packet is truncated before a given field.
+  let waterHeight        = 20
+  const terrainDetail: string[]      = ['', '', '', '']
+  const terrainStartHeight: number[] = [0, 0, 0, 0]
+  const terrainHeightRange: number[] = [0, 0, 0, 0]
+  let regionId           = ''
+
+  // WHY: each step guards against a short buffer. `need(n)` returns true only if n more
+  // bytes are available from the current offset.
+  const need = (n: number) => off + n <= buf.length
+  try {
+    if (need(16)) off += 16                              // SimOwner UUID (unused here)
+    if (need(1))  off += 1                               // IsEstateManager U8
+    if (need(4)) { waterHeight = buf.readFloatLE(off); off += 4 }
+    if (need(4)) off += 4                                // BillableFactor F32
+    if (need(16)) off += 16                              // CacheID UUID
+    if (need(64)) off += 64                              // TerrainBase0..3 (legacy, skip)
+    for (let i = 0; i < 4; i++) {
+      if (need(16)) { terrainDetail[i] = bytesToUuid(buf, off); off += 16 }
+    }
+    for (let i = 0; i < 4; i++) {
+      if (need(4)) { terrainStartHeight[i] = buf.readFloatLE(off); off += 4 }
+    }
+    for (let i = 0; i < 4; i++) {
+      if (need(4)) { terrainHeightRange[i] = buf.readFloatLE(off); off += 4 }
+    }
+    if (need(16)) { regionId = bytesToUuid(buf, off); off += 16 }  // RegionInfo2.RegionID
+  } catch {
+    // Any unexpected read error → keep whatever was parsed plus defaults.
+  }
+
+  return { simName, simAccess, waterHeight, terrainDetail, terrainStartHeight, terrainHeightRange, regionId }
 }
 
 /** Decode KillObject (High #16) — sim removes objects from the viewer's scene.
@@ -1500,6 +1550,36 @@ export function encodeTeleportLandmarkRequest(p: { agentId: string; sessionId: s
   uuidToBytes(p.sessionId).copy(body, 16)
   uuidToBytes(p.landmarkId).copy(body, 32)
   return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x41]), body])  // Low 65
+}
+
+/** SetStartLocationRequest (Low 204) — set avatar home/last position.
+ *  LocationID 1 = home, 0 = last. SimName is variable-length (1-byte prefix). */
+export function encodeSetStartLocationRequest(p: {
+  agentId:    string
+  sessionId:  string
+  seq:        number
+  simName:    string
+  locationId: number   // 1 = home
+  x: number; y: number; z: number
+}): Buffer {
+  const hdr      = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const MSG      = Buffer.from([0xFF, 0xFF, 0x00, 0xCC])  // Low 204
+  const nameBytes = Buffer.from(p.simName, 'utf8')
+  const body = Buffer.allocUnsafe(16 + 16 + 1 + nameBytes.length + 4 + 12 + 12)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);    off += 16
+  uuidToBytes(p.sessionId).copy(body, off);  off += 16
+  body.writeUInt8(nameBytes.length, off);    off += 1
+  nameBytes.copy(body, off);                 off += nameBytes.length
+  body.writeUInt32LE(p.locationId, off);     off += 4
+  body.writeFloatLE(p.x, off); off += 4
+  body.writeFloatLE(p.y, off); off += 4
+  body.writeFloatLE(p.z, off); off += 4
+  // LookAt — face north (0, 1, 0)
+  body.writeFloatLE(0, off); off += 4
+  body.writeFloatLE(1, off); off += 4
+  body.writeFloatLE(0, off); off += 4
+  return Buffer.concat([hdr, MSG, body])
 }
 
 /** AvatarPropertiesRequest (Low 169) — ask for an avatar's profile. Sim replies with

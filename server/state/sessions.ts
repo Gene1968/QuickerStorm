@@ -102,6 +102,15 @@ export interface CircuitState {
 	// logout/relogin. Cache the snapshots server-side and replay on demand.
 	cachedRegionName?:   string
 	cachedRegionAccess?: number
+	// WHY: render-critical environment from RegionHandshake (water level + terrain textures).
+	// Replayed via REGION_INFO on resync so HMR/reload keeps correct water height + palette.
+	cachedRegionEnv?: {
+		waterHeight:        number
+		terrainDetail:      string[]
+		terrainStartHeight: number[]
+		terrainHeightRange: number[]
+		regionId:           string
+	}
 	cachedSpawnPos?:     [number, number, number]
 	// Keyed by `${patchX},${patchY}` — last decoded LAND patch for that tile.
 	// WHY: WATER layer omitted (water plane is fixed flat).

@@ -23,7 +23,7 @@ import {
 	decodeAgentGroupDataUpdate, decodeAgentDataUpdate, decodeParcelInfoReply,
 	encodeAvatarPropertiesRequest, encodeParcelInfoRequest, encodeUUIDNameRequest,
 	encodeAcceptFriendship, encodeDeclineFriendship, encodeTerminateFriendship, encodeChangeUserRights,
-	encodeTeleportLandmarkRequest,
+	encodeTeleportLandmarkRequest, encodeSetStartLocationRequest,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -299,8 +299,9 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		// WHY: Sim sends this right after circuit established; must reply or avatar won't appear.
 		// SimName field gives us the region name that OSGrid omits from the login response.
 		try {
-			const { simName, simAccess } = decodeRegionHandshake(buf, dataOffset)
-			slog.info(session.ws, `✓ RegionHandshake: SimName="${simName}" access=${simAccess}`)
+			const rh = decodeRegionHandshake(buf, dataOffset)
+			const { simName, simAccess, waterHeight } = rh
+			slog.info(session.ws, `✓ RegionHandshake: SimName="${simName}" access=${simAccess} water=${waterHeight}m detail=[${rh.terrainDetail.map(u => u.slice(0, 8)).join(' ')}]`)
 			// Reply is required
 			const seq = nextSeq(session)
 			const reply = encodeRegionHandshakeReply({ agentId: session.agentId, sessionId: session.sessionId, seq })
@@ -309,8 +310,18 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			// Cache for resync replays (HMR / page reload / manual "Resync World")
 			session.cachedRegionName   = simName
 			session.cachedRegionAccess = simAccess
-			// Forward region name to browser
-			session.ws.send(JSON.stringify({ t: S.REGION_INFO, d: { name: simName, access: simAccess } }))
+			session.cachedRegionEnv    = {
+				waterHeight,
+				terrainDetail:      rh.terrainDetail,
+				terrainStartHeight: rh.terrainStartHeight,
+				terrainHeightRange: rh.terrainHeightRange,
+				regionId:           rh.regionId,
+			}
+			// Forward region name + render-critical environment to browser
+			session.ws.send(JSON.stringify({
+				t: S.REGION_INFO,
+				d: { name: simName, access: simAccess, ...session.cachedRegionEnv },
+			}))
 		} catch (e) { slog.warn(session.ws, `RegionHandshake decode error: ${(e as Error).message}`) }
 		return
 	}
@@ -882,6 +893,32 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ TeleportLandmarkRequest lm=${d.landmarkId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.TP_HOME) {
+		const seq = nextSeq(session)
+		const pkt = encodeTeleportLandmarkRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, landmarkId: '00000000-0000-0000-0000-000000000000' })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, '→ TeleportLandmarkRequest (home/zero UUID)')
+		return
+	}
+
+	if (msg.t === C.SET_HOME) {
+		const d = msg.d as { regionName: string; x: number; y: number; z: number }
+		const seq = nextSeq(session)
+		const pkt = encodeSetStartLocationRequest({
+			agentId:    session.agentId,
+			sessionId:  session.sessionId,
+			seq,
+			simName:    d.regionName || '',
+			locationId: 1,
+			x: d.x, y: d.y, z: d.z,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ SetStartLocationRequest home @ ${d.regionName} ${d.x.toFixed(0)},${d.y.toFixed(0)},${d.z.toFixed(0)}`)
 		return
 	}
 

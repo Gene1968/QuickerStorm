@@ -136,7 +136,13 @@ export function useWorldEngine(canvasRef) {
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
 	const stopAlwaysRunWatch = watch(() => uiStore.alwaysRun, (v) => sendSetAlwaysRun(v))
-	// WHY: Phase 2 prim-handle preview — rebuild gizmo when selection/mode/visibility changes.
+	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
+	// built — water plane starts at the default 20m and terrain is coloured against it. When the
+	// real sea level arrives, reposition the water plane and recolour terrain to match.
+	const stopWaterHeightWatch = watch(() => sessionStore.waterHeight, (h) => {
+		if (waterMesh) waterMesh.position.y = h
+		rebuildTerrainFromStore()
+	})
 	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
 	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) clearGizmo(); else refreshGizmo() })
@@ -669,20 +675,23 @@ export function useWorldEngine(canvasRef) {
 	// gamma-applied at output and look washed out (#527959 → #9ab69f → fog
 	// blend → #acc2b1 in the viewer). Returns [r, g, b] in 0–1 linear.
 	function heightColor(h) {
-		// WHY: narrow sand band right at the wave wash (~19–21m) blends shoreline
-		// from grass into sand into water. Region terrain that sits a couple metres
-		// above sea level (typical ~23m) should already read as grass, not desert.
+		// WHY: bands are anchored to the region's actual sea level W (from RegionHandshake),
+		// not a hardcoded 20m. d = metres above water. Narrow sand band at the wave wash
+		// (W±1m) blends shoreline from grass→sand→water; ground a couple metres above water
+		// reads grass, not desert. Re-anchoring fixed the beige-flatland look on regions whose
+		// water level ≠ 20m. See [[var-region-terrain-fix]].
 		const SAND  = [0.85, 0.78, 0.58]  // pale beige
 		const GRASS = [0.29, 0.49, 0.35]
 		const TAN   = [0.68, 0.62, 0.45]  // dry low-land tan, between green and sand
+		const d = h - sessionStore.waterHeight
 		let rgb
-		if      (h <=  0) rgb = [0.08, 0.30, 0.60]                                         // deep
-		else if (h <= 10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], h / 10)    // shallow → low land
-		else if (h <= 19) rgb = lerpRgb([0.25, 0.55, 0.45], TAN,                (h - 10) / 9)   // low land → tan
-		else if (h <= 21) rgb = lerpRgb(TAN, SAND,                              (h - 19) / 2)   // tan → sand at shoreline
-		else if (h <= 23) rgb = lerpRgb(SAND, GRASS,                            (h - 21) / 2)   // sand → grass quickly
-		else if (h <= 50) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],              (h - 23) / 27)  // grass → earthy
-		else              rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((h - 50) / 60, 1))  // earthy → stone
+		if      (d <= -20) rgb = [0.08, 0.30, 0.60]                                          // deep
+		else if (d <= -10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], (d + 20) / 10)  // shallow → low land
+		else if (d <=  -1) rgb = lerpRgb([0.25, 0.55, 0.45], TAN,                (d + 10) / 9)    // low land → tan
+		else if (d <=   1) rgb = lerpRgb(TAN, SAND,                              (d + 1) / 2)     // tan → sand at shoreline
+		else if (d <=   3) rgb = lerpRgb(SAND, GRASS,                            (d - 1) / 2)     // sand → grass quickly
+		else if (d <=  30) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],             (d - 3) / 27)     // grass → earthy
+		else               rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((d - 30) / 60, 1))  // earthy → stone
 		return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]
 	}
 
@@ -843,7 +852,10 @@ export function useWorldEngine(canvasRef) {
 			waterMaterial,
 		)
 		waterMesh.rotation.x = -Math.PI / 2
-		waterMesh.position.set(rx / 2, 20, -ry / 2)
+		// WHY: y = region water level from RegionHandshake (SL default 20, but var-region/estate
+		// sims set custom levels). Re-applied by the sessionStore.waterHeight watcher if it arrives
+		// after the scene is built.
+		waterMesh.position.set(rx / 2, sessionStore.waterHeight, -ry / 2)
 		scene.add(waterMesh)
 
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
@@ -1986,6 +1998,7 @@ export function useWorldEngine(canvasRef) {
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()
 		stopSelSyncWatch()
+		stopWaterHeightWatch()
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
 		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
 		clearGizmo()

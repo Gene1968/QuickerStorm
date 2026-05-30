@@ -30,6 +30,16 @@ function onRegionInfo(d) {
 	// The real name arrives via RegionHandshake UDP → S.REGION_INFO from server.
 	if (d.name) session.regionName = d.name
 	if (typeof d.access === 'number') session.regionAccess = d.access
+	// WHY: water level + terrain textures drive the water plane Y and the terrain colour
+	// palette. useWorldEngine watches sessionStore.waterHeight to reposition/recolour.
+	if (typeof d.waterHeight === 'number') session.waterHeight = d.waterHeight
+	if (Array.isArray(d.terrainDetail)) {
+		session.terrainTextures = {
+			detail:      d.terrainDetail,
+			startHeight: d.terrainStartHeight ?? [0, 0, 0, 0],
+			heightRange: d.terrainHeightRange ?? [0, 0, 0, 0],
+		}
+	}
 }
 
 function onDisconnected(d) {
