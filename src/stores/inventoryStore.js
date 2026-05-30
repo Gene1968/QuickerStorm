@@ -4,7 +4,6 @@
 // cap (Phase 3 slice 2) and dropped into `items` by folderId.
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { itemMatchesType } from '@/utils/inventoryIcons'
 
 export const useInventoryStore = defineStore('inventory', () => {
 	// folders: Map<folderId, { folderId, parentId, name, typeDefault, version, source }>
@@ -18,11 +17,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const caps      = ref(new Set())  // HTTP cap names the sim offered (after seed-cap fetch)
 	// WHY: grids name the descendents cap differently (modern vs legacy). Accept either.
 	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2') || caps.value.has('WebFetchInventoryDescendents'))
-	const filterText = ref('')        // tree search box (matches folder + loaded item names + perms)
-	const filtering  = computed(() => filterText.value.trim().length > 0)
-	const typeFilter = ref('all')     // TYPE_FILTERS id; 'all' = no type restriction
 	const selectedId = ref('')        // selected folder/item id (drives footer + highlight)
-	const filtersActive = computed(() => filtering.value || typeFilter.value !== 'all')
 	const sortMode   = ref('name')    // item sort within a folder: 'name' | 'date' | 'type'
 	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
 	const propsTarget = ref(null)     // { kind, obj } shown in the Properties popover | null
@@ -41,8 +36,6 @@ export const useInventoryStore = defineStore('inventory', () => {
 		fetching.value  = new Set()
 		// WHY: caps belong to the session — re-armed by the CAPS_READY message after each login.
 		caps.value      = new Set()
-		filterText.value = ''
-		typeFilter.value = 'all'
 		selectedId.value = ''
 		sortMode.value   = 'name'
 		contextMenu.value = null
@@ -96,32 +89,6 @@ export const useInventoryStore = defineStore('inventory', () => {
 		return found
 	}
 
-	// ── Filter matching (folder names always available; item names only once fetched) ──
-	function nameMatches(name) { return (name || '').toLowerCase().includes(filterText.value.trim().toLowerCase()) }
-	function folderNameMatches(folderId) { const f = folders.value.get(folderId); return !!f && nameMatches(f.name) }
-
-	// WHY: fold the FS-style "(no copy)(no modify)(no transfer)" tags into the searchable text so
-	// the filter box can find restricted items (e.g. type "no transfer").
-	function itemSearchText(it) {
-		let s = it.name || ''
-		if (it.canCopy === false)     s += ' no copy'
-		if (it.canModify === false)   s += ' no modify'
-		if (it.canTransfer === false) s += ' no transfer'
-		return s
-	}
-	// An item passes the active filters (text + type).
-	function itemVisible(it) {
-		return nameMatches(itemSearchText(it)) && itemMatchesType(it, typeFilter.value)
-	}
-	function folderHasMatch(folderId) {
-		if (!filtersActive.value) return true
-		// Folder-name text match reveals all contents only when no type restriction is set.
-		if (filtering.value && typeFilter.value === 'all' && folderNameMatches(folderId)) return true
-		for (const it of folderItems(folderId)) if (itemVisible(it)) return true
-		for (const c of childFolders(folderId)) if (folderHasMatch(c.folderId)) return true
-		return false
-	}
-
 	function select(id) { selectedId.value = id }
 
 	// ── Sort (folders stay system-then-name; items sort by the chosen mode) ──
@@ -139,6 +106,19 @@ export const useInventoryStore = defineStore('inventory', () => {
 	function closeContextMenu() { contextMenu.value = null }
 	function showProperties(kind, obj) { propsTarget.value = { kind, obj }; contextMenu.value = null }
 	function closeProperties() { propsTarget.value = null }
+
+	// Local-only: insert item into the Favorites folder's in-memory list (no server cap yet).
+	function addToFavorites(item) {
+		let favId = ''
+		folders.value.forEach(f => { if (!favId && Number(f.typeDefault) === 23) favId = f.folderId })
+		if (!favId) return
+		const list = items.value.get(favId) || []
+		if (list.some(i => i.itemId === item.itemId)) return
+		const m = new Map(items.value)
+		m.set(favId, [...list, { ...item, parentId: favId }])
+		items.value = m
+		if (!fetched.value.has(favId)) fetched.value = new Set(fetched.value).add(favId)
+	}
 
 	// Recursive descendant counts (items + subfolders) for the FS "(items/folders)" badge + footer.
 	function descendantCounts(folderId) {
@@ -198,12 +178,11 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	return {
 		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady,
-		filterText, filtering, typeFilter, selectedId, filtersActive,
-		sortMode, contextMenu, propsTarget,
+		selectedId, sortMode, contextMenu, propsTarget,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, toggle, expandAll, collapseAll, findSystemFolder,
-		nameMatches, folderNameMatches, folderHasMatch, itemVisible, select, descendantCounts,
-		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties,
+		select, descendantCounts,
+		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties, addToFavorites,
 		setItems, folderCount, itemCount, clear,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
 		pendingAgentFolders,

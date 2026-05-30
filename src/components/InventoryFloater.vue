@@ -1,12 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, provide, onMounted, onUnmounted, nextTick } from 'vue'
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useInventory } from '@/composables/useInventory'
-import { itemIcon, TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT } from '@/utils/inventoryIcons'
+import { itemIcon, TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT, itemMatchesType } from '@/utils/inventoryIcons'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
-import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon } from '@lucide/vue'
+import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon } from '@lucide/vue'
 
 const props = defineProps({
 	index: { type: Number, default: 0 },
@@ -52,6 +52,51 @@ const tabFills = computed(() => {
 })
 
 
+// ── Per-instance filter state (not stored globally — each floater is independent) ─────────────
+const rawFilter      = ref('')   // bound directly to input (immediate)
+const localFilter    = ref('')   // debounced — drives the actual filter computation
+const localTypeFilter = ref('all')
+let   filterTimer    = null
+
+// Spinner true while debounce is pending
+const searching = computed(() => rawFilter.value !== localFilter.value)
+
+watch(rawFilter, (v) => {
+	clearTimeout(filterTimer)
+	filterTimer = setTimeout(() => { localFilter.value = v }, 280)
+})
+
+const filtering     = computed(() => localFilter.value.trim().length > 0)
+const filtersActive = computed(() => filtering.value || localTypeFilter.value !== 'all')
+
+function nameMatches(name) {
+	return (name || '').toLowerCase().includes(localFilter.value.trim().toLowerCase())
+}
+function folderNameMatches(folderId) {
+	const f = inv.folders.get(folderId)
+	return !!f && nameMatches(f.name)
+}
+function itemSearchText(it) {
+	let s = it.name || ''
+	if (it.canCopy === false)     s += ' no copy'
+	if (it.canModify === false)   s += ' no modify'
+	if (it.canTransfer === false) s += ' no transfer'
+	return s
+}
+function itemVisible(it) {
+	return nameMatches(itemSearchText(it)) && itemMatchesType(it, localTypeFilter.value)
+}
+function folderHasMatch(folderId) {
+	if (!filtersActive.value) return true
+	if (filtering.value && localTypeFilter.value === 'all' && folderNameMatches(folderId)) return true
+	for (const it of inv.folderItems(folderId)) if (itemVisible(it)) return true
+	for (const c of inv.childFolders(folderId)) if (folderHasMatch(c.folderId)) return true
+	return false
+}
+
+// Provide filter context to InventoryTreeNode (recursive, so provide on the floater works).
+provide('invFilter', { filtering, filtersActive, typeFilter: localTypeFilter, folderHasMatch, itemVisible, folderNameMatches, nameMatches })
+
 // WHY: per-instance id so each floater has its own focus/z-index slot in the floater stack.
 const floaterId   = computed(() => `inventory-${props.index}`)
 const defaultPos  = computed(() => INVENTORY_DEFAULT_POS[props.index] ?? INVENTORY_DEFAULT_POS[0])
@@ -74,8 +119,8 @@ function pickSort(id) { inv.setSort(id); showCogMenu.value = false }
 
 // ── Type-filter dropdown ───────────────────────────────────────────────────────
 const showTypeMenu = ref(false)
-const typeLabel    = computed(() => typeFilterLabel(inv.typeFilter))
-function setType(id) { inv.typeFilter = id; showTypeMenu.value = false }
+const typeLabel    = computed(() => typeFilterLabel(localTypeFilter.value))
+function setType(id) { localTypeFilter.value = id; showTypeMenu.value = false }
 
 // ── Horizontal tab strip: wheel-scroll + edge arrows only when overflowing ───────
 const tabScrollEl = ref(null)
@@ -121,6 +166,8 @@ onMounted(() => {
 onUnmounted(() => {
 	tabRo?.disconnect()
 	document.removeEventListener('click', closeMenus)
+	clearTimeout(filterTimer)
+	filterTimer = null
 })
 </script>
 
@@ -133,7 +180,10 @@ onUnmounted(() => {
 		@close="close"
 		class="min-w-[16.5rem]"
 	>
-		<div class="flex p-1"><input v-model="inv.filterText" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" /></div>
+		<div class="relative flex p-1">
+				<input v-model="rawFilter" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" />
+				<Loader2Icon v-if="searching" class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-accent animate-spin pointer-events-none" />
+			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-white">
 			<div class="flex flex-row items-center justify-start w-full text-2xs">
 				<button class="ui-btn me-2 py-0" @click="inv.collapseAll()">Collapse</button>
@@ -147,7 +197,7 @@ onUnmounted(() => {
 							v-for="t in TYPE_FILTERS"
 							:key="t.id"
 							class="block w-full text-left px-2 py-1 hover:bg-white/10"
-							:class="inv.typeFilter === t.id ? 'text-accent' : 'text-t1'"
+							:class="localTypeFilter === t.id ? 'text-accent' : 'text-t1'"
 							@click="setType(t.id)"
 						>{{ t.label }}</button>
 					</div>

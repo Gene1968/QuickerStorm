@@ -1,6 +1,6 @@
 <script setup>
 // Recursive inventory folder row. Self-references by filename (Vue 3 SFC recursion).
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { ChevronRightIcon, ChevronDownIcon } from '@lucide/vue'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useInventory } from '@/composables/useInventory'
@@ -13,11 +13,13 @@ const props = defineProps({
 
 const inv = useInventoryStore()
 const { fetchFolder } = useInventory()
+const f = inject('invFilter')
+
 const folder   = computed(() => inv.folders.get(props.folderId))
-const children = computed(() => inv.childFolders(props.folderId).filter(c => inv.folderHasMatch(c.folderId)))
-const visible  = computed(() => inv.folderHasMatch(props.folderId))
+const children = computed(() => inv.childFolders(props.folderId).filter(c => f.folderHasMatch(c.folderId)))
+const visible  = computed(() => f.folderHasMatch(props.folderId))
 // WHY: while filtering, auto-open matching folders so hits are revealed without manual expand.
-const open     = computed(() => inv.isExpanded(props.folderId) || inv.filtersActive)
+const open     = computed(() => inv.isExpanded(props.folderId) || f.filtersActive.value)
 const loading  = computed(() => inv.isFetching(props.folderId))
 const fIcon    = computed(() => folderIcon(folder.value?.typeDefault, open.value))
 const selected = computed(() => inv.selectedId === props.folderId)
@@ -26,12 +28,12 @@ const counts   = computed(() => inv.descendantCounts(props.folderId))
 // Item list: when filters active show only matching items; if folder name matched (text only), all.
 const items    = computed(() => {
 	let all = inv.folderItems(props.folderId)
-	if (inv.filtersActive && !(inv.filtering && inv.typeFilter === 'all' && inv.folderNameMatches(props.folderId))) {
-		all = all.filter(it => inv.itemVisible(it))
+	if (f.filtersActive.value && !(f.filtering.value && f.typeFilter.value === 'all' && f.folderNameMatches(props.folderId))) {
+		all = all.filter(it => f.itemVisible(it))
 	}
 	return inv.sortItems(all)
 })
-const empty    = computed(() => !inv.filtersActive && inv.isFetched(props.folderId) && children.value.length === 0 && inv.folderItems(props.folderId).length === 0)
+const empty    = computed(() => !f.filtersActive.value && inv.isFetched(props.folderId) && children.value.length === 0 && inv.folderItems(props.folderId).length === 0)
 
 // WHY: indent each level; chevron column is fixed so folder glyphs line up.
 const padLeft  = computed(() => `${props.depth * 0.85 + 0.25}rem`)
