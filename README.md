@@ -48,6 +48,8 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] Favorites / Worn (Current Outfit) / Recent tabs from system folders
 - [x] Right-click menu — Properties, Copy Item/Asset/Folder UUID; Properties popover (type, UUIDs, perms, created date)
 - [ ] Drag/move, rename/F2, wear/attach, thumbnails (need move + texture caps)
+- [ ] Create, create folder, change perms?
+
 
 **🟡 Partially working**
 - [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing?: collision & objects so you don't silently bump into invisible prims.
@@ -65,7 +67,6 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 
 **🔜 Phase 3 ("real assets + social", HTTP caps)**
 - [x] **HTTP-capability client foundation** — LLSD-XML parser, full cap dictionary from seed cap, server-side cap proxy (cap URLs never leave the server)
-- [x] **Inventory viewing** - 60%.  via `FetchInventoryDescendents2` cap — see the Inventory section above
 - [~] **Profile floater** - 60%.  via avatar properties cap
 - [~] **Places floater** — 65%.  Favorites, Landmarks, TP history.  Gear menu needs Teleport, Show on map,, share, view/edit lm, move to Favorites (if not), copy slurl, create pick?,, cut, copy, paste, rename, delete,, expand (folders only),, Remove from history (h only).  History gets accordion menu for Today and a few time periods (manual close),  Buttons at bottom persist for Teleport, Map, [Place] Profile. Items need drag, Favs appear in top favorites bar.  Needs to retrieve names, LM view w thumbnail & Edit btn (Title, My Notes), plus btn menu to LM curr loc or create folder,  delete, sort by date.  Teleport history (alt+h toggle), TP, copy SLurl, remove, clear, position, date.  Filter, detail view/Back, TP, show on map, region image
 - [~] Right-click object **Edit / Take / Copy / Delete / Export** (perms + caps)
