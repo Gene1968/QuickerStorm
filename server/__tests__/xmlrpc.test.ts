@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { buildLoginXml, parseLoginResponse, hashPassword } from '../lib/xmlrpc'
+import { buildLoginXml, parseLoginResponse, hashPassword, parseInventorySkeleton, parseInventoryRoot } from '../lib/xmlrpc'
 
 describe('xmlrpc', () => {
 	it('hashPassword produces $1$-prefixed md5', () => {
@@ -48,6 +48,50 @@ describe('xmlrpc', () => {
 		expect(xml).toContain('&#39;')
 		expect(xml).not.toContain('John & Jane')
 		expect(xml).not.toMatch(/O'Brien/)
+	})
+
+	it('parses inventory skeleton + root from login response', () => {
+		const xml = `<?xml version="1.0"?><methodResponse><params><param><value><struct>
+      <member><name>login</name><value><string>true</string></value></member>
+      <member><name>inventory-root</name><value><array><data>
+        <value><struct><member><name>folder_id</name><value><string>11111111-1111-1111-1111-111111111111</string></value></member></struct></value>
+      </data></array></value></member>
+      <member><name>inventory-skeleton</name><value><array><data>
+        <value><struct>
+          <member><name>folder_id</name><value><string>11111111-1111-1111-1111-111111111111</string></value></member>
+          <member><name>parent_id</name><value><string>00000000-0000-0000-0000-000000000000</string></value></member>
+          <member><name>name</name><value><string>My Inventory</string></value></member>
+          <member><name>type_default</name><value><i4>8</i4></value></member>
+          <member><name>version</name><value><i4>5</i4></value></member>
+        </struct></value>
+        <value><struct>
+          <member><name>folder_id</name><value><string>22222222-2222-2222-2222-222222222222</string></value></member>
+          <member><name>parent_id</name><value><string>11111111-1111-1111-1111-111111111111</string></value></member>
+          <member><name>name</name><value><string>Objects</string></value></member>
+          <member><name>type_default</name><value><i4>6</i4></value></member>
+          <member><name>version</name><value><i4>3</i4></value></member>
+        </struct></value>
+      </data></array></value></member>
+    </struct></value></param></params></methodResponse>`
+		const result = parseLoginResponse(xml)
+		expect(result.inventory_root).toBe('11111111-1111-1111-1111-111111111111')
+		expect(result.inventory_skeleton?.length).toBe(2)
+		const objects = result.inventory_skeleton?.find(f => f.name === 'Objects')
+		expect(objects?.parentId).toBe('11111111-1111-1111-1111-111111111111')
+		expect(objects?.typeDefault).toBe(6)
+		expect(objects?.version).toBe(3)
+		// direct helper calls
+		expect(parseInventoryRoot(xml, 'inventory-root')).toBe('11111111-1111-1111-1111-111111111111')
+		expect(parseInventorySkeleton(xml).length).toBe(2)
+	})
+
+	it('inventory skeleton absent → empty array, no throw', () => {
+		const xml = `<?xml version="1.0"?><methodResponse><params><param><value><struct>
+      <member><name>login</name><value><string>true</string></value></member>
+    </struct></value></param></params></methodResponse>`
+		const result = parseLoginResponse(xml)
+		expect(result.inventory_skeleton).toEqual([])
+		expect(result.inventory_root).toBe('')
 	})
 
 	it('parseLoginResponse returns sim_port 0 for malformed integer value', () => {

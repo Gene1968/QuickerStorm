@@ -48,6 +48,23 @@ function focus() { ui.focusFloater(props.id) }
 onMounted(() => {
 	focus()
 	playSound('pop.mp3', 0.7)
+	if (el.value && 'ResizeObserver' in window) {
+		ro = new ResizeObserver((entries) => {
+			const e = entries[0]
+			// Prefer border-box (box-sizing:border-box globally) so feeding the value back doesn't
+			// drift smaller each cycle the way content-box would.
+			let w, h
+			if (e.borderBoxSize && e.borderBoxSize.length) {
+				w = e.borderBoxSize[0].inlineSize
+				h = e.borderBoxSize[0].blockSize
+			} else {
+				w = e.contentRect.width
+				h = e.contentRect.height
+			}
+			size.value = { w: Math.round(w), h: Math.round(h) }
+		})
+		ro.observe(el.value)
+	}
 })
 
 // ── Drag ─────────────────────────────────────────────────────────────────────
@@ -55,6 +72,14 @@ const el         = ref(null)
 const pos        = ref(null)           // null = CSS-centered; { x, y } = pixel pos after first drag
 const dragging   = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
+
+// ── Resize persistence ─────────────────────────────────────────────────────────
+// WHY: CSS `resize:both` writes width/height to the element, but outerStyle re-applies wrapStyle's
+// base width/height on every recompute (e.g. z-index change when the floater is focused on a tab
+// click), wiping the user's manual resize. A ResizeObserver captures the live border-box size and
+// feeds it back through outerStyle, so re-patches are idempotent and the resize sticks.
+const size = ref(null)                 // { w, h } px — null until first measure
+let ro = null
 
 function onTitlebarMousedown(e) {
 	if (e.button !== 0) return
@@ -86,6 +111,7 @@ function onMouseup() {
 
 onUnmounted(() => {
 	playSound('pop.mp3', 0.7)
+	ro?.disconnect()
 	window.removeEventListener('mousemove', onMousemove)
 	window.removeEventListener('mouseup',   onMouseup)
 })
@@ -109,6 +135,9 @@ const outerStyle = computed(() => ({
 		? { left: `${pos.value.x}px`, top: `${pos.value.y}px`, transform: 'none' }
 		: (props.defaultPos ?? {})),
 	...props.wrapStyle,
+	// WHY: once measured, drive width/height from the live size so a re-patch (focus/z-index change)
+	// reuses the user's resized dimensions instead of resetting to wrapStyle's base values.
+	...(size.value ? { width: `${size.value.w}px`, height: `${size.value.h}px` } : {}),
 }))
 </script>
 
@@ -135,7 +164,10 @@ const outerStyle = computed(() => ({
 		</div>
 
 		<!-- Content slot -->
-		<div class="floater flex flex-col flex-1">
+		<!-- WHY: min-h-0 lets the flex-1 content area respect the floater's fixed height so inner
+		     `flex-1 min-h-0 overflow-y-auto` regions actually scroll instead of overflowing past
+		     the bottom edge (which hid the footer). -->
+		<div class="floater flex flex-col flex-1 min-h-0">
 			<slot />
 		</div>
 	</div>

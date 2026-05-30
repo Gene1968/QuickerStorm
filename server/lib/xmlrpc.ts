@@ -24,7 +24,24 @@ export interface LoginResult {
 	start_location?: string   // 'last', 'home', or 'uri:...' echoed back by grid
 	look_at?: string          // "[r0,r0,r0]" viewer orientation hint
 	agent_access?: string     // 'M', 'A', etc
+	first_name?: string
+	last_name?: string
+	// WHY: the login response already carries the full inventory FOLDER tree (no cap needed).
+	// Folder CONTENTS (items) still require the FetchInventoryDescendents2 cap (Phase 3 slice 2).
+	inventory_root?: string             // UUID of the agent's root ("My Inventory") folder
+	inventory_skeleton?: InvFolder[]    // every agent folder (no items)
+	inventory_lib_root?: string         // UUID of the shared Library root folder
+	inventory_skeleton_lib?: InvFolder[]// Library folders (read-only shared inventory)
 	message?: string
+}
+
+/** One inventory folder from the login skeleton (no items — those need a cap fetch). */
+export interface InvFolder {
+	folderId: string
+	parentId: string
+	name: string
+	typeDefault: number   // preferred AssetType for the folder (drives icon); -1 = none
+	version: number
 }
 
 /** Hash plaintext password per SL protocol: "$1$" + md5(password) */
@@ -137,12 +154,86 @@ export function parseLoginResponse(xml: string): LoginResult {
 		start_location:  members['start_location'],
 		look_at:         members['look_at'],
 		agent_access:    members['agent_access'],
+		first_name:      members['first_name'],
+		last_name:       members['last_name'],
+		// WHY: parsed from the raw XML (nested arrays the flat member scan above can't reach).
+		inventory_root:         parseInventoryRoot(xml, 'inventory-root'),
+		inventory_skeleton:     parseInventorySkeleton(xml, 'inventory-skeleton'),
+		inventory_lib_root:     parseInventoryRoot(xml, 'inventory-lib-root'),
+		inventory_skeleton_lib: parseInventorySkeleton(xml, 'inventory-skeleton-lib'),
 	}
+
+	console.log(`[xmlrpc] inventory skeleton: ${result.inventory_skeleton?.length ?? 0} folders, lib: ${result.inventory_skeleton_lib?.length ?? 0}, root=${result.inventory_root?.slice(0, 8)}`)
 
 	// Debug log so we can verify parsing during development
 	console.log('[xmlrpc] login OK — region:', result.region_name, 'sim:', result.sim_ip, ':', result.sim_port)
 
 	return result
+}
+
+/**
+ * Extract the raw inner XML of a named XML-RPC <member>'s <array> value.
+ * WHY: the flat member parser in parseLoginResponse can't reach nested arrays/structs. This
+ * slices out just the one member's <array>…</array> by counting nesting depth, so the per-struct
+ * parse below operates on a bounded substring.
+ */
+function sliceMemberArray(xml: string, memberName: string): string | null {
+	const nameIdx = xml.indexOf(`<name>${memberName}</name>`)
+	if (nameIdx === -1) return null
+	const arrStart = xml.indexOf('<array>', nameIdx)
+	if (arrStart === -1) return null
+	const re = /<(\/?)array>/g
+	re.lastIndex = arrStart
+	let depth = 0
+	let m: RegExpExecArray | null
+	while ((m = re.exec(xml)) !== null) {
+		if (m[1]) { depth--; if (depth === 0) return xml.slice(arrStart, m.index) }
+		else depth++
+	}
+	return null
+}
+
+/** Read a flat member value (string/int/i4) from a single XML-RPC <struct> body. */
+function structMember(structBody: string, member: string): string {
+	const re = new RegExp(`<name>${member}</name>\\s*<value>\\s*(?:<[^>]+>)?\\s*([\\s\\S]*?)\\s*(?:</[^>]+>)?\\s*</value>`)
+	const m = re.exec(structBody)
+	return m ? m[1].trim() : ''
+}
+
+/**
+ * Parse an inventory folder array (inventory-skeleton or inventory-skeleton-lib) from the login XML.
+ * Folder structs are flat (string/int members only), so a non-nesting <struct> scan is safe.
+ */
+export function parseInventorySkeleton(xml: string, memberName = 'inventory-skeleton'): InvFolder[] {
+	const arrXml = sliceMemberArray(xml, memberName)
+	if (!arrXml) return []
+	const folders: InvFolder[] = []
+	const structRe = /<struct>([\s\S]*?)<\/struct>/g
+	let s: RegExpExecArray | null
+	while ((s = structRe.exec(arrXml)) !== null) {
+		const body = s[1]
+		const td = structMember(body, 'type_default')
+		const ver = structMember(body, 'version')
+		folders.push({
+			folderId:    structMember(body, 'folder_id'),
+			parentId:    structMember(body, 'parent_id'),
+			name:        structMember(body, 'name'),
+			typeDefault: td  === '' ? -1 : parseInt(td, 10),
+			version:     ver === '' ? 0  : parseInt(ver, 10),
+		})
+	}
+	return folders
+}
+
+/**
+ * The inventory-root / inventory-lib-root members are an array of one struct holding folder_id.
+ * Returns that folder UUID, or '' if absent.
+ */
+export function parseInventoryRoot(xml: string, memberName = 'inventory-root'): string {
+	const arrXml = sliceMemberArray(xml, memberName)
+	if (!arrXml) return ''
+	const s = /<struct>([\s\S]*?)<\/struct>/.exec(arrXml)
+	return s ? structMember(s[1], 'folder_id') : ''
 }
 
 /** POST an XML-RPC request; returns parsed body string */

@@ -1,14 +1,17 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
+import { useInventoryStore } from '@/stores/inventoryStore'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
+import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
 import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon } from '@lucide/vue'
 
 const props = defineProps({
 	index: { type: Number, default: 0 },
 })
 
-const ui = useUiStore()
+const ui  = useUiStore()
+const inv = useInventoryStore()
 
 const tabs = [
 	{ id: 'inventory',  label: 'Inventory' },
@@ -72,34 +75,39 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 		</div>
 
 		<template v-if="activeTab === 'inventory'">
-			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
+			<div v-if="inv.rootId" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+				<InventoryTreeNode :folder-id="inv.rootId" />
+				<InventoryTreeNode v-if="inv.libRootId" :folder-id="inv.libRootId" />
+			</div>
+			<div v-else class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
 				<p class="mt-8 text-2xl">📦</p>
-				<p>Inventory tree coming in Phase 2.</p>
-				<p class="text-xs mt-2 opacity-60">Full in-world inventory browsing, attachment, and wearables.</p>
+				<p>No inventory loaded.</p>
+				<p class="text-xs mt-2 opacity-60">Folder tree loads at login. Folder contents (items) arrive with the Phase 3 cap layer.</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'recent'">
 			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
 				<p class="mt-8 text-2xl">📦</p>
-				<p>Recent items tree coming in Phase 2.</p>
+				<p>Recent items tree coming in Phase 3.</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'worn'">
 			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
 				<p class="mt-8 text-2xl">📦</p>
-				<p>Worn items tree coming in Phase 2.</p>
+				<p>Worn items tree coming in Phase 3.</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'favorites'">
 			<div class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
 				<p class="mt-8 text-2xl">📦</p>
-				<p>Favorite items coming in Phase 2.</p>
+				<p>Favorite items coming in Phase 3.</p>
 				<p class="text-xs mt-2 opacity-60">You haven't marked any items as favorites.</p>
 			</div>
 		</template>
 
-		<div class="flex-1"/>
-		<div class="flex flex-row items-center justify-between text-xs text-white">
+		<!-- WHY: spacer only when the inventory tree isn't already filling the column (flex-1). -->
+		<div v-if="!(activeTab === 'inventory' && inv.rootId)" class="flex-1"/>
+		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-white">
 			<button title="Show additional options (TO-DO)" class="px-1"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 			<button title="Add new item (TO-DO)"><PlusIcon /></button>
 			<button
@@ -113,8 +121,7 @@ function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 
 			<button title="Show filters - Shows the filter side menu when selected. Becomes highlighted when any filter is enabled. (TO-DO)"><FilterIcon /></button>
 			<button v-if="true" title="Switch between views (TO-DO)"><ListIcon /></button>
 			<button v-else title="Switch between views (TO-DO)"><TableOfContentsIcon /></button>
-			<div v-if="true" title="999,999 Items, 333 Folders (TO-DO)" class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none">999,999 Elements</div>
-			<div v-else title="0 Items, 27 Folders (TO-DO)" class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none">27 Elements</div>
+			<div :title="`${inv.itemCount} Items, ${inv.folderCount} Folders`" class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none">{{ inv.folderCount }} Folders<span v-if="inv.itemCount">, {{ inv.itemCount }} Items</span></div>
 			<button title="Remove selected item (TO-DO)"><Trash2Icon /></button>
 		</div>
 	</FloaterWindow>

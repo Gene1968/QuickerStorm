@@ -2,6 +2,7 @@
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useGridStore } from '@/stores/gridStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useInventoryStore } from '@/stores/inventoryStore'
 import { useRouter } from 'vue-router'
 import { S, C } from '@shared/protocol.js'
 
@@ -10,9 +11,10 @@ const WS_CONNECT_MS    = 10_000   // 10s to get WS open
 
 export function useGridLogin() {
 	const { connect, on, off, emit, connected } = useRealtimeSocket()
-	const gridStore    = useGridStore()
-	const sessionStore = useSessionStore()
-	const router       = useRouter()
+	const gridStore     = useGridStore()
+	const sessionStore  = useSessionStore()
+	const inventoryStore = useInventoryStore()
+	const router        = useRouter()
 
 	// WHY: Ask server whether a live circuit exists for this user WITHOUT triggering login.
 	// Returns true if the server still holds the circuit (within 15s hold window after WS drop).
@@ -99,6 +101,8 @@ export function useGridLogin() {
 				off(S.LOGIN_OK,   onOk)
 				off(S.LOGIN_FAIL, onFail)
 				sessionStore.setSession({ ...d, username })
+				// WHY: folder skeleton ships in LOGIN_OK (fresh + resume) — populate the tree now.
+				inventoryStore.loadFromLogin(d)
 				gridStore.setLoginState('connected')
 				router.push('/world')
 				resolve(d)

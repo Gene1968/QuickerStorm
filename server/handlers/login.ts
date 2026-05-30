@@ -122,6 +122,12 @@ export async function handleLogin(
 		regionSizeY,
 		startLocation: loginResult.start_location ?? start,
 		agentAccess:   loginResult.agent_access ?? '',
+		// WHY: folder tree comes free in the login response — ship it so the Inventory floater
+		// renders immediately. Items are fetched per-folder later via FetchInventoryDescendents2.
+		inventoryRoot:        loginResult.inventory_root ?? '',
+		inventorySkeleton:    loginResult.inventory_skeleton ?? [],
+		inventoryLibRoot:     loginResult.inventory_lib_root ?? '',
+		inventorySkeletonLib: loginResult.inventory_skeleton_lib ?? [],
 	}
 
 	const fullName = [loginResult.first_name, loginResult.last_name].filter(Boolean).join(' ')
@@ -296,24 +302,9 @@ export async function handleLogin(
 			}
 		}, 10_000)
 
-		// Notify browser — includes all session data from login response
-		ws.send(JSON.stringify({
-			t: S.LOGIN_OK,
-			d: {
-				agentId:       loginResult.agent_id,
-				sessionId:     loginResult.session_id,
-				simIp:         loginResult.sim_ip,
-				simPort:       loginResult.sim_port,
-				seedCap:       loginResult.seed_capability,
-				regionName:    loginResult.region_name ?? '',
-				regionX:       loginResult.region_x ?? 0,
-				regionY:       loginResult.region_y ?? 0,
-				regionSizeX,
-				regionSizeY,
-				startLocation: loginResult.start_location ?? start,
-				agentAccess:   loginResult.agent_access ?? '',
-			},
-		}))
+		// Notify browser — reuse cachedLoginOk so the fresh + resume payloads can't drift
+		// (it already carries session data + the inventory skeleton).
+		ws.send(JSON.stringify({ t: S.LOGIN_OK, d: cachedLoginOk }))
 	})
 }
 
