@@ -219,8 +219,8 @@ const server = Bun.serve<WSData>({
 					break
 				}
 				case C.INV_FETCH_FOLDER: {
-					const d = msg.d as { folderId: string }
-					handleInventoryFetch(circuitId, d.folderId)
+					const d = msg.d as { folderId?: string; folderIds?: string[] }
+					handleInventoryFetch(circuitId, d.folderIds ?? (d.folderId ? [d.folderId] : []))
 					break
 				}
 				default:

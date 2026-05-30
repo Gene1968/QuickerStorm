@@ -58,6 +58,35 @@ const FOLDER_ICONS = {
 export const FOLDER_FAVORITES      = 23
 export const FOLDER_CURRENT_OUTFIT  = 46
 
+// Type-filter dropdown options (FS "Filter: All Types ▾"). `types` lists matching AssetTypes.
+export const TYPE_FILTERS = [
+	{ id: 'all',          label: 'All Types',     types: null },
+	{ id: 'animations',   label: 'Animations',    types: [20] },
+	{ id: 'bodyparts',    label: 'Body Parts',    types: [13] },
+	{ id: 'callingcards', label: 'Calling Cards', types: [2] },
+	{ id: 'clothing',     label: 'Clothing',      types: [5] },
+	{ id: 'gestures',     label: 'Gestures',      types: [21] },
+	{ id: 'landmarks',    label: 'Landmarks',     types: [3] },
+	{ id: 'materials',    label: 'Materials',     types: [57] },
+	{ id: 'meshes',       label: 'Meshes',        types: [49] },
+	{ id: 'notecards',    label: 'Notecards',     types: [7] },
+	{ id: 'objects',      label: 'Objects',       types: [6] },
+	{ id: 'scripts',      label: 'Scripts',       types: [10, 11] },
+	{ id: 'settings',     label: 'Settings',      types: [56] },
+	{ id: 'sounds',       label: 'Sounds',        types: [1] },
+	{ id: 'textures',     label: 'Textures',      types: [0] },
+]
+
+export function typeFilterLabel(id) {
+	return (TYPE_FILTERS.find(t => t.id === id) || TYPE_FILTERS[0]).label
+}
+
+export function itemMatchesType(item, typeId) {
+	if (!typeId || typeId === 'all') return true
+	const f = TYPE_FILTERS.find(t => t.id === typeId)
+	return !!(f && f.types && f.types.includes(item.assetType))
+}
+
 export function itemIcon(assetType, invType) {
 	return ITEM_ICONS[assetType] ?? INVTYPE_ICONS[invType] ?? '📄'
 }

@@ -4,6 +4,7 @@
 // cap (Phase 3 slice 2) and dropped into `items` by folderId.
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { itemMatchesType } from '@/utils/inventoryIcons'
 
 export const useInventoryStore = defineStore('inventory', () => {
 	// folders: Map<folderId, { folderId, parentId, name, typeDefault, version, source }>
@@ -16,8 +17,11 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const fetching  = ref(new Set())  // folderIds with an in-flight fetch
 	const caps      = ref(new Set())  // HTTP cap names the sim offered (after seed-cap fetch)
 	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2'))
-	const filterText = ref('')        // tree search box (matches folder + loaded item names)
+	const filterText = ref('')        // tree search box (matches folder + loaded item names + perms)
 	const filtering  = computed(() => filterText.value.trim().length > 0)
+	const typeFilter = ref('all')     // TYPE_FILTERS id; 'all' = no type restriction
+	const selectedId = ref('')        // selected folder/item id (drives footer + highlight)
+	const filtersActive = computed(() => filtering.value || typeFilter.value !== 'all')
 
 	function loadFromLogin(d) {
 		const m = new Map()
@@ -34,6 +38,8 @@ export const useInventoryStore = defineStore('inventory', () => {
 		// WHY: caps belong to the session — re-armed by the CAPS_READY message after each login.
 		caps.value      = new Set()
 		filterText.value = ''
+		typeFilter.value = 'all'
+		selectedId.value = ''
 	}
 
 	// Direct child folders of a folder, sorted to match Firestorm's default inventory order
@@ -86,12 +92,42 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// ── Filter matching (folder names always available; item names only once fetched) ──
 	function nameMatches(name) { return (name || '').toLowerCase().includes(filterText.value.trim().toLowerCase()) }
 	function folderNameMatches(folderId) { const f = folders.value.get(folderId); return !!f && nameMatches(f.name) }
+
+	// WHY: fold the FS-style "(no copy)(no modify)(no transfer)" tags into the searchable text so
+	// the filter box can find restricted items (e.g. type "no transfer").
+	function itemSearchText(it) {
+		let s = it.name || ''
+		if (it.canCopy === false)     s += ' no copy'
+		if (it.canModify === false)   s += ' no modify'
+		if (it.canTransfer === false) s += ' no transfer'
+		return s
+	}
+	// An item passes the active filters (text + type).
+	function itemVisible(it) {
+		return nameMatches(itemSearchText(it)) && itemMatchesType(it, typeFilter.value)
+	}
 	function folderHasMatch(folderId) {
-		if (!filtering.value) return true
-		if (folderNameMatches(folderId)) return true
-		for (const it of folderItems(folderId)) if (nameMatches(it.name)) return true
+		if (!filtersActive.value) return true
+		// Folder-name text match reveals all contents only when no type restriction is set.
+		if (filtering.value && typeFilter.value === 'all' && folderNameMatches(folderId)) return true
+		for (const it of folderItems(folderId)) if (itemVisible(it)) return true
 		for (const c of childFolders(folderId)) if (folderHasMatch(c.folderId)) return true
 		return false
+	}
+
+	function select(id) { selectedId.value = id }
+
+	// Recursive descendant counts (items + subfolders) for the FS "(items/folders)" badge + footer.
+	function descendantCounts(folderId) {
+		let items = folderItems(folderId).length
+		let foldersN = 0
+		for (const c of childFolders(folderId)) {
+			foldersN++
+			const d = descendantCounts(c.folderId)
+			items += d.items
+			foldersN += d.folders
+		}
+		return { items, folders: foldersN }
 	}
 
 	// Store fetched folder contents (from FetchInventoryDescendents2).
@@ -110,14 +146,41 @@ export const useInventoryStore = defineStore('inventory', () => {
 		return n
 	})
 
+	// ── Agent-scoped totals (exclude the shared Library, like Firestorm's "My Inventory" count) ──
+	const agentFolderIds = computed(() => {
+		const out = []
+		folders.value.forEach(f => { if (f.source === 'agent') out.push(f.folderId) })
+		return out
+	})
+	const agentFolderCount  = computed(() => agentFolderIds.value.length)
+	const agentItemCount    = computed(() => {
+		let n = 0
+		for (const id of agentFolderIds.value) { const l = items.value.get(id); if (l) n += l.length }
+		return n
+	})
+	const agentFetchedCount = computed(() => {
+		let n = 0
+		for (const id of agentFolderIds.value) if (fetched.value.has(id)) n++
+		return n
+	})
+	// True once every agent folder's items have been fetched → grand total is exact (FS-style).
+	const allAgentFetched = computed(() => agentFolderCount.value > 0 && agentFetchedCount.value >= agentFolderCount.value)
+
+	// Agent folders still needing a fetch (for the background bulk loader).
+	function pendingAgentFolders() {
+		return agentFolderIds.value.filter(id => !fetched.value.has(id) && !fetching.value.has(id))
+	}
+
 	function clear() { loadFromLogin(null) }
 
 	return {
 		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady,
-		filterText, filtering,
+		filterText, filtering, typeFilter, selectedId, filtersActive,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, toggle, expandAll, collapseAll, findSystemFolder,
-		nameMatches, folderNameMatches, folderHasMatch,
+		nameMatches, folderNameMatches, folderHasMatch, itemVisible, select, descendantCounts,
 		setItems, folderCount, itemCount, clear,
+		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
+		pendingAgentFolders,
 	}
 })

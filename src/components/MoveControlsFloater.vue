@@ -89,7 +89,7 @@ function selectMode(m) {
 		id="move"
 		title="🚶 Movement"
 		:wrap-style="{ width: '10rem', resize: 'both' }"
-		:default-pos="{ left: '17.65vw', bottom: '2.5rem' }"
+		:default-pos="{ left: '15.35vw', bottom: '2.5rem' }"
 		@close="ui.toggleMoveControls()"
 		class="min-w-[10rem] min-h-[10.5rem]"
 	>

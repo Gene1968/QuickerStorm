@@ -25,7 +25,7 @@ export const C = {
 	MAP_QUERY:      'map_query',      // { minX, maxX, minY, maxY } — MapBlockRequest range
 	MAP_NAME_QUERY: 'map_name_query', // { name } — MapNameRequest by region name
 	MAP_TELEPORT:   'map_teleport',   // { regionX, regionY, x, y, z } — TeleportLocationRequest to (regionX*256+x,...)
-	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } — fetch a folder's items via FetchInventoryDescendents2 cap
+	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } or { folderIds:[] } — fetch folder item(s) via FetchInventoryDescendents2 cap (batched)
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────

@@ -131,7 +131,7 @@ function close() {
 					:key="t.id"
 					:title="t.hint"
 					:disabled="t.disabled"
-					class="flex-1 min-w-0 px-1.5 py-1 text-[0.65rem] rounded border transition-colors truncate"
+					class="ui-btn flex-1 min-w-0 px-1.5 py-1 text-[0.65rem] rounded border transition-colors truncate"
 					:class="t.disabled
 						? 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'
 						: ui.gizmoMode === t.mode && t.id !== 'edit'
@@ -285,9 +285,9 @@ function close() {
 
 				<!-- Texture ─────────────────────────────────────────────── -->
 				<!-- WHY: FS-parity layout (read-only Phase 2). Slots correspond to libomv
-				     TextureEntry fields — texture UUID, RGBA color, RepeatU/V, OffsetU/V,
-				     Rotation, Glow, Bumpiness, Shininess. Wired through in Phase 3 when
-				     J2C decode + perms land. -->
+					TextureEntry fields — texture UUID, RGBA color, RepeatU/V, OffsetU/V,
+					Rotation, Glow, Bumpiness, Shininess. Wired through in Phase 3 when
+					J2C decode + perms land. -->
 				<template v-else-if="activeTab === 'texture'">
 					<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-[0.7rem]">
 						<div class="text-white/50 self-center">Texture</div>
@@ -359,7 +359,7 @@ function close() {
 
 				<!-- Content ─────────────────────────────────────────────── -->
 				<!-- WHY: FS-parity layout. Phase 2: empty inventory placeholder + disabled
-				     New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
+					New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
 				<template v-else-if="activeTab === 'content'">
 					<div class="flex items-center gap-1 pb-1">
 						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>

@@ -39,8 +39,8 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 **🟡 Partially working**
 - [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision & objects so you don't silently bump into invisible prims.
 - [~] **Map** — 80%. Pannable, smooth wheel zoom (zoom-toward-cursor, zoom 1–8 = 2–256 regions across), click to select (red disc + zoom-immune label), dbl-click TP, hovertip, search w/auto-retry, G/M/A maturity badges, ground-aware Z (flying preserves altitude). Real region snapshot tiles, agent dots on map, friends layer, Go Home, landmarks — Phase 3 cap-dependent.
-- [~] Nearby chat — 75%.  Sending and receiving works, emojis added. Deliberating: transcript, muted transcript, options and search, tear-off, close
-- [~] **Instant Messaging (IM)** — 60%.  Sending and receiving works, emojis added. Need some of the 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
+- [~] Nearby chat — 75%.  Sending and receiving works, emoji picker/recent added. Deliberating: transcript, muted transcript, options and search, tear-off, close
+- [~] **Instant Messaging (IM)** — 60%.  Sending and receiving works, emoji picker/recent added. Need some of the 10+ toolbar buttons, voice. `ImprovedInstantMessage` is pure LLUDP, no HTTP cap needed
 - [~] Scene — 55%.  Terrain & ocean to horizon are great. No neighboring sims yet. No environment / light sources
 - [~] Menus/floaters — 60%.  Some disabled placeholders as we implement features
 - [~] Minimap — 65%.  Good as a compass, shows avies, dbl-click teleports within current region
@@ -50,7 +50,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [~] **Right-click object menu (subset)** — 30%.  Edit (basic), Inspect (mock), Touch, Sit?? (no Take/Delete yet — those need Phase 3 caps)
 - [~] **Object Edit floater** - 30%.   Object Properties + TransformControls + `MultipleObjectUpdate`
 
-**🔜 Phase 2 finishing items**
+**🔜 Phase 3 finishing items**
 - [ ] **Hollow / PathScale / Shear / Skew / RadiusOffset** prim params decoded but not yet applied to geometry (Sculpt prims still bounding-box; full sculpt is Phase 3)
 - [ ] **Neighboring-sim terrain** — render adjacent regions at ±regionSize offset (EnableSimulator + second circuit / cap fetch)
 - [ ] **Object face raycast picking** — currently picks bounding box; need per-triangle for correct Edit selection
@@ -58,9 +58,9 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [ ] **Voice (WebRTC ↔ sim VoIP)** — peer signaling works; gateway wire-up + spatial pan still TODO
 
 **🔜 Up next later — Phase 3 ("real assets + social", HTTP caps)**
-- [ ] **Media** sound assets first, object/script sounds, parcel media, stream audio, object texture video media
-- [ ] **Friends / Contacts** floater with online status, IM, profile, teleport-to (with rights)
 - [ ] **Inventory viewing** via `FetchInventoryDescendents2` cap; folder tree + item icons
+- [ ] **Friends / Contacts** floater with online status, IM, profile, teleport-to (with rights)
+- [ ] **Media** sound assets first, object/script sounds, parcel media, stream audio, object texture video media
 - [ ] Object script basics - touch, hovertext, rotate, general LSL functions
 - [ ] Scripting textures behavior and advanced
 - [ ] HTTP-capability client foundation (LLSD-XML over Bun proxy)
@@ -72,6 +72,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [ ] **Places floater** — Favorites, drag, manages favorites bar.  Landmark list, add, delete, sort by date.  Teleport history (alt+h toggle), TP, copy SLurl, remove, clear, position, date.  Filter, detail view/Back, TP, show on map, region image
 - [ ] Right-click object **Edit / Take / Copy / Delete / Export** (perms + caps)
 - [ ] Web-on-prim (`ObjectMedia` cap)
+- [ ] Transfer inventory, drop, folder of 42, CMT?
 
 **⚠️ May be tricky**
 - Cross-region teleport — requires tearing down and rebuilding the UDP circuit mid-session

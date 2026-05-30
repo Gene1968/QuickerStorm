@@ -173,7 +173,8 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 
 
 	/* ── Floaters UI elements ────────────────────────────────────────────────────────── */
-	:where(.floater button:not(.custom)) {
+	:where(.floater button:not(.custom)),
+	.ui-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;

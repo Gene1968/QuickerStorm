@@ -144,7 +144,7 @@ onUnmounted(() => {
 			<div class="pf-body">
 
 				<!-- Left: vertical tab strip -->
-				<nav class="pf-tabnav">
+				<nav class="vtabs pf-tabnav">
 					<button
 						v-for="tab in visibleTabs"
 						:key="tab.id"
