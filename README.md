@@ -7,7 +7,9 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 
 ## Current state · May 2026
 
-**Phase 2 ship status:** nearly done. Prim rendering resolved (1500–1800 prims/region), Map 2D + cross-region TP shipped, terrain + ocean horizon stable. Last remaining must-have item is neighbor-sim terrain (currently accepting seamless 8 km ocean horizon as substitute).
+**Phase 2 ship status:** done. Prim rendering resolved (1500–1800 prims/region), Map 2D + cross-region TP shipped, terrain + ocean horizon stable. Avatar/object right-click menus + IM + child-prim linksets + hovertext all in. Only deferred must-have is neighbor-sim terrain (accepting seamless 8 km ocean horizon as substitute) + voice (Phase 2.5).
+
+**Phase 3 started:** HTTP-capability foundation live (LLSD-XML parser, full cap dictionary, server-side cap proxy) and the first payload — **Inventory** — is browsing-complete (folder tree + items via `FetchInventoryDescendents2`). Textures (`GetTexture` → J2C) is the next lever.
 
 **✨ Parts already better than some other clients:**
 - Resumes your grid session after a brief network drop or page reload. (no re-login). Useful 'Recsync World' feature
@@ -36,6 +38,17 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [x] Bump into other avatars
 - [x] Always Run toggle, terrain step-up tolerance, anti-fall safety
 
+**📦 Inventory — view/browse (Phase 3, ~70%)**
+- [x] Folder tree from the login skeleton (instant, no cap) — FS sort order (system folders to top, then alphabetical)
+- [x] Folder contents (items) via `FetchInventoryDescendents2` cap — lazy on expand + paced background bulk load of the whole inventory
+- [x] **Accurate total** — `N,NNN Elements` footer once bulk load completes; per-folder `(items/folders)` count on the selected folder
+- [x] Type icons (textures, scripts, objects, landmarks, animations, …); folder-type icons
+- [x] Search filter (folder + item names) — **searchable permission tags** ("no copy/modify/transfer")
+- [x] Type filter dropdown; sort by Name/Date/Type in the cog menu
+- [x] Favorites / Worn (Current Outfit) / Recent tabs from system folders
+- [x] Right-click menu — Properties, Copy Item/Asset/Folder UUID; Properties popover (type, UUIDs, perms, created date)
+- [ ] Drag/move, rename, wear/attach, thumbnails (need move + texture caps)
+
 **🟡 Partially working**
 - [~] Movement — 90%.  Inputs send correctly, you see your coords update, dead-reckoning matched to SL physics (3.2 m/s walk, 5.2 m/s run, 11 m/s fly). Initial yaw seeded from sim. Still missing: collision & objects so you don't silently bump into invisible prims.
 - [~] **Map** — 80%. Pannable, smooth wheel zoom (zoom-toward-cursor, zoom 1–8 = 2–256 regions across), click to select (red disc + zoom-immune label), dbl-click TP, hovertip, search w/auto-retry, G/M/A maturity badges, ground-aware Z (flying preserves altitude). Real region snapshot tiles, agent dots on map, friends layer, Go Home, landmarks — Phase 3 cap-dependent.
@@ -58,13 +71,13 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 - [ ] **Voice (WebRTC ↔ sim VoIP)** — peer signaling works; gateway wire-up + spatial pan still TODO
 
 **🔜 Up next later — Phase 3 ("real assets + social", HTTP caps)**
-- [ ] **Inventory viewing** via `FetchInventoryDescendents2` cap; folder tree + item icons
+- [x] **HTTP-capability client foundation** — LLSD-XML parser, full cap dictionary from seed cap, server-side cap proxy (cap URLs never leave the server)
+- [x] **Inventory viewing** via `FetchInventoryDescendents2` cap — see the Inventory section above
 - [ ] **Friends / Contacts** floater with online status, IM, profile, teleport-to (with rights)
 - [ ] **Media** sound assets first, object/script sounds, parcel media, stream audio, object texture video media
 - [ ] Object script basics - touch, hovertext, rotate, general LSL functions
 - [ ] Scripting textures behavior and advanced
-- [ ] HTTP-capability client foundation (LLSD-XML over Bun proxy)
-- [ ] **Texture asset pipeline** — `GetTexture` cap → J2C (JPEG2000) decode in browser → real prim textures
+- [ ] **Texture asset pipeline** — `GetTexture` cap → J2C (JPEG2000) decode in browser → real prim textures + inventory thumbnails (next up; cap already in the dictionary)
 - [ ] **Texture Inspect floater** — per-face UUID, dimensions, repeat/offset
 - [ ] **Mesh export/import** via `GetMesh2` cap; Both Dae and GLTF/OBJ on the export side
 - [ ] **Groups** + **Group IM** (group chat is `ChatSessionRequest` cap + IM hybrid)

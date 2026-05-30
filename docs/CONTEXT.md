@@ -20,8 +20,8 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
 │  (Vite, Three.js) │                 │  (server/*.ts)     │             │  (OpenSim)  │
 └───────────────────┘                 └────────────────────┘             └─────────────┘
                                              │
-                                             ├── XML-RPC login proxy → grid login URI
-                                             └── (Phase 3) HTTP capability proxy → seed cap URLs
+                                             ├── XML-RPC login proxy → grid login URI (also parses inventory skeleton)
+                                             └── HTTP capability proxy → seed-cap dict + LLSD caps (FetchInventoryDescendents2, GetTexture, …)
 ```
 
 - **Frontend**: Vue 3 SPA, hash-based routing for SharePoint/standalone embed.
@@ -68,7 +68,8 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | `worldStore` | Scene state: `objects` (Map of localId → ObjectData), `terrainHeights` (Float32Array 513×513), `avatarPos`, `spawnPos` |
 | `mapStore` | World Map cache: `regions` (Map keyed `"x,y"` of MapBlockReply records), `viewCenterX/Y`, `viewZoom` (1..8 float), `queriedChunks` (60s TTL dedup) |
 | `gridStore` | Grid selection, loginState (`disconnected | reconnecting | live`) |
-| `uiStore` | Floater stack, cameraYaw, debug toggles |
+| `uiStore` | Floater stack, cameraYaw, debug toggles, multi-instance inventory floater state |
+| `inventoryStore` | Inventory tree: `folders` (Map from login skeleton), `items` (Map folderId→items, fetched via cap), `caps`/`capsReady`, filter/type/sort/selection, recursive `descendantCounts`, agent-scoped totals |
 | `debugStore` | Live ring buffer of debug messages for the in-page debug panel |
 | `theme` | Light/dark toggle, shared `isDark` ref |
 
@@ -86,7 +87,13 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | `src/composables/useProximityVoice.js` | WebRTC voice (Phase 2 wire-up pending) |
 | `src/composables/useTheme.js` | Light/dark toggle |
 | `src/composables/useVersionCheck.js` | Polls `version.json` every 5 min; shows reload banner on new build |
+| `src/composables/useInventory.js` | Inventory cap driver: lazy folder fetch on expand + paced background bulk load (`fetchAll`); handles `S.INV_FOLDER`/`S.CAPS_READY` |
+| `src/components/InventoryFloater.vue` | Inventory UI — tabs, filter/type/sort, footer totals, cog menu. Tree rows via recursive `InventoryTreeNode.vue`. Right-click `InventoryContextMenu.vue` + `InventoryItemProperties.vue` |
 | `server/index.ts` | Bun WS + HTTP server entry |
+| `server/handlers/inventory.ts` | `FetchInventoryDescendents2` cap (batched folders) → typed item JSON. Cap URL resolved server-side; never sent to client |
+| `server/handlers/caps.ts` | Generic CORS cap-fetch proxy (`C.CAPS_FETCH` → `S.CAPS_RESULT`) |
+| `server/lib/llsd.ts` | LLSD-XML parser (map/array/all leaf types) for cap responses |
+| `server/lib/xmlrpc.ts` | Login proxy + login-response parse, incl. `parseInventorySkeleton`/`parseInventoryRoot` (folder tree comes free at login) |
 | `server/handlers/lludp.ts` | UDP → WS relay: decodes incoming LLUDP, forwards to browser; receives outgoing messages |
 | `server/lib/lludp-codec.ts` | Wire-format encoders/decoders for every LLUDP message we speak |
 | `server/lib/terrain-codec.ts` | LayerData terrain patch decoder (libomv BitPack format, prefix-code coefficients) |
