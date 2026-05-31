@@ -49,8 +49,11 @@ export const useUiStore = defineStore('ui', () => {
 	const showPlaces         = ref(false)    // Places floater (landmarks + favorites)
 	const placesActiveTab    = ref('favorites') // 'favorites' | 'landmarks' | 'history'
 	const preferenceActiveTab = ref('appearance') // active tab id in Preferences floater
-	const showProfile        = ref(false)    // profile floater
-	const profileTargetId    = ref(null)     // null = self; UUID string = other user
+	// WHY: Profile is multi-instance — open several at once for different users (mirrors inventory).
+	// Each entry is a target id: null = self, UUID string = other user. Order = open order.
+	const profileInstances   = ref([])
+	const showProfile        = computed(() => profileInstances.value.includes(null)) // self-open (toolbar active state)
+	const profileTargetId    = ref(null)     // map-centering target (set by Conversations actMap/imMap) — NOT the profile floater source
 	const showCreateLandmark = ref(false)    // "Create Landmark" dialog (World→Landmark This Place / star)
 	const createLandmarkPrefill = ref(null)  // { name } default for the dialog (region name)
 	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
@@ -126,8 +129,20 @@ export const useUiStore = defineStore('ui', () => {
 		showPreferences.value     = true
 		showQuickPrefs.value      = false
 	}
-	function openProfile(id = null) { profileTargetId.value = id; showProfile.value = true }
-	function toggleProfile()        { showProfile.value = !showProfile.value }
+	// WHY: per-target floater id so each profile has its own focus/z-index + close mapping.
+	function profileFloaterId(id) { return `profile-${id ?? 'self'}` }
+	function openProfile(id = null) {
+		if (!profileInstances.value.includes(id)) profileInstances.value = [...profileInstances.value, id]
+		focusFloater(profileFloaterId(id))
+	}
+	function closeProfile(id = null) {
+		profileInstances.value = profileInstances.value.filter(t => t !== id)
+		floaterStack.value = floaterStack.value.filter(f => f !== profileFloaterId(id))
+	}
+	function toggleProfile() {
+		if (profileInstances.value.includes(null)) closeProfile(null)
+		else openProfile(null)
+	}
 	function openCreateLandmark(prefill = null) { createLandmarkPrefill.value = prefill; showCreateLandmark.value = true }
 	// WHY: push to top of stack on focus; remove+re-add keeps order clean
 	function focusFloater(id) {
@@ -150,7 +165,6 @@ export const useUiStore = defineStore('ui', () => {
 		places:          () => { showPlaces.value        = false },
 		'object-edit':   () => { showObjectEdit.value    = false },
 		preferences:     () => { showPreferences.value   = false },
-		profile:         () => { showProfile.value       = false },
 		'create-landmark': () => { showCreateLandmark.value = false },
 		'movement-help': () => { showMovementHelp.value  = false },
 		quickprefs:      () => { showQuickPrefs.value    = false },
@@ -163,6 +177,12 @@ export const useUiStore = defineStore('ui', () => {
 		if (typeof topId === 'string' && topId.startsWith('inventory-')) {
 			const idx = Number(topId.slice('inventory-'.length))
 			if (Number.isFinite(idx)) closeInventoryAt(idx)
+			return
+		}
+		// WHY: profile ids are 'profile-self' | 'profile-<uuid>' (multi-instance).
+		if (typeof topId === 'string' && topId.startsWith('profile-')) {
+			const key = topId.slice('profile-'.length)
+			closeProfile(key === 'self' ? null : key)
 			return
 		}
 		_FLOATER_CLOSE[topId]?.()
@@ -210,7 +230,7 @@ export const useUiStore = defineStore('ui', () => {
 		showVoiceControls, showMoveControls, showCameraControls,
 		showAppearance, showSearch, showSnapshot, showAO,
 		showMovementHelp, showPlaces, preferenceActiveTab,
-		showProfile, profileTargetId,
+		showProfile, profileTargetId, profileInstances,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleNotifications, toggleSettings, toggleDebug,
 		inventoryInstances, openInventoryAt, closeInventoryAt, toggleInventoryAt, openNextInventory,
@@ -220,7 +240,7 @@ export const useUiStore = defineStore('ui', () => {
 		toggleMovementHelp, togglePlaces, openPlacesOnTab, placesActiveTab, openPreferencesOnTab,
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
-		openProfile, toggleProfile,
+		openProfile, closeProfile, toggleProfile,
 		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,
 		uiVisible, toggleUiVisible, closeActiveFloater,

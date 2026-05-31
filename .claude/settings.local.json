@@ -141,7 +141,10 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)[:5]\\)\")",
       "PowerShell(npx vitest run src/__tests__/ 2>&1 | Select-Object -Last 40)",
       "PowerShell(npx vite build --mode development 2>&1 | Select-Object -Last 20)",
-      "Bash(bun -e ' *)"
+      "Bash(bun -e ' *)",
+      "PowerShell(head *)",
+      "PowerShell(npx vitest run src/__tests__/stores/uiStore.test.js 2>&1 | Select-Object -Last 40)",
+      "PowerShell(npm run *)"
     ]
   }
 }

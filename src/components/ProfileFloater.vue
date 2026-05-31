@@ -2,9 +2,10 @@
 /**
  * ProfileFloater — Firestorm-style profile dialog.
  * Self mode: bio editable. Other mode: read-only except Notes; action buttons shown.
- * Controlled by uiStore.showProfile + uiStore.profileTargetId.
+ * Multi-instance: one floater per open target. `targetId` prop = null (self) or a UUID.
+ * Mounted via v-for over uiStore.profileInstances; closed via uiStore.closeProfile(targetId).
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useUiStore }       from '@/stores/uiStore.js'
 import { useAvatarStore }   from '@/stores/avatarStore.js'
 import { usePresenceStore } from '@/stores/presenceStore.js'
@@ -13,6 +14,13 @@ import { useGridSocialStore } from '@/stores/gridSocialStore.js'
 import { useSocial }        from '@/composables/useSocial.js'
 import { useInstantMessage } from '@/composables/useInstantMessage.js'
 import FloaterWindow        from '@/components/FloaterWindow.vue'
+
+const props = defineProps({
+	// null = self profile; UUID string = another user's profile
+	targetId: { type: String, default: null },
+	// open-order index — staggers the default position so stacked profiles stay legible
+	index:    { type: Number, default: 0 },
+})
 
 const ui       = useUiStore()
 const avatar   = useAvatarStore()
@@ -23,42 +31,42 @@ const { requestProfile, requestNames, offerFriendship, removeFriend } = useSocia
 const im       = useInstantMessage()
 
 // ── Computed ─────────────────────────────────────────────────────────────────
-const isSelf = computed(() => ui.profileTargetId === null)
+const isSelf = computed(() => props.targetId === null)
 
 // Resolved profile fragment for the current target (other users only).
-const profile = computed(() => isSelf.value ? null : social.profileFor(ui.profileTargetId))
-const props   = computed(() => profile.value?.properties ?? null)
+const profile = computed(() => isSelf.value ? null : social.profileFor(props.targetId))
+const avProps = computed(() => profile.value?.properties ?? null)
 
 const displayName = computed(() => {
 	if (isSelf.value) return avatar.displayName
-	return social.nameFor(ui.profileTargetId) || '(Other User)'
+	return social.nameFor(props.targetId) || '(Other User)'
 })
 
 // WHY: agentId from sessionStore is the live grid-assigned UUID (most authoritative for self)
 const profileUUID = computed(() =>
-	isSelf.value ? (session.agentId ?? avatar.authUserId ?? '—') : (ui.profileTargetId ?? '—')
+	isSelf.value ? (session.agentId ?? avatar.authUserId ?? '—') : (props.targetId ?? '—')
 )
 
 // WHY: grid online status — prefer the friend's live OnlineNotification flag, fall back to
 // web-collab presence for users who are in-scene but not grid friends.
 const onlineStatus = computed(() => {
 	if (isSelf.value) return null
-	const friend = social.friendById(ui.profileTargetId)
+	const friend = social.friendById(props.targetId)
 	if (friend) return friend.online ? 'online' : 'offline'
-	const user = presence.users.find(u => u.id === ui.profileTargetId)
+	const user = presence.users.find(u => u.id === props.targetId)
 	return user?.status ?? 'offline'
 })
 
-const isFriend = computed(() => !isSelf.value && social.isFriend(ui.profileTargetId))
+const isFriend = computed(() => !isSelf.value && social.isFriend(props.targetId))
 
 // ── Profile field values ───────────────────────────────────────────────────
-const bornValue    = computed(() => props.value?.bornOn || 'N/A')
+const bornValue    = computed(() => avProps.value?.bornOn || 'N/A')
 const partnerValue = computed(() => {
-	const pid = props.value?.partnerId
+	const pid = avProps.value?.partnerId
 	if (!pid || pid === '00000000-0000-0000-0000-000000000000') return 'None'
 	return social.nameFor(pid) || `${pid.slice(0, 8)}…`
 })
-const aboutValue   = computed(() => props.value?.aboutText || '')
+const aboutValue   = computed(() => avProps.value?.aboutText || '')
 // Groups shown: self → my group list; other → their AvatarGroupsReply groups.
 const shownGroups  = computed(() => isSelf.value ? social.groups : (profile.value?.groups ?? []))
 
@@ -78,47 +86,44 @@ function selectTab(tab) {
 	activeTab.value = tab.id
 }
 
-// ── Fetch profile data when opening another user's profile ──────────────────
-watch(
-	[() => ui.showProfile, () => ui.profileTargetId],
-	([open, id]) => {
-		if (!open || isSelf.value || !id) return
-		requestProfile(id)        // → AvatarProperties/Interests/Groups replies
-		requestNames([id])        // resolve their display name
-	},
-	{ immediate: true },
-)
+// ── Fetch profile data on open (mounted fresh per target) ────────────────────
+onMounted(() => {
+	if (!isSelf.value && props.targetId) {
+		requestProfile(props.targetId)   // → AvatarProperties/Interests/Groups replies
+		requestNames([props.targetId])   // resolve their display name
+	}
+	// Self bio + notes init (other-user notes loaded below too)
+	if (isSelf.value) bioEdit.value = avatar.bio
+	activeTab.value = 'profile'
+	notes.value = localStorage.getItem(notesKey()) ?? ''
+})
 // Resolve partner name once properties arrive.
-watch(() => props.value?.partnerId, (pid) => {
+watch(() => avProps.value?.partnerId, (pid) => {
 	if (pid && pid !== '00000000-0000-0000-0000-000000000000') requestNames([pid])
 })
 
 // ── Actions (gated — change the real grid account) ──────────────────────────
 function actIM() {
 	if (isSelf.value) return
-	im.openWith(ui.profileTargetId, displayName.value)
+	im.openWith(props.targetId, displayName.value)
 	ui.showChat = true
 }
 function actOfferFriend() {
 	if (isSelf.value) return
 	if (window.confirm(`Offer friendship to ${displayName.value}?`)) {
-		offerFriendship(ui.profileTargetId, displayName.value)
+		offerFriendship(props.targetId, displayName.value)
 	}
 }
 function actRemoveFriend() {
 	if (isSelf.value) return
 	if (window.confirm(`Remove ${displayName.value} from your friends? This cannot be undone.`)) {
-		removeFriend(ui.profileTargetId)
+		removeFriend(props.targetId)
 	}
 }
 
 // ── Bio editing (self only) ───────────────────────────────────────────────────
 const bioEdit  = ref('')
 const bioDirty = computed(() => bioEdit.value !== avatar.bio)
-
-watch(() => ui.showProfile, (open) => {
-	if (open) { bioEdit.value = avatar.bio; activeTab.value = 'profile' }
-}, { immediate: true })
 
 async function saveBio()  { await avatar.setBio(bioEdit.value) }
 function  discardBio()    { bioEdit.value = avatar.bio }
@@ -127,15 +132,9 @@ function  discardBio()    { bioEdit.value = avatar.bio }
 const notes = ref('')
 
 function notesKey() {
-	const id = isSelf.value ? (avatar.authUserId ?? 'self') : ui.profileTargetId
+	const id = isSelf.value ? (avatar.authUserId ?? 'self') : props.targetId
 	return `ava_profile_notes_${id}`
 }
-
-watch(
-	[() => ui.showProfile, () => ui.profileTargetId],
-	([open]) => { if (open) notes.value = localStorage.getItem(notesKey()) ?? '' },
-	{ immediate: true }
-)
 
 function saveNotes() {
 	try { localStorage.setItem(notesKey(), notes.value) } catch { /* ignore: private-mode */ }
@@ -144,11 +143,11 @@ function saveNotes() {
 
 <template>
 	<FloaterWindow
-		id="profile"
-		title="Profile"
+		:id="`profile-${targetId ?? 'self'}`"
+		:title="isSelf ? 'My Profile' : `Profile — ${displayName}`"
 		:wrap-style="{ width: '30rem', height: '34rem', resize: 'both' }"
-		:default-pos="{ left: '20%', top: '5%' }"
-		@close="ui.showProfile = false"
+		:default-pos="{ left: `calc(20% + ${index * 1.5}rem)`, top: `calc(5% + ${index * 1.5}rem)` }"
+		@close="ui.closeProfile(targetId)"
 	>
 		<!-- Tab strip -->
 		<div class="flex flex-row border-b border-brd shrink-0 px-2 pt-2 gap-0.5">

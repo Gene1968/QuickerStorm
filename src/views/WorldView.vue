@@ -139,7 +139,12 @@ watch(
 					<MapFloater				v-if="ui.showMap" />
 					<PlacesFloater			v-if="ui.showPlaces" />
 					<ObjectEditFloater		v-if="ui.showObjectEdit" />
-					<ProfileFloater			v-if="ui.showProfile" />
+					<ProfileFloater
+						v-for="(tid, i) in ui.profileInstances"
+						:key="tid ?? 'self'"
+						:target-id="tid"
+						:index="i"
+					/>
 					<SettingsFloater		v-if="ui.showSettings" />
 					<DebugPanel				v-if="ui.showDebug" />
 					<MovementHelpFloater	v-if="ui.showMovementHelp" />
