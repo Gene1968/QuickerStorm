@@ -35,8 +35,10 @@ function onAccountSelect() {
 	if (!grid) return
 	const stored = accountsStore.getPassword(rawUser, grid.nick)
 	if (stored === null) return
-	username.value = rawUser
+	// WHY: selectGrid() fires the selectedNick watcher which blanks username.
+	// Set username and password after selectGrid so they are not overwritten.
 	gridStore.selectGrid(grid.nick)
+	username.value = rawUser
 	password.value = stored
 }
 
