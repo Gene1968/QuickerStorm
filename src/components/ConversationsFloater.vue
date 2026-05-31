@@ -203,7 +203,7 @@ async function submitChat() {
 						<input
 							v-model="contactSearch"
 							type="text"
-							placeholder="Filter friends…"
+							placeholder="Filter friends"
 							class="flex-1 min-w-0 bg-card2 border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 						<span class="text-2xs text-tm shrink-0">{{ social.onlineCount }}/{{ social.friendCount }} online</span>
@@ -284,7 +284,7 @@ async function submitChat() {
 						</div>
 						<button
 							type="submit"
-							class="hidden px-2 py-1 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="px-2 py-1 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>
@@ -339,7 +339,7 @@ async function submitChat() {
 						</div>
 						<button
 							type="submit"
-							class="hidden px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>

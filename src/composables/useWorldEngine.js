@@ -219,6 +219,13 @@ export function useWorldEngine(canvasRef) {
 	// Replacing old snap (ownAvatarSnapPos/ownAvatarPosNeedsApply) with lerp-based follow.
 	let avatarSLPos      = null
 	let followDist       = FOLLOW_DIST
+	// WHY: horizontal dead-reckoning velocity (SL m/s). Ramped toward the desired velocity each
+	// frame so the avatar accelerates on key press and SKIDS to a stop on release — mirroring the
+	// sim's own deceleration. Instant stop left avatarSLPos behind the still-coasting sim, and the
+	// TerseUpdate correction then rubber-banded across that gap.
+	let drVelX = 0, drVelY = 0
+	const DR_ACCEL_RATE = 25  // velocity ramp-up on press (1/s) — reaches speed in ~0.12s
+	const DR_DECEL_RATE = 4   // skid-to-stop decay on release (1/s) — ~0.4s glide, matches sim feel
 	let terseUpdateCount = 0  // diagnostic: confirm TerseUpdates are flowing
 
 	// ── Input state ─────────────────────────────────────────────────────────
@@ -1412,7 +1419,13 @@ export function useWorldEngine(canvasRef) {
 			worldStore.updateObjectPos(obj.localId, pos)
 			// Move the mesh
 			const mesh = meshMap.get(obj.localId)
-			if (mesh) {
+			// WHY: Skip own avatar mesh entirely here. It is driven by the local dead-reckoning
+			// + gravity loop in animate() via direct position.set() every frame. A competing GSAP
+			// tween toward the 10Hz sim pos ran on GSAP's own ticker and fought those per-frame
+			// sets — each overwrote the other mid-flight, producing the local walking jitter.
+			// (Remote FS viewers saw smooth motion because the SENT position is clean.) Own pos
+			// is still corrected softly via the avatarSLPos blend below.
+			if (mesh && obj.localId !== ownAvatarLocalId) {
 				const t = slToThree(pos[0], pos[1], pos[2])
 				// WHY: Avatars get GSAP lerp to smooth 10Hz TerseUpdate jitter into fluid motion.
 				// Prims use direct set — GSAP on many static prims restarts tweens every update
@@ -1444,10 +1457,25 @@ export function useWorldEngine(canvasRef) {
 					avatarSLPos = [...p]
 				} else {
 					const d = Math.hypot(p[0] - avatarSLPos[0], p[1] - avatarSLPos[1], p[2] - avatarSLPos[2])
-					const blend = d > 5 ? 1.0 : 0.4
+					// WHY: while actively moving, trust dead reckoning and do NOT correct toward the
+					// sim's TerseUpdate. The relayed pos lags our prediction by ~round-trip latency, so
+					// blending toward it every 100ms yanked the avatar backward → visible spring-back
+					// (the avatar pulled toward the camera mid-stride). Remote viewers see smooth motion
+					// because the SENT path is clean, so DR is correct — no correction needed in flight.
+					// When idle, ease gently toward the sim to settle out any accumulated drift. Big
+					// deltas (>5m = teleport / hard physics correction) always snap.
+					// Suppress correction while moving OR still skidding (residual DR velocity) —
+					// otherwise the ease toward the lagged sim pos re-introduces a pull the instant
+					// the key is released, mid-coast. Once fully stopped, settle gently.
+					const movingNow = MOVE_KEYS.some(k => keys[k]) || drVelX !== 0 || drVelY !== 0
+					const blend = d > 5 ? 1.0 : (movingNow ? 0 : 0.15)
 					avatarSLPos[0] += (p[0] - avatarSLPos[0]) * blend
 					avatarSLPos[1] += (p[1] - avatarSLPos[1]) * blend
-					avatarSLPos[2] += (p[2] - avatarSLPos[2]) * blend
+					// WHY: on the ground, gravity owns Z — it clamps to terrain every frame. Blending
+					// the sim's Z here too created a 10Hz vertical stair-step that gravity immediately
+					// re-clamped = micro-bob. Only pull Z from the sim while flying (no ground clamp)
+					// or on a large correction.
+					if (isFlying || d > 5) avatarSLPos[2] += (p[2] - avatarSLPos[2]) * blend
 				}
 				worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 				if (firstUpdate) {
@@ -1863,58 +1891,62 @@ export function useWorldEngine(canvasRef) {
 		// → camera frozen, LocationBar coords stall. When TerseUpdates do arrive (physics
 		// corrections, other grids), onTerseUpdate blends them in softly rather than snapping,
 		// preventing the position oscillation that caused the previous removal of dead reckoning.
-		if (avatarSLPos && ownAvatarLocalId && cf) {
-			const hasFwd  = cf & (CTRL_AT_POS | CTRL_AT_NEG)
-			const hasLat  = cf & (CTRL_LEFT_POS | CTRL_LEFT_NEG)
-			const hasVert = cf & (CTRL_UP_POS | CTRL_UP_NEG)
-			if (hasFwd || hasLat || hasVert) {
-				const runSticky = uiStore.alwaysRun
-				const spd  = ((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
-				const lspd = ((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
-				// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
-				const fX = -Math.sin(yaw), fY = Math.cos(yaw)
-				const rX =  Math.cos(yaw), rY = Math.sin(yaw)
-				// WHY: Raycast against scene meshes (prims/avatars) before applying the DR step.
-				// If something is in the way, block that axis and play the bump SFX (rate-limited).
-				// Sim already has us stuck — DR would otherwise march coords through walls and
-				// LocationBar/camera diverge from where everyone else sees us.
-				const dxStep = (cf & CTRL_AT_POS ? fX : 0) - (cf & CTRL_AT_NEG ? fX : 0)
-				                - (cf & CTRL_LEFT_POS ? rX : 0) + (cf & CTRL_LEFT_NEG ? rX : 0)
-				const dyStep = (cf & CTRL_AT_POS ? fY : 0) - (cf & CTRL_AT_NEG ? fY : 0)
-				                - (cf & CTRL_LEFT_POS ? rY : 0) + (cf & CTRL_LEFT_NEG ? rY : 0)
-				const stepMag = Math.hypot(dxStep, dyStep)
-				let blocked = false
-				if (stepMag > 0.001 && (hasFwd || hasLat)) {
-					blocked = checkCollision(dxStep / stepMag, dyStep / stepMag)
+		// WHY: run whenever a control flag is held OR residual skid velocity remains, so the
+		// glide-to-stop keeps integrating after the key is released. Skipped fully at rest to
+		// avoid 60fps store writes while idle.
+		if (avatarSLPos && ownAvatarLocalId && (cf || drVelX !== 0 || drVelY !== 0)) {
+			const runSticky = uiStore.alwaysRun
+			const spd  = ((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
+			const lspd = ((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
+			// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
+			const fX = -Math.sin(yaw), fY = Math.cos(yaw)
+			const rX =  Math.cos(yaw), rY = Math.sin(yaw)
+			// Desired horizontal velocity from the control flags currently held (0 = no move keys).
+			let desX = 0, desY = 0
+			if (cf & CTRL_AT_POS)   { desX += fX * spd;  desY += fY * spd }
+			if (cf & CTRL_AT_NEG)   { desX -= fX * spd;  desY -= fY * spd }
+			if (cf & CTRL_LEFT_POS) { desX -= rX * lspd; desY -= rY * lspd }
+			if (cf & CTRL_LEFT_NEG) { desX += rX * lspd; desY += rY * lspd }
+			const wantMove = desX !== 0 || desY !== 0
+			// WHY: ramp velocity toward the desired vector — fast on press, slow decay on release
+			// (skid). Frame-rate-independent (1 - exp(-rate*dt)). This is what removes the rubber-band:
+			// the avatar coasts to a halt on roughly the same curve the sim uses, so the gap the
+			// TerseUpdate has to correct stays small and the correction no longer snaps.
+			const k = 1 - Math.exp(-(wantMove ? DR_ACCEL_RATE : DR_DECEL_RATE) * dt)
+			drVelX += (desX - drVelX) * k
+			drVelY += (desY - drVelY) * k
+			const vMag = Math.hypot(drVelX, drVelY)
+			if (vMag > 0.02) {
+				// WHY: raycast before stepping. If blocked, kill velocity (sim already has us stuck)
+				// so DR doesn't march coords through walls and diverge from where peers see us.
+				if (checkCollision(drVelX / vMag, drVelY / vMag)) {
+					drVelX = 0; drVelY = 0
+				} else {
+					avatarSLPos[0] += drVelX * dt
+					avatarSLPos[1] += drVelY * dt
 				}
-				if (!blocked) {
-					if (cf & CTRL_AT_POS)   { avatarSLPos[0] += fX * spd  * dt; avatarSLPos[1] += fY * spd  * dt }
-					if (cf & CTRL_AT_NEG)   { avatarSLPos[0] -= fX * spd  * dt; avatarSLPos[1] -= fY * spd  * dt }
-					if (cf & CTRL_LEFT_POS) { avatarSLPos[0] -= rX * lspd * dt; avatarSLPos[1] -= rY * lspd * dt }
-					if (cf & CTRL_LEFT_NEG) { avatarSLPos[0] += rX * lspd * dt; avatarSLPos[1] += rY * lspd * dt }
-				}
-				// WHY: only push Z directly while flying. On the ground the jump impulse
-				// (vertVel = JUMP_VEL) drives vertical motion through the gravity loop, which
-				// produces a real parabolic arc instead of a continuous lift.
-				if (isFlying && (cf & CTRL_UP_POS)) avatarSLPos[2] += SL_FLY_SPEED * dt
-				if (isFlying && (cf & CTRL_UP_NEG)) avatarSLPos[2] -= SL_FLY_SPEED * dt
-				// WHY: clamp to [1, regionSize-1] — prevents walking off the sim edge.
-				// Uses sessionStore.regionSizeX/Y so var regions (e.g. 512×512) work correctly.
-				avatarSLPos[0] = Math.max(1, Math.min(sessionStore.regionSizeX - 1, avatarSLPos[0]))
-				avatarSLPos[1] = Math.max(1, Math.min(sessionStore.regionSizeY - 1, avatarSLPos[1]))
-				avatarSLPos[2] = Math.max(0, avatarSLPos[2])
-				// Move own avatar mesh to predicted position directly (no GSAP tween).
-				// WHY: Dead reckoning runs every animation frame at 60fps. Starting a GSAP
-				// tween with overwrite:true 60×/sec adds tween overhead and can cause micro-stutter.
-				// Direct set is sufficient — the camera lerp already provides smooth visual motion.
-				const ownMesh = meshMap.get(ownAvatarLocalId)
-				if (ownMesh) {
-					const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
-					ownMesh.position.set(t.x, t.y, t.z)
-				}
-				// Update store so LocationBar stays current
-				worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			} else {
+				drVelX = 0; drVelY = 0  // snap to rest below threshold so the idle gate trips
 			}
+			// WHY: only push Z directly while flying. On the ground the jump impulse
+			// (vertVel = JUMP_VEL) drives vertical motion through the gravity loop, which
+			// produces a real parabolic arc instead of a continuous lift.
+			if (isFlying && (cf & CTRL_UP_POS)) avatarSLPos[2] += SL_FLY_SPEED * dt
+			if (isFlying && (cf & CTRL_UP_NEG)) avatarSLPos[2] -= SL_FLY_SPEED * dt
+			// WHY: clamp to [1, regionSize-1] — prevents walking off the sim edge.
+			// Uses sessionStore.regionSizeX/Y so var regions (e.g. 512×512) work correctly.
+			avatarSLPos[0] = Math.max(1, Math.min(sessionStore.regionSizeX - 1, avatarSLPos[0]))
+			avatarSLPos[1] = Math.max(1, Math.min(sessionStore.regionSizeY - 1, avatarSLPos[1]))
+			avatarSLPos[2] = Math.max(0, avatarSLPos[2])
+			// Move own avatar mesh to predicted position directly (no GSAP tween — camera lerp
+			// already provides visual smoothing; a 60fps tween would just add stutter).
+			const ownMesh = meshMap.get(ownAvatarLocalId)
+			if (ownMesh) {
+				const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+				ownMesh.position.set(t.x, t.y, t.z)
+			}
+			// Update store so LocationBar stays current
+			worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 		}
 
 		// ── Gravity + ground clamp ───────────────────────────────────────────────
