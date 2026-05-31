@@ -35,8 +35,9 @@ function onAccountSelect() {
 	if (!grid) return
 	const stored = accountsStore.getPassword(rawUser, grid.nick)
 	if (stored === null) return
-	// WHY: selectGrid() fires the selectedNick watcher which blanks username.
-	// Set username and password after selectGrid so they are not overwritten.
+	// WHY: Vue watchers flush async (next microtask). selectGrid() mutates
+	// selectedNick, which queues the blank-fields watcher. The synchronous
+	// assignments below are the last writes in this frame, so they survive.
 	gridStore.selectGrid(grid.nick)
 	username.value = rawUser
 	password.value = stored
