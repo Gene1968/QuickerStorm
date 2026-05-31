@@ -304,6 +304,16 @@ export function useWorldEngine(canvasRef) {
 			followDist = FOLLOW_DIST
 			isAltOrbit = false
 			isDragging = false
+			// WHY: if orbit entered NaN state (asin clamp was missing in prior sessions or
+			// some other corruption), camera.position is NaN and the follow-camera lerp
+			// can never recover (lerp(NaN, valid, f) = NaN). Hard-snap here clears it.
+			if (camera && !isFinite(camera.position.x)) {
+				const ap = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+				camera.up.set(0, 1, 0)
+				camera.position.set(ap.x + Math.sin(yaw) * followDist, ap.y + FOLLOW_HEIGHT, ap.z + Math.cos(yaw) * followDist)
+				camera.lookAt(ap.x, ap.y + LOOKAT_Y, ap.z)
+				camLookInit = false
+			}
 			e.preventDefault()
 			return
 		}
@@ -343,7 +353,9 @@ export function useWorldEngine(canvasRef) {
 		const dz = camera.position.z - orbitPivot.z
 		const r  = Math.sqrt(dx * dx + dy * dy + dz * dz)
 		orbitRadius = Math.max(2, Math.min(64, r))
-		orbitPitch  = Math.asin(dy / orbitRadius)
+		// WHY: clamp to ±0.99 to prevent Math.asin(>1) → NaN when camera is >radius above
+		// the pivot (e.g. avatar at ground, camera high up); also avoids ±π/2 gimbal lock.
+		orbitPitch  = Math.asin(Math.max(-0.99, Math.min(0.99, dy / orbitRadius)))
 		orbitYaw    = Math.atan2(dx, dz)
 		isAltOrbit  = true
 	}
@@ -406,7 +418,9 @@ export function useWorldEngine(canvasRef) {
 		const dz = camera.position.z - pivot.z
 		const r  = Math.hypot(dx, dy, dz)
 		orbitRadius = Math.max(2, Math.min(128, r))
-		orbitPitch  = Math.asin(dy / orbitRadius)
+		// WHY: same ±0.99 guard as enterOrbit — ocean surface at y=0 with camera high up
+		// gives dy/clamped-radius > 1 → NaN pitch → NaN camera pos → unrecoverable.
+		orbitPitch  = Math.asin(Math.max(-0.99, Math.min(0.99, dy / orbitRadius)))
 		orbitYaw    = Math.atan2(dx, dz)
 		isAltOrbit  = true
 	}
@@ -1848,6 +1862,13 @@ export function useWorldEngine(canvasRef) {
 				t.y + FOLLOW_HEIGHT,
 				t.z + Math.cos(yaw) * followDist,
 			)
+			// WHY: lerp(NaN, valid, f) = NaN forever; hard-snap here so a prior bad orbit
+			// (NaN camera pos) self-heals the first time the follow camera runs.
+			if (!isFinite(camera.position.x)) {
+				camera.up.set(0, 1, 0)
+				camera.position.copy(target)
+				camLookInit = false
+			}
 			const distToTarget = camera.position.distanceTo(target)
 			// WHY: Hard-snap ONLY when explicitly flagged (teleport/spawn). Distance
 			// heuristic removed — Esc-from-orbit can put camera >50m from follow target
