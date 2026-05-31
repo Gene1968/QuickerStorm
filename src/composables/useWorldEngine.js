@@ -1645,10 +1645,22 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function onTerrainPatch(payload) {
-		if (!terrainMesh) return
 		const { layerType, patchSize = 16, patches } = payload
 		if (layerType === 'WATER') return  // water plane height fixed at 20 for Phase 1
+
+		// WHY: always store + count patches regardless of whether the Three.js scene is ready.
+		// Terrain packets arrive during the login sequence, before Vue has mounted the canvas and
+		// initScene() has created terrainMesh. The old guard `if (!terrainMesh) return` dropped
+		// those patches from worldStore entirely — they never landed in terrainHeights or
+		// patchReceived, so rebuildTerrainFromStore() (called at end of initScene) applied zeros
+		// for the missing coords and the diagnostic reported 491/1024 on fresh login even though
+		// the server cache held all 1024. Store always; skip Three.js vertex writes when not ready.
+		for (const { x: px, y: py, heights } of patches) {
+			worldStore.setTerrainPatch(px, py, heights, patchSize)
+		}
 		_scheduleMissingPatchDump()
+
+		if (!terrainMesh) return  // Three.js scene not ready — rebuildTerrainFromStore() picks these up on initScene
 
 		const pos     = terrainMesh.geometry.attributes.position
 		const col     = terrainMesh.geometry.attributes.color
@@ -1658,9 +1670,6 @@ export function useWorldEngine(canvasRef) {
 		const vStride = rx + 1
 
 		for (const { x: px, y: py, heights } of patches) {
-			// Store in worldStore for remount persistence
-			worldStore.setTerrainPatch(px, py, heights, patchSize)
-
 			// WHY: Update (patchSize+1)×(patchSize+1) vertices to fill seam between patches.
 			// Clamped height index prevents reading out-of-bounds on the patch edge.
 			// iy=ry-slY: see rebuildTerrainFromStore — PlaneGeometry orientation requires

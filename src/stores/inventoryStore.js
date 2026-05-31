@@ -3,17 +3,26 @@
 // response). Folder CONTENTS (items) are fetched lazily per-folder via the FetchInventoryDescendents2
 // cap (Phase 3 slice 2) and dropped into `items` by folderId.
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, shallowRef, triggerRef, computed } from 'vue'
 
 export const useInventoryStore = defineStore('inventory', () => {
 	// folders: Map<folderId, { folderId, parentId, name, typeDefault, version, source }>
 	const folders   = ref(new Map())
 	const rootId    = ref('')   // agent root ("My Inventory")
 	const libRootId = ref('')   // shared Library root
-	const items     = ref(new Map())  // Map<folderId, Item[]> — filled by cap fetch
-	const expanded  = ref(new Set())  // folderIds currently expanded in the tree
-	const fetched   = ref(new Set())  // folderIds whose contents have been fetched
-	const fetching  = ref(new Set())  // folderIds with an in-flight fetch
+	const items     = shallowRef(new Map())  // Map<folderId, Item[]> — filled by cap fetch
+	const expanded  = ref(new Set())         // folderIds currently expanded in the tree
+	const fetched   = shallowRef(new Set())  // folderIds whose contents have been fetched
+	const fetching  = shallowRef(new Set())  // folderIds with an in-flight fetch
+
+	// WHY: batch Vue reactivity triggers — many WS messages arrive per tick (40+ folder responses).
+	// Instead of triggering N full re-renders, mutate in-place and flush once per microtask.
+	let _trigPending = false
+	function _schedTrigger() {
+		if (_trigPending) return
+		_trigPending = true
+		Promise.resolve().then(() => { _trigPending = false; triggerRef(items); triggerRef(fetched); triggerRef(fetching) })
+	}
 	const caps      = ref(new Set())  // HTTP cap names the sim offered (after seed-cap fetch)
 	// WHY: grids name the descendents cap differently (modern vs legacy). Accept either.
 	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2') || caps.value.has('WebFetchInventoryDescendents'))
@@ -64,7 +73,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 	function isFetched(id)         { return fetched.value.has(id) }
 	function isFetching(id)        { return fetching.value.has(id) }
 
-	function markFetching(id) { fetching.value = new Set(fetching.value).add(id) }
+	function markFetching(id) { fetching.value.add(id); _schedTrigger() }
 	function setCaps(names) { caps.value = new Set(names || []) }
 
 	function toggle(id) {
@@ -114,10 +123,9 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (!favId) return
 		const list = items.value.get(favId) || []
 		if (list.some(i => i.itemId === item.itemId)) return
-		const m = new Map(items.value)
-		m.set(favId, [...list, { ...item, parentId: favId }])
-		items.value = m
-		if (!fetched.value.has(favId)) fetched.value = new Set(fetched.value).add(favId)
+		items.value.set(favId, [...list, { ...item, parentId: favId }])
+		fetched.value.add(favId)
+		_schedTrigger()
 	}
 
 	// Recursive descendant counts (items + subfolders) for the FS "(items/folders)" badge + footer.
@@ -134,12 +142,13 @@ export const useInventoryStore = defineStore('inventory', () => {
 	}
 
 	// Store fetched folder contents (from FetchInventoryDescendents2).
+	// WHY: mutate in-place + deferred trigger — avoids O(n) Map copy per response and collapses
+	// 40+ concurrent WS messages into one Vue re-render per microtask tick.
 	function setItems(folderId, list) {
-		const m = new Map(items.value)
-		m.set(folderId, list || [])
-		items.value = m
-		fetched.value = new Set(fetched.value).add(folderId)
-		const fset = new Set(fetching.value); fset.delete(folderId); fetching.value = fset
+		items.value.set(folderId, list || [])
+		fetched.value.add(folderId)
+		fetching.value.delete(folderId)
+		_schedTrigger()
 	}
 
 	const folderCount = computed(() => folders.value.size)
@@ -178,14 +187,13 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// so a fresh landmark shows up immediately without a re-fetch. De-dupes by itemId.
 	function addCreatedItems(list) {
 		if (!Array.isArray(list) || !list.length) return
-		const m = new Map(items.value)
 		for (const it of list) {
 			if (!it?.parentId) continue
-			const cur = m.get(it.parentId) || []
+			const cur = items.value.get(it.parentId) || []
 			if (cur.some(x => x.itemId === it.itemId)) continue
-			m.set(it.parentId, [...cur, it])
+			items.value.set(it.parentId, [...cur, it])
 		}
-		items.value = m
+		_schedTrigger()
 	}
 
 	// Optimistically add a folder the client just asked the sim to create (CreateInventoryFolder

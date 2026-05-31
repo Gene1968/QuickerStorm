@@ -63,7 +63,7 @@ function onChange(e) {
 			target="_blank"
 			rel="noopener noreferrer"
 			class="px-2 py-2 rounded border border-brd bg-accent2 text-white hover:opacity-80 transition-colors text-sm"
-			title="Grid website"
+			title="Visit the grid's website"
 		>↗</a>
 	</div>
 

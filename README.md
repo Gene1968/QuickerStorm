@@ -12,9 +12,9 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 **Phase 3 started:** HTTP-capability foundation live (LLSD-XML parser, full cap dictionary, server-side cap proxy) and the first payload — **Inventory** — is browsing-complete (folder tree + items via `FetchInventoryDescendents2`). Textures (`GetTexture` → J2C) is the next lever.
 
 **✨ Parts already better than some other clients:**
-- Resumes your grid session after a brief network drop or page reload. (no re-login). Useful 'Recsync World' feature
-- Clean avatar logout — actually works. Takes some 2-way comm but not sure why others never had this
-- More sensible multi- inventory floaters (not that they can be used yet)
+- Truly resumes your grid session after a brief network drop or page reload, often no re-login needed. Useful 'Resync World' feature if it bugs out
+- Clean avatar logout — it actually works. Takes some 2-way comm but not sure why others never had this for switching to your alts
+- Somewhat more sensible multi-floaters for inventory (can view now, working on asset management and usage)
 
 ---
 

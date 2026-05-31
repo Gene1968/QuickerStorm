@@ -330,8 +330,8 @@ onUnmounted(() => {
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
-				class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none"
-			>{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
+				class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none flex items-center gap-1"
+			><Loader2Icon v-if="!inv.allAgentFetched" class="shrink-0 animate-spin opacity-60" :size="10" />{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
 			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon /></button>
 		</div>
 	</FloaterWindow>
