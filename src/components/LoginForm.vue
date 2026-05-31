@@ -3,6 +3,8 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useGridLogin } from '@/composables/useGridLogin'
 import { useGridStore } from '@/stores/gridStore'
 import { useAccountsStore } from '@/stores/accountsStore'
+import { ChevronDownIcon } from '@lucide/vue'
+import GridSelector from '@/components/GridSelector.vue'
 
 const { login }		= useGridLogin()
 const gridStore		= useGridStore()
@@ -124,15 +126,15 @@ async function submit() {
 				ref="usernameInputRef"
 				v-model="username"
 				type="text"
-				placeholder="First Last"
+				placeholder="Username - First Last (grid)"
 				autocomplete="new-password"
-				class="reset-input w-full px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+				class="relative reset-input w-full px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 				required
 				@focus="openAccountSuggestions"
 				@input="openAccountSuggestions"
 				@blur="closeAccountSuggestions"
 				@keydown.escape="closeAccountSuggestions"
-			/>
+			><ChevronDownIcon class="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4" /></input>
 			<ul
 				v-if="showAccountSuggestions && filteredAccounts.length"
 				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
@@ -155,6 +157,12 @@ async function submit() {
 			class="reset-input px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 			required
 		/>
+
+		<!-- Grid -->
+		<div>
+			<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
+			<GridSelector />
+		</div>
 
 		<!-- Destination row -->
 		<div class="flex flex-col gap-1.5">

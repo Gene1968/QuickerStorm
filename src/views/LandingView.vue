@@ -1,6 +1,5 @@
 <script setup>
 import { computed, onMounted, ref }	from 'vue'
-import GridSelector					from '@/components/GridSelector.vue'
 import LoginForm					from '@/components/LoginForm.vue'
 import { useTheme }				from '@/composables/useTheme'
 import { useGridStore }			from '@/stores/gridStore'
@@ -118,15 +117,11 @@ onMounted(async () => {
 				<template v-else>
 					<!-- Grid + form — constrained width -->
 					<div class="flex flex-col gap-3 w-full">
+						<LoginForm />
 						<p
 							v-if="reconnectError"
 							class="text-yellow-400 text-sm"
 						>{{ reconnectError }}</p>
-						<div>
-							<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
-							<GridSelector />
-						</div>
-						<LoginForm />
 					</div>
 
 					<!-- Disclaimer -->
