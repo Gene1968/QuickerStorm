@@ -18,10 +18,23 @@ import {
 import { useProximityVoice } from '@/composables/useProximityVoice.js'
 import { Search as SearchIcon } from '@lucide/vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
+import { useAccountsStore } from '@/stores/accountsStore.js'
+import { useGridStore }     from '@/stores/gridStore.js'
 
-const ui          = useUiStore()
-const theme       = useTheme()
-const avatarStore = useAvatarStore()
+const ui            = useUiStore()
+const theme         = useTheme()
+const avatarStore   = useAvatarStore()
+const accountsStore = useAccountsStore()
+const gridStore     = useGridStore()
+
+function formatLastUsed(ts) {
+	if (!ts) return 'Never'
+	const days = Math.floor((Date.now() - ts) / 86400000)
+	if (days === 0) return 'Today'
+	if (days === 1) return 'Yesterday'
+	if (days < 7)   return `${days} days ago`
+	return new Date(ts).toLocaleDateString()
+}
 
 // ── State ─────────────────────────────────────────────────────────────────
 const search    = ref('')
@@ -69,6 +82,7 @@ const originalDark = ref(theme.isDark.value)
 // ── Tab definitions ────────────────────────────────────────────────────────
 const ALL_TABS = [
 	{ id: 'general',       icon: '⚙️',  label: 'General',       disabled: false, soon: false },
+	{ id: 'accounts',      icon: '👤',  label: 'Accounts',      disabled: false, soon: false },
 	{ id: 'appearance',    icon: '🎨',  label: 'Appearance',    disabled: false, soon: false },
 	{ id: 'chat',          icon: '💬',  label: 'Chat',          disabled: false, soon: true  },
 	{ id: 'graphics',      icon: '🖥️',  label: 'Graphics',      disabled: false, soon: true  },
@@ -166,8 +180,35 @@ onUnmounted(() => {
 				<!-- Right: tab content -->
 				<div class="pf-content">
 
+					<!-- ── ACCOUNTS ── -->
+					<template v-if="activeTab === 'accounts'">
+						<h2 class="pf-section-heading">Saved Accounts</h2>
+
+						<template v-if="accountsStore.accounts.length">
+							<div
+								v-for="acct in accountsStore.accounts"
+								:key="acct.username + '@' + acct.gridNick"
+								class="pf-row"
+							>
+								<div class="pf-row-info">
+									<span class="pf-row-label">
+										{{ acct.username }} @ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}
+									</span>
+									<span class="pf-row-hint">Last used: {{ formatLastUsed(acct.lastUsed) }}</span>
+								</div>
+								<button
+									class="px-3 py-1 text-sm rounded border border-red-500/40 text-red-400 hover:bg-red-500/15 transition-colors"
+									@click="accountsStore.remove(acct.username, acct.gridNick)"
+								>Remove</button>
+							</div>
+						</template>
+						<p v-else class="text-t2 text-sm px-1">
+							No saved accounts. Check &ldquo;Remember me&rdquo; when logging in.
+						</p>
+					</template>
+
 					<!-- ── GENERAL ── -->
-					<template v-if="activeTab === 'general'">
+					<template v-else-if="activeTab === 'general'">
 						<h2 class="pf-section-heading">General</h2>
 
 						<div class="pf-row">
