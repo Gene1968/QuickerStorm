@@ -170,6 +170,13 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
+	// WHY (perf): prim mesh builds are deferred off the WS message handler into a paced per-frame
+	// drain. Region entry delivers thousands of ObjectUpdates; building all their Three.js geometry
+	// synchronously inside onmessage blocked the main thread (multi-second 'message handler took Nms'
+	// violations). pendingMeshIds holds prim localIds awaiting a mesh; drainMeshQueue() builds them
+	// under a per-frame time budget. Dedupe is automatic (Set + fetch latest obj from worldStore).
+	const pendingMeshIds = new Set()  // localId → awaiting mesh build (prims only; avatars build inline)
+	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
 	let waterMaterial = null  // ShaderMaterial — uTime updated each frame for ripple
@@ -1348,6 +1355,13 @@ export function useWorldEngine(canvasRef) {
 		}
 		for (const obj of objs) {
 			worldStore.upsertObject(obj)
+			// WHY (perf): defer prim mesh creation to the paced per-frame drain so a big
+			// ObjectUpdate batch doesn't block the WS message handler. Avatars are few and the
+			// own-avatar logic below drives the camera, so build those inline immediately.
+			if (obj.pcode !== PCODE_AVATAR) {
+				pendingMeshIds.add(obj.localId)
+				continue
+			}
 			try {
 				upsertMesh(obj)
 			} catch (e) {
@@ -1545,6 +1559,8 @@ export function useWorldEngine(canvasRef) {
 			mesh.parent?.remove(mesh)
 		})
 		meshMap.clear()
+		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
+		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
 		worldStore.clearTerrain()
 		avatarSLPos = null
@@ -1587,6 +1603,7 @@ export function useWorldEngine(canvasRef) {
 			worldStore.objects.forEach((o, lid) => { if (o.parentId === id) all.add(lid) })
 		}
 		for (const id of all) {
+			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
 			removeMesh(id)
 			worldStore.removeObject(id)
 		}
@@ -1665,7 +1682,22 @@ export function useWorldEngine(canvasRef) {
 
 		pos.needsUpdate = true
 		col.needsUpdate = true
-		terrainMesh.geometry.computeVertexNormals()
+		// WHY (perf): defer the full-geometry normal recompute — see _scheduleTerrainNormals.
+		_scheduleTerrainNormals()
+	}
+
+	// WHY (perf): computeVertexNormals() over the full region geometry (~260k verts on a 512²
+	// region) costs ~40-50ms. Running it per TERRAIN_PATCH message blocked the WS handler ~1.3s
+	// during region entry (one full recompute per patch message). Vertex positions/colors update
+	// live above; coalesce the normal recompute to once, ~150ms after the patch burst settles —
+	// terrain shape is immediate, shading settles a beat later.
+	let _terrainNormalsTimer = null
+	function _scheduleTerrainNormals() {
+		if (_terrainNormalsTimer) clearTimeout(_terrainNormalsTimer)
+		_terrainNormalsTimer = setTimeout(() => {
+			_terrainNormalsTimer = null
+			if (terrainMesh) terrainMesh.geometry.computeVertexNormals()
+		}, 150)
 	}
 
 	// ── Collision detection (dead-reckoning aid) ─────────────────────────────
@@ -1836,11 +1868,41 @@ export function useWorldEngine(canvasRef) {
 
 	// ── Render loop ───────────────────────────────────────────────────────────
 	let lastTime = 0
+	// WHY (perf): build queued prim meshes a few at a time, bounded by a per-frame time budget,
+	// instead of all-at-once inside the WS message handler. Iterating a Set while deleting the
+	// current entry is safe per spec. Fetch the latest obj from worldStore so coalesced updates
+	// (multiple ObjectUpdates before the mesh existed) build at the newest state.
+	const MESH_DRAIN_BUDGET_MS = 8
+	function drainMeshQueue() {
+		if (!pendingMeshIds.size) return
+		const start = performance.now()
+		for (const localId of pendingMeshIds) {
+			pendingMeshIds.delete(localId)
+			const obj = worldStore.objects.get(localId)
+			if (!obj) continue  // killed before its mesh was built
+			try {
+				upsertMesh(obj)
+			} catch (e) {
+				upsertMeshFailures++
+				if (upsertMeshFailures <= 5 || upsertMeshFailures % 25 === 0) {
+					debugStore.push('warn', `[3D] upsertMesh(drain) fail #${upsertMeshFailures} localId=${localId} pcode=${obj.pcode}: ${e.message}`)
+				}
+			}
+			if (performance.now() - start > MESH_DRAIN_BUDGET_MS) break
+		}
+		// C1 (perf): once the initial flood has fully drained, precompile shaders off the render
+		// path (async, non-blocking where the GPU supports KHR_parallel_shader_compile) so the
+		// first camera move doesn't hit a lazy synchronous shader-compile stall (~271ms observed).
+		if (pendingMeshIds.size === 0 && !_didPrecompile && meshMap.size > 50 && renderer) {
+			_didPrecompile = true
+			renderer.compileAsync?.(scene, camera)
+		}
+	}
+
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
-
 		const cf = updateCamera(dt)
 
 		// WHY: Third-person follow camera — positions camera behind and above avatar.
@@ -2003,6 +2065,8 @@ export function useWorldEngine(canvasRef) {
 		if (waterMaterial) waterMaterial.uniforms.uTime.value += dt
 		if (gizmoGroup) positionGizmo()
 
+		drainMeshQueue()  // perf: paced prim-mesh creation (bounded per frame)
+
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
 	}
@@ -2101,6 +2165,7 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer?.domElement.remove()
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
+		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
 		worldStore.clearTerrain()
 		worldStore.clearAll()
 	})
