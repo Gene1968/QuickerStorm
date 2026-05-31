@@ -101,4 +101,10 @@ describe('accountsStore', () => {
 		const s2 = useAccountsStore()
 		expect(s2.accounts.find(a => a.gridNick === 'osgrid')?.username).toBe('Gene Freenote')
 	})
+
+	it('filters out accounts for unknown/deleted grids', () => {
+		const store = useAccountsStore()
+		store.addOrUpdate('Ghost', 'unknown-grid-xyz', 'pass')
+		expect(store.accounts).toHaveLength(0)
+	})
 })

@@ -49,7 +49,7 @@ export const useAccountsStore = defineStore('accounts', () => {
 	})
 
 	function addOrUpdate(username, gridNick, password) {
-		const list = _load()
+		const list = [..._raw.value]
 		const idx = list.findIndex(a => _matchKey(a, username, gridNick))
 		const entry = { username, gridNick, password, lastUsed: Date.now() }
 		if (idx >= 0) list[idx] = entry
@@ -59,13 +59,13 @@ export const useAccountsStore = defineStore('accounts', () => {
 	}
 
 	function remove(username, gridNick) {
-		const list = _load().filter(a => !_matchKey(a, username, gridNick))
+		const list = _raw.value.filter(a => !_matchKey(a, username, gridNick))
 		_save(list)
 		_raw.value = list
 	}
 
 	function getPassword(username, gridNick) {
-		return _load().find(a => _matchKey(a, username, gridNick))?.password ?? null
+		return _raw.value.find(a => _matchKey(a, username, gridNick))?.password ?? null
 	}
 
 	return { accounts, addOrUpdate, remove, getPassword }
