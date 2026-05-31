@@ -1901,6 +1901,13 @@ export function useWorldEngine(canvasRef) {
 
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
+		// WHY (perf): when the page is unfocused (mouse on taskbar, another window, or devtools)
+		// Chrome deprioritizes this window's GPU, so each renderer.render of the heavy scene balloons
+		// to 50-106ms and trips '[Violation] requestAnimationFrame handler took Nms' ~10×/sec while
+		// wasting GPU/battery. document.hasFocus() is false in exactly those states (verified). Skip
+		// the frame's work while unfocused — the rAF loop stays alive so we resume instantly on focus.
+		// Advance lastTime so dt doesn't spike on the first frame back.
+		if (!document.hasFocus()) { lastTime = time; return }
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
