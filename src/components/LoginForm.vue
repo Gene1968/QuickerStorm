@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useGridLogin } from '@/composables/useGridLogin'
 import { useGridStore } from '@/stores/gridStore'
+import { useAccountsStore } from '@/stores/accountsStore'
 
 const { login }		= useGridLogin()
 const gridStore		= useGridStore()
+const accountsStore	= useAccountsStore()
 
 const username		= ref('')
 const password		= ref('')
@@ -12,36 +14,31 @@ const destType		= ref('last')// 'last' | 'home' | 'region'
 const destRegion	= ref('')	// region name when destType === 'region'
 const error			= ref('')
 
-// ── Remember Me — per-grid credential storage ─────────────────────────────
-// WHY: Each grid is a separate service with separate accounts. Storing under
-// one flat key would clobber credentials when the user switches grids.
-const AUTOLOGIN_PREFIX = 'qs_autologin_'
-function autologinKey() { return `${AUTOLOGIN_PREFIX}${gridStore.selectedNick}` }
-
-// WHY: Pre-fill from stored creds for the active grid. Called on mount and
-// whenever the user switches grids so the form always shows the right creds.
-function loadCredsForGrid() {
-	try {
-		const stored = JSON.parse(localStorage.getItem(autologinKey()))
-		username.value   = stored?.username ?? ''
-		password.value   = stored?.password ?? ''
-		// WHY: If this grid has stored creds, keep rememberMe on so a one-click
-		// retry works after auto-reconnect failure.
-		rememberMe.value = !!(stored?.username && stored?.password)
-	} catch {
-		username.value = ''
-		password.value = ''
-	}
-}
-
-onMounted(loadCredsForGrid)
-// WHY: Reload credentials immediately when user picks a different grid from
-// the dropdown — not just on next submit — so the form is always in sync.
-watch(() => gridStore.selectedNick, loadCredsForGrid)
-
 // WHY: Default true — auto-reconnect on reload is expected behaviour for a viewer.
-// User can uncheck to opt out. loadCredsForGrid overrides this based on stored state.
+// User can uncheck to opt out.
 const rememberMe = ref(true)
+
+// Clear form when user switches grid via GridSelector (not via account combobox)
+watch(() => gridStore.selectedNick, () => {
+	username.value = ''
+	password.value = ''
+})
+
+// Fires when the username input changes. If the value matches a saved-account
+// datalist option ("Username @ GridName"), auto-switch grid and inject password.
+function onAccountSelect() {
+	const val = username.value
+	const match = val.match(/^(.+)\s@\s(.+)$/)
+	if (!match) return
+	const [, rawUser, gridName] = match
+	const grid = gridStore.grids.find(g => g.name === gridName)
+	if (!grid) return
+	const stored = accountsStore.getPassword(rawUser, grid.nick)
+	if (stored === null) return
+	username.value = rawUser
+	gridStore.selectGrid(grid.nick)
+	password.value = stored
+}
 
 // ── Recent region destinations ────────────────────────────────────────────
 const RECENT_KEY = 'qs_recent_regions'
@@ -94,19 +91,16 @@ async function submit() {
 	if (destType.value === 'region' && destRegion.value.trim()) {
 		saveRecent(gridStore.selectedNick, destRegion.value.trim())
 	}
-	// WHY: Save creds BEFORE login() resolves — login() calls router.push() then resolves,
-	// and the router navigation can unmount this component before the post-await line runs.
-	// Saving first is safe: on failure we clear them so no stale creds persist.
-	const key = autologinKey()
-	if (rememberMe.value) {
-		localStorage.setItem(key, JSON.stringify({ username: username.value, password: password.value }))
-	} else {
-		localStorage.removeItem(key)
-	}
+	// WHY: Capture before await — component may unmount after login() triggers
+	// router.push(). Store references survive unmount, primitive captures do too.
+	const user     = username.value
+	const grid     = gridStore.selectedNick
+	const pass     = password.value
+	const remember = rememberMe.value
 	try {
-		await login(username.value, password.value, destination.value)
+		await login(user, pass, destination.value)
+		if (remember) accountsStore.addOrUpdate(user, grid, pass)
 	} catch (e) {
-		localStorage.removeItem(key)  // don't persist bad creds
 		error.value = e.message
 	}
 }
@@ -118,11 +112,20 @@ async function submit() {
 		<input
 			v-model="username"
 			type="text"
+			list="qs-saved-accounts"
 			placeholder="First Last"
 			autocomplete="username"
 			class="reset-input px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 			required
+			@input="onAccountSelect"
 		/>
+		<datalist id="qs-saved-accounts">
+			<option
+				v-for="acct in accountsStore.accounts"
+				:key="acct.username + '@' + acct.gridNick"
+				:value="acct.username + ' @ ' + (gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick)"
+			/>
+		</datalist>
 
 		<input
 			v-model="password"
