@@ -5,9 +5,11 @@ import LoginForm					from '@/components/LoginForm.vue'
 import { useTheme }				from '@/composables/useTheme'
 import { useGridStore }			from '@/stores/gridStore'
 import { useGridLogin }			from '@/composables/useGridLogin'
+import { useAccountsStore }		from '@/stores/accountsStore'
 
 const { isDark, toggle } = useTheme()
-const gridStore = useGridStore()
+const gridStore      = useGridStore()
+const accountsStore  = useAccountsStore()
 const { login, checkCircuit } = useGridLogin()
 
 const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
@@ -26,13 +28,10 @@ const splashUrl = computed(() => gridStore.selectedGrid?.loginPage ?? null)
 //   If the hold expired (>15s since WS drop) or another viewer took over, the
 //   server returns alive=false → we show the login form instead of forcing a
 //   fresh XML-RPC login the user didn't ask for.
-const AUTOLOGIN_PREFIX = 'qs_autologin_'
-const IN_WORLD_KEY     = 'qs_in_world'
+const IN_WORLD_KEY = 'qs_in_world'
 
-const autologinKey = `${AUTOLOGIN_PREFIX}${gridStore.selectedNick}`
-
-let _stored = null
-try { _stored = JSON.parse(localStorage.getItem(autologinKey)) } catch {}
+// Most recently used account for the currently selected grid (accounts sorted by lastUsed desc)
+const _stored       = accountsStore.accounts.find(a => a.gridNick === gridStore.selectedNick) ?? null
 const hasStoredCreds = !!(_stored?.username && _stored?.password)
 
 // Gate 1 evaluated synchronously — drives initial spinner render
