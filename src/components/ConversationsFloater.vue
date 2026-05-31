@@ -125,6 +125,10 @@ function onInput() {
 	if (chatInput.value.length === 1) playSound('typing.mp3', 0.3)
 }
 
+function onImInput() {
+	if (imInput.value.length === 1) playSound('typing.mp3', 0.3)
+}
+
 async function selectTab(id) {
 	activeTab.value = id
 	im.setActive(id?.includes('-') ? id : null)
@@ -407,6 +411,7 @@ async function submitChat() {
 							:placeholder="`To ${activeConv.agentName}`"
 							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 							maxlength="1023"
+							@input="onImInput"
 						/>
 						<div class="relative shrink-0">
 							<button

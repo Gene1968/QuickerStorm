@@ -491,9 +491,22 @@ export function encodeImprovedInstantMessage(p: {
   const regionId = p.regionId  ?? '00000000-0000-0000-0000-000000000000'
   const pos      = p.position  ?? [0, 0, 0]
   const dialog   = p.dialog    ?? 0
-  // WHY: SL/OpenSim sim may dedupe IMs with identical message IDs (especially during retries).
-  // Generate a fresh random UUID per message so sim treats each send as distinct.
-  const msgId    = p.messageId ?? crypto.randomUUID()
+  // The IM `ID` field doubles as the conversation/session id for 1:1 chat IMs (dialog 0): the
+  // recipient viewer (Firestorm) threads the conversation by it, computed as agentID XOR otherID
+  // (symmetric, so both sides agree — see LLIMMgr::computeSessionID, llimview.cpp). A random id
+  // here makes every message open a NEW IM tab on the recipient. For non-chat dialogs (e.g. 38
+  // friendship offer) the ID is a transaction id the peer echoes back, so a fresh random is right.
+  let idBytes: Buffer
+  if (p.messageId) {
+    idBytes = uuidToBytes(p.messageId)
+  } else if (dialog === 0) {
+    const a = uuidToBytes(p.agentId)
+    const b = uuidToBytes(p.toAgentId)
+    idBytes = Buffer.allocUnsafe(16)
+    for (let i = 0; i < 16; i++) idBytes[i] = a[i] ^ b[i]
+  } else {
+    idBytes = uuidToBytes(crypto.randomUUID())
+  }
   const bucketLen = 0
 
   const bodySize = 32 + 1 + 16 + 4 + 16 + 12 + 1 + 1 + 16 + 4 +
@@ -511,7 +524,7 @@ export function encodeImprovedInstantMessage(p: {
   body.writeFloatLE(pos[2], off); off += 4
   body[off++] = 0       // Offline = 0
   body[off++] = dialog
-  uuidToBytes(msgId).copy(body, off); off += 16
+  idBytes.copy(body, off); off += 16
   body.writeUInt32LE(Math.floor(Date.now() / 1000), off); off += 4
   body[off++] = fromBuf.length
   fromBuf.copy(body, off); off += fromBuf.length
