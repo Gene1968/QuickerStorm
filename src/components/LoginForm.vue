@@ -45,15 +45,9 @@ const recentRegions = computed(() => loadRecent()[gridStore.selectedNick] ?? [])
 // input instead. Same pattern used for both username and region fields.
 const usernameInputRef = ref(null)
 const showAccountSuggestions = ref(false)
-const filteredAccounts = computed(() => {
-	const q = username.value.trim().toLowerCase()
-	return q
-		? accountsStore.accounts.filter(a => a.username.toLowerCase().includes(q))
-		: accountsStore.accounts
-})
 
 function openAccountSuggestions() {
-	if (filteredAccounts.value.length) showAccountSuggestions.value = true
+	if (accountsStore.accounts.length) showAccountSuggestions.value = true
 }
 function toggleAccountSuggestions() {
 	showAccountSuggestions.value = !showAccountSuggestions.value
@@ -129,7 +123,7 @@ async function submit() {
 				ref="usernameInputRef"
 				v-model="username"
 				type="text"
-				placeholder="First Last"
+				placeholder="Username: First Last [grid]"
 				autocomplete="new-password"
 				class="reset-input w-full px-3 py-2 pr-8 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 				required
@@ -150,9 +144,9 @@ async function submit() {
 				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
 				@mousedown.prevent
 			>
-				<template v-if="filteredAccounts.length">
+				<template v-if="accountsStore.accounts.length">
 					<li
-						v-for="acct in filteredAccounts"
+						v-for="acct in accountsStore.accounts"
 						:key="acct.username + '@' + acct.gridNick"
 						class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
 						@click="pickAccount(acct)"
