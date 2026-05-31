@@ -1775,6 +1775,21 @@ export function encodeChangeUserRights(p: { agentId: string; agentRelated: strin
   return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x41]), body])  // Low 321
 }
 
+/** AvatarPickerRequest (Low 26) — name search for Add-Friend.
+ *  AgentData{AgentID, SessionID, QueryID}; Data{Name Variable 1 (NUL-terminated)}. */
+export function encodeAvatarPickerRequest(p: { agentId: string; sessionId: string; queryId: string; name: string; seq: number }): Buffer {
+  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
+  const name = Buffer.from((p.name || '') + '\0', 'utf8').subarray(0, 255)
+  const body = Buffer.allocUnsafe(16 + 16 + 16 + 1 + name.length)
+  let off = 0
+  uuidToBytes(p.agentId).copy(body, off);   off += 16
+  uuidToBytes(p.sessionId).copy(body, off); off += 16
+  uuidToBytes(p.queryId).copy(body, off);   off += 16
+  body[off++] = name.length
+  name.copy(body, off)
+  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x1A]), body])  // Low 26
+}
+
 // ── Inbound decoders ──────────────────────────────────────────────────────
 
 /** OnlineNotification (322) / OfflineNotification (323): AgentBlock Variable{AgentID}×N. */
@@ -1799,6 +1814,48 @@ export function decodeUUIDNameReply(buf: Buffer, dataOffset: number): { id: stri
     out.push({ id, name: [first, last].filter(Boolean).join(' ') })
   }
   return out
+}
+
+/** AvatarPickerReply (Low 28). AgentData{AgentID, QueryID};
+ *  Data Variable{AvatarID, FirstName V1, LastName V1}×N. */
+export function decodeAvatarPickerReply(buf: Buffer, dataOffset: number): {
+  agentId: string; queryId: string; avatars: { id: string; firstName: string; lastName: string }[]
+} {
+  let off = dataOffset
+  const agentId = bytesToUuid(buf, off); off += 16
+  const queryId = bytesToUuid(buf, off); off += 16
+  const count = buf[off++]
+  const avatars: { id: string; firstName: string; lastName: string }[] = []
+  const readV1Inline = (): string => {
+    const len = buf[off++]
+    const s = buf.toString('utf8', off, off + len).replace(/\0+$/, '')
+    off += len
+    return s
+  }
+  for (let i = 0; i < count && off + 16 <= buf.length; i++) {
+    const id = bytesToUuid(buf, off); off += 16
+    const firstName = readV1Inline()
+    const lastName = readV1Inline()
+    avatars.push({ id, firstName, lastName })
+  }
+  return { agentId, queryId, avatars }
+}
+
+/** ChangeUserRights (Low 321) inbound. AgentData{AgentID};
+ *  Rights Variable{AgentRelated LLUUID, RelatedRights S32}×N. */
+export function decodeChangeUserRights(buf: Buffer, dataOffset: number): {
+  agentId: string; rights: { agentRelated: string; relatedRights: number }[]
+} {
+  let off = dataOffset
+  const agentId = bytesToUuid(buf, off); off += 16
+  const count = buf[off++]
+  const rights: { agentRelated: string; relatedRights: number }[] = []
+  for (let i = 0; i < count && off + 20 <= buf.length; i++) {
+    const agentRelated = bytesToUuid(buf, off); off += 16
+    const relatedRights = buf.readInt32LE(off); off += 4
+    rights.push({ agentRelated, relatedRights })
+  }
+  return { agentId, rights }
 }
 
 export interface AvatarPropertiesData {

@@ -179,6 +179,11 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 		color: var(--color-t2);
 	}
 
+	/* Compact action-bar button (Contacts tab). */
+	.qs-btn-mini {
+		@apply px-2 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed;
+	}
+
 
 
 

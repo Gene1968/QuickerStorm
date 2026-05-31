@@ -39,6 +39,7 @@ export const C = {
 	FRIEND_REMOVE:    'friend_remove',    // { agentId } — TerminateFriendship (Low 300)
 	FRIEND_RIGHTS:    'friend_rights',    // { agentId, rights:number } — ChangeUserRights (Low 321)
 	NAME_REQ:         'name_req',         // { ids:string[] } — UUIDNameRequest (Low 235) → resolve avatar UUIDs to names
+	AVATAR_PICKER_REQ: 'avatar_picker_req', // { query, queryId } — AvatarPickerRequest (Low 26) for Add-Friend name search
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -73,6 +74,8 @@ export const S = {
 	AVATAR_PROPS:    'avatar_props',   // { avatarId, properties?, interests?, groups? } — AvatarProperties/Interests/GroupsReply
 	PARCEL_INFO:     'parcel_info',    // { parcel:{ parcelId, ownerId, name, desc, actualArea, globalX, globalY, globalZ, simName, snapshotId, dwell, salePrice } } — ParcelInfoReply
 	NAME_REPLY:      'name_reply',    // { names: { [uuid]: "First Last" } } — UUIDNameReply
+	AVATAR_PICKER_REPLY:  'avatar_picker_reply',  // { queryId, avatars:[{ id, name }] } — AvatarPickerReply (Low 28)
+	FRIEND_RIGHTS_CHANGED:'friend_rights_changed',// { agentId, relatedId, rights } — inbound ChangeUserRights (Low 321)
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

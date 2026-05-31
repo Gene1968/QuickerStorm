@@ -4,7 +4,7 @@ import { useLocalChat }  from '@/composables/useLocalChat'
 import { useInstantMessage } from '@/composables/useInstantMessage'
 import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
-import { useGridSocialStore } from '@/stores/gridSocialStore'
+import { useGridSocialStore, hasRight, setRight, RIGHT_ONLINE, RIGHT_MAP, RIGHT_MODIFY } from '@/stores/gridSocialStore'
 import { useSocial }     from '@/composables/useSocial'
 import { playSound } from '@/composables/useAudio'
 import { ChevronDownIcon, XIcon } from '@lucide/vue'
@@ -14,7 +14,7 @@ import 'emoji-picker-element'
 const avatar = useAvatarStore()
 const ui     = useUiStore()
 const social = useGridSocialStore()
-const { removeFriend } = useSocial()
+const { removeFriend, setFriendRights, offerFriendship, findAvatars } = useSocial()
 const { messages, send } = useLocalChat()
 const im     = useInstantMessage()
 
@@ -42,6 +42,50 @@ function confirmRemove(f) {
 	if (window.confirm(`Remove ${friendLabel(f)} from your friends list? This cannot be undone.`)) {
 		removeFriend(f.id)
 	}
+}
+
+// ── Contacts: selection + rights + actions ────────────────────────────────
+const selectedId = ref(null)
+const selectedFriend = computed(() => social.friendById(selectedId.value))
+
+function selectFriend(f) { selectedId.value = (selectedId.value === f.id) ? null : f.id }
+
+// Toggle one of MY granted rights (online/map/modify) on a friend, then send to the sim.
+function toggleRight(f, bit) {
+	const next = setRight(f.rightsGiven, bit, !hasRight(f.rightsGiven, bit))
+	social.setRightsGivenLocal(f.id, next) // optimistic; reconciled by S.FRIEND_RIGHTS_CHANGED
+	setFriendRights(f.id, next)
+}
+
+// Action-bar enablement.
+const canIM      = computed(() => !!selectedFriend.value)
+const canProfile = computed(() => !!selectedFriend.value)
+const canRemove  = computed(() => !!selectedFriend.value)
+const canMap     = computed(() => !!selectedFriend.value && selectedFriend.value.online && hasRight(selectedFriend.value.rightsHas, RIGHT_MAP))
+const canTeleport= computed(() => !!selectedFriend.value && selectedFriend.value.online)
+
+function actIM()       { const f = selectedFriend.value; if (f) openIM(f) }
+function actProfile()  { const f = selectedFriend.value; if (f) openProfile(f.id) }
+function actRemove()   { const f = selectedFriend.value; if (f) confirmRemove(f) }
+function actMap()      { const f = selectedFriend.value; if (f && canMap.value) { ui.profileTargetId = f.id; ui.showMap = true } }
+function actTeleport() { const f = selectedFriend.value; if (f && canTeleport.value) openIM(f) }
+
+// ── Add-Friend picker ──────────────────────────────────────────────────────
+const showAdd     = ref(false)
+const addQuery    = ref('')
+const addResults  = ref([])
+const addBusy     = ref(false)
+function openAdd() { showAdd.value = true; addQuery.value = ''; addResults.value = [] }
+async function runAddSearch() {
+	const q = addQuery.value.trim()
+	if (q.length < 2) return
+	addBusy.value = true
+	try { addResults.value = await findAvatars(q) }
+	finally { addBusy.value = false }
+}
+function addFriendFromResult(r) {
+	offerFriendship(r.id, r.name, 'Will you be my friend?')
+	showAdd.value = false
 }
 
 const activeTab  = ref('nearby')
@@ -197,7 +241,7 @@ async function submitChat() {
 			<!-- Content area -->
 			<div class="flex flex-col flex-1 min-w-0 min-h-0">
 
-				<!-- Contacts ───────────────────────────────────────── -->
+				<!-- Contacts (Firestorm-style rights table) ─────────── -->
 				<template v-if="activeTab === 'contacts'">
 					<div class="px-2 py-1.5 border-b border-brd shrink-0 flex items-center gap-2">
 						<input
@@ -208,28 +252,72 @@ async function submitChat() {
 						/>
 						<span class="text-2xs text-tm shrink-0">{{ social.onlineCount }}/{{ social.friendCount }} online</span>
 					</div>
+
 					<div v-if="social.friendCount === 0" class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
 						No friends on this account
 					</div>
+
 					<div v-else class="flex-1 overflow-y-auto min-h-0">
+						<div class="flex items-center gap-1 px-2 py-1 text-2xs text-tm sticky top-0 bg-card border-b border-brd z-10 select-none">
+							<span class="w-2 shrink-0"></span>
+							<span class="flex-1 min-w-0">Name</span>
+							<span class="w-5 text-center shrink-0" title="Friend can see when you're online">👁</span>
+							<span class="w-5 text-center shrink-0" title="Friend can locate you on the map">🗺</span>
+							<span class="w-5 text-center shrink-0" title="Friend can edit, delete or take your objects">✎</span>
+							<span class="w-1 shrink-0"></span>
+							<span class="w-5 text-center shrink-0 opacity-60" title="You can locate them on the map">🗺</span>
+							<span class="w-5 text-center shrink-0 opacity-60" title="You can edit this friend's objects">✎</span>
+						</div>
+
 						<div
 							v-for="f in sortedFriends"
 							:key="f.id"
-							class="group flex items-center gap-2 px-2 py-1 hover:bg-white/5 cursor-default"
+							class="flex items-center gap-1 px-2 py-1 cursor-default border-b border-brd"
+							:class="selectedId === f.id ? 'bg-white/10' : 'hover:bg-white/5'"
+							@click="selectFriend(f)"
 							@dblclick="openIM(f)"
 						>
-							<span
-								class="w-2 h-2 rounded-full shrink-0"
-								:class="f.online ? 'bg-green-500' : 'bg-gray-500/50'"
-								:title="f.online ? 'Online' : 'Offline'"
-							/>
+							<span class="w-2 h-2 rounded-full shrink-0" :class="f.online ? 'bg-green-500' : 'bg-gray-500/50'" :title="f.online ? 'Online' : 'Offline'" />
 							<span class="flex-1 min-w-0 truncate text-xs" :class="f.online ? 'text-t1' : 'text-tm'">{{ friendLabel(f) }}</span>
-							<div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-								<button class="px-1.5 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10" title="Profile" @click="openProfile(f.id)">ℹ</button>
-								<button class="px-1.5 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10" title="IM" @click="openIM(f)">💬</button>
-								<button class="px-1.5 py-0.5 text-2xs rounded border border-brd text-red-400 hover:bg-red-500/10" title="Remove friend" @click="confirmRemove(f)">✕</button>
-							</div>
+
+							<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can see when you're online"
+								:checked="hasRight(f.rightsGiven, RIGHT_ONLINE)" @click.stop="toggleRight(f, RIGHT_ONLINE)" />
+							<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can locate you on the map"
+								:checked="hasRight(f.rightsGiven, RIGHT_MAP)" @click.stop="toggleRight(f, RIGHT_MAP)" />
+							<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can edit, delete or take your objects"
+								:checked="hasRight(f.rightsGiven, RIGHT_MODIFY)" @click.stop="toggleRight(f, RIGHT_MODIFY)" />
+							<span class="w-1 shrink-0"></span>
+							<input type="checkbox" disabled class="w-5 shrink-0 opacity-60" title="You can locate them on the map"
+								:checked="hasRight(f.rightsHas, RIGHT_MAP)" @click.stop />
+							<input type="checkbox" disabled class="w-5 shrink-0 opacity-60" title="You can edit this friend's objects"
+								:checked="hasRight(f.rightsHas, RIGHT_MODIFY)" @click.stop />
 						</div>
+					</div>
+
+					<div class="px-2 py-1.5 border-t border-brd shrink-0 flex flex-wrap gap-1">
+						<button class="qs-btn-mini" :disabled="!canIM"       title="Send IM (Call disabled until voice)" @click="actIM">IM</button>
+						<button class="qs-btn-mini" :disabled="!canProfile"  title="View profile" @click="actProfile">Profile</button>
+						<button class="qs-btn-mini" :disabled="!canTeleport" title="Offer teleport" @click="actTeleport">Teleport</button>
+						<button class="qs-btn-mini" :disabled="!canMap"      title="Show on map" @click="actMap">Map</button>
+						<button class="qs-btn-mini" disabled                 title="Pay — not yet available">Pay</button>
+						<button class="qs-btn-mini" :disabled="!canRemove"   title="Remove friend" @click="actRemove">Remove</button>
+						<button class="qs-btn-mini" title="Add a friend by name" @click="openAdd">Add</button>
+					</div>
+
+					<div v-if="showAdd" class="px-2 py-2 border-t border-brd shrink-0 bg-card2">
+						<div class="flex gap-1.5">
+							<input v-model="addQuery" type="text" placeholder="Search by name…" maxlength="63"
+								class="flex-1 min-w-0 bg-card border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+								@keyup.enter="runAddSearch" />
+							<button class="qs-btn-mini" :disabled="addBusy || addQuery.trim().length < 2" @click="runAddSearch">{{ addBusy ? '…' : 'Search' }}</button>
+							<button class="qs-btn-mini" @click="showAdd = false">Cancel</button>
+						</div>
+						<div v-if="addResults.length" class="mt-1.5 max-h-32 overflow-y-auto">
+							<button v-for="r in addResults" :key="r.id"
+								class="block w-full text-left px-2 py-1 text-xs text-t1 hover:bg-white/10 rounded"
+								@click="addFriendFromResult(r)">{{ r.name }}</button>
+						</div>
+						<div v-else-if="!addBusy && addQuery.trim().length >= 2" class="mt-1.5 text-2xs text-tm italic">No matches.</div>
 					</div>
 				</template>
 

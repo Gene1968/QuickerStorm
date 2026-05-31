@@ -130,7 +130,17 @@
       "Bash(gh search *)",
       "Bash(gh api *)",
       "Read(//c/tmp/**)",
-      "Bash(grep -n -A 30 '^\t__TRACKED_VAR__ ' message_template.msg)"
+      "Bash(grep -n -A 30 '^\t__TRACKED_VAR__ ' message_template.msg)",
+      "Bash(Select-Object -First 30 FullName)",
+      "Bash(Format-Table FullName)",
+      "Bash(grep -nE \"LOW_CHANGE_USER_RIGHTS|321|first-seen unhandled|LOW_ONLINE_NOTIFICATION|low:\\\\\\\\$\\\\\\\\{\" server/handlers/lludp.ts)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(bunx tsc *)",
+      "Bash(npm test *)",
+      "Bash(python3 *)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)[:5]\\)\")",
+      "PowerShell(npx vitest run src/__tests__/ 2>&1 | Select-Object -Last 40)",
+      "PowerShell(npx vite build --mode development 2>&1 | Select-Object -Last 20)"
     ]
   }
 }

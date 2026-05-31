@@ -12,6 +12,10 @@ export const RIGHT_ONLINE = 1   // can see my online status
 export const RIGHT_MAP    = 2   // can locate me on the map
 export const RIGHT_MODIFY = 4   // can modify my objects
 
+// Pure bit helpers for rights bitmasks (exported for the Contacts UI + tests).
+export const hasRight = (mask, bit) => (Number(mask) & bit) !== 0
+export const setRight = (mask, bit, on) => on ? (Number(mask) | bit) : (Number(mask) & ~bit)
+
 // WHY: LLUDP decoders emit lowercase UUIDs; the XML-RPC login buddy_id casing can differ.
 // Normalize every id to lowercase at ingestion + lookup so online-status/name/profile joins match.
 const lc = (id) => (id || '').toLowerCase()
@@ -64,6 +68,30 @@ export const useGridSocialStore = defineStore('gridSocial', () => {
 		friends.value = friends.value.map(f => set.has(f.id) ? { ...f, online } : f)
 	}
 
+	/** Insert a friend if not already present (optimistic add on accept/accepted). */
+	function addFriend(id, name = '', rightsGiven = 0, rightsHas = 0) {
+		const key = lc(id)
+		if (!key || friends.value.some(f => f.id === key)) return
+		friends.value = [...friends.value, { id: key, name, rightsGiven, rightsHas, online: false }]
+	}
+
+	/** Patch one friend's rights bits (only fields that are defined). */
+	function applyRightsChange({ agentId, rightsGiven, rightsHas } = {}) {
+		const key = lc(agentId)
+		friends.value = friends.value.map(f => {
+			if (f.id !== key) return f
+			const next = { ...f }
+			if (rightsGiven !== undefined) next.rightsGiven = rightsGiven | 0
+			if (rightsHas   !== undefined) next.rightsHas   = rightsHas | 0
+			return next
+		})
+	}
+
+	/** Optimistic local set of rights-I-grant, before the sim confirms via ChangeUserRights. */
+	function setRightsGivenLocal(id, bitmask) {
+		applyRightsChange({ agentId: id, rightsGiven: bitmask | 0 })
+	}
+
 	/** Apply UUIDNameReply — fill friend display names + name cache. */
 	function applyNames(map) {
 		const m = new Map(names.value)
@@ -106,7 +134,8 @@ export const useGridSocialStore = defineStore('gridSocial', () => {
 		friends, groups, activeGroupId, groupTitle, profiles, parcels, names,
 		gestures, globalTextures, loginFlags,
 		onlineFriends, friendCount, onlineCount, friendById, isFriend, profileFor, nameFor,
-		loadFromLogin, setFriendStatus, applyNames, setSelfGroups, setAgentData,
+		loadFromLogin, setFriendStatus, addFriend, applyRightsChange, setRightsGivenLocal,
+		applyNames, setSelfGroups, setAgentData,
 		mergeProfile, setParcel, clear,
 	}
 })

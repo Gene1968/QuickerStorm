@@ -25,6 +25,7 @@ import {
 	encodeAcceptFriendship, encodeDeclineFriendship, encodeTerminateFriendship, encodeChangeUserRights,
 	encodeTeleportLandmarkRequest, encodeSetStartLocationRequest,
 	encodeCreateInventoryItem, encodeCreateInventoryFolder, decodeUpdateCreateInventoryItem,
+	encodeAvatarPickerRequest, decodeAvatarPickerReply, decodeChangeUserRights,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -67,6 +68,8 @@ const LOW_OFFLINE_NOTIFICATION      = 323  // OfflineNotification
 const LOW_AGENT_DATA_UPDATE         = 387  // AgentDataUpdate (Zerocoded) — self active group/title
 const LOW_AGENT_GROUP_DATA_UPDATE   = 389  // AgentGroupDataUpdate (Zerocoded) — self group list
 const LOW_UPDATE_CREATE_INV_ITEM    = 267  // UpdateCreateInventoryItem — sim's reply after CreateInventoryItem
+const LOW_AVATAR_PICKER_REPLY       = 28   // AvatarPickerReply
+const LOW_CHANGE_USER_RIGHTS        = 321  // ChangeUserRights (inbound notification)
 
 // WHY: Sim disconnects if no packets received for 60s. Send AgentUpdate every 2s when idle.
 const HEARTBEAT_INTERVAL_MS = 2000
@@ -728,6 +731,28 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `low:${LOW_AVATAR_PICKER_REPLY}`) {
+		try {
+			const r = decodeAvatarPickerReply(buf, dataOffset)
+			const avatars = r.avatars.map(a => ({ id: a.id, name: `${a.firstName} ${a.lastName}`.trim() }))
+			session.ws.send(JSON.stringify({ t: S.AVATAR_PICKER_REPLY, d: { queryId: r.queryId, avatars } }))
+			slog.info(session.ws, `[Picker] ${avatars.length} result(s) q=${r.queryId.slice(0, 8)}…`)
+		} catch (e) { slog.warn(session.ws, `AvatarPickerReply decode error: ${(e as Error).message}`) }
+		return
+	}
+	if (type === `low:${LOW_CHANGE_USER_RIGHTS}`) {
+		try {
+			const r = decodeChangeUserRights(buf, dataOffset)
+			for (const entry of r.rights) {
+				session.ws.send(JSON.stringify({ t: S.FRIEND_RIGHTS_CHANGED, d: {
+					agentId: r.agentId, relatedId: entry.agentRelated, rights: entry.relatedRights,
+				} }))
+			}
+			slog.info(session.ws, `[Friends] rights changed agent=${r.agentId.slice(0, 8)}… ×${r.rights.length}`)
+		} catch (e) { slog.warn(session.ws, `ChangeUserRights decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	if (type === `low:${LOW_UUID_NAME_REPLY}`) {
 		try {
 			const pairs = decodeUUIDNameReply(buf, dataOffset)
@@ -1152,6 +1177,20 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ChangeUserRights ${d.agentId.slice(0, 8)}… rights=${d.rights}`)
+		return
+	}
+
+	if (msg.t === C.AVATAR_PICKER_REQ) {
+		const d = msg.d as { query: string; queryId: string }
+		if (!d.query || !d.queryId) return
+		const seq = nextSeq(session)
+		const pkt = encodeAvatarPickerRequest({
+			agentId: session.agentId, sessionId: session.sessionId,
+			queryId: d.queryId, name: d.query, seq,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ AvatarPickerRequest "${d.query}" q=${d.queryId.slice(0, 8)}…`)
 		return
 	}
 

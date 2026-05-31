@@ -35,7 +35,9 @@ import DebugPanel			from '@/components/DebugPanel.vue'
 import AudioControlsWidget	from '@/components/AudioControlsWidget.vue'
 import MovementHelpFloater	from '@/components/MovementHelpFloater.vue'
 import CreateLandmarkFloater	from '@/components/CreateLandmarkFloater.vue'
+import NotificationsFloater	from '@/components/NotificationsFloater.vue'
 import ResyncBanner			from '@/components/ResyncBanner.vue'
+import ToastStack				from '@/components/ToastStack.vue'
 
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
 const { is2D: autoDetect2D } = use2DFallback()
@@ -140,11 +142,13 @@ watch(
 					<SettingsFloater		v-if="ui.showSettings" />
 					<DebugPanel				v-if="ui.showDebug" />
 					<MovementHelpFloater	v-if="ui.showMovementHelp" />
+					<NotificationsFloater	v-if="ui.showNotifications" />
 				<CreateLandmarkFloater	v-if="ui.showCreateLandmark" />
 					<AvatarContextMenu />
 					<ObjectContextMenu />
 					<InventoryContextMenu />
 					<InventoryItemProperties />
+					<ToastStack />
 				</div>
 			</div>
 

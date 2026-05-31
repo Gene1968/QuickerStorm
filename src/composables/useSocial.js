@@ -6,14 +6,20 @@
 import { onMounted, onUnmounted, watch } from 'vue'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useGridSocialStore } from '@/stores/gridSocialStore'
+import { useNotificationStore } from '@/stores/notificationStore'
+import { useSessionStore } from '@/stores/sessionStore'
 import { C, S } from '@shared/protocol.js'
 
 let registered = false
 let nameWatcher = null
+// Pending avatar-picker queries: queryId -> resolve fn. Module-level so the singleton handler resolves them.
+const pickerQueries = new Map()
 
 export function useSocial() {
 	const { on, emit } = useRealtimeSocket()
-	const social = useGridSocialStore()
+	const social   = useGridSocialStore()
+	const notif    = useNotificationStore()
+	const session  = useSessionStore()
 
 	// ── Outbound requests ──────────────────────────────────────────────────────
 	function requestProfile(avatarId)   { if (avatarId) emit(C.AVATAR_PROPS_REQ, { avatarId }) }
@@ -25,7 +31,22 @@ export function useSocial() {
 
 	// ── Friend management (gated by confirm dialogs in the UI) ──────────────────
 	function offerFriendship(toAgentId, toAgentName, message) {
-		if (toAgentId) emit(C.FRIEND_OFFER, { toAgentId, toAgentName, message })
+		if (!toAgentId) return
+		emit(C.FRIEND_OFFER, { toAgentId, toAgentName, message })
+		notif.notify({ tab: 'system', title: 'Friendship offered', body: `You offered friendship to ${toAgentName || toAgentId.slice(0, 8)}.` })
+	}
+
+	/** Add-Friend name search. Resolves to [{ id, name }] (empty on timeout). */
+	function findAvatars(query) {
+		return new Promise((resolve) => {
+			const queryId = crypto.randomUUID()
+			pickerQueries.set(queryId, resolve)
+			emit(C.AVATAR_PICKER_REQ, { query, queryId })
+			// WHY: never leave a hanging promise if the sim returns nothing.
+			setTimeout(() => {
+				if (pickerQueries.has(queryId)) { pickerQueries.delete(queryId); resolve([]) }
+			}, 8000)
+		})
 	}
 	function respondFriendship(transactionId, accept, folderId) {
 		if (transactionId) emit(C.FRIEND_RESPOND, { transactionId, accept: !!accept, folderId })
@@ -50,6 +71,52 @@ export function useSocial() {
 	}
 	function onParcelInfo(d) { social.setParcel(d?.parcel) }
 
+	function onAvatarPickerReply(d) {
+		const r = pickerQueries.get(d?.queryId)
+		if (r) { pickerQueries.delete(d.queryId); r(d?.avatars || []) }
+	}
+
+	function onFriendRightsChanged(d) {
+		const me = (session.agentId || '').toLowerCase()
+		if ((d?.relatedId || '').toLowerCase() === me) {
+			// The friend (d.agentId) changed what they grant me → my rightsHas.
+			social.applyRightsChange({ agentId: d.agentId, rightsHas: d.rights })
+		} else if ((d?.agentId || '').toLowerCase() === me) {
+			// I changed what I grant d.relatedId → that friend's rightsGiven.
+			social.applyRightsChange({ agentId: d.relatedId, rightsGiven: d.rights })
+		}
+	}
+
+	// Friendship dialogs ride on ImprovedInstantMessage (S.IM_RECV). useInstantMessage ignores
+	// non-zero dialogs, so we own 38/39/40 here.
+	function onFriendshipIm(d) {
+		const fromName = d?.fromAgentName || (d?.fromAgentId || '').slice(0, 8)
+		if (d?.dialog === 38) {
+			const transactionId = d.imId
+			const { groupId } = notif.notify({
+				tab: 'system', sticky: true,
+				title: `Friendship offer from ${fromName}`,
+				body: d.message || 'Will you be my friend?',
+				actions: [
+					{ label: 'Accept', variant: 'primary', run: () => {
+						respondFriendship(transactionId, true)
+						social.addFriend(d.fromAgentId, fromName)
+						notif.dismissGroup(groupId)
+					} },
+					{ label: 'Decline', variant: 'ghost', run: () => {
+						respondFriendship(transactionId, false)
+						notif.dismissGroup(groupId)
+					} },
+				],
+			})
+		} else if (d?.dialog === 39) {
+			social.addFriend(d.fromAgentId, fromName)
+			notif.notify({ tab: 'system', title: `${fromName} accepted your friendship offer.` })
+		} else if (d?.dialog === 40) {
+			notif.notify({ tab: 'system', title: `${fromName} declined your friendship offer.` })
+		}
+	}
+
 	onMounted(() => {
 		if (!registered) {
 			on(S.FRIEND_STATUS, onFriendStatus)
@@ -58,6 +125,9 @@ export function useSocial() {
 			on(S.AVATAR_PROPS,  onAvatarProps)
 			on(S.PARCEL_INFO,   onParcelInfo)
 			on(S.NAME_REPLY,    onNameReply)
+			on(S.AVATAR_PICKER_REPLY,   onAvatarPickerReply)
+			on(S.FRIEND_RIGHTS_CHANGED, onFriendRightsChanged)
+			on(S.IM_RECV,               onFriendshipIm)
 			// WHY: friends arrive (with UUIDs only) on login. Resolve any unresolved names as the
 			// list changes — UUIDNameRequest is cheap and batched. Watcher persists for the session.
 			nameWatcher = watch(
@@ -73,6 +143,6 @@ export function useSocial() {
 
 	return {
 		requestProfile, requestParcelInfo, requestNames,
-		offerFriendship, respondFriendship, removeFriend, setFriendRights,
+		offerFriendship, respondFriendship, removeFriend, setFriendRights, findAvatars,
 	}
 }

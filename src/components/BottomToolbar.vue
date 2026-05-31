@@ -6,12 +6,14 @@ import { useGridStore } from '@/stores/gridStore'
 import { useRouter } from 'vue-router'
 import QuickPrefsPopover from '@/components/QuickPrefsPopover.vue'
 import { useProximityVoice } from '@/composables/useProximityVoice'
+import { useNotificationStore } from '@/stores/notificationStore'
 
 const ui			= useUiStore()
 const session = useSessionStore()
 const grid		= useGridStore()
 const router	= useRouter()
 const voice		= useProximityVoice()
+const notif		= useNotificationStore()
 
 function logout() {
 	session.clearSession()
@@ -102,6 +104,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		>
 			Logout
 		</button> -->
+
+		<!-- Notifications -->
+		<button
+			class="flex flex-1 flex-col items-center justify-center h-8 rounded text-2xs truncate transition-colors"
+			:class="ui.showNotifications ? 'bg-white/5 text-accent3' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+			title="Notifications"
+			@click="ui.toggleNotifications()"
+		>
+			<span class="relative text-base leading-none">
+				🔔
+				<span v-if="notif.totalUnread" class="absolute -top-1 -right-2 bg-red-600 text-white rounded-full text-[0.6rem] leading-none px-1 py-0.5 min-w-[1rem] text-center">{{ notif.totalUnread }}</span>
+			</span>
+			<span class="leading-none my-0.5 hidden sm:block">Notifs</span>
+		</button>
 
 		<!-- Quick Prefs (last btn, right edge) -->
 		<button

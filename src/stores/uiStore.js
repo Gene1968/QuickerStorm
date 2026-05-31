@@ -33,6 +33,7 @@ export const useUiStore = defineStore('ui', () => {
 	const inventoryInstances = ref([])
 	const showInventory      = computed(() => inventoryInstances.value.includes(0))
 	const showMap        = ref(false)
+	const showNotifications = ref(false)
 	const showSettings       = ref(false)
 	const showDebug          = ref(false)    // debug/connection panel
 	const showPreferences    = ref(false)    // full Preferences floater (Ctrl+P)
@@ -85,6 +86,7 @@ export const useUiStore = defineStore('ui', () => {
 	}
 	function toggleInventory() { toggleInventoryAt(0) }
 	function toggleMap()         { showMap.value         = !showMap.value }
+	function toggleNotifications() { showNotifications.value = !showNotifications.value }
 	function toggleSettings()    { showSettings.value    = !showSettings.value }
 	function toggleDebug()       { showDebug.value       = !showDebug.value }
 	function togglePreferences()    { showPreferences.value    = !showPreferences.value; showQuickPrefs.value = false }
@@ -141,6 +143,7 @@ export const useUiStore = defineStore('ui', () => {
 	const _FLOATER_CLOSE = {
 		conversations:   () => { showChat.value         = false },
 		map:             () => { showMap.value           = false },
+		notifications:   () => { showNotifications.value = false },
 		appearance:      () => { showAppearance.value    = false },
 		move:            () => { showMoveControls.value  = false },
 		camera:          () => { showCameraControls.value = false },
@@ -201,14 +204,14 @@ export const useUiStore = defineStore('ui', () => {
 
 	return {
 		mode, showAvatarList, showMinimap, showChat,
-		showInventory, showMap, showSettings, showDebug,
+		showInventory, showMap, showNotifications, showSettings, showDebug,
 		showPreferences, showQuickPrefs,
 		showVoiceControls, showMoveControls, showCameraControls,
 		showAppearance, showSearch, showSnapshot, showAO,
 		showMovementHelp, showPlaces, preferenceActiveTab,
 		showProfile, profileTargetId,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
-		toggleInventory, toggleMap, toggleSettings, toggleDebug,
+		toggleInventory, toggleMap, toggleNotifications, toggleSettings, toggleDebug,
 		inventoryInstances, openInventoryAt, closeInventoryAt, toggleInventoryAt, openNextInventory,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,

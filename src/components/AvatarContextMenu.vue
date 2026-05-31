@@ -2,9 +2,13 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useInstantMessage } from '@/composables/useInstantMessage'
+import { useGridSocialStore } from '@/stores/gridSocialStore'
+import { useSocial } from '@/composables/useSocial'
 
 const ui = useUiStore()
 const im = useInstantMessage()
+const social = useGridSocialStore()
+const { offerFriendship } = useSocial()
 
 const menu = computed(() => ui.avatarMenu)
 
@@ -32,6 +36,11 @@ function viewProfile() {
 	if (!menu.value) return
 	ui.openProfile(menu.value.agentId)
 	close()
+}
+
+function addFriend() {
+	if (menu.value) offerFriendship(menu.value.agentId, menu.value.name, 'Will you be my friend?')
+	ui.closeAvatarMenu()
 }
 
 function faceToward() {
@@ -71,6 +80,11 @@ onUnmounted(() => {
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="startIM">Send IM…</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="viewProfile">View Profile</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="faceToward">Face Toward</button>
+		<button
+			v-if="!social.isFriend(menu.agentId)"
+			class="block w-full text-left px-3 py-1.5 hover:bg-white/10"
+			@click="addFriend"
+		>Add Friend</button>
 		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Mute (Phase 3)</button>
 		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Follow (Phase 3)</button>
 	</div>

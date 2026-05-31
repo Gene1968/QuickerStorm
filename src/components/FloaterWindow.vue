@@ -61,7 +61,10 @@ onMounted(() => {
 				w = e.contentRect.width
 				h = e.contentRect.height
 			}
-			size.value = { w: Math.round(w), h: Math.round(h) }
+			// WHY: skip when element is hidden (display:none or visibility:hidden collapses
+			// position:fixed in some browsers); persisting 0×0 would freeze the floater
+			// at zero dimensions after Ctrl+Alt+F1 restores the UI.
+			if (w && h) size.value = { w: Math.round(w), h: Math.round(h) }
 		})
 		ro.observe(el.value)
 	}
