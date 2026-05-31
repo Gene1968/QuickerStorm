@@ -24,24 +24,6 @@ watch(() => gridStore.selectedNick, () => {
 	password.value = ''
 })
 
-// Fires when the username input changes. If the value matches a saved-account
-// datalist option ("Username @ GridName"), auto-switch grid and inject password.
-function onAccountSelect() {
-	const val = username.value
-	const match = val.match(/^(.+)\s@\s(.+)$/)
-	if (!match) return
-	const [, rawUser, gridName] = match
-	const grid = gridStore.grids.find(g => g.name === gridName)
-	if (!grid) return
-	const stored = accountsStore.getPassword(rawUser, grid.nick)
-	if (stored === null) return
-	// WHY: Vue watchers flush async (next microtask). selectGrid() mutates
-	// selectedNick, which queues the blank-fields watcher. The synchronous
-	// assignments below are the last writes in this frame, so they survive.
-	gridStore.selectGrid(grid.nick)
-	username.value = rawUser
-	password.value = stored
-}
 
 // ── Recent region destinations ────────────────────────────────────────────
 const RECENT_KEY = 'qs_recent_regions'
@@ -56,8 +38,33 @@ function saveRecent(grid, region) {
 }
 const recentRegions = computed(() => loadRecent()[gridStore.selectedNick] ?? [])
 
-// WHY: Native <datalist> can't be styled and mispositions inside scrollable
-// panels (LandingView login strip). Custom list anchors to the input instead.
+// WHY: Native <datalist> mispositions inside scrollable/overflow panels
+// (LandingView login strip has overflow-y-auto). Custom lists anchor to the
+// input instead. Same pattern used for both username and region fields.
+const usernameInputRef = ref(null)
+const showAccountSuggestions = ref(false)
+const filteredAccounts = computed(() => {
+	const q = username.value.trim().toLowerCase()
+	return q
+		? accountsStore.accounts.filter(a => a.username.toLowerCase().includes(q))
+		: accountsStore.accounts
+})
+
+function openAccountSuggestions() {
+	if (accountsStore.accounts.length) showAccountSuggestions.value = true
+}
+function closeAccountSuggestions() {
+	showAccountSuggestions.value = false
+}
+function pickAccount(acct) {
+	closeAccountSuggestions()
+	// WHY: Vue watchers flush async (next microtask). selectGrid() queues the
+	// blank-fields watcher; synchronous assignments below are the last writes.
+	gridStore.selectGrid(acct.gridNick)
+	username.value = acct.username
+	password.value = acct.password
+}
+
 const regionInputRef = ref(null)
 const showRegionSuggestions = ref(false)
 const filteredRegions = computed(() => {
@@ -112,23 +119,33 @@ async function submit() {
 <template>
 	<form class="flex flex-col gap-3" @submit.prevent="submit">
 
-		<input
-			v-model="username"
-			type="text"
-			list="qs-saved-accounts"
-			placeholder="First Last"
-			autocomplete="username"
-			class="reset-input px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
-			required
-			@input="onAccountSelect"
-		/>
-		<datalist id="qs-saved-accounts">
-			<option
-				v-for="acct in accountsStore.accounts"
-				:key="acct.username + '@' + acct.gridNick"
-				:value="acct.username + ' @ ' + (gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick)"
+		<div class="relative">
+			<input
+				ref="usernameInputRef"
+				v-model="username"
+				type="text"
+				placeholder="First Last"
+				autocomplete="off"
+				class="reset-input w-full px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+				required
+				@focus="openAccountSuggestions"
+				@input="openAccountSuggestions"
+				@blur="closeAccountSuggestions"
+				@keydown.escape="closeAccountSuggestions"
 			/>
-		</datalist>
+			<ul
+				v-if="showAccountSuggestions && filteredAccounts.length"
+				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
+				@mousedown.prevent
+			>
+				<li
+					v-for="acct in filteredAccounts"
+					:key="acct.username + '@' + acct.gridNick"
+					class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
+					@click="pickAccount(acct)"
+				>{{ acct.username }} <span class="text-t2">@ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}</span></li>
+			</ul>
+		</div>
 
 		<input
 			v-model="password"
