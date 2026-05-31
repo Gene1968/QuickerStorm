@@ -53,7 +53,10 @@ const filteredAccounts = computed(() => {
 })
 
 function openAccountSuggestions() {
-	if (accountsStore.accounts.length) showAccountSuggestions.value = true
+	if (filteredAccounts.value.length) showAccountSuggestions.value = true
+}
+function toggleAccountSuggestions() {
+	showAccountSuggestions.value = !showAccountSuggestions.value
 }
 function closeAccountSuggestions() {
 	showAccountSuggestions.value = false
@@ -126,26 +129,36 @@ async function submit() {
 				ref="usernameInputRef"
 				v-model="username"
 				type="text"
-				placeholder="Username - First Last (grid)"
+				placeholder="First Last"
 				autocomplete="new-password"
-				class="relative reset-input w-full px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+				class="reset-input w-full px-3 py-2 pr-8 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 				required
 				@focus="openAccountSuggestions"
 				@input="openAccountSuggestions"
 				@blur="closeAccountSuggestions"
 				@keydown.escape="closeAccountSuggestions"
-			><ChevronDownIcon class="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4" /></input>
+			/>
+			<button
+				type="button"
+				tabindex="-1"
+				class="absolute right-2 top-1/2 -translate-y-1/2 text-t2 hover:text-t1 transition-colors"
+				@mousedown.prevent
+				@click="toggleAccountSuggestions"
+			><ChevronDownIcon class="w-4 h-4 transition-transform" :class="showAccountSuggestions ? 'rotate-180' : ''" /></button>
 			<ul
-				v-if="showAccountSuggestions && filteredAccounts.length"
+				v-if="showAccountSuggestions"
 				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
 				@mousedown.prevent
 			>
-				<li
-					v-for="acct in filteredAccounts"
-					:key="acct.username + '@' + acct.gridNick"
-					class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
-					@click="pickAccount(acct)"
-				>{{ acct.username }} <span class="text-t2">@ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}</span></li>
+				<template v-if="filteredAccounts.length">
+					<li
+						v-for="acct in filteredAccounts"
+						:key="acct.username + '@' + acct.gridNick"
+						class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
+						@click="pickAccount(acct)"
+					>{{ acct.username }} <span class="text-t2">@ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}</span></li>
+				</template>
+				<li v-else class="px-3 py-1.5 text-sm text-t2 italic select-none">None stored</li>
 			</ul>
 		</div>
 
@@ -170,7 +183,7 @@ async function submit() {
 			<div class="flex gap-2">
 				<select
 					v-model="destType"
-					class="flex-1 px-2 py-1.5 border border-brd rounded bg-card2 text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+					class="flex-1 py-1.5 px-2 border border-brd rounded bg-card2 text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
 				>
 					<option value="last">Last Location</option>
 					<option value="home">Home</option>
