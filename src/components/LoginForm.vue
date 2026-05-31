@@ -125,7 +125,7 @@ async function submit() {
 				v-model="username"
 				type="text"
 				placeholder="First Last"
-				autocomplete="off"
+				autocomplete="new-password"
 				class="reset-input w-full px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 				required
 				@focus="openAccountSuggestions"
