@@ -160,7 +160,7 @@ async function submitChat() {
 	<FloaterWindow
 		id="conversations"
 		:title="floaterTitle"
-		:wrap-style="{ width: '29vw', height: '36vh', resize: 'both' }"
+		:wrap-style="{ width: '36vw', height: '38vh', resize: 'both' }"
 		:default-pos="{ left: '0.125%', top: '7%' }"
 		@close="ui.toggleChat()"
 	>
@@ -168,7 +168,7 @@ async function submitChat() {
 		<div class="flex flex-1 min-h-0">
 
 			<!-- Vertical tab strip -->
-			<nav class="vtabs w-[9rem]">
+			<nav class="vtabs w-[11rem]">
 				<div
 					v-for="tab in tabs"
 					:key="tab.id"
@@ -181,15 +181,15 @@ async function submitChat() {
 						@click="selectTab(tab.id)"
 					>
 						<span class="-mt-0.5 text-base leading-none">{{ tab.icon }}</span>
-						<span class="w-full text-start leading-none truncate">{{ tab.label }}</span>
+						<span :title="tab.label" class="w-full text-start leading-none truncate">{{ tab.label }}</span>
 					</button>
 					<button
 						v-if="tab.closable"
-						class="absolute top-0.5 right-0.5 justify-end opacity-0 hover:opacity-100 text-gray-400 hover:text-gray-900"
+						class="absolute block top-0 right-0.5 border opacity-20 hover:opacity-100"
 						title="Close conversation"
 						@click="closeImTab(tab.id, $event)"
 					>
-						<XIcon class="w-3 h-3" />
+						<XIcon class="custom w-6 h-6 bg-red-900 text-white" />
 					</button>
 				</div>
 			</nav>

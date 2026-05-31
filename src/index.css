@@ -199,7 +199,7 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 		border-color: var(--color-accent);
 		color: var(--color-t1);
 	}
-	.floater button svg {
+	.floater button svg:not(.custom) {
 		width: 1rem;
 		height: 1rem;
 	}
@@ -234,15 +234,18 @@ html.light .shelf-divider     { background: rgba(255,255,255,0.25); }
 	.floater .vtabs {
 		@apply flex flex-col shrink-0 border-r border-brd overflow-y-auto;
 	}
-	.floater .vtabs button {
-		background: none;
-		@apply flex items-center gap-1 py-3 px-1 text-xs transition-colors border-l-2 border-transparent w-full;
+	.floater .vtabs > div {
+		@apply flex items-center justify-between;
 	}
-	.floater .vtabs button:hover {
+	.floater .vtabs button:not(.block) {
+		background: none;
+		@apply flex items-center gap-1 py-4 px-1 text-xs transition-colors border-l-2 border-transparent w-full;
+	}
+	.floater .vtabs button:not(.block):hover {
 		background: rgba(255, 255, 255, 0.06);
 		color: var(--color-t1);
 	}
-	.floater .vtabs button.active {
+	.floater .vtabs button:not(.block).active {
 		@apply bg-white/10 text-accent border-accent3
 	}
 
