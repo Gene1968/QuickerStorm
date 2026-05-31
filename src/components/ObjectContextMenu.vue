@@ -68,7 +68,7 @@ onUnmounted(() => {
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-brd truncate">{{ menu.name }}</div>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="edit">Edit…</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="inspect">{{ showInspect ? 'Hide Inspect' : 'Inspect' }}</button>
-		<div v-if="showInspect" class="px-3 py-1.5 border-b border-brd text-[0.65rem] text-white/70 font-mono">
+		<div v-if="showInspect" class="px-3 py-1.5 border-b border-brd text-2xs text-white/70 font-mono">
 			<div>id: {{ menu.localId }}</div>
 			<div class="truncate">uuid: {{ menu.fullId }}</div>
 			<div v-if="menu.pos">pos: {{ menu.pos.map(v => v.toFixed(1)).join(', ') }}</div>

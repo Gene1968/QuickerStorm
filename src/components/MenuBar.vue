@@ -140,7 +140,7 @@ const MENUS = [
 			{ label: 'Preferences…',		kbd: 'Ctrl+P',	action: () => act(() => ui.openPreferences()) },
 			{ sep: true },
 			{ label: 'Inventory',							action: () => act(() => ui.toggleInventory()) },
-			{ label: 'Profile…',							action: () => act(() => ui.openProfile()) },
+			{ label: 'My profile…',							action: () => act(() => ui.openProfile()) },
 			{ sep: true },
 			{ label: 'Snapshot…',			disabled: true },
 			{ sep: true },

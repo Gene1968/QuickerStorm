@@ -50,7 +50,7 @@ const cameraRows = [
 		<div class="p-4 text-xs text-t2 space-y-5">
 			<div class="flex justify-between gap-4">
 				<section>
-					<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Movement</h3>
+					<h3 class="text-xs font-bold uppercase tracking-widest text-tm mb-2">Movement</h3>
 					<table class="w-full border-collapse">
 						<tbody>
 							<tr
@@ -65,7 +65,7 @@ const cameraRows = [
 					</table>
 				</section>
 				<section>
-					<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Other shortcuts</h3>
+					<h3 class="text-xs font-bold uppercase tracking-widest text-tm mb-2">Other shortcuts</h3>
 					<table class="w-full border-collapse">
 						<tbody>
 							<tr
@@ -82,7 +82,7 @@ const cameraRows = [
 			</div>
 
 			<section>
-				<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm mb-2">Camera view</h3>
+				<h3 class="text-xs font-bold uppercase tracking-widest text-tm mb-2">Camera view</h3>
 				<table class="w-full border-collapse">
 					<tbody>
 						<tr

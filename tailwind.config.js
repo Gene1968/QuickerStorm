@@ -26,63 +26,27 @@ export default {
 		},
 		extend: {
 			/**
-			 * Fluid type: clamp(min, vw blend, max). Rem units inside clamp resolve against the
-			 * browser root (16px), not html — so they do not double-scale with the fluid html root.
+			 * Fluid type anchored at 1600px (1vw = 1rem = 16px).
+			 * Two-point solve: 360px (mobile) → 1600px (anchor).
+			 * a = (desktop_px − mobile_px) / 12.4, b = (desktop_px − a×16) / 16
+			 * Caps hit ~5K–7K; all sizes unconstrained through 4K.
+			 * Rem inside clamp resolves against browser root (16px), not html.
 			 */
 			fontSize: {
-				'2xs': ['clamp(0.625rem, 0.25vw + 0.55rem, 0.75rem)', { lineHeight: '1rem' }],
-				xs: [
-					'clamp(0.75rem, 0.35vw + 0.65rem, 0.875rem)',
-					{ lineHeight: '1rem' },
-				],
-				sm: [
-					'clamp(0.8125rem, 0.4vw + 0.7rem, 0.9375rem)',
-					{ lineHeight: '1.25rem' },
-				],
-				base: [
-					'clamp(0.875rem, 0.45vw + 0.75rem, 1rem)',
-					{ lineHeight: '1.5rem' },
-				],
-				lg: [
-					'clamp(1rem, 0.55vw + 0.82rem, 1.125rem)',
-					{ lineHeight: '1.75rem' },
-				],
-				xl: [
-					'clamp(1.0625rem, 0.65vw + 0.85rem, 1.25rem)',
-					{ lineHeight: '1.75rem' },
-				],
-				'2xl': [
-					'clamp(1.125rem, 0.85vw + 0.9rem, 1.5rem)',
-					{ lineHeight: '2rem' },
-				],
-				'3xl': [
-					'clamp(1.375rem, 1.1vw + 1rem, 1.875rem)',
-					{ lineHeight: '2.25rem' },
-				],
-				'4xl': [
-					'clamp(1.5rem, 1.35vw + 1.05rem, 2.25rem)',
-					{ lineHeight: '2.5rem' },
-				],
-				'5xl': [
-					'clamp(1.75rem, 1.75vw + 1.1rem, 3rem)',
-					{ lineHeight: '1' },
-				],
-				'6xl': [
-					'clamp(2rem, 2.25vw + 1.2rem, 3.75rem)',
-					{ lineHeight: '1' },
-				],
-				'7xl': [
-					'clamp(2.25rem, 2.75vw + 1.25rem, 4.5rem)',
-					{ lineHeight: '1' },
-				],
-				'8xl': [
-					'clamp(2.75rem, 3.5vw + 1.5rem, 6rem)',
-					{ lineHeight: '1' },
-				],
-				'9xl': [
-					'clamp(3.25rem, 4.25vw + 1.75rem, 8rem)',
-					{ lineHeight: '1' },
-				],
+				'2xs': ['clamp(0.5625rem, 0.081vw + 0.544rem, 0.875rem)',  { lineHeight: '1rem' }],
+				xs:   ['clamp(0.6875rem, 0.081vw + 0.669rem, 1rem)',       { lineHeight: '1rem' }],
+				sm:   ['clamp(0.75rem,   0.161vw + 0.714rem, 1.25rem)',    { lineHeight: '1.25rem' }],
+				base: ['clamp(0.875rem,  0.161vw + 0.839rem, 1.5rem)',     { lineHeight: '1.5rem' }],
+				lg:   ['clamp(1rem,      0.161vw + 0.964rem, 1.75rem)',    { lineHeight: '1.75rem' }],
+				xl:   ['clamp(1.125rem,  0.161vw + 1.089rem, 2rem)',       { lineHeight: '1.75rem' }],
+				'2xl': ['clamp(1.25rem,  0.323vw + 1.177rem, 2.5rem)',    { lineHeight: '2rem' }],
+				'3xl': ['clamp(1.5rem,   0.484vw + 1.391rem, 3.125rem)',  { lineHeight: '2.25rem' }],
+				'4xl': ['clamp(1.75rem,  0.645vw + 1.605rem, 4rem)',      { lineHeight: '2.5rem' }],
+				'5xl': ['clamp(2rem,     1.290vw + 1.710rem, 6rem)',      { lineHeight: '1' }],
+				'6xl': ['clamp(2.375rem, 1.774vw + 1.976rem, 8rem)',      { lineHeight: '1' }],
+				'7xl': ['clamp(2.875rem, 2.097vw + 2.403rem, 10rem)',     { lineHeight: '1' }],
+				'8xl': ['clamp(3.5rem,   3.226vw + 2.774rem, 14rem)',     { lineHeight: '1' }],
+				'9xl': ['clamp(4.25rem,  4.839vw + 3.161rem, 20rem)',     { lineHeight: '1' }],
 			},
 			fontFamily: {
 				montserrat: ['Montserrat', ...defaultTheme.fontFamily.sans],

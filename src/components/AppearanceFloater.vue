@@ -124,9 +124,9 @@ const outfitFolders = [
 
 			<!-- ── Current Look header (always visible) ──────────────── -->
 			<div class="flex items-center gap-2 px-2.5 py-2 border-b border-brd shrink-0 bg-card2">
-				<span class="text-2xl leading-none shrink-0">👕</span>
+				<span class="text-2xl leading-none shrink-0 -mt-2">👕</span>
 				<div class="flex flex-col flex-1 min-w-0">
-					<span class="text-[10px] text-white/50 uppercase tracking-wide leading-none mb-0.5">
+					<span class="text-xs text-white/50 uppercase tracking-wide leading-none mb-0.5">
 						{{ editMode ? 'Now editing…' : 'Now wearing…' }}
 					</span>
 					<span class="text-sm font-semibold text-t1 leading-tight truncate">
@@ -157,13 +157,13 @@ const outfitFolders = [
 						placeholder="Filter Outfits…"
 						class="flex-1 min-w-0 bg-card2 border border-brd text-t1 placeholder-tm rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
 					/>
-					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Options — Phase 2" disabled>
+					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Sort — Phase 2" disabled>
+					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Sort — Phase 3" disabled>
 						<ArrowUpDownIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Delete Outfit — Phase 2" disabled>
+					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Delete Outfit — Phase 3" disabled>
 						<Trash2Icon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -177,7 +177,7 @@ const outfitFolders = [
 							{ id: 'wearing', label: `Wearing (${totalWorn}/38 Att.)` },
 						]"
 						:key="tab.id"
-						class="flex-1 py-1.5 text-[11px] font-medium border-b-2 transition-colors"
+						class="flex-1 py-1.5 text-sm font-medium border-b-2 transition-colors"
 						:class="activeTab === tab.id
 							? 'border-accent text-accent bg-white/5'
 							: 'border-transparent text-white/50 hover:text-white hover:border-white/30'"
@@ -197,7 +197,7 @@ const outfitFolders = [
 								v-for="item in galleryItems"
 								:key="item.id"
 								class="flex flex-col items-center gap-1 cursor-pointer group"
-								title="Outfit Gallery — Phase 2"
+								title="Outfit Gallery — Phase 3"
 							>
 								<div
 									class="w-full aspect-square rounded border-2 border-brd group-hover:border-accent transition-colors"
@@ -205,10 +205,10 @@ const outfitFolders = [
 								>
 									<div class="flex items-center justify-center h-full text-2xl">👕</div>
 								</div>
-								<span class="text-[10px] text-tm text-center truncate w-full">{{ item.name }}</span>
+								<span class="text-xs text-tm text-center truncate w-full">{{ item.name }}</span>
 							</div>
 						</div>
-						<div class="px-3 pb-2 text-tm/50 text-[10px] italic text-center">Outfit Gallery — Phase 2</div>
+						<div class="px-3 pb-2 text-tm/50 text-xs italic text-center">Outfit Gallery — Phase 3</div>
 					</template>
 
 					<!-- Outfits tab ─────────────────────────────────── -->
@@ -229,21 +229,21 @@ const outfitFolders = [
 										class="w-3 h-3 text-white/40 shrink-0"
 									/>
 									<span class="text-t1 font-medium">{{ folder.label }}</span>
-									<span class="ml-auto text-tm/50 text-[10px]">{{ folder.count }}</span>
+									<span class="ml-auto text-tm/50 text-xs">{{ folder.count }}</span>
 								</button>
 								<!-- Folder contents placeholder -->
 								<template v-if="folder.open.value && folder.count > 0">
-									<div class="px-4 py-1 text-tm/40 text-[11px] italic">
-										Contents — Phase 2
+									<div class="px-4 py-1 text-tm/40 text-sm italic">
+										Contents — Phase 3
 									</div>
 								</template>
 								<template v-else-if="folder.open.value">
-									<div class="px-4 py-1 text-tm/30 text-[11px] italic">Empty</div>
+									<div class="px-4 py-1 text-tm/30 text-sm italic">Empty</div>
 								</template>
 							</div>
 						</div>
-						<div class="px-3 py-2 text-tm/40 text-[10px] italic text-center">
-							Full outfit library — Phase 2
+						<div class="px-3 py-2 text-tm/40 text-xs italic text-center">
+							Full outfit library — Phase 3
 						</div>
 					</template>
 
@@ -263,14 +263,14 @@ const outfitFolders = [
 									:is="expanded[group.id] ? ChevronDownIcon : ChevronRightIcon"
 									class="w-3 h-3 text-white/40 shrink-0"
 								/>
-								<span class="text-t1 font-medium text-[11px]">{{ group.label }}</span>
-								<span class="ml-auto text-tm/40 text-[10px]">{{ group.items.length }}</span>
+								<span class="text-t1 font-medium text-sm">{{ group.label }}</span>
+								<span class="ml-auto text-tm/40 text-xs">{{ group.items.length }}</span>
 							</button>
 							<!-- Items -->
 							<template v-if="expanded[group.id]">
 								<div
 									v-if="!group.items.length"
-									class="px-6 py-1.5 text-tm/40 text-[11px] italic"
+									class="px-6 py-1.5 text-tm/40 text-sm italic"
 								>
 									{{ group.id === 'attachments' ? 'No attachments worn.' : 'None' }}
 								</div>
@@ -282,7 +282,7 @@ const outfitFolders = [
 									<span class="text-sm leading-none shrink-0">{{ item.icon }}</span>
 									<div class="flex flex-col flex-1 min-w-0">
 										<span class="text-t1 font-medium leading-tight">{{ item.label }}</span>
-										<span class="text-tm/60 text-[10px] leading-tight truncate">{{ item.detail }}</span>
+										<span class="text-tm/60 text-xs leading-tight truncate">{{ item.detail }}</span>
 									</div>
 									<!-- Color swatch -->
 									<div
@@ -300,8 +300,8 @@ const outfitFolders = [
 
 				<!-- Bottom status bar -->
 				<div class="flex items-center px-2.5 py-1.5 border-t border-brd shrink-0 bg-card2 gap-2">
-					<span class="text-tm/50 text-[10px] flex-1">Complexity: — (Phase 2)</span>
-					<button class="p-1 rounded hover:bg-white/10 text-white/40 hover:text-white" title="Marketplace — Phase 2" disabled>
+					<span class="text-tm/50 text-xs flex-1">Complexity: — (Phase 3)</span>
+					<button class="p-1 rounded hover:bg-white/10 text-white/40 hover:text-white" title="Marketplace — Phase 3" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -335,7 +335,7 @@ const outfitFolders = [
 							@click="expanded.body = !expanded.body"
 						>
 							<component :is="expanded.body ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-white/40 shrink-0" />
-							<span class="text-t1 font-medium text-[11px]">Body Parts</span>
+							<span class="text-t1 font-medium text-sm">Body Parts</span>
 						</button>
 						<template v-if="expanded.body">
 							<!-- Shape (read-only) -->
@@ -343,7 +343,7 @@ const outfitFolders = [
 								<span class="text-sm shrink-0">🧍</span>
 								<div class="flex flex-col flex-1 min-w-0">
 									<span class="text-t1 font-medium leading-tight">Shape</span>
-									<span class="text-tm/50 text-[10px]">Classic Avatar — Phase 2</span>
+									<span class="text-tm/50 text-xs">Classic Avatar — Phase 3</span>
 								</div>
 							</div>
 							<!-- Skin -->
@@ -366,7 +366,7 @@ const outfitFolders = [
 									<span class="text-t1 font-medium leading-tight">Hair</span>
 									<select
 										v-model="editHairStyle"
-										class="bg-card2 border border-brd text-t1 rounded px-1 py-0.5 text-[10px] mt-0.5 focus:outline-none focus:ring-1 focus:ring-accent"
+										class="bg-card2 border border-brd text-t1 rounded px-1 py-0.5 text-xs mt-0.5 focus:outline-none focus:ring-1 focus:ring-accent"
 									>
 										<option value="none">None</option>
 										<option value="short">Short</option>
@@ -386,7 +386,7 @@ const outfitFolders = [
 								<span class="text-sm shrink-0">👁</span>
 								<div class="flex flex-col flex-1 min-w-0">
 									<span class="text-t1 font-medium leading-tight">Eyes</span>
-									<span class="text-tm/50 text-[10px]">Default — Phase 2</span>
+									<span class="text-tm/50 text-xs">Default — Phase 3</span>
 								</div>
 							</div>
 						</template>
@@ -399,7 +399,7 @@ const outfitFolders = [
 							@click="expanded.clothing = !expanded.clothing"
 						>
 							<component :is="expanded.clothing ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-white/40 shrink-0" />
-							<span class="text-t1 font-medium text-[11px]">Clothing</span>
+							<span class="text-t1 font-medium text-sm">Clothing</span>
 						</button>
 						<template v-if="expanded.clothing">
 							<!-- Outfit color -->
@@ -407,7 +407,7 @@ const outfitFolders = [
 								<span class="text-sm shrink-0">👕</span>
 								<div class="flex flex-col flex-1 min-w-0">
 									<span class="text-t1 font-medium leading-tight">Outfit Color</span>
-									<span class="text-tm/50 text-[10px]">Primary / accent color</span>
+									<span class="text-tm/50 text-xs">Primary / accent color</span>
 								</div>
 								<input
 									v-model="editColor"
@@ -426,26 +426,26 @@ const outfitFolders = [
 							@click="expanded.attachments = !expanded.attachments"
 						>
 							<component :is="expanded.attachments ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-white/40 shrink-0" />
-							<span class="text-t1 font-medium text-[11px]">Attachments</span>
-							<span class="ml-auto text-tm/40 text-[10px]">0</span>
+							<span class="text-t1 font-medium text-sm">Attachments</span>
+							<span class="ml-auto text-tm/40 text-xs">0</span>
 						</button>
 						<template v-if="expanded.attachments">
-							<div class="px-6 py-2 text-tm/40 text-[11px] italic">No attachments worn.</div>
+							<div class="px-6 py-2 text-tm/40 text-sm italic">No attachments worn.</div>
 						</template>
 					</div>
 
 					<!-- Add More (stub expand) -->
 					<div class="px-3 py-2 border-b border-brd/40">
 						<button
-							class="flex items-center gap-1.5 px-2 py-1 border border-brd rounded text-tm hover:bg-white/5 hover:text-t1 transition-colors text-[11px]"
-							title="Browse inventory to add wearables — Phase 2"
+							class="flex items-center gap-1.5 px-2 py-1 border border-brd rounded text-tm hover:bg-white/5 hover:text-t1 transition-colors text-sm"
+							title="Browse inventory to add wearables — Phase 3"
 							@click="showAddMore = !showAddMore"
 						>
 							<PlusIcon class="w-3 h-3" />
 							Add More…
 						</button>
-						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-card2 border border-brd rounded text-center text-tm/40 text-[11px] italic">
-							Inventory browser — Phase 2
+						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-card2 border border-brd rounded text-center text-tm/40 text-sm italic">
+							Inventory browser — Phase 3
 						</div>
 					</div>
 
@@ -453,11 +453,11 @@ const outfitFolders = [
 
 				<!-- Bottom bar: gear + complexity + shop -->
 				<div class="flex items-center px-2 py-1.5 border-t border-brd shrink-0 bg-card2 gap-1">
-					<button class="p-1 rounded hover:bg-white/10 text-white/40" title="Options — Phase 2" disabled>
+					<button class="p-1 rounded hover:bg-white/10 text-white/40" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<span class="flex-1 text-tm/40 text-[10px] text-center">Complexity: — (Phase 2)</span>
-					<button class="p-1 rounded hover:bg-white/10 text-white/40" title="Marketplace — Phase 2" disabled>
+					<span class="flex-1 text-tm/40 text-xs text-center">Complexity: — (Phase 3)</span>
+					<button class="p-1 rounded hover:bg-white/10 text-white/40" title="Marketplace — Phase 3" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -470,7 +470,7 @@ const outfitFolders = [
 					>Save</button>
 					<button
 						class="flex-1 py-1.5 bg-card2 border border-brd text-tm rounded text-xs hover:bg-white/5 transition-colors opacity-50 cursor-not-allowed"
-						disabled title="Save As — Phase 2"
+						disabled title="Save As — Phase 3"
 					>Save As…</button>
 					<button
 						class="flex-1 py-1.5 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors"

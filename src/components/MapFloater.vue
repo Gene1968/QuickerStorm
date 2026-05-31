@@ -414,7 +414,7 @@ function centerOnMe() {
 }
 
 function goHome() {
-	flashStatus('Go Home — Phase 2.')
+	flashStatus('Go Home — Phase 3.')
 }
 
 let _flashTimer = null
@@ -597,7 +597,7 @@ onUnmounted(() => {
 					<!-- Hover tooltip — follows cursor at any zoom -->
 					<div
 						v-if="hoverBlock"
-						class="absolute pointer-events-none bg-black/85 text-white text-[11px] font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap z-10"
+						class="absolute pointer-events-none bg-black/85 text-white text-xs font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap z-10"
 						:style="{ left: (hoverPx.x + 12) + 'px', top: (hoverPx.y + 12) + 'px' }"
 					>
 						<div class="font-semibold">{{ hoverBlock.name }}</div>
@@ -607,10 +607,10 @@ onUnmounted(() => {
 
 					<!-- Status overlay -->
 					<div class="absolute bottom-2 left-3 pointer-events-none flex flex-col gap-0.5">
-						<span class="text-white/70 text-[10px] font-mono">
+						<span class="text-white/70 text-2xs font-mono">
 							center=({{ map.viewCenterX.toFixed(1) }},{{ map.viewCenterY.toFixed(1) }}) zoom={{ map.viewZoom }} regions={{ map.regions.size }}
 						</span>
-						<span class="text-white/40 text-[10px]">Drag to pan · wheel to zoom · click to select · double-click to teleport</span>
+						<span class="text-white/40 text-2xs">Drag to pan · wheel to zoom · click to select · double-click to teleport</span>
 					</div>
 				</div>
 
@@ -629,14 +629,14 @@ onUnmounted(() => {
 						class="text-tm text-xs px-1.5 hover:text-accent"
 						title="Zoom out" @click="map.setZoom(map.viewZoom + 1); queueQuery()"
 					>+</button>
-					<span class="text-tm/60 text-[10px] ml-2">{{ regionsAcross }} regions across</span>
+					<span class="text-tm/60 text-2xs ml-2">{{ regionsAcross }} regions across</span>
 				</div>
 			</div>
 
 			<!-- ══ RIGHT SIDEBAR ═════════ -->
 			<div class="flex flex-col w-64 shrink-0 overflow-y-auto text-xs">
 
-				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-[10px] font-semibold text-white/60 uppercase tracking-widest shrink-0">
+				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-2xs font-semibold text-white/60 uppercase tracking-widest shrink-0">
 					Legend
 				</div>
 				<div class="px-3 py-2 border-b border-brd flex flex-col gap-1.5 shrink-0">
@@ -677,7 +677,7 @@ onUnmounted(() => {
 							</label>
 						</div>
 						<div>
-							<div class="mt-1 mb-0.5 text-[10px] text-white/40 uppercase tracking-wide">Events</div>
+							<div class="mt-1 mb-0.5 text-2xs text-white/40 uppercase tracking-wide">Events</div>
 							<label class="flex items-center gap-1.5 text-tm/50 cursor-not-allowed" title="TO-DO">
 								<input v-model="showEventsG" type="checkbox" class="accent-accent" disabled/>
 								<span class="w-2 h-2 rounded-full bg-green-500 shrink-0"/>
@@ -697,7 +697,7 @@ onUnmounted(() => {
 					</div>
 				</div>
 
-				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-[10px] font-semibold text-white/60 uppercase tracking-widest shrink-0">
+				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-2xs font-semibold text-white/60 uppercase tracking-widest shrink-0">
 					Find on Map
 				</div>
 				<div class="px-1 py-1 border-b border-brd flex flex-col gap-1.5 shrink-0">
@@ -732,7 +732,7 @@ onUnmounted(() => {
 					>
 						<div
 							v-if="!searchResults.length"
-							class="flex items-center justify-center h-16 text-t1 italic text-[11px]"
+							class="flex items-center justify-center h-16 text-t1 italic text-xs"
 						>
 							No results
 						</div>
@@ -744,34 +744,34 @@ onUnmounted(() => {
 							@click="selectResult(r)"
 						>
 							<span
-								:class="['inline-flex items-center justify-center shrink-0 rounded-sm font-bold text-[9px] w-4 h-4 leading-none', accessBadge(r.access).cls]"
+								:class="['inline-flex items-center justify-center shrink-0 rounded-sm font-bold text-2xs w-4 h-4 leading-none', accessBadge(r.access).cls]"
 								:title="`access ${accessBadge(r.access).text}`"
 							>{{ accessBadge(r.access).label }}</span>
 							<span class="truncate">{{ r.name }}</span>
-							<span class="text-tm/50 text-[10px] ml-auto shrink-0">({{ r.regionX }},{{ r.regionY }})</span>
+							<span class="text-tm/50 text-2xs ml-auto shrink-0">({{ r.regionX }},{{ r.regionY }})</span>
 						</button>
 					</div>
 				</div>
 
-				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-[10px] font-semibold text-white/60 uppercase tracking-widest shrink-0">
+				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-2xs font-semibold text-white/60 uppercase tracking-widest shrink-0">
 					Location
 				</div>
 				<div class="flex flex-col gap-1.5 p-1">
 					<div class="flex items-center justify-evenly gap-x-1.5 gap-y-1">
-						<span class="text-tm font-mono text-[10px] text-right">X/Y/Z:</span>
+						<span class="text-tm font-mono text-2xs text-right">X/Y/Z:</span>
 						<input
 							v-model.number="coordX"
-							type="number" min="1" max="255" step="1"
+							type="number" id="coordX" min="1" max="255" step="1"
 							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordY"
-							type="number" min="1" max="255" step="1"
+							type="number" id="coordY" min="1" max="255" step="1"
 							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordZ"
-							type="number" min="0" max="4096" step="1"
+							type="number" id="coordZ" min="0" max="4096" step="1"
 							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 					</div>

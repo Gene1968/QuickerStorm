@@ -166,7 +166,7 @@ function saveNotes() {
 				]"
 			>
 				{{ tab.label }}
-				<span v-if="tab.soon" class="absolute -top-1 -right-1 text-[9px] font-bold text-t1 leading-none">soon</span>
+				<span v-if="tab.soon" class="absolute -top-1 -right-1 text-2xs font-bold text-t1 leading-none">soon</span>
 			</button>
 		</div>
 
@@ -190,7 +190,7 @@ function saveNotes() {
 
 				<!-- Photo + remaining fields -->
 				<div class="flex gap-4">
-					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-4xl text-t1 select-none">👤</div>
+					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-t1 select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
 					<div class="flex flex-col gap-1 pt-0.5">
 						<div
 							v-for="field in [

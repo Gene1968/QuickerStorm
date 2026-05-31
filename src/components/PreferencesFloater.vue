@@ -324,7 +324,7 @@ onUnmounted(() => {
 
 							<!-- Volume mixer -->
 							<div class="flex flex-col gap-3 mb-6">
-								<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm">Volume</h3>
+								<h3 class="text-xs font-bold uppercase tracking-widest text-tm">Volume</h3>
 
 								<!-- Master (wired) -->
 								<div class="pf-row">
@@ -381,7 +381,7 @@ onUnmounted(() => {
 
 							<!-- Audio devices -->
 							<div class="flex flex-col gap-3">
-								<h3 class="text-[0.6875rem] font-bold uppercase tracking-widest text-tm">Devices</h3>
+								<h3 class="text-xs font-bold uppercase tracking-widest text-tm">Devices</h3>
 
 								<p v-if="!micDevices.length && !spkDevices.length" class="text-xs text-tm">
 									Open voice to enumerate devices.
@@ -596,7 +596,7 @@ onUnmounted(() => {
 	align-items: center;
 	justify-content: space-between;
 	gap: 1rem;
-	padding: 0.5rem 0;
+	padding: 0.35rem 0;
 	border-bottom: 1px solid var(--color-brd);
 }
 .pf-row:last-child { border-bottom: none; }

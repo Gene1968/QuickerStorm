@@ -131,7 +131,7 @@ function close() {
 					:key="t.id"
 					:title="t.hint"
 					:disabled="t.disabled"
-					class="ui-btn flex-1 min-w-0 px-1.5 py-1 text-[0.65rem] rounded border transition-colors truncate"
+					class="ui-btn flex-1 min-w-0 px-1.5 py-1 text-2xs rounded border transition-colors truncate"
 					:class="t.disabled
 						? 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'
 						: ui.gizmoMode === t.mode && t.id !== 'edit'
@@ -140,7 +140,7 @@ function close() {
 					@click="pickTool(t)"
 				>{{ t.label }}</button>
 			</div>
-			<div class="shrink-0 px-2 py-1 text-[0.6rem] text-white/40 italic border-b border-brd">
+			<div class="shrink-0 px-2 py-1 text-2xs text-white/40 italic border-b border-brd">
 				Click a prim to select • Ctrl = rotate • Ctrl+Shift = scale
 			</div>
 
@@ -163,26 +163,26 @@ function close() {
 			<div v-else class="flex-1 overflow-y-auto px-3 py-2 space-y-3">
 				<!-- General ─────────────────────────────────────────────── -->
 				<template v-if="activeTab === 'general'">
-					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-white/50" title="63 chars, ASCII-7 + pipe.">Name:</div>
 						<input :value="obj.name || '(Object)'" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1" />
 						<div class="text-white/50" title="127 chars. May get used in hover tips or scripting">Description:</div>
 						<input :value="obj.description || ''" readonly placeholder="—" class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1" />
 						<div class="text-white/50">UUID:</div>
-						<input :value="obj.fullId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
+						<input :value="obj.fullId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-2xs" />
 						<div class="text-white/50">Type:</div>
 						<div class="text-t1">{{ pcodeLabel }}</div>
 						<div class="text-white/50">Hover Text:</div>
 						<div class="text-t1 whitespace-pre-wrap">{{ obj.text || '—' }}</div>
 					</div>
 					<div v-if="obj.creatorId" class="border-t border-brd pt-2">
-						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 							<div class="text-white/50">Creator:</div>
-							<input :value="obj.creatorId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
+							<input :value="obj.creatorId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-2xs" />
 							<div class="text-white/50">Owner:</div>
-							<input :value="obj.ownerId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
+							<input :value="obj.ownerId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-2xs" />
 							<div class="text-white/50">Group:</div>
-							<input :value="obj.groupId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-[0.6rem]" />
+							<input :value="obj.groupId" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-2xs" />
 							<div class="text-white/50">Created:</div>
 							<div class="text-t1 font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
 							<div class="text-white/50">Sale:</div>
@@ -190,8 +190,8 @@ function close() {
 						</div>
 					</div>
 					<div v-if="obj.baseMask != null" class="border-t border-brd pt-2">
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Permissions</div>
-						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1 text-[0.7rem] font-mono">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Permissions</div>
+						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1 text-xs font-mono">
 							<div class="text-white/50">Base:</div>      <div class="text-t1">{{ permLetters(obj.baseMask) }}</div>
 							<div class="text-white/50">Owner:</div>     <div class="text-t1">{{ permLetters(obj.ownerMask) }}</div>
 							<div class="text-white/50">Group:</div>     <div class="text-t1">{{ permLetters(obj.groupMask) }}</div>
@@ -199,14 +199,14 @@ function close() {
 							<div class="text-white/50">Next Owner:</div><div class="text-t1">{{ permLetters(obj.nextOwnerMask) }}</div>
 						</div>
 					</div>
-					<div v-if="!obj.creatorId" class="border-t border-brd pt-2 text-[0.65rem] text-white/40 italic">
+					<div v-if="!obj.creatorId" class="border-t border-brd pt-2 text-2xs text-white/40 italic">
 						Loading properties from sim…
 					</div>
 				</template>
 
 				<!-- Object ──────────────────────────────────────────────── -->
 				<template v-else-if="activeTab === 'object'">
-					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-white/50">LocalID</div>
 						<div class="text-t1 font-mono">{{ obj.localId }}</div>
 						<div class="text-white/50">Parent ID</div>
@@ -215,24 +215,24 @@ function close() {
 						<div class="text-t1">{{ linkCount }}</div>
 					</div>
 					<div class="border-t border-brd pt-2">
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Position (SL)</div>
-						<div class="grid grid-cols-3 gap-1 text-[0.7rem]">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Position (SL)</div>
+						<div class="grid grid-cols-3 gap-1 text-xs">
 							<div><span class="text-white/40">X</span> <span class="text-t1 font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
 							<div><span class="text-white/40">Y</span> <span class="text-t1 font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
 							<div><span class="text-white/40">Z</span> <span class="text-t1 font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
 						</div>
 					</div>
 					<div>
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Size (m)</div>
-						<div class="grid grid-cols-3 gap-1 text-[0.7rem]">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Size (m)</div>
+						<div class="grid grid-cols-3 gap-1 text-xs">
 							<div><span class="text-white/40">X</span> <span class="text-t1 font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
 							<div><span class="text-white/40">Y</span> <span class="text-t1 font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
 							<div><span class="text-white/40">Z</span> <span class="text-t1 font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
 						</div>
 					</div>
 					<div>
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Rotation (deg)</div>
-						<div class="grid grid-cols-3 gap-1 text-[0.7rem]">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Rotation (deg)</div>
+						<div class="grid grid-cols-3 gap-1 text-xs">
 							<div><span class="text-white/40">R</span> <span class="text-t1 font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
 							<div><span class="text-white/40">P</span> <span class="text-t1 font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
 							<div><span class="text-white/40">Y</span> <span class="text-t1 font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
@@ -243,7 +243,7 @@ function close() {
 				<!-- Features ────────────────────────────────────────────── -->
 				<template v-else-if="activeTab === 'features'">
 					<div v-if="!obj.shape" class="text-white/40 italic">No shape data (avatar or undecoded).</div>
-					<div v-else class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+					<div v-else class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-white/50">Path Curve</div>
 						<div class="text-t1">{{ pathCurveLabel }}</div>
 						<div class="text-white/50">Profile Curve</div>
@@ -270,8 +270,8 @@ function close() {
 						<div class="text-t1 font-mono">{{ obj.shape.pathRadiusOffset }}</div>
 					</div>
 					<div v-if="obj.defaultColor" class="border-t border-brd pt-2">
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">TE Default Color</div>
-						<div class="flex items-center gap-2 text-[0.7rem]">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">TE Default Color</div>
+						<div class="flex items-center gap-2 text-xs">
 							<div
 								class="w-6 h-6 rounded border border-brd"
 								:style="{ background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }"
@@ -289,10 +289,10 @@ function close() {
 					Rotation, Glow, Bumpiness, Shininess. Wired through in Phase 3 when
 					J2C decode + perms land. -->
 				<template v-else-if="activeTab === 'texture'">
-					<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-[0.7rem]">
+					<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
 						<div class="text-white/50 self-center">Texture</div>
 						<div class="flex items-center gap-2">
-							<div class="w-12 h-12 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-[0.6rem]">No tex</div>
+							<div class="w-12 h-12 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs">No tex</div>
 							<button class="flex-1 px-2 py-1 border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Pick…</button>
 						</div>
 						<div class="text-white/50 self-center">Color</div>
@@ -319,8 +319,8 @@ function close() {
 						<input value="0.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 					</div>
 					<div class="border-t border-brd pt-2">
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Mapping</div>
-						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Mapping</div>
+						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 							<div class="text-white/50 self-center">Mapping</div>
 							<select disabled class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-white/40 cursor-not-allowed">
 								<option>Default</option><option>Planar</option>
@@ -340,8 +340,8 @@ function close() {
 						</div>
 					</div>
 					<div class="border-t border-brd pt-2">
-						<div class="text-white/50 text-[0.65rem] uppercase tracking-wide mb-1">Material</div>
-						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-[0.7rem]">
+						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Material</div>
+						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 							<div class="text-white/50 self-center">Bumpiness</div>
 							<select disabled class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-white/40 cursor-not-allowed">
 								<option>None</option>
@@ -352,7 +352,7 @@ function close() {
 							</select>
 						</div>
 					</div>
-					<div class="text-[0.6rem] text-white/30 italic pt-1">
+					<div class="text-2xs text-white/30 italic pt-1">
 						J2C texture decode + edit (Phase 3, HTTP caps).
 					</div>
 				</template>
@@ -362,15 +362,15 @@ function close() {
 					New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
 				<template v-else-if="activeTab === 'content'">
 					<div class="flex items-center gap-1 pb-1">
-						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
-						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
-						<button class="px-2 py-1 text-[0.65rem] border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
-						<div class="ml-auto text-[0.6rem] text-white/40">0 items</div>
+						<button class="px-2 py-1 text-2xs border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
+						<button class="px-2 py-1 text-2xs border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
+						<button class="px-2 py-1 text-2xs border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
+						<div class="ml-auto text-2xs text-white/40">0 items</div>
 					</div>
-					<div class="border border-brd rounded bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-white/30 italic text-[0.7rem] px-4 text-center">
+					<div class="border border-brd rounded bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-white/30 italic text-xs px-4 text-center">
 						Inventory contents will appear here (Phase 3).
 					</div>
-					<div class="text-[0.6rem] text-white/30 italic pt-1">
+					<div class="text-2xs text-white/30 italic pt-1">
 						Object inventory uses HTTP capabilities — wired with Phase 3 cap layer.
 					</div>
 				</template>

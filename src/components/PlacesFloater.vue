@@ -99,7 +99,7 @@ const filteredHistory = computed(() => {
 								/>
 							</div>
 							<div class="flex items-center gap-1 shrink-0">
-								<span class="text-[0.6rem] text-white/40 mr-1">{{ Math.round(p.x) }},{{ Math.round(p.y) }},{{ Math.round(p.z) }}</span>
+								<span class="text-2xs text-white/60 mr-1">{{ Math.round(p.x) }},{{ Math.round(p.y) }},{{ Math.round(p.z) }}</span>
 								<button class="inline-btn" @click.stop="teleportTo(p)">TP</button>
 								<button class="inline-btn inline-btn--trash" title="Remove" @click.stop="removeFavorite(i)">
 									<Trash2Icon class="w-3 h-3" />
@@ -108,7 +108,7 @@ const filteredHistory = computed(() => {
 						</li>
 					</ul>
 					<div v-else class="py-8 text-white/30 italic text-center">
-						{{ filter ? 'No matches.' : 'No favorites yet.' }}
+						{{ filter ? 'No matches (clear filter above).' : 'No favorites yet.' }}
 					</div>
 				</template>
 
@@ -118,7 +118,7 @@ const filteredHistory = computed(() => {
 					via TeleportLandmarkRequest (sim resolves the LM asset's stored location). -->
 				<template v-else-if="ui.placesActiveTab === 'landmarks'">
 					<!-- Region anchors -->
-					<p class="px-3 pt-2 pb-1 text-[0.6rem] uppercase tracking-widest text-white/40">This region</p>
+					<p class="px-3 pt-2 pb-1 text-2xs uppercase tracking-widest text-white/60">This region</p>
 					<ul v-if="filteredLandmarks.length" class="px-2">
 						<li
 							v-for="(p, i) in filteredLandmarks"
@@ -130,7 +130,7 @@ const filteredHistory = computed(() => {
 								<span class="mb-1 w-3.5 h-3.5 shrink-0">📍</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
-									<div class="text-[0.6rem] text-white/40 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
+									<div class="text-2xs text-white/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
 								</div>
 							</div>
 							<button class="inline-btn" @click.stop="teleportTo(p)">TP</button>
@@ -138,7 +138,7 @@ const filteredHistory = computed(() => {
 					</ul>
 
 					<!-- Saved inventory landmarks -->
-					<p class="px-3 pt-3 pb-1 text-[0.6rem] uppercase tracking-widest text-white/40">My landmarks</p>
+					<p class="px-3 pt-3 pb-1 text-2xs uppercase tracking-widest text-white/60">My landmarks</p>
 					<ul v-if="filteredInvLandmarks.length" class="px-2 pb-2">
 						<li
 							v-for="lm in filteredInvLandmarks"
@@ -153,8 +153,8 @@ const filteredHistory = computed(() => {
 							<button class="inline-btn" @click.stop="teleportToLandmark(lm)">TP</button>
 						</li>
 					</ul>
-					<div v-else class="px-3 pb-2 text-white/30 italic text-[0.7rem]">
-						{{ filter ? 'No matches.' : 'No saved landmarks (still loading inventory, or none in this account).' }}
+					<div v-else class="px-3 pb-2 text-white/40 italic text-xs">
+						{{ filter ? 'No matches (clear filter above).' : 'No saved landmarks (still loading inventory, or none in this account).' }}
 					</div>
 				</template>
 
@@ -171,14 +171,14 @@ const filteredHistory = computed(() => {
 								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
-									<div class="text-[0.6rem] text-white/40 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
+									<div class="text-2xs text-white/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
 								</div>
 							</div>
 							<button class="inline-btn opacity-0 group-hover:opacity-100" @click.stop="teleportTo(p)">TP</button>
 						</li>
 					</ul>
 					<div v-else class="py-8 text-white/30 italic text-center">
-						{{ filter ? 'No matches.' : 'No teleport history yet.' }}
+						{{ filter ? 'No matches (clear filter above).' : 'No teleport history yet.' }}
 					</div>
 				</template>
 			</div>

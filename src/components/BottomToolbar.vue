@@ -113,7 +113,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		>
 			<span class="relative text-base leading-none">
 				🔔
-				<span v-if="notif.totalUnread" class="absolute -top-1 -right-2 bg-red-600 text-white rounded-full text-[0.6rem] leading-none px-1 py-0.5 min-w-[1rem] text-center">{{ notif.totalUnread }}</span>
+				<span v-if="notif.totalUnread" class="absolute -top-1 -right-2 bg-red-600 text-white rounded-full text-2xs leading-none px-1 py-0.5 min-w-[1rem] text-center">{{ notif.totalUnread }}</span>
 			</span>
 			<span class="leading-none my-0.5 hidden sm:block">Notifs</span>
 		</button> -->

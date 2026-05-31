@@ -28,7 +28,7 @@ _Last updated: 2026-05-23_
 - Symptom: avatar spawns at edge, can't move (physics boundary)
 - Detection: warning logged in debugStore when x<10 or x>246 or y<10 or y>246
 - Fix: login with "home" destination instead of "last", OR teleport to 128/128 after spawn
-- TODO Phase 2: send LogoutRequest on window close; implement local teleport
+- TODO Phase 3: send LogoutRequest on window close; implement local teleport
 
 **Movement sends AgentUpdate but avatar doesn't move (edge position only)**
 - When at edge AND BodyRotation faces into boundary → walk animation plays but physics blocked

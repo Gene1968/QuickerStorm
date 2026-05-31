@@ -36,7 +36,7 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
 |-------|--------|
 | Frontend | Vue 3 (Composition API, `<script setup>`), Vite, Pinia, Vue Router (hash mode) |
 | 3D Engine | Three.js r183 — scene, avatar meshes, terrain mesh, GSAP tweening |
-| Voice (Phase 2) | WebRTC (browser native) + Bun WS server for signaling |
+| Voice (Phase 3) | WebRTC (browser native) + Bun WS server for signaling |
 | LLUDP bridge | Bun WebSocket server (`server/`); typed handlers under `server/handlers/` |
 | Styling | Tailwind utilities + helpers + `<style scoped>`; light/dark via `useTheme()` |
 | Hosting | Vite SPA (static); Bun server runs on Railway (staging) or locally on port 8787 |
@@ -84,7 +84,7 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | `src/composables/useTeleport.js` | `requestTeleport` (same-region) + `requestRegionTeleport` (cross-region via MapNameRequest→MAP_TELEPORT). Plays woosh on dispatch |
 | `src/composables/useLLUDP.js` | Client→server WS emit wrappers (move, chat, teleport, map query, etc) |
 | `src/components/MapFloater.vue` | World Map 2D — SVG render, pan/zoom-toward-cursor, click-select, dbl-click TP |
-| `src/composables/useProximityVoice.js` | WebRTC voice (Phase 2 wire-up pending) |
+| `src/composables/useProximityVoice.js` | WebRTC voice (Phase 3 wire-up pending) |
 | `src/composables/useTheme.js` | Light/dark toggle |
 | `src/composables/useVersionCheck.js` | Polls `version.json` every 5 min; shows reload banner on new build |
 | `src/composables/useInventory.js` | Inventory cap driver: lazy folder fetch on expand + paced background bulk load (`fetchAll`); handles `S.INV_FOLDER`/`S.CAPS_READY` |
