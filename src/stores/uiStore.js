@@ -153,6 +153,7 @@ export const useUiStore = defineStore('ui', () => {
 		profile:         () => { showProfile.value       = false },
 		'create-landmark': () => { showCreateLandmark.value = false },
 		'movement-help': () => { showMovementHelp.value  = false },
+		quickprefs:      () => { showQuickPrefs.value    = false },
 	}
 	function closeActiveFloater() {
 		if (!floaterStack.value.length) return

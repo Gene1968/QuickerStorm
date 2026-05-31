@@ -1,18 +1,16 @@
 <script setup>
 /**
- * QuickPrefsPopover — quick-access preferences panel, FS-style.
- * Anchored fixed above the bottom toolbar, right-aligned.
- * Down-arrow caret points toward the trigger button.
+ * QuickPrefs — quick-access preferences, now a standard draggable FloaterWindow.
+ * Opens docked at bottom-right above the toolbar with a down-caret pointing at its trigger button;
+ * drag it and the caret is replaced by a Dock button (in the titlebar) to snap it back.
  * Post-login only (mounted in BottomToolbar context).
  */
-import { onMounted, onUnmounted } from 'vue'
+import FloaterWindow from '@/components/FloaterWindow.vue'
 import { useTheme } from '@/composables/useTheme.js'
 import { useUiStore } from '@/stores/uiStore.js'
-import { useAudio } from '@/composables/useAudio.js'
 
 const theme = useTheme()
 const ui    = useUiStore()
-const { playSound } = useAudio()
 
 function close() { ui.showQuickPrefs = false }
 
@@ -20,42 +18,17 @@ function openPreferences() {
 	close()
 	ui.openPreferences()
 }
-
-function onKey(_e) { /* reserved — Esc is camera reset */ }
-
-function onClickOutside(e) {
-	// The trigger button has data-quick-prefs-trigger; don't close on that click
-	if (e.target.closest('[data-quick-prefs-trigger]')) return
-	if (!e.target.closest('.qp-popover')) close()
-}
-
-onMounted(() => {
-	playSound('pop.mp3', 0.7)
-	window.addEventListener('keydown', onKey)
-	// Defer so the opening click doesn't immediately close it
-	setTimeout(() => window.addEventListener('mousedown', onClickOutside), 50)
-})
-onUnmounted(() => {
-	playSound('pop.mp3', 0.7)
-	window.removeEventListener('keydown', onKey)
-	window.removeEventListener('mousedown', onClickOutside)
-})
 </script>
 
 <template>
-	<!--
-		Fixed above bottom bar (bottom: 40px = toolbar height).
-		Right edge: 0.5rem from viewport right.
-		Down-caret at bottom-right of popover via ::after pseudo.
-	-->
-	<div class="qp-popover" role="dialog" aria-label="Quick Preferences">
-
-		<!-- Header -->
-		<div class="qp-header">
-			<span class="qp-title">Quick Preferences</span>
-			<button class="qp-close" title="Close" @click="close">✕</button>
-		</div>
-
+	<FloaterWindow
+		id="quickprefs"
+		title="Quick Preferences"
+		:wrap-style="{ width: '18rem' }"
+		:default-pos="{ right: '1.25rem', bottom: '2.9rem' }"
+		caret-dir="down"
+		@close="close"
+	>
 		<!-- ── Theme ─────────────────────────────────────────────────── -->
 		<div class="qp-section">
 			<div class="qp-section-label">Appearance</div>
@@ -102,88 +75,10 @@ onUnmounted(() => {
 				⚙️ Open Preferences… <span class="qp-kbhint">Ctrl+P</span>
 			</button>
 		</div>
-
-		<!-- Down caret pointing toward trigger button -->
-		<div class="qp-caret" />
-
-	</div>
+	</FloaterWindow>
 </template>
 
 <style scoped>
-.qp-popover {
-	position: fixed;
-	bottom: 44px; /* toolbar height + gap */
-	right: 0.1875%;
-	width: clamp(14rem, 22vw, 20rem);
-	background: var(--color-card);
-	border: 1px solid var(--color-brd2);
-	border-radius: 0.5rem; /* = rounded-lg, matches other floaters */
-	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-	display: flex;
-	flex-direction: column;
-	z-index: 650;
-	overflow: visible; /* caret needs to overflow */
-}
-
-/* ── Down caret ──────────────────────────────────────────────────────────── */
-.qp-caret {
-	position: absolute;
-	bottom: -7px;
-	right: 2.7vw;/* align with the button */
-	width: 14px;
-	height: 7px;
-	overflow: visible;
-}
-.qp-caret::before,
-.qp-caret::after {
-	content: '';
-	position: absolute;
-	left: 0;
-}
-/* border triangle (border color) */
-.qp-caret::before {
-	bottom: -1px;
-	border-left: 7px solid transparent;
-	border-right: 7px solid transparent;
-	border-top: 8px solid var(--color-brd2);
-}
-/* fill triangle (background color) */
-.qp-caret::after {
-	bottom: 0;
-	border-left: 7px solid transparent;
-	border-right: 7px solid transparent;
-	border-top: 7px solid var(--color-card);
-}
-
-/* ── Header ──────────────────────────────────────────────────────────────── */
-.qp-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0.5rem 0.75rem;
-	border-bottom: 1px solid var(--color-brd);
-	background: var(--color-card2);
-	border-radius: 0.5rem 0.5rem 0 0;
-	flex-shrink: 0;
-}
-.qp-title {
-	font-size: 0.8125rem;
-	font-weight: 700;
-	color: var(--color-t1);
-	letter-spacing: 0.01em;
-}
-.qp-close {
-	background: none;
-	border: none;
-	cursor: pointer;
-	color: var(--color-tm);
-	font-size: 0.75rem;
-	padding: 0.125rem 0.25rem;
-	border-radius: 0.25rem;
-	transition: color 0.15s;
-}
-.qp-close:hover { color: var(--color-t1); }
-
 /* ── Sections ────────────────────────────────────────────────────────────── */
 .qp-section {
 	display: flex;

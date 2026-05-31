@@ -38,6 +38,7 @@ import CreateLandmarkFloater	from '@/components/CreateLandmarkFloater.vue'
 import NotificationsFloater	from '@/components/NotificationsFloater.vue'
 import ResyncBanner			from '@/components/ResyncBanner.vue'
 import ToastStack				from '@/components/ToastStack.vue'
+import TopRightTray			from '@/components/TopRightTray.vue'
 
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
 const { is2D: autoDetect2D } = use2DFallback()
@@ -149,6 +150,7 @@ watch(
 					<InventoryContextMenu />
 					<InventoryItemProperties />
 					<ToastStack />
+					<TopRightTray />
 				</div>
 			</div>
 

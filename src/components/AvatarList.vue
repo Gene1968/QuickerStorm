@@ -12,7 +12,7 @@ onUnmounted(() => playSound('pop.mp3', 0.7))
 
 <template>
 	<!-- Positioned as absolute overlay on the right side of the canvas area -->
-	<div class="absolute right-0 top-0 h-full w-64 bg-black/60 backdrop-blur-sm border-l border-white/10 overflow-y-auto flex flex-col">
+	<div class="absolute right-0 top-0 flex flex-col border-l border-white/10 bg-black/60 pt-10 w-64 h-full backdrop-blur-sm overflow-y-auto">
 		<p class="text-white/50 text-xs px-3 py-1.5 uppercase tracking-widest border-b border-white/10 shrink-0">
 			Nearby · {{ world.avatars.length }}
 		</p>

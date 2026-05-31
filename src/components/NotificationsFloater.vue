@@ -24,8 +24,9 @@ function runAction(a) { try { a.run?.() } catch (e) { console.error('[notif acti
 	<FloaterWindow
 		id="notifications"
 		title="Notifications"
-		:wrap-style="{ width: '18vw', height: '42vh', resize: 'both' }"
-		:default-pos="{ right: '1.5vw', top: '11vh' }"
+		:wrap-style="{ width: '24vw', height: '42vh', resize: 'both' }"
+		:default-pos="{ right: '0.3vw', top: '7.25vh' }"
+		caret-dir="up"
 		@close="ui.toggleNotifications()"
 	>
 		<div class="flex flex-col flex-1 min-h-0">

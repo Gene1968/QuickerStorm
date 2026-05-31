@@ -123,7 +123,7 @@ async function submit() {
 				ref="usernameInputRef"
 				v-model="username"
 				type="text"
-				placeholder="Username: First Last [grid]"
+				placeholder="Username: First Last"
 				autocomplete="new-password"
 				class="reset-input w-full px-3 py-2 pr-8 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 				required

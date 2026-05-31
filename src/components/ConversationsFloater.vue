@@ -111,6 +111,23 @@ const activeConv = computed(() => im.conversations.value.get(activeTab.value) ??
 
 watch(() => im.activeId.value, (id) => { if (id) activeTab.value = id })
 
+// ── IM conversation action bar (FS-style, atop each IM tab) ────────────────
+const imIsFriend = computed(() => {
+	const c = activeConv.value
+	return !!(c && social.isFriend(c.agentId))
+})
+const imMapEnabled = computed(() => {
+	const c = activeConv.value
+	if (!c) return false
+	const f = social.friendById(c.agentId)
+	return !!(f && f.online && hasRight(f.rightsHas, RIGHT_MAP))
+})
+function imProfile()   { const c = activeConv.value; if (c) openProfile(c.agentId) }
+function imMap()       { const c = activeConv.value; if (c && imMapEnabled.value) { ui.profileTargetId = c.agentId; ui.showMap = true } }
+function imAddFriend() { const c = activeConv.value; if (c) offerFriendship(c.agentId, c.agentName, 'Will you be my friend?') }
+function imRemove()    { const c = activeConv.value; if (c) confirmRemove({ id: c.agentId, name: c.agentName }) }
+function imCloseConv() { const c = activeConv.value; if (c) closeImTab(c.agentId) }
+
 const floaterTitle = computed(() =>
 	avatar.displayName ? `Conversations — ${avatar.displayName}` : 'Conversations'
 )
@@ -383,6 +400,20 @@ async function submitChat() {
 
 				<!-- IM tab (per avatar) ──────────────────────────────── -->
 				<template v-else-if="activeConv">
+					<!-- IM action bar (FS-style; several disabled until those systems exist) -->
+					<div class="flex flex-wrap gap-1 px-2 py-1.5 border-b border-brd shrink-0">
+						<button class="qs-btn-mini" title="View profile" @click="imProfile">Profile</button>
+						<button class="qs-btn-mini" disabled title="Voice call — not yet available">Call</button>
+						<button class="qs-btn-mini" disabled title="Offer teleport — not yet available">TP</button>
+						<button class="qs-btn-mini" :disabled="!imMapEnabled" title="Show on map" @click="imMap">Map</button>
+						<button class="qs-btn-mini" disabled title="Share inventory — not yet available">Share</button>
+						<button class="qs-btn-mini" disabled title="Pay — not yet available">Pay</button>
+						<button v-if="!imIsFriend" class="qs-btn-mini" title="Add friend" @click="imAddFriend">Add</button>
+						<button v-else class="qs-btn-mini" title="Remove friend" @click="imRemove">Remove</button>
+						<button class="qs-btn-mini" disabled title="Block/Mute — not yet available">Block</button>
+						<button class="qs-btn-mini" disabled title="Group — not yet available">Group</button>
+						<button class="qs-btn-mini" title="Close conversation" @click="imCloseConv">Close</button>
+					</div>
 					<div
 						ref="imLogEl"
 						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0 cursor-text"
