@@ -70,6 +70,9 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | `gridStore` | Grid selection, loginState (`disconnected | reconnecting | live`) |
 | `uiStore` | Floater stack, cameraYaw, debug toggles, multi-instance inventory floater state |
 | `inventoryStore` | Inventory tree: `folders` (Map from login skeleton), `items` (Map folderId→items, fetched via cap), `caps`/`capsReady`, filter/type/sort/selection, recursive `descendantCounts`, agent-scoped totals |
+| `gridSocialStore` | Friends list (from login buddy-list + live FRIEND_STATUS), groups, agent name cache, profile/parcel fragments, own-agent data |
+| `notificationStore` | In-session toast queue + Notifications floater tab history (system / friend-requests / IMs) |
+| `accountsStore` | Saved login accounts (grid + username pairs) persisted to localStorage; used by LoginForm dropdown |
 | `debugStore` | Live ring buffer of debug messages for the in-page debug panel |
 | `theme` | Light/dark toggle, shared `isDark` ref |
 
@@ -89,6 +92,12 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | `src/composables/useVersionCheck.js` | Polls `version.json` every 5 min; shows reload banner on new build |
 | `src/composables/useInventory.js` | Inventory cap driver: lazy folder fetch on expand + paced background bulk load (`fetchAll`); handles `S.INV_FOLDER`/`S.CAPS_READY` |
 | `src/components/InventoryFloater.vue` | Inventory UI — tabs, filter/type/sort, footer totals, cog menu. Tree rows via recursive `InventoryTreeNode.vue`. Right-click `InventoryContextMenu.vue` + `InventoryItemProperties.vue` |
+| `src/composables/useSocial.js` | Social pipeline: routes FRIEND_STATUS/AVATAR_PROPS/NAME_REPLY into gridSocialStore; outbound friend offer/respond/remove/rights; add-by-name avatar picker |
+| `src/composables/useNotifications.js` | Notification dispatch helper; writes to notificationStore; drives toast queue |
+| `src/components/ConversationsFloater.vue` | IM conversation tabs — per-agent threads, emoji picker; `ImprovedInstantMessage` LLUDP |
+| `src/components/NotificationsFloater.vue` | Notifications floater — system / friend-request / IM history tabs |
+| `src/components/AppearanceFloater.vue` | Appearance/Outfits floater — avatar color/skin/hair editor, Wearing tab, Outfits tab shell |
+| `src/components/TopRightTray.vue` | Top-right HUD cluster: IM badge + Notifications badge; opens ConversationsFloater/NotificationsFloater |
 | `server/index.ts` | Bun WS + HTTP server entry |
 | `server/handlers/inventory.ts` | `FetchInventoryDescendents2` cap (batched folders) → typed item JSON. Cap URL resolved server-side; never sent to client |
 | `server/handlers/caps.ts` | Generic CORS cap-fetch proxy (`C.CAPS_FETCH` → `S.CAPS_RESULT`) |
@@ -119,10 +128,12 @@ function slQuatToThree(x, y, z, w) { return new THREE.Quaternion(x, z, -y, w) }
 
 1. Read **`docs/PROJECT_BRIEF.md`**, **`docs/CONVENTIONS.md`**, and **`docs/CONTEXT.md`** (this file).
 2. Read **`docs/superpowers/specs/`** for the canonical spec before implementing anything (per `memory/read-specs-first.md`).
-3. Check **`README.md`** for the current Phase 2/3 roadmap.
-4. For terrain bugs: `server/lib/terrain-codec.ts` + `memory/terrain-rendering-next.md` (recent rewrite to libomv BitPack format).
+3. Check **`README.md`** for the current Phase 3 roadmap and completion percentages.
+4. For terrain bugs: `server/lib/terrain-codec.ts` + `memory/terrain-rendering-next.md`.
 5. For LLUDP decode bugs: `server/lib/lludp-codec.ts` + `memory/lludp-decode-gotchas.md`.
 6. For circuit/login bugs: `server/handlers/lludp.ts` + `server/lib/circuit.ts` + `memory/opensim-circuit-lifecycle.md`.
+7. For social/friends bugs: `src/composables/useSocial.js` + `src/stores/gridSocialStore.js` + `memory/phase3-social-shipped.md`.
+8. For inventory bugs: `src/composables/useInventory.js` + `server/handlers/inventory.ts` + `memory/phase3-inventory-and-cap-state.md`.
 
 ---
 

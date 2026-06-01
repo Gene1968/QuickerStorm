@@ -144,7 +144,8 @@
       "Bash(bun -e ' *)",
       "PowerShell(head *)",
       "PowerShell(npx vitest run src/__tests__/stores/uiStore.test.js 2>&1 | Select-Object -Last 40)",
-      "PowerShell(npm run *)"
+      "PowerShell(npm run *)",
+      "Bash(Select-String -NotMatch \"node_modules\")"
     ]
   }
 }

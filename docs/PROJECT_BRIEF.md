@@ -43,27 +43,33 @@ Phase 1 (shipped):
 7. **Session resume** — 15-second circuit hold on network blip; clean logout via LogoutRequest
 8. **RebakeAvatarTextures** cap
 
-Phase 2 (next — see README + `memory/phase2-goals.md`):
+Phase 2 (shipped May 2026):
 
-9. **Real prim geometry** — PathCurve/ProfileCurve → boxes/cylinders/spheres/tori
-10. **Child-prim composition** — linked sets via ParentID
-11. **TextureEntry default color** — real prim RGBA without asset fetch
-12. **Terrain collision + gravity + ocean ripple**
-13. **Neighboring-sim terrain + cross-region teleport**
-14. **WebRTC proximity voice** — wire-up to existing signaling
-15. **IM** — `ImprovedInstantMessage` LLUDP
-16. **Right-click avatar + object context menus** (Phase 2 subset)
-17. **Places floater**
+9. **Real prim geometry** — PathCurve/ProfileCurve → boxes/cylinders/spheres/tori ✓
+10. **Child-prim composition** — linked sets via ParentID ✓
+11. **TextureEntry default color** — real prim RGBA without asset fetch ✓
+12. **Terrain collision + gravity + ocean ripple** ✓
+13. **Cross-region teleport** — circuit tear-down + rebuild on TeleportFinish ✓
+14. **IM** — `ImprovedInstantMessage` LLUDP ✓
+15. **Right-click avatar + object context menus** (Phase 2 subset) ✓
+16. **Places floater** (~65% — landmarks + history wired; some gear-menu items TODO) ✓
+17. **Map 2D** — pannable/zoomable world map, snapshot tiles, dbl-click TP ✓
+- Deferred from Phase 2: neighboring-sim terrain (ocean horizon accepted as substitute), voice (Phase 2.5/3)
 
-Phase 3 (HTTP capability layer — see `memory/phase3-goals.md`):
+Phase 3 (HTTP capability layer — in progress, May 2026):
 
-18. **Inventory viewing + management** via `FetchInventoryDescendents2` cap
-19. **Texture pipeline** — `GetTexture` cap + J2C (JPEG2000) decode in browser
-20. **Mesh export/import** via `GetMesh2` cap
-21. **Friends / Contacts** + **Groups + Group IM**
-22. **Object Edit floater** + Take/Copy/Delete/Export
-23. **Profile floater** + (carefully) appearance editing
-24. **Web-on-prim** via `ObjectMedia` cap
+18. **HTTP-cap foundation** — LLSD-XML parser, full cap dictionary, server-side proxy ✓
+19. **Inventory browse** — folder tree + `FetchInventoryDescendents2` items, search/filter/sort ✓ (~70%)
+20. **Social layer** — friends list from login, online/offline status, friend-request toasts, add-by-name, rights ✓ (~45%); Friends floater UI TODO
+21. **Saved accounts** — multi-account login dropdown, persist/remove ✓
+22. **Appearance / Outfits floater** — color/skin/hair editor, Wearing tab (~35%); no baked textures yet
+23. **Notifications floater** + TopRightTray IM/Notification cluster ✓
+24. **Texture pipeline** — `GetTexture` cap + J2C (JPEG2000) decode in browser (TODO — next major lever)
+25. **Mesh export/import** via `GetMesh2` cap (TODO)
+26. **Object Edit floater** + Take/Copy/Delete/Export (perms + caps) (~30%)
+27. **Profile floater** (~60%) + (carefully) appearance editing
+28. **Groups + Group IM** (TODO)
+29. **Web-on-prim** via `ObjectMedia` cap (TODO)
 
 ## Out of Scope
 
