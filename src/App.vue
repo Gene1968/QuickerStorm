@@ -63,7 +63,8 @@ function onWsOpen() {
 	wasOpenBefore = true
 	if (!reconnect) return
 	if (!session.connected) return
-	if (grid.loginState === 'disconnected') return
+	// WHY: Don't skip when loginState==='disconnected' — probe may clear the overlay if circuit survived
+	const wasDisconnected = grid.loginState === 'disconnected'
 	const grd = grid.selectedNick
 	const usr = session.username
 	if (!grd || !usr) return
@@ -74,7 +75,10 @@ function onWsOpen() {
 	function onStatus(d) {
 		clearTimeout(t)
 		off(S.CIRCUIT_STATUS, onStatus)
-		if (!d?.alive) {
+		if (d?.alive && wasDisconnected) {
+			debug.push('info', `[DISCONNECT] circuit survived WS gap — auto-resuming`)
+			grid.setLoginState('connected')
+		} else if (!d?.alive) {
 			debug.push('warn', `[DISCONNECT] probe alive=${d?.alive} loginState=${grid.loginState}`)
 			grid.setDisconnected('Server lost your session while disconnected')
 		}

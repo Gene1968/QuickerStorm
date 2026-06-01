@@ -185,6 +185,8 @@ watch(
 
 				<p class="text-white/60 text-sm leading-relaxed">{{ grid.disconnectReason }}</p>
 
+				<p class="text-white/35 text-xs leading-relaxed">Will resume automatically if the connection restores.</p>
+
 				<button
 					class="mt-1 px-6 py-2 rounded-lg bg-accent2 text-white text-sm font-semibold hover:opacity-80 transition-opacity"
 					@click="returnToLogin"
