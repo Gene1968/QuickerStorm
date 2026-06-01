@@ -258,6 +258,7 @@ export function useWorldEngine(canvasRef) {
 	// Frame-rate-independent lerp rates (larger = snappier). POS faster than LOOK so the
 	// camera tracks position while the view angle eases. Half-life ≈ ln(2)/rate seconds.
 	const CAM_POS_RATE  = 12  // ~0.06s half-life
+	const CAM_RETURN_RATE = 4 // gentle glide-back when exiting alt-orbit far away (~0.8s)
 	const CAM_LOOK_RATE = 8   // ~0.09s half-life — slower glide on rotation
 
 	// Alt-orbit (third-person camera): alt+drag orbits around a pivot
@@ -266,6 +267,10 @@ export function useWorldEngine(canvasRef) {
 	let orbitRadius = 8   // metres from pivot
 	let orbitYaw    = 0   // orbit horizontal angle
 	let orbitPitch  = 0.3 // orbit vertical angle (radians)
+	let focusTween  = null // GSAP tween gliding orbitPivot to a clicked focal point
+	let focusGliding = false // true while the focal-point glide holds the camera fixed
+	const orbitGlideCamPos = new THREE.Vector3() // camera pos held still during the glide
+	let camReturning = false // true while gliding the follow-cam back after exiting alt-orbit
 
 	// Mouse drag state
 	let isDragging   = false
@@ -311,6 +316,8 @@ export function useWorldEngine(canvasRef) {
 			followDist = FOLLOW_DIST
 			isAltOrbit = false
 			isDragging = false
+			camReturning = true // glide the follow-cam home rather than snapping
+			endFocusGlide()
 			// WHY: if orbit entered NaN state (asin clamp was missing in prior sessions or
 			// some other corruption), camera.position is NaN and the follow-camera lerp
 			// can never recover (lerp(NaN, valid, f) = NaN). Hard-snap here clears it.
@@ -365,6 +372,7 @@ export function useWorldEngine(canvasRef) {
 		orbitPitch  = Math.asin(Math.max(-0.99, Math.min(0.99, dy / orbitRadius)))
 		orbitYaw    = Math.atan2(dx, dz)
 		isAltOrbit  = true
+		camReturning = false // entering orbit cancels any in-progress glide-back
 	}
 
 	// WHY: Camera preset selector — receives a name and locks orbit at a canonical angle.
@@ -415,21 +423,59 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
-	// WHY: Alt+click camera focal-point pick — raycast against terrain + objects, set
-	// orbitPivot to hit point so user can zoom/orbit around any clicked feature. Matches
-	// SL/Firestorm behaviour (Alt-LMB-click sets focus, Alt-LMB-drag orbits around it).
-	function enterOrbitAt(pivot) {
-		orbitPivot.copy(pivot)
-		const dx = camera.position.x - pivot.x
-		const dy = camera.position.y - pivot.y
-		const dz = camera.position.z - pivot.z
+	// WHY: Derive spherical orbit params (radius/pitch/yaw) from the camera's CURRENT
+	// position relative to orbitPivot. Used to hand off from a focal-point glide to manual
+	// orbit-drag/zoom without a jump — the reconstructed pose equals where the camera is.
+	// ±0.99 guard: ocean surface at y=0 with camera high up gives dy/clamped-radius > 1 →
+	// NaN pitch → NaN camera pos → unrecoverable.
+	function recomputeOrbitFromCamera() {
+		const dx = camera.position.x - orbitPivot.x
+		const dy = camera.position.y - orbitPivot.y
+		const dz = camera.position.z - orbitPivot.z
 		const r  = Math.hypot(dx, dy, dz)
 		orbitRadius = Math.max(2, Math.min(128, r))
-		// WHY: same ±0.99 guard as enterOrbit — ocean surface at y=0 with camera high up
-		// gives dy/clamped-radius > 1 → NaN pitch → NaN camera pos → unrecoverable.
 		orbitPitch  = Math.asin(Math.max(-0.99, Math.min(0.99, dy / orbitRadius)))
 		orbitYaw    = Math.atan2(dx, dz)
-		isAltOrbit  = true
+	}
+
+	// WHY: End an in-progress focal-point glide. Lock spherical params from the now-fixed
+	// camera so whatever happens next (orbit-drag, zoom, another click) continues seamlessly.
+	function endFocusGlide() {
+		if (focusTween) { focusTween.kill(); focusTween = null }
+		if (focusGliding) {
+			focusGliding = false
+			if (isAltOrbit && camera) recomputeOrbitFromCamera()
+		}
+	}
+
+	// WHY: Alt+click camera focal-point pick — raycast against terrain + objects, then GLIDE
+	// the focus to the hit point. The camera is held perfectly still (orbit, never zoom):
+	// only the look target eases over. Matches SL/Firestorm (Alt-LMB sets focus, Alt-drag
+	// orbits around it). Seeding orbitPivot from the current look target before the tween
+	// avoids a one-frame snap to a stale orbit pose (the "jumps below ground" glitch).
+	function enterOrbitAt(pivot) {
+		if (focusTween) focusTween.kill()
+		// Seed the glide's START at where the camera currently looks (avatar when entering
+		// fresh from follow-cam; the existing pivot when already orbiting).
+		if (!isAltOrbit && avatarSLPos) {
+			const ap = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			orbitPivot.set(ap.x, ap.y + LOOKAT_Y, ap.z)
+		}
+		isAltOrbit = true
+		focusGliding = true
+		camReturning = false // a new focus pick cancels any in-progress glide-back
+		orbitGlideCamPos.copy(camera.position) // freeze the camera here for the whole glide
+		focusTween = gsap.to(orbitPivot, {
+			x: pivot.x, y: pivot.y, z: pivot.z,
+			duration: 0.8,
+			ease: 'power2.out',
+			overwrite: true,
+			onComplete: () => {
+				focusTween = null
+				focusGliding = false
+				recomputeOrbitFromCamera()
+			},
+		})
 	}
 
 	function onMouseDown(e) {
@@ -493,6 +539,8 @@ export function useWorldEngine(canvasRef) {
 	}
 	function onMouseMove(e) {
 		if (!isDragging || !isAltOrbit) return
+		// WHY: Manual orbit-drag takes over from any in-progress focus glide.
+		endFocusGlide()
 		const dx = e.clientX - lastMouseX
 		const dy = e.clientY - lastMouseY
 		lastMouseX = e.clientX
@@ -561,6 +609,7 @@ export function useWorldEngine(canvasRef) {
 			|| keys['KeyE'] || keys['KeyC']
 			|| keys['KeyW'] || keys['KeyS'] || keys['ArrowUp'] || keys['ArrowDown']
 		if (alt && altOrbitKey) {
+			endFocusGlide() // keyboard orbit/zoom takes over from any in-progress glide
 			if (!isAltOrbit) enterOrbit()
 			// WHY: Alt+A swings camera LEFT around pivot (orbitYaw decreases); Alt+D right.
 			// Three.js orbit formula: increasing orbitYaw moves camera to +X side (right of avatar).
@@ -578,6 +627,13 @@ export function useWorldEngine(canvasRef) {
 		}
 
 		if (isAltOrbit) {
+			// WHY: During a focal-point glide the camera is pinned in place — only the look
+			// target eases over to the clicked point. No spherical math = no zoom, ever.
+			if (focusGliding) {
+				camera.position.copy(orbitGlideCamPos)
+				camera.lookAt(orbitPivot)
+				return 0
+			}
 			// Alt-orbit: update camera position only. ZERO control flags returned so avatar
 			// doesn't walk/turn/fly while user is moving the camera.
 			const cx = orbitPivot.x + orbitRadius * Math.sin(orbitYaw) * Math.cos(orbitPitch)
@@ -1527,6 +1583,7 @@ export function useWorldEngine(canvasRef) {
 		// WHY: Exit alt-orbit on teleport — otherwise animate() short-circuits the avatar-follow
 		// camera update and the view stays stuck at the pre-TP orbit position.
 		isAltOrbit = false
+		endFocusGlide()
 		isDragging = false
 		followDist = FOLLOW_DIST
 		cameraSnapRequested = true  // snap camera to new position immediately
@@ -1932,6 +1989,8 @@ export function useWorldEngine(canvasRef) {
 		// isAltOrbit every frame → orbit barely advances before being yanked back to follow.
 		if (isAltOrbit && isMoving && !isDragging && !altHeld) {
 			isAltOrbit = false
+			camReturning = true // WASD after camming far → glide home, don't snap
+			endFocusGlide()
 		}
 		if (avatarSLPos && !isAltOrbit) {
 			const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
@@ -1956,11 +2015,18 @@ export function useWorldEngine(canvasRef) {
 			// smooth 0.15 glide (~0.25s).
 			const snap = cameraSnapRequested
 			cameraSnapRequested = false
+			// WHY: A snap or getting close ends an orbit-exit glide-back; hand control to the
+			// normal follow rate so a walking avatar stays glued without a rate seam.
+			if (camReturning && (snap || distToTarget < 2)) camReturning = false
 			// WHY: frame-rate-independent lerp — 1 - exp(-rate*dt) gives the same smoothing
 			// at 30 or 144 fps. The old fixed 0.15/frame factor under-smoothed at low fps
 			// (visible stutter) and over-smoothed at high fps. Movement bumps the rate up a
-			// bit so the camera keeps pace with a walking avatar.
-			const posRate = isMoving ? CAM_POS_RATE + distToTarget * 1.5 : CAM_POS_RATE
+			// bit so the camera keeps pace with a walking avatar — BUT during an orbit-exit
+			// glide-back that boost is suppressed (a 50m gap × 1.5 → instant snap) in favour
+			// of the gentle CAM_RETURN_RATE so the camera eases home over ~0.8s.
+			const posRate = camReturning
+				? CAM_RETURN_RATE
+				: (isMoving ? CAM_POS_RATE + distToTarget * 1.5 : CAM_POS_RATE)
 			const posF = snap ? 1.0 : 1 - Math.exp(-posRate * dt)
 			camera.position.lerp(target, posF)
 			// WHY: lookAt at LOOKAT_Y above avatar feet. Camera at FOLLOW_HEIGHT looking
@@ -1969,7 +2035,7 @@ export function useWorldEngine(canvasRef) {
 			// view angle every frame (the main cause of the scene bobbing up/down).
 			const lookTarget = _v3a.set(t.x, t.y + LOOKAT_Y, t.z)
 			if (snap || !camLookInit) { camLook.copy(lookTarget); camLookInit = true }
-			else camLook.lerp(lookTarget, 1 - Math.exp(-CAM_LOOK_RATE * dt))
+			else camLook.lerp(lookTarget, 1 - Math.exp(-(camReturning ? CAM_RETURN_RATE : CAM_LOOK_RATE) * dt))
 			camera.lookAt(camLook)
 
 			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
@@ -2156,6 +2222,7 @@ export function useWorldEngine(canvasRef) {
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
 		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
 		clearGizmo()
+		endFocusGlide()
 		cancelAnimationFrame(animId)
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
