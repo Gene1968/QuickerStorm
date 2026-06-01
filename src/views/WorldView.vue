@@ -40,8 +40,10 @@ import ResyncBanner			from '@/components/ResyncBanner.vue'
 import ToastStack				from '@/components/ToastStack.vue'
 import TopRightTray			from '@/components/TopRightTray.vue'
 
+import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 // use2DFallback auto-detects on mount; uiStore.mode can also force 2D
 const { is2D: autoDetect2D } = use2DFallback()
+const { connected: wsConnected } = useRealtimeSocket()
 const ui           = useUiStore()
 const grid         = useGridStore()
 const session      = useSessionStore()
@@ -185,7 +187,10 @@ watch(
 
 				<p class="text-white/60 text-sm leading-relaxed">{{ grid.disconnectReason }}</p>
 
-				<p class="text-white/35 text-xs leading-relaxed">Will resume automatically if the connection restores.</p>
+				<!-- WHY: Only promise auto-resume when the WS itself is down (will reconnect + probe).
+				     When WS is still up but the circuit died (S.DISCONNECTED path), the session is
+				     gone server-side and cannot resume — showing this text would be a false promise. -->
+				<p v-if="!wsConnected" class="text-white/35 text-xs leading-relaxed">Will resume automatically if the connection restores.</p>
 
 				<button
 					class="mt-1 px-6 py-2 rounded-lg bg-accent2 text-white text-sm font-semibold hover:opacity-80 transition-opacity"

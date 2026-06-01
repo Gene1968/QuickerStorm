@@ -10,7 +10,7 @@ import { useWorldStore } from '@/stores/worldStore'
 import { S, C } from '@shared/protocol.js'
 import PreferencesFloater from '@/components/PreferencesFloater.vue'
 
-const { on, off, emit } = useRealtimeSocket()
+const { on, off, emit, connected } = useRealtimeSocket()
 const debug      = useDebugStore()
 const session    = useSessionStore()
 const grid       = useGridStore()
@@ -50,6 +50,21 @@ function onDisconnected(d) {
 	// sees why they were dropped and chooses to return to login. session.clearSession()
 	// is called by the overlay's "Return to Login" button, not here.
 	grid.setDisconnected(reason)
+	// WHY: S.DISCONNECTED arrives on a still-open WS (server deletes session then sends this message).
+	// onWsOpen won't re-fire to clear the overlay. Probe once — if the circuit somehow
+	// survived (edge case), auto-clear; if dead (normal case), leave the overlay up.
+	if (connected.value && session.connected) {
+		const grd = grid.selectedNick, usr = session.username
+		if (grd && usr) {
+			emit(C.CHECK_CIRCUIT, { grid: grd, username: usr })
+			const t = setTimeout(() => off(S.CIRCUIT_STATUS, onCircuitProbe), 5000)
+			function onCircuitProbe(s) {
+				clearTimeout(t); off(S.CIRCUIT_STATUS, onCircuitProbe)
+				if (s?.alive) { debug.push('info', '[DISCONNECT] circuit alive after S.DISCONNECTED — auto-clearing'); grid.setLoginState('connected') }
+			}
+			on(S.CIRCUIT_STATUS, onCircuitProbe)
+		}
+	}
 }
 
 // WHY: WS reopened after a mid-session drop. Server may have lost our session
@@ -63,8 +78,6 @@ function onWsOpen() {
 	wasOpenBefore = true
 	if (!reconnect) return
 	if (!session.connected) return
-	// WHY: Don't skip when loginState==='disconnected' — probe may clear the overlay if circuit survived
-	const wasDisconnected = grid.loginState === 'disconnected'
 	const grd = grid.selectedNick
 	const usr = session.username
 	if (!grd || !usr) return
@@ -75,7 +88,10 @@ function onWsOpen() {
 	function onStatus(d) {
 		clearTimeout(t)
 		off(S.CIRCUIT_STATUS, onStatus)
-		if (d?.alive && wasDisconnected) {
+		// WHY: Read loginState here (at result time) not at probe-launch time. If S.DISCONNECTED
+		// arrived while the probe was in-flight, loginState is now 'disconnected' and we should
+		// clear it if the circuit is alive — the earlier 'wasDisconnected' capture missed this race.
+		if (d?.alive && grid.loginState === 'disconnected') {
 			debug.push('info', `[DISCONNECT] circuit survived WS gap — auto-resuming`)
 			grid.setLoginState('connected')
 		} else if (!d?.alive) {
