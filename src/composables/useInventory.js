@@ -2,9 +2,13 @@
 // Folder TREE comes from the login skeleton (inventoryStore.loadFromLogin). Folder ITEMS are
 // fetched here: expanding a folder (or the background loader) → C.INV_FETCH_FOLDER →
 // server FetchInventoryDescendents2 → S.INV_FOLDER → inventoryStore.setItems.
-import { onMounted, onUnmounted } from 'vue'
+// IndexedDB cache: items are pre-populated from last session so inventory is instant, then
+// the cap fetch runs in the background and overwrites with current grid data.
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useSessionStore } from '@/stores/sessionStore'
+import { loadCachedInventory, saveCachedInventory } from '@/lib/inventoryCache'
 import { C, S } from '@shared/protocol.js'
 
 const BATCH        = 40   // folders per cap POST (server batches them into one request)
@@ -12,11 +16,13 @@ const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background
 const PUMP_MS      = 150
 
 let registered = false
+let saveWatcherRegistered = false
 let pump = null
 
 export function useInventory() {
 	const { on, off, emit } = useRealtimeSocket()
-	const inv = useInventoryStore()
+	const inv     = useInventoryStore()
+	const session = useSessionStore()
 
 	// Fetch one or more folders' items in a single batched cap request.
 	function fetchFolders(ids) {
@@ -61,8 +67,30 @@ export function useInventory() {
 		inv.setItems(d.folderId, d.items || [])
 	}
 
-	function onCapsReady(d) {
+	// Load IndexedDB cache for this agent, pre-populating items without marking folders fetched.
+	// WHY: the cap fetch still runs normally and overwrites stale data; this just makes the
+	// inventory appear instantly instead of spinning for minutes.
+	async function loadCache() {
+		const agentId = session.agentId
+		if (!agentId || inv.cacheLoaded) return
+		try {
+			const cached = await loadCachedInventory(agentId)
+			if (cached?.itemPairs?.length) {
+				inv.applyCachedItems(cached.itemPairs)
+			} else {
+				// No cache yet — mark loaded so we don't attempt again this session.
+				inv.applyCachedItems([])
+			}
+		} catch (e) {
+			console.warn('[InvCache] load error:', e)
+			inv.applyCachedItems([])
+		}
+	}
+
+	async function onCapsReady(d) {
 		inv.setCaps(d?.caps || [])
+		// Load cache BEFORE starting fetches so items appear immediately.
+		await loadCache()
 		// Backfill folders the user expanded before caps were ready (root auto-expands on load).
 		for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
 		// Kick off the background full load so totals reach the exact count.
@@ -89,6 +117,20 @@ export function useInventory() {
 		return folderId
 	}
 
+	// WHY: Single watcher for the session — saves cache when full sync completes.
+	// Guarded so only the first useInventory() call (from WorldView) registers it.
+	if (!saveWatcherRegistered) {
+		watch(() => inv.allAgentFetched, async (done) => {
+			if (!done || !session.agentId) return
+			const pairs = []
+			inv.items.forEach((list, folderId) => {
+				if (list.length > 0) pairs.push([folderId, list])
+			})
+			await saveCachedInventory(session.agentId, pairs)
+		})
+		saveWatcherRegistered = true
+	}
+
 	onMounted(() => {
 		if (!registered) {
 			on(S.INV_FOLDER,       onInvFolder)
@@ -99,8 +141,10 @@ export function useInventory() {
 		// WHY: Safety net — if CAPS_READY arrived before this component mounted (edge case on fast
 		// resume), inv.capsReady is already true but onCapsReady was never called. Kick off fetching.
 		if (inv.capsReady) {
-			for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
-			fetchAll()
+			loadCache().then(() => {
+				for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
+				fetchAll()
+			})
 		}
 	})
 	// Keep handlers registered for the session — module-level state survives component unmount.

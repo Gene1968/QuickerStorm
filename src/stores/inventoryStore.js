@@ -26,6 +26,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const caps      = ref(new Set())  // HTTP cap names the sim offered (after seed-cap fetch)
 	// WHY: grids name the descendents cap differently (modern vs legacy). Accept either.
 	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2') || caps.value.has('WebFetchInventoryDescendents'))
+	const cacheLoaded = ref(false)    // true once IndexedDB cache was applied this session
 	const selectedId = ref('')        // selected folder/item id (drives footer + highlight)
 	const sortMode   = ref('name')    // item sort within a folder: 'name' | 'date' | 'type'
 	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
@@ -44,7 +45,8 @@ export const useInventoryStore = defineStore('inventory', () => {
 		fetched.value   = new Set()
 		fetching.value  = new Set()
 		// WHY: caps belong to the session — re-armed by the CAPS_READY message after each login.
-		caps.value      = new Set()
+		caps.value       = new Set()
+		cacheLoaded.value = false
 		selectedId.value = ''
 		sortMode.value   = 'name'
 		contextMenu.value = null
@@ -75,6 +77,17 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	function markFetching(id) { fetching.value.add(id); _schedTrigger() }
 	function setCaps(names) { caps.value = new Set(names || []) }
+
+	// Pre-populate items from IndexedDB cache WITHOUT marking folders as fetched.
+	// WHY: background cap fetch still runs for all folders and overwrites stale entries.
+	// This gives instant display of last-known inventory while the real sync happens.
+	function applyCachedItems(pairs) {
+		for (const [folderId, list] of (pairs || [])) {
+			if (!fetched.value.has(folderId)) items.value.set(folderId, list || [])
+		}
+		cacheLoaded.value = true
+		_schedTrigger()
+	}
 
 	function toggle(id) {
 		const s = new Set(expanded.value)
@@ -226,10 +239,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	function clear() { loadFromLogin(null) }
 
 	return {
-		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady,
+		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady, cacheLoaded,
 		selectedId, sortMode, contextMenu, propsTarget,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
-		markFetching, setCaps, toggle, expandAll, collapseAll, findSystemFolder,
+		markFetching, setCaps, applyCachedItems, toggle, expandAll, collapseAll, findSystemFolder,
 		select, descendantCounts,
 		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties, addToFavorites,
 		setItems, folderCount, itemCount, clear,

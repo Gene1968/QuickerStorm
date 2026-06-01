@@ -6,7 +6,7 @@ import { useInventory } from '@/composables/useInventory'
 import { itemIcon, TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT, itemMatchesType } from '@/utils/inventoryIcons'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
-import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon } from '@lucide/vue'
+import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
 
 const props = defineProps({
 	index: { type: Number, default: 0 },
@@ -404,7 +404,7 @@ onUnmounted(() => {
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
 				class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none flex items-center gap-1"
-			><Loader2Icon v-if="!inv.allAgentFetched" class="shrink-0 animate-spin opacity-60" :size="10" />{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
+			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 text-green-400" :size="10" /><Loader2Icon v-else class="shrink-0 animate-spin opacity-60" :size="10" />{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
 			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon /></button>
 		</div>
 	</FloaterWindow>

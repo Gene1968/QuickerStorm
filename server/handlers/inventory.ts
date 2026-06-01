@@ -43,10 +43,14 @@ export async function handleInventoryFetch(circuitId: string, folderIds: string[
 	const body = `<?xml version="1.0" encoding="UTF-8"?>\n<llsd><map><key>folders</key><array>${folderXml}</array></map></llsd>`
 
 	try {
+		// WHY: 25s timeout — grid cap endpoints can hang indefinitely on busy/flaky grids.
+		// Without this the client spins forever at 0/N fetched. AbortError is caught below
+		// and sends empty responses so folders are marked fetched (client shows cached data).
 		const res = await fetch(cap, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/llsd+xml', 'Accept': 'application/llsd+xml' },
 			body,
+			signal: AbortSignal.timeout(25_000),
 		})
 		const text = await res.text()
 		const parsed = parseLLSD(text) as any
