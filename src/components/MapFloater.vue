@@ -15,7 +15,7 @@ const ui      = useUiStore()
 const session = useSessionStore()
 const world   = useWorldStore()
 const map     = useMapStore()
-const { requestTeleport }     = useTeleport()
+const { requestTeleport, requestHomeTeleport } = useTeleport()
 const { sendMapQuery, sendMapNameQuery, sendMapTeleport } = useLLUDP()
 const { on, off } = useRealtimeSocket()
 const { playSound } = useAudio()
@@ -113,6 +113,39 @@ const avatarDot = computed(() => {
 	const rx = curRegionX.value + ap.x / sizeX
 	const ry = curRegionY.value + ap.y / sizeY
 	return gridToPx(rx, ry)
+})
+
+// Other nearby avatars (from ObjectUpdate-driven world.avatars) plotted as green dots.
+// Their pos is region-local SL metres; map to grid via the current region origin. Own avatar
+// is excluded (drawn separately as the purple dot) by matching session.agentId.
+const peopleDots = computed(() => {
+	if (!showPeople.value) return []
+	const myId = session.agentId?.toLowerCase()
+	const sx = session.regionSizeX || 256
+	const sy = session.regionSizeY || 256
+	return world.avatars
+		.filter(av => av.pos && av.fullId?.toLowerCase() !== myId)
+		.map(av => {
+			const rx = curRegionX.value + av.pos[0] / sx
+			const ry = curRegionY.value + av.pos[1] / sy
+			const { px, py } = gridToPx(rx, ry)
+			return { id: av.localId, px, py, name: av.name || 'Avatar' }
+		})
+})
+
+// Heading cone (~120° FOV) at the own avatar, showing facing direction. Map is north-up
+// (gridToPx flips Y), so the same SVG-vector math as the minimap applies. Fixed pixel radius.
+const FOV_HALF = Math.PI / 3
+const CONE_R   = 22
+const headingCone = computed(() => {
+	const a = avatarDot.value
+	if (!a) return null
+	const phi = Math.atan2(-Math.cos(ui.cameraYaw), -Math.sin(ui.cameraYaw))
+	const x1 = a.px + CONE_R * Math.cos(phi - FOV_HALF)
+	const y1 = a.py + CONE_R * Math.sin(phi - FOV_HALF)
+	const x2 = a.px + CONE_R * Math.cos(phi + FOV_HALF)
+	const y2 = a.py + CONE_R * Math.sin(phi + FOV_HALF)
+	return `M ${a.px} ${a.py} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${CONE_R} ${CONE_R} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`
 })
 
 const currentRegionRect = computed(() => {
@@ -422,7 +455,9 @@ function centerOnMe() {
 }
 
 function goHome() {
-	flashStatus('Go Home — Phase 3.')
+	requestHomeTeleport()   // → C.TP_HOME → TeleportLandmarkRequest(zero UUID); sim sends us home
+	flashStatus('Teleporting home…')
+	ui.toggleMap()
 }
 
 let _flashTimer = null
@@ -579,13 +614,31 @@ onUnmounted(() => {
 							pointer-events="none"
 						/>
 
-						<!-- Avatar dot -->
+						<!-- Own avatar heading cone (FOV wedge) -->
+						<path
+							v-if="headingCone"
+							:d="headingCone"
+							fill="#7c3aed55" stroke="#7c3aedaa" stroke-width="0.75"
+							pointer-events="none"
+						/>
+
+						<!-- Own avatar dot (purple) -->
 						<circle
 							v-if="avatarDot"
 							:cx="avatarDot.px" :cy="avatarDot.py" r="4"
 							fill="#7c3aed" stroke="#ffffff" stroke-width="1.5"
 							pointer-events="none"
 						/>
+
+						<!-- Other nearby avatars — green dots, drawn on top so they stay visible
+						     even when standing right next to your own (purple) dot -->
+						<g pointer-events="none">
+							<circle
+								v-for="d in peopleDots" :key="`av-${d.id}`"
+								:cx="d.px" :cy="d.py" r="4"
+								fill="#22c55e" stroke="#0a0a0a" stroke-width="1.5"
+							><title>{{ d.name }}</title></circle>
+						</g>
 					</svg>
 
 					<!-- Selected spot label — fixed font size, immune to zoom -->
