@@ -143,6 +143,8 @@ export async function handleLogin(
 		regionSizeY,
 		startLocation: loginResult.start_location ?? start,
 		agentAccess:   loginResult.agent_access ?? '',
+		firstName:     loginResult.first_name ?? '',
+		lastName:      loginResult.last_name  ?? '',
 		// WHY: folder tree comes free in the login response — ship it so the Inventory floater
 		// renders immediately. Items are fetched per-folder later via FetchInventoryDescendents2.
 		inventoryRoot:        loginResult.inventory_root ?? '',

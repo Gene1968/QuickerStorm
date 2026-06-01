@@ -4,6 +4,7 @@ import { useGridStore } from '@/stores/gridStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useGridSocialStore } from '@/stores/gridSocialStore'
+import { useAvatarStore } from '@/stores/avatarStore'
 import { useRouter } from 'vue-router'
 import { S, C } from '@shared/protocol.js'
 
@@ -12,11 +13,12 @@ const WS_CONNECT_MS    = 10_000   // 10s to get WS open
 
 export function useGridLogin() {
 	const { connect, on, off, emit, connected } = useRealtimeSocket()
-	const gridStore     = useGridStore()
-	const sessionStore  = useSessionStore()
-	const inventoryStore = useInventoryStore()
+	const gridStore       = useGridStore()
+	const sessionStore    = useSessionStore()
+	const inventoryStore  = useInventoryStore()
 	const gridSocialStore = useGridSocialStore()
-	const router        = useRouter()
+	const avatarStore     = useAvatarStore()
+	const router          = useRouter()
 
 	// WHY: Ask server whether a live circuit exists for this user WITHOUT triggering login.
 	// Returns true if the server still holds the circuit (within 15s hold window after WS drop).
@@ -107,6 +109,14 @@ export function useGridLogin() {
 				inventoryStore.loadFromLogin(d)
 				// WHY: social harvest (friends/gestures/textures/flags) also ships in LOGIN_OK.
 				gridSocialStore.loadFromLogin(d?.social)
+				// Seed display name from login if not already customised.
+				// GetDisplayNames cap (not yet implemented) will override this later.
+				// WHY: "Resident" is the legacy OpenSim/SL placeholder last name — omit it
+				// so "Gene Resident" shows as "Gene", matching Firestorm's behaviour.
+				if (!avatarStore.displayName && d?.firstName) {
+					const last = d.lastName === 'Resident' ? '' : (d.lastName ?? '')
+					avatarStore.displayName = [d.firstName, last].filter(Boolean).join(' ')
+				}
 				gridStore.setLoginState('connected')
 				router.push('/world')
 				resolve(d)

@@ -34,7 +34,7 @@ const sortedFriends = computed(() => {
 		return (a.name || a.id).localeCompare(b.name || b.id)
 	})
 })
-function friendLabel(f) { return f.name || `${f.id.slice(0, 8)}…` }
+function friendLabel(f) { return f.name || `${f.id}` }
 function openProfile(id) { ui.openProfile(id) }
 function openIM(f)       { im.openWith(f.id, friendLabel(f)); activeTab.value = f.id }
 function confirmRemove(f) {
@@ -225,7 +225,7 @@ async function submitChat() {
 	<FloaterWindow
 		id="conversations"
 		:title="floaterTitle"
-		:wrap-style="{ width: '32vw', height: '40vh', resize: 'both' }"
+		:wrap-style="{ width: '33.75vw', height: '40vh', resize: 'both' }"
 		:default-pos="{ left: '0.125%', top: '7%' }"
 		@close="ui.toggleChat()"
 	>
@@ -402,22 +402,22 @@ async function submitChat() {
 				<template v-else-if="activeConv">
 					<!-- IM action bar (FS-style; several disabled until those systems exist) -->
 					<div class="flex flex-wrap gap-1 px-2 py-1.5 border-b border-brd shrink-0">
-						<button class="qs-btn-mini" title="Show this resident's profile" @click="imProfile"><ShieldUserIcon class="w-4 h-4 mr-1" /></button>
-						<button :disabled="imIsFriend" class="qs-btn-mini" title="Add this resident as a friend" @click="imAddFriend"><HandshakeIcon class="w-4 h-4 mr-1" /></button>
+						<button class="qs-btn-mini" title="Show this resident's profile" @click="imProfile"><ShieldUserIcon class="w-4 h-4" /></button>
+						<button :disabled="imIsFriend" class="qs-btn-mini" title="Add this resident as a friend" @click="imAddFriend"><HandshakeIcon class="w-4 h-4" /></button>
 						<!-- <button v-else class="qs-btn-mini" title="Remove friend" @click="imRemove">Remove</button> -->
 						<button class="qs-btn-mini" disabled title="Offer teleport — not yet available">TP!</button>
 						<button class="qs-btn-mini" disabled title="Request teleport — not yet available">TP?</button>
-						<button class="qs-btn-mini" disabled title="Send an item to this resident — not yet available"><GiftIcon class="w-4 h-4 mr-1" /></button>
-						<button class="qs-btn-mini" disabled title="Add a voice to this chat — not yet available"><PhoneIcon class="w-4 h-4 mr-1" /></button>
-						<button class="qs-btn-mini" disabled title="Open this conversation's past transcripts — not yet available"><CaptionsIcon class="w-4 h-4 mr-1" /></button>
-						<button class="qs-btn-mini" disabled title="Add someone to this conversation — not yet available"><UserPlusIcon class="w-4 h-4 mr-1" /></button>
-						<button class="qs-btn-mini" disabled title="Chat options — not yet available"><SquareMenuIcon class="w-4 h-4 mr-1" /></button>
-						<button class="qs-btn-mini" disabled title="Search chat — not yet available"><SearchIcon class="w-4 h-4 mr-1" /></button>
-						<button class="qs-btn-mini" :disabled="!imMapEnabled" title="Show on map" @click="imMap"><MapIcon class="w-4 h-4 mr-1" /></button>
+						<button class="qs-btn-mini" disabled title="Send an item to this resident — not yet available"><GiftIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" disabled title="Add a voice to this chat — not yet available"><PhoneIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" disabled title="Open this conversation's past transcripts — not yet available"><CaptionsIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" disabled title="Add someone to this conversation — not yet available"><UserPlusIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" disabled title="Chat options — not yet available"><SquareMenuIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" disabled title="Search chat — not yet available"><SearchIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" :disabled="!imMapEnabled" title="Show on map" @click="imMap"><MapIcon class="w-4 h-4" /></button>
 						<!-- <button class="qs-btn-mini" disabled title="Pay — not yet available">Pay</button>
 						<button class="qs-btn-mini" disabled title="Block/Mute — not yet available">Block</button>
 						<button class="qs-btn-mini" disabled title="Group — not yet available">Group</button> -->
-						<button class="qs-btn-mini" title="Close conversation" @click="imCloseConv"><XIcon class="w-4 h-4 mr-1" /></button>
+						<button class="qs-btn-mini" title="Close conversation" @click="imCloseConv"><XIcon class="w-4 h-4" /></button>
 					</div>
 					<div
 						ref="imLogEl"

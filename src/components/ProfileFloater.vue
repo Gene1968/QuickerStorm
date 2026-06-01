@@ -36,7 +36,7 @@ const isSelf = computed(() => props.targetId === null)
 
 // Resolved profile fragment — self uses live agentId once session is ready.
 const profileId = computed(() =>
-	isSelf.value ? (session.agentId ?? avatar.authUserId ?? null) : props.targetId
+	isSelf.value ? (session.agentId ?? null) : props.targetId
 )
 const profile = computed(() => {
 	const id = profileId.value
@@ -51,7 +51,7 @@ const displayName = computed(() => {
 
 // WHY: agentId from sessionStore is the live grid-assigned UUID (most authoritative for self)
 const profileUUID = computed(() =>
-	isSelf.value ? (session.agentId ?? avatar.authUserId ?? '—') : (props.targetId ?? '—')
+	isSelf.value ? (session.agentId ?? '—') : (props.targetId ?? '—')
 )
 
 // WHY: grid online status — prefer the friend's live OnlineNotification flag, fall back to
@@ -189,7 +189,7 @@ function  discardBio()    { bioEdit.value = avatar.bio }
 const notes = ref('')
 
 function notesKey() {
-	const id = isSelf.value ? (avatar.authUserId ?? 'self') : props.targetId
+	const id = isSelf.value ? (session.agentId ?? 'self') : props.targetId
 	return `ava_profile_notes_${id}`
 }
 
@@ -235,7 +235,7 @@ function saveNotes() {
 				<!-- Name + Key above photo -->
 				<div>
 					<div class="flex items-center justify-between gap-4">
-						<p class="border border-brd rounded bg-white/5 w-full p-1 px-2 text-sm font-bold text-t1 truncate">{{ displayName }}</p>
+						<p class="border border-brd rounded bg-white/5 w-full p-1 px-2 text-sm font-bold text-t1 truncate">{{ displayName || 'loading...' }}</p>
 						<div class="flex items-center gap-3">
 							<EyeIcon title="Friend can see my online status" class="w-5 h-5 text-t1" />
 							<MapPinSearchIcon title="Friend can see me on map" class="w-5 h-5 text-t1" />
