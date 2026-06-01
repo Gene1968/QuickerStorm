@@ -380,6 +380,14 @@ function clearMap() {
 	status.value         = ''
 }
 
+// Clear the region search field + its results (× button in the search box).
+function clearSearch() {
+	searchQuery.value    = ''
+	searchResults.value  = []
+	selectedResult.value = null
+	if (searchRetryTimer) clearTimeout(searchRetryTimer)
+}
+
 // MapNameRequest reply sometimes dropped by sim under load. Auto-retry once after 2s
 // if no matching block appears in the cache.
 let searchRetryTimer = null
@@ -714,13 +722,22 @@ onUnmounted(() => {
 						<option>🏁 My Landmarks</option>
 					</select>
 					<div class="flex gap-1">
-						<input
-							v-model="searchQuery"
-							type="text"
-							placeholder="Regions by name…"
-							class="flex-1 min-w-0 bg-card2 border border-brd rounded-xl text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
-							@keydown.enter="doSearch"
-						/>
+						<div class="relative flex-1 min-w-0">
+							<input
+								v-model="searchQuery"
+								type="text"
+								placeholder="Regions by name…"
+								class="w-full bg-card2 border border-brd rounded-xl text-t1 placeholder-tm pl-1.5 pr-6 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+								@keydown.enter="doSearch"
+							/>
+							<button
+								v-if="searchQuery"
+								class="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-tm hover:text-t1 hover:bg-white/10 leading-none"
+								title="Clear search"
+								aria-label="Clear search"
+								@click="clearSearch"
+							>×</button>
+						</div>
 						<button
 							class="bg-accent text-white rounded text-xs hover:opacity-80 shrink-0 min-w-[3.25rem]"
 							@click="doSearch"

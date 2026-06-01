@@ -19,6 +19,11 @@ export const useMapStore = defineStore('map', () => {
 
 	function setRegions(blocks) {
 		for (const b of blocks) {
+			// WHY: a MapNameRequest with no match returns a sentinel block at grid (0,0) (libomv's
+			// documented "no results" indicator — OpenSim often echoes the searched name into it).
+			// Grid (0,0) is never a real region, so drop it: otherwise gibberish searches "find one"
+			// and a phantom tile renders at the map origin.
+			if (b.regionX === 0 && b.regionY === 0) continue
 			regions.value.set(`${b.regionX},${b.regionY}`, b)
 		}
 	}
