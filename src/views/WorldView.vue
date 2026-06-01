@@ -19,6 +19,7 @@ import MinimapOverlay		from '@/components/MinimapOverlay.vue'
 import ConversationsFloater	from '@/components/ConversationsFloater.vue'
 import AvatarContextMenu	from '@/components/AvatarContextMenu.vue'
 import ObjectContextMenu	from '@/components/ObjectContextMenu.vue'
+import LandContextMenu		from '@/components/LandContextMenu.vue'
 import PlacesFloater		from '@/components/PlacesFloater.vue'
 import ObjectEditFloater	from '@/components/ObjectEditFloater.vue'
 import BottomToolbar		from '@/components/BottomToolbar.vue'
@@ -154,6 +155,7 @@ watch(
 				<CreateLandmarkFloater	v-if="ui.showCreateLandmark" />
 					<AvatarContextMenu />
 					<ObjectContextMenu />
+					<LandContextMenu />
 					<InventoryContextMenu />
 					<InventoryItemProperties />
 					<ToastStack />

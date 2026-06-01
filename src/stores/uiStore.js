@@ -223,6 +223,17 @@ export const useUiStore = defineStore('ui', () => {
 	function openObjectMenu(target) { objectMenu.value = target }
 	function closeObjectMenu()      { objectMenu.value = null }
 
+	// WHY: land/terrain context menu — pos = SL coords of the hit point; Walk To and Landmark use them.
+	const landMenu = ref(null)  // null | { pos: [slX, slY, slZ], x, y }
+	function openLandMenu(target)  { landMenu.value = target }
+	function closeLandMenu()       { landMenu.value = null }
+
+	// WHY: Warp request from LandContextMenu “Walk To”. worldEngine watches this; when non-null it
+	// snaps avatarSLPos + mesh then clears it. Same pattern as waterHeight → rebuildTerrainFromStore.
+	const pendingWarpPos = ref(null)  // null | [slX, slY, slZ]
+	function requestWarp(x, y, z) { pendingWarpPos.value = [x, y, z] }
+	function clearWarp()          { pendingWarpPos.value = null }
+
 	// WHY: ObjectEditFloater target — single localId driving the inspector. Right-click menu
 	// "Edit" sets this and toggles showObjectEdit. null = floater shows empty-state.
 	const showObjectEdit = ref(false)
@@ -260,6 +271,8 @@ export const useUiStore = defineStore('ui', () => {
 		cameraYaw, setCameraYaw,
 		avatarMenu, openAvatarMenu, closeAvatarMenu,
 		objectMenu, openObjectMenu, closeObjectMenu,
+		landMenu, openLandMenu, closeLandMenu,
+		pendingWarpPos, requestWarp, clearWarp,
 		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
 		gizmoMode, setGizmoMode,
 	}

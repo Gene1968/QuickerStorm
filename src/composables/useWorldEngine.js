@@ -144,6 +144,20 @@ export function useWorldEngine(canvasRef) {
 		rebuildTerrainFromStore()
 	})
 	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
+	// WHY: LandContextMenu "Walk To" — snap own avatar + camera to chosen terrain point.
+	// Same snap logic as onAgentSpawnPos but triggered client-side via uiStore.requestWarp().
+	const stopWarpWatch = watch(() => uiStore.pendingWarpPos, (pos) => {
+		if (!pos) return
+		const [x, y, z] = pos
+		avatarSLPos = [x, y, z]
+		worldStore.setAvatarPos(x, y, z)
+		cameraSnapRequested = true
+		if (ownAvatarLocalId) {
+			const m = meshMap.get(ownAvatarLocalId)
+			if (m) { const t = slToThree(x, y, z); m.position.set(t.x, t.y, t.z) }
+		}
+		uiStore.clearWarp()
+	})
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
 	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) clearGizmo(); else refreshGizmo() })
 	// WHY: Sim-side ObjectSelect must be paired with ObjectDeselect or selections leak server-side
@@ -786,8 +800,8 @@ export function useWorldEngine(canvasRef) {
 		else if (d <= -10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], (d + 20) / 10)  // shallow → low land
 		else if (d <=  -1) rgb = lerpRgb([0.25, 0.55, 0.45], TAN,                (d + 10) / 9)    // low land → tan
 		else if (d <=   1) rgb = lerpRgb(TAN, SAND,                              (d + 1) / 2)     // tan → sand at shoreline
-		else if (d <=   3) rgb = lerpRgb(SAND, GRASS,                            (d - 1) / 2)     // sand → grass quickly
-		else if (d <=  30) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],             (d - 3) / 27)     // grass → earthy
+		else if (d <=   2) rgb = lerpRgb(SAND, GRASS,                            (d - 1) / 1)     // sand → grass, done at d=2 (22m @ water=20)
+		else if (d <=  30) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],             (d - 2) / 28)     // grass → earthy
 		else               rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((d - 30) / 60, 1))  // earthy → stone
 		return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]
 	}
@@ -885,10 +899,10 @@ export function useWorldEngine(canvasRef) {
 		terrainGeo.translate(rx / 2, 0, -ry / 2)
 
 		// Add vertex color attribute — updated per patch in onTerrainPatch.
-		// Initial fill matches heightColor(20) = mid-green; stored in LINEAR
+		// Initial fill: heightColor(22) = grass (d=2 above default water=20); stored in LINEAR
 		// space so the sRGB renderer pipeline outputs the intended hue.
 		const vtxColors = new Float32Array(terrainGeo.attributes.position.count * 3)
-		const [ir, ig, ib] = heightColor(20)
+		const [ir, ig, ib] = heightColor(22)
 		for (let i = 0; i < vtxColors.length; i += 3) {
 			vtxColors[i]     = ir
 			vtxColors[i + 1] = ig
@@ -1830,6 +1844,7 @@ export function useWorldEngine(canvasRef) {
 				const obj = worldStore.objects.get(hitMesh.userData.localId)
 				if (obj) {
 					uiStore.closeObjectMenu()
+					uiStore.closeLandMenu()
 					uiStore.openAvatarMenu({
 						agentId: obj.fullId,
 						name:    obj.name || 'Avatar',
@@ -1851,8 +1866,21 @@ export function useWorldEngine(canvasRef) {
 		})
 		const primHits = _raycaster.intersectObjects(primTargets, true)
 		if (primHits.length === 0) {
+			// Prim miss — try terrain
+			if (terrainMesh) {
+				const terrHits = _raycaster.intersectObject(terrainMesh, false)
+				if (terrHits.length > 0) {
+					const hp = terrHits[0].point
+					const slX = hp.x, slY = -hp.z, slZ = hp.y
+					uiStore.closeAvatarMenu()
+					uiStore.closeObjectMenu()
+					uiStore.openLandMenu({ pos: [slX, slY, slZ], x: e.clientX, y: e.clientY })
+					return
+				}
+			}
 			uiStore.closeAvatarMenu()
 			uiStore.closeObjectMenu()
+			uiStore.closeLandMenu()
 			return
 		}
 		let hitMesh = primHits[0].object
@@ -1861,6 +1889,7 @@ export function useWorldEngine(canvasRef) {
 		const obj = worldStore.objects.get(hitMesh.userData.localId)
 		if (!obj) return
 		uiStore.closeAvatarMenu()
+		uiStore.closeLandMenu()
 		uiStore.openObjectMenu({
 			localId: hitMesh.userData.localId,
 			fullId:  obj.fullId,
