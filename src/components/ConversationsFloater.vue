@@ -7,7 +7,7 @@ import { useUiStore }     from '@/stores/uiStore'
 import { useGridSocialStore, hasRight, setRight, RIGHT_ONLINE, RIGHT_MAP, RIGHT_MODIFY } from '@/stores/gridSocialStore'
 import { useSocial }     from '@/composables/useSocial'
 import { playSound } from '@/composables/useAudio'
-import { ShieldUserIcon, HandshakeIcon, GiftIcon, PhoneIcon, CaptionsIcon, UserPlusIcon, SquareMenuIcon, SearchIcon, XIcon, MapIcon, ChevronDownIcon } from '@lucide/vue'
+import { EyeIcon, MapPinSearchIcon, BoxIcon, ShieldUserIcon, HandshakeIcon, GiftIcon, PhoneIcon, CaptionsIcon, UserPlusIcon, SquareMenuIcon, SearchIcon, XIcon, MapIcon, ChevronDownIcon } from '@lucide/vue'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
 import 'emoji-picker-element'
 
@@ -264,81 +264,81 @@ async function submitChat() {
 
 				<!-- Contacts (Firestorm-style rights table) ─────────── -->
 				<template v-if="activeTab === 'contacts'">
-					<div class="px-2 py-1.5 border-b border-brd shrink-0 flex items-center gap-2">
-						<input
-							v-model="contactSearch"
-							type="text"
-							placeholder="Filter friends"
-							class="flex-1 min-w-0 bg-card2 border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
-						/>
-						<span class="text-2xs text-tm shrink-0">{{ social.onlineCount }}/{{ social.friendCount }} online</span>
-					</div>
-
-					<div v-if="social.friendCount === 0" class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
-						No friends on this account
-					</div>
-
-					<div v-else class="flex-1 overflow-y-auto min-h-0">
-						<div class="flex items-center gap-1 px-2 py-1 text-2xs text-tm sticky top-0 bg-card border-b border-brd z-10 select-none">
-							<span class="w-2 shrink-0"></span>
-							<span class="flex-1 min-w-0">Name</span>
-							<span class="w-5 text-center shrink-0" title="Friend can see when you're online">👁</span>
-							<span class="w-5 text-center shrink-0" title="Friend can locate you on the map">🗺</span>
-							<span class="w-5 text-center shrink-0" title="Friend can edit, delete or take your objects">✎</span>
-							<span class="w-1 shrink-0"></span>
-							<span class="w-5 text-center shrink-0 opacity-60" title="You can locate them on the map">🗺</span>
-							<span class="w-5 text-center shrink-0 opacity-60" title="You can edit this friend's objects">✎</span>
+					<!-- To do: add tabs here for Friends, Groups and Contact Sets -->
+					<!-- Begin Friends tab -->
+					<div class="flex flex-row">
+						<div class="flex-1 min-w-0">
+							<div class="px-2 py-1.5 border-b border-brd shrink-0 flex items-center gap-4">
+								<input
+									v-model="contactSearch"
+									type="text"
+									placeholder="Filter friends"
+									class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
+								/>
+								<span class="text-xs text-t1 shrink-0">{{ social.onlineCount }} / {{ social.friendCount }} friends online</span>
+							</div>
+							<div v-if="social.friendCount === 0" class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
+								No friends on this account
+							</div>
+							<div v-else class="flex-1 overflow-y-auto min-h-0">
+								<div class="flex items-center gap-1 px-2 py-1 text-2xs text-tm sticky top-0 bg-card border-b border-brd z-10 select-none">
+									<span class="w-2 shrink-0"></span>
+									<span class="flex-1 min-w-0 text-t1">Name</span>
+									<EyeIcon title="Friend can see when you're online" class="w-5 h-5 text-t1" />
+									<MapPinSearchIcon title="Friend can locate you on the map" class="w-5 h-5 text-t1" />
+									<BoxIcon title="Friend can edit, delete or take your objects" class="w-5 h-5 text-t1" />
+									<span class="w-1 shrink-0"></span>
+									<MapPinSearchIcon title="You can locate them on the map" class="w-5 h-5 text-t1" />
+									<BoxIcon title="You can edit this friend's objects" class="w-5 h-5 text-t1" />
+								</div>
+								<div
+									v-for="f in sortedFriends"
+									:key="f.id"
+									class="flex items-center gap-1 px-2 py-1 cursor-default border-b border-brd"
+									:class="selectedId === f.id ? 'bg-white/10' : 'hover:bg-white/5'"
+									@click="selectFriend(f)"
+									@dblclick="openIM(f)"
+								>
+									<span class="w-2 h-2 rounded-full shrink-0" :class="f.online ? 'bg-green-500' : 'bg-gray-500/50'" :title="f.online ? 'Online' : 'Offline'" />
+									<span class="flex-1 min-w-0 truncate text-xs" :class="f.online ? 'text-t1' : 'text-tm'">{{ friendLabel(f) }}</span>
+									<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can see when you're online"
+										:checked="hasRight(f.rightsGiven, RIGHT_ONLINE)" @click.stop="toggleRight(f, RIGHT_ONLINE)" />
+									<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can locate you on the map"
+										:checked="hasRight(f.rightsGiven, RIGHT_MAP)" @click.stop="toggleRight(f, RIGHT_MAP)" />
+									<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can edit, delete or take your objects"
+										:checked="hasRight(f.rightsGiven, RIGHT_MODIFY)" @click.stop="toggleRight(f, RIGHT_MODIFY)" />
+									<span class="w-1 shrink-0"></span>
+									<input type="checkbox" disabled class="w-5 shrink-0 opacity-60" title="You can locate them on the map"
+										:checked="hasRight(f.rightsHas, RIGHT_MAP)" @click.stop />
+									<input type="checkbox" disabled class="w-5 shrink-0 opacity-60" title="You can edit this friend's objects"
+										:checked="hasRight(f.rightsHas, RIGHT_MODIFY)" @click.stop />
+								</div>
+							</div>
 						</div>
-
-						<div
-							v-for="f in sortedFriends"
-							:key="f.id"
-							class="flex items-center gap-1 px-2 py-1 cursor-default border-b border-brd"
-							:class="selectedId === f.id ? 'bg-white/10' : 'hover:bg-white/5'"
-							@click="selectFriend(f)"
-							@dblclick="openIM(f)"
-						>
-							<span class="w-2 h-2 rounded-full shrink-0" :class="f.online ? 'bg-green-500' : 'bg-gray-500/50'" :title="f.online ? 'Online' : 'Offline'" />
-							<span class="flex-1 min-w-0 truncate text-xs" :class="f.online ? 'text-t1' : 'text-tm'">{{ friendLabel(f) }}</span>
-
-							<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can see when you're online"
-								:checked="hasRight(f.rightsGiven, RIGHT_ONLINE)" @click.stop="toggleRight(f, RIGHT_ONLINE)" />
-							<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can locate you on the map"
-								:checked="hasRight(f.rightsGiven, RIGHT_MAP)" @click.stop="toggleRight(f, RIGHT_MAP)" />
-							<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can edit, delete or take your objects"
-								:checked="hasRight(f.rightsGiven, RIGHT_MODIFY)" @click.stop="toggleRight(f, RIGHT_MODIFY)" />
-							<span class="w-1 shrink-0"></span>
-							<input type="checkbox" disabled class="w-5 shrink-0 opacity-60" title="You can locate them on the map"
-								:checked="hasRight(f.rightsHas, RIGHT_MAP)" @click.stop />
-							<input type="checkbox" disabled class="w-5 shrink-0 opacity-60" title="You can edit this friend's objects"
-								:checked="hasRight(f.rightsHas, RIGHT_MODIFY)" @click.stop />
+						<div class="flex flex-col gap-1 px-2 py-1.5 border-t border-brd shrink-0">
+							<button class="ui-btn py-0 px-3" :disabled="!canIM"       title="Send IM (Call disabled until voice)" @click="actIM">IM</button>
+							<button class="ui-btn py-0 px-3" :disabled="!canProfile"  title="View profile" @click="actProfile">Profile</button>
+							<button class="ui-btn py-0 px-3" :disabled="!canTeleport" title="Offer teleport" @click="actTeleport">Teleport&#8230;</button>
+							<button class="ui-btn py-0 px-3" :disabled="!canMap"      title="Show on map" @click="actMap">Map</button>
+							<button class="ui-btn py-0 px-3" disabled                 title="Pay — not yet available">Pay&#8230;</button>
+							<button class="ui-btn py-0 px-3" :disabled="!canRemove"   title="Remove friend" @click="actRemove">Remove&#8230;</button>
+							<button class="ui-btn py-0 px-3" title="Add a friend by name" @click="openAdd">Add</button>
 						</div>
-					</div>
-
-					<div class="px-2 py-1.5 border-t border-brd shrink-0 flex flex-wrap gap-1">
-						<button class="qs-btn-mini" :disabled="!canIM"       title="Send IM (Call disabled until voice)" @click="actIM">IM</button>
-						<button class="qs-btn-mini" :disabled="!canProfile"  title="View profile" @click="actProfile">Profile</button>
-						<button class="qs-btn-mini" :disabled="!canTeleport" title="Offer teleport" @click="actTeleport">Teleport</button>
-						<button class="qs-btn-mini" :disabled="!canMap"      title="Show on map" @click="actMap">Map</button>
-						<button class="qs-btn-mini" disabled                 title="Pay — not yet available">Pay</button>
-						<button class="qs-btn-mini" :disabled="!canRemove"   title="Remove friend" @click="actRemove">Remove</button>
-						<button class="qs-btn-mini" title="Add a friend by name" @click="openAdd">Add</button>
-					</div>
-
-					<div v-if="showAdd" class="px-2 py-2 border-t border-brd shrink-0 bg-card2">
-						<div class="flex gap-1.5">
-							<input v-model="addQuery" type="text" placeholder="Search by name…" maxlength="63"
-								class="flex-1 min-w-0 bg-card border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
-								@keyup.enter="runAddSearch" />
-							<button class="qs-btn-mini" :disabled="addBusy || addQuery.trim().length < 2" @click="runAddSearch">{{ addBusy ? '…' : 'Search' }}</button>
-							<button class="qs-btn-mini" @click="showAdd = false">Cancel</button>
+						<div v-if="showAdd" class="px-2 py-2 border-t border-brd shrink-0 bg-card2">
+							<div class="flex gap-1.5">
+								<input v-model="addQuery" type="text" placeholder="Search by name…" maxlength="63"
+									class="flex-1 min-w-0 bg-card border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+									@keyup.enter="runAddSearch" />
+								<button class="qs-btn-mini" :disabled="addBusy || addQuery.trim().length < 2" @click="runAddSearch">{{ addBusy ? '…' : 'Search' }}</button>
+								<button class="qs-btn-mini" @click="showAdd = false">Cancel</button>
+							</div>
+							<div v-if="addResults.length" class="mt-1.5 max-h-32 overflow-y-auto">
+								<button v-for="r in addResults" :key="r.id"
+									class="block w-full text-left px-2 py-1 text-xs text-t1 hover:bg-white/10 rounded"
+									@click="addFriendFromResult(r)">{{ r.name }}</button>
+							</div>
+							<div v-else-if="!addBusy && addQuery.trim().length >= 2" class="mt-1.5 text-2xs text-tm italic">No matches.</div>
 						</div>
-						<div v-if="addResults.length" class="mt-1.5 max-h-32 overflow-y-auto">
-							<button v-for="r in addResults" :key="r.id"
-								class="block w-full text-left px-2 py-1 text-xs text-t1 hover:bg-white/10 rounded"
-								@click="addFriendFromResult(r)">{{ r.name }}</button>
-						</div>
-						<div v-else-if="!addBusy && addQuery.trim().length >= 2" class="mt-1.5 text-2xs text-tm italic">No matches.</div>
 					</div>
 				</template>
 

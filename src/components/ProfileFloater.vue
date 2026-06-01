@@ -14,6 +14,7 @@ import { useGridSocialStore } from '@/stores/gridSocialStore.js'
 import { useSocial }        from '@/composables/useSocial.js'
 import { useInstantMessage } from '@/composables/useInstantMessage.js'
 import FloaterWindow        from '@/components/FloaterWindow.vue'
+import { EyeIcon, MapPinSearchIcon, BoxIcon } from '@lucide/vue'
 
 const props = defineProps({
 	// null = self profile; UUID string = another user's profile
@@ -33,8 +34,14 @@ const im       = useInstantMessage()
 // ── Computed ─────────────────────────────────────────────────────────────────
 const isSelf = computed(() => props.targetId === null)
 
-// Resolved profile fragment for the current target (other users only).
-const profile = computed(() => isSelf.value ? null : social.profileFor(props.targetId))
+// Resolved profile fragment — self uses live agentId once session is ready.
+const profileId = computed(() =>
+	isSelf.value ? (session.agentId ?? avatar.authUserId ?? null) : props.targetId
+)
+const profile = computed(() => {
+	const id = profileId.value
+	return id ? social.profileFor(id) : null
+})
 const avProps = computed(() => profile.value?.properties ?? null)
 
 const displayName = computed(() => {
@@ -60,12 +67,57 @@ const onlineStatus = computed(() => {
 const isFriend = computed(() => !isSelf.value && social.isFriend(props.targetId))
 
 // ── Profile field values ───────────────────────────────────────────────────
-const bornValue    = computed(() => avProps.value?.bornOn || 'N/A')
+const BORN_DATE_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/
+
+function parseBornWithAge(bornOn) {
+	const raw = (bornOn ?? '').trim()
+	if (!raw) return { date: 'N/A', age: null }
+
+	const match = BORN_DATE_RE.exec(raw)
+	if (!match) return { date: raw, age: null }
+
+	const month = Number(match[1])
+	const day = Number(match[2])
+	const year = Number(match[3])
+	const birth = new Date(year, month - 1, day)
+	if (birth.getFullYear() !== year || birth.getMonth() !== month - 1 || birth.getDate() !== day) {
+		return { date: raw, age: null }
+	}
+
+	const today = new Date()
+	const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+	if (birth > todayStart) return { date: raw, age: null }
+
+	const totalDays = Math.floor((todayStart - birth) / 86_400_000)
+
+	let years = today.getFullYear() - year
+	let months = today.getMonth() - (month - 1)
+	if (today.getDate() < day) {
+		months--
+		if (months < 0) {
+			years--
+			months += 12
+		}
+	} else if (months < 0) {
+		years--
+		months += 12
+	}
+
+	const date = `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}/${year}`
+	const age = `(${years} years ${months} months; ${totalDays} days)`
+	return { date, age }
+}
+
+const bornDisplay = computed(() => parseBornWithAge(avProps.value?.bornOn))
 const partnerValue = computed(() => {
 	const pid = avProps.value?.partnerId
 	if (!pid || pid === '00000000-0000-0000-0000-000000000000') return 'None'
 	return social.nameFor(pid) || `${pid.slice(0, 8)}…`
 })
+const profileDetailFields = computed(() => [
+	{ label: 'Account: ', value: 'Resident' },
+	{ label: 'Partner: ', value: partnerValue.value },
+])
 const aboutValue   = computed(() => avProps.value?.aboutText || '')
 // Groups shown: self → my group list; other → their AvatarGroupsReply groups.
 const shownGroups  = computed(() => isSelf.value ? social.groups : (profile.value?.groups ?? []))
@@ -87,16 +139,21 @@ function selectTab(tab) {
 }
 
 // ── Fetch profile data on open (mounted fresh per target) ────────────────────
+function loadProfileData() {
+	const id = profileId.value
+	if (!id) return
+	requestProfile(id)
+	if (!isSelf.value) requestNames([id])
+}
+
 onMounted(() => {
-	if (!isSelf.value && props.targetId) {
-		requestProfile(props.targetId)   // → AvatarProperties/Interests/Groups replies
-		requestNames([props.targetId])   // resolve their display name
-	}
+	loadProfileData()
 	// Self bio + notes init (other-user notes loaded below too)
 	if (isSelf.value) bioEdit.value = avatar.bio
 	activeTab.value = 'profile'
 	notes.value = localStorage.getItem(notesKey()) ?? ''
 })
+watch(profileId, (id) => { if (id) loadProfileData() })
 // Resolve partner name once properties arrive.
 watch(() => avProps.value?.partnerId, (pid) => {
 	if (pid && pid !== '00000000-0000-0000-0000-000000000000') requestNames([pid])
@@ -145,7 +202,7 @@ function saveNotes() {
 	<FloaterWindow
 		:id="`profile-${targetId ?? 'self'}`"
 		:title="isSelf ? 'My Profile' : `Profile — ${displayName}`"
-		:wrap-style="{ width: '30rem', height: '34rem', resize: 'both' }"
+		:wrap-style="{ width: '28rem', height: '36rem', resize: 'both' }"
 		:default-pos="{ left: `calc(20% + ${index * 1.5}rem)`, top: `calc(5% + ${index * 1.5}rem)` }"
 		@close="ui.closeProfile(targetId)"
 	>
@@ -177,31 +234,43 @@ function saveNotes() {
 
 				<!-- Name + Key above photo -->
 				<div>
-					<p class="text-sm font-bold text-t1 truncate">{{ displayName }}</p>
-					<p v-if="!isSelf" :class="onlineStatus === 'online' ? 'text-green-400 font-bold text-xs mt-0.5' : 'text-red-400 font-bold text-xs mt-0.5'">
-						{{ onlineStatus === 'online' ? 'Online' : 'Offline' }}
-					</p>
-					<div class="flex items-baseline gap-2 mt-1">
-						<span class="text-2xs text-t1 w-14 shrink-0">Key</span>
-						<span class="text-2xs text-t1 font-mono select-all break-all">{{ profileUUID }}</span>
+					<div class="flex items-center justify-between gap-4">
+						<p class="border border-brd rounded bg-white/5 w-full p-1 px-2 text-sm font-bold text-t1 truncate">{{ displayName }}</p>
+						<div class="flex items-center gap-3">
+							<EyeIcon title="Friend can see my online status" class="w-5 h-5 text-t1" />
+							<MapPinSearchIcon title="Friend can see me on map" class="w-5 h-5 text-t1" />
+							<BoxIcon title="Friend can edit my objects" class="w-5 h-5 text-t1" />
+						</div>
+					</div>
+					<div class="flex items-baseline justify-between gap-2 mt-1">
+						<div>
+							<span class="inline-block shrink-0 w-10 me-4 text-end text-2xs text-t1">Key: </span>
+							<span class="text-xs text-t1 font-mono select-all break-all">{{ profileUUID }}</span>
+						</div>
+						<p v-if="!isSelf" :class="onlineStatus === 'online' ? 'text-green-400 font-bold text-xs mt-0.5' : 'text-red-400 font-bold text-xs mt-0.5'">
+							{{ onlineStatus === 'online' ? 'Online' : 'Offline' }}
+						</p>
 					</div>
 				</div>
 
 				<!-- Photo + remaining fields -->
 				<div class="flex gap-4">
 					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-t1 select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
-					<div class="flex flex-col gap-1 pt-0.5">
+					<div class="flex flex-col gap-1 pt-0.5 min-w-0">
+						<div class="flex items-baseline gap-2">
+							<span class="text-end text-2xs text-t1 w-14 shrink-0">Birthdate: </span>
+							<div class="border border-brd rounded bg-white/5 p-1 px-2 text-2xs text-t1 font-mono break-words min-w-0 flex flex-col">
+								<span>{{ bornDisplay.date }}</span>
+								<span v-if="bornDisplay.age">{{ bornDisplay.age }}</span>
+							</div>
+						</div>
 						<div
-							v-for="field in [
-								{ label: 'Born',    value: bornValue },
-								{ label: 'Account', value: 'Resident' },
-								{ label: 'Partner', value: partnerValue },
-							]"
+							v-for="field in profileDetailFields"
 							:key="field.label"
 							class="flex items-baseline gap-2"
 						>
-							<span class="text-2xs text-t1 w-14 shrink-0">{{ field.label }}</span>
-							<span class="text-2xs text-t1 font-mono">{{ field.value }}</span>
+							<span class="text-end text-2xs text-t1 w-14 shrink-0">{{ field.label }}</span>
+							<span class="border border-brd rounded bg-white/5 p-1 px-2 text-2xs text-t1 font-mono">{{ field.value }}</span>
 						</div>
 						<div v-if="isSelf && social.groupTitle" class="flex items-baseline gap-2">
 							<span class="text-2xs text-t1 w-14 shrink-0">Title</span>
@@ -210,9 +279,26 @@ function saveNotes() {
 					</div>
 				</div>
 
+				<div class="flex flex-col gap-1">
+					<p class="text-2xs text-t1">About:</p>
+					<textarea
+						v-if="isSelf"
+						v-model="bioEdit"
+						rows="4"
+						placeholder="Write something about yourself…"
+						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+					/>
+					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">{{ aboutValue || '(no about text)' }}</div>
+				</div>
+
+				<div v-if="isSelf && bioDirty" class="flex justify-end gap-2 mt-1">
+					<button @click="discardBio" class="px-3 py-1 text-xs rounded border border-brd text-t1 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
+					<button @click="saveBio"    class="px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
+				</div>
+
 				<div>
 					<p class="text-2xs text-t1 mb-1">Groups:</p>
-					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs min-h-[2rem]">
+					<div class="border border-brd rounded bg-white/5 px-2 py-1.5 text-xs min-h-[2rem]">
 						<div v-if="shownGroups.length === 0" class="text-t1 italic">(none)</div>
 						<ul v-else class="flex flex-col gap-0.5">
 							<li
@@ -226,22 +312,6 @@ function saveNotes() {
 					</div>
 				</div>
 
-				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-t1">About:</p>
-					<textarea
-						v-if="isSelf"
-						v-model="bioEdit"
-						rows="5"
-						placeholder="Write something about yourself…"
-						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
-					/>
-					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">{{ aboutValue || '(no about text)' }}</div>
-				</div>
-
-				<div v-if="isSelf && bioDirty" class="flex justify-end gap-2 mt-1">
-					<button @click="discardBio" class="px-3 py-1 text-xs rounded border border-brd text-t1 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
-					<button @click="saveBio"    class="px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
-				</div>
 			</div>
 
 			<!-- Notes tab -->
@@ -289,28 +359,28 @@ function saveNotes() {
 		</div>
 
 			<!-- Other-user action buttons -->
-		<div v-if="!isSelf" class="flex flex-row flex-wrap gap-2 shrink-0 border-t border-brd px-4 py-2">
-			<button
-				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
-				@click="actIM"
-			>Instant Message</button>
-			<button
-				v-if="!isFriend"
-				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
-				@click="actOfferFriend"
-			>Add Friend</button>
-			<button
-				v-else
-				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
-				@click="actRemoveFriend"
-			>Remove Friend</button>
+		<div v-if="!isSelf" class="flex flex-row flex-wrap gap-1 shrink-0 border-t border-brd px-4 py-2">
 			<!-- Still gated on extra packets (Phase 3 later): Pay, Block, Find on Map, Offer TP -->
 			<button
 				v-for="btn in ['Find on Map', 'Offer Teleport','Pay', 'Block']"
 				:key="btn"
 				disabled
-				class="flex-1 whitespace-nowrap px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
 			>{{ btn }}</button>
+			<button
+				v-if="!isFriend"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
+				@click="actOfferFriend"
+			>Add Friend</button>
+			<button
+				v-else
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
+				@click="actRemoveFriend"
+			>Remove Friend</button>
+			<button
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
+				@click="actIM"
+			>Instant Message</button>
 		</div>
 	</FloaterWindow>
 </template>
