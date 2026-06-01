@@ -42,6 +42,7 @@ export const useUiStore = defineStore('ui', () => {
 	const showMoveControls   = ref(false)    // movement controls floater (stub)
 	const showCameraControls = ref(false)    // camera controls floater (stub)
 	const showAppearance     = ref(false)    // avatar appearance floater (stub)
+	const appearanceActiveTab = ref('wearing') // 'gallery' | 'outfits' | 'wearing'
 	const showSearch         = ref(false)    // search floater (stub)
 	const showSnapshot       = ref(false)    // snapshot/screenshot floater (stub)
 	const showAO             = ref(false)    // animation override floater (stub)
@@ -99,6 +100,17 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleMoveControls()   { showMoveControls.value   = !showMoveControls.value }
 	function toggleCameraControls() { showCameraControls.value = !showCameraControls.value }
 	function toggleAppearance()     { showAppearance.value     = !showAppearance.value }
+	// WHY: Avatar ▸ "Now wearing…" opens straight to a tab; Ctrl+O / "Outfits" toggles the
+	// floater on the Outfits tab (close if already showing it, else open + switch).
+	function openAppearanceOnTab(tabId)  { appearanceActiveTab.value = tabId; showAppearance.value = true }
+	function toggleAppearanceOnTab(tabId) {
+		if (showAppearance.value && appearanceActiveTab.value === tabId) {
+			showAppearance.value = false
+		} else {
+			appearanceActiveTab.value = tabId
+			showAppearance.value = true
+		}
+	}
 	function toggleSearch()         { showSearch.value         = !showSearch.value }
 	function toggleSnapshot()       { showSnapshot.value       = !showSnapshot.value }
 	function toggleAO()             { showAO.value             = !showAO.value }
@@ -228,7 +240,7 @@ export const useUiStore = defineStore('ui', () => {
 		showInventory, showMap, showNotifications, showSettings, showDebug,
 		showPreferences, showQuickPrefs,
 		showVoiceControls, showMoveControls, showCameraControls,
-		showAppearance, showSearch, showSnapshot, showAO,
+		showAppearance, appearanceActiveTab, showSearch, showSnapshot, showAO,
 		showMovementHelp, showPlaces, preferenceActiveTab,
 		showProfile, profileTargetId, profileInstances,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
@@ -236,7 +248,7 @@ export const useUiStore = defineStore('ui', () => {
 		inventoryInstances, openInventoryAt, closeInventoryAt, toggleInventoryAt, openNextInventory,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
-		toggleAppearance, toggleSearch, toggleSnapshot, toggleAO,
+		toggleAppearance, openAppearanceOnTab, toggleAppearanceOnTab, toggleSearch, toggleSnapshot, toggleAO,
 		toggleMovementHelp, togglePlaces, openPlacesOnTab, placesActiveTab, openPreferencesOnTab,
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,

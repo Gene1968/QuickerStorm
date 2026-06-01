@@ -12,7 +12,8 @@ const ui     = useUiStore()
 const avatar = useAvatarStore()
 
 // ── View state ─────────────────────────────────────────────────────────────
-const activeTab  = ref('wearing')    // 'gallery' | 'outfits' | 'wearing'
+// WHY: activeTab lives in uiStore so menu/shortcut entries (Avatar ▸ Now wearing…,
+// Outfits / Ctrl+O) can open the floater straight to a chosen tab.
 const editMode   = ref(false)
 const filterText = ref('')
 const expanded   = ref({ body: true, clothing: true, attachments: false })
@@ -178,10 +179,10 @@ const outfitFolders = [
 						]"
 						:key="tab.id"
 						class="flex-1 py-1.5 text-sm font-medium border-b-2 transition-colors"
-						:class="activeTab === tab.id
+						:class="ui.appearanceActiveTab === tab.id
 							? 'border-accent text-accent bg-white/5'
 							: 'border-transparent text-white/50 hover:text-white hover:border-white/30'"
-						@click="activeTab = tab.id"
+						@click="ui.appearanceActiveTab = tab.id"
 					>
 						{{ tab.label }}
 					</button>
@@ -191,7 +192,7 @@ const outfitFolders = [
 				<div class="flex-1 overflow-y-auto min-h-0">
 
 					<!-- Gallery tab ────────────────────────────────── -->
-					<template v-if="activeTab === 'gallery'">
+					<template v-if="ui.appearanceActiveTab === 'gallery'">
 						<div class="grid grid-cols-3 gap-1.5 p-2">
 							<div
 								v-for="item in galleryItems"
@@ -212,7 +213,7 @@ const outfitFolders = [
 					</template>
 
 					<!-- Outfits tab ─────────────────────────────────── -->
-					<template v-else-if="activeTab === 'outfits'">
+					<template v-else-if="ui.appearanceActiveTab === 'outfits'">
 						<div class="flex flex-col">
 							<div
 								v-for="folder in outfitFolders"

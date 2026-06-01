@@ -66,6 +66,12 @@ function onKey(e) {
 		e.preventDefault()
 		ui.toggleAlwaysRun()
 	}
+	// Ctrl+O — Toggle Appearance floater on the Outfits tab. Overrides browser "open file".
+	if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+		e.preventDefault()
+		ui.toggleAppearanceOnTab('outfits')
+		return
+	}
 	// Ctrl+Shift+M — Toggle Mini-Map
 	if (e.ctrlKey && !e.altKey && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
 		e.preventDefault()
@@ -141,6 +147,9 @@ const MENUS = [
 			{ sep: true },
 			{ label: 'Inventory',							action: () => act(() => ui.toggleInventory()) },
 			{ label: 'My profile…',							action: () => act(() => ui.openProfile()) },
+			{ sep: true },
+			{ label: 'Now wearing…',						action: () => act(() => ui.openAppearanceOnTab('wearing')) },
+			{ label: 'Outfits',				kbd: 'Ctrl+O',	checked: () => ui.showAppearance && ui.appearanceActiveTab === 'outfits', action: () => act(() => ui.toggleAppearanceOnTab('outfits')) },
 			{ sep: true },
 			{ label: 'Snapshot…',			disabled: true },
 			{ sep: true },
@@ -290,7 +299,7 @@ const MENUS = [
 							:disabled="item.disabled"
 							@click="playSound('tick.mp3', 0.6); item.action && item.action()"
 						>
-							<span class="mb-item-label">{{ item.label }}</span>
+							<span class="mb-item-label"><span v-if="item.checked" class="mb-item-check">{{ item.checked() ? '✓' : '' }}</span>{{ item.label }}</span>
 							<span v-if="item.kbd" class="mb-item-kbd">{{ item.kbd }}</span>
 						</button>
 					</template>
@@ -379,6 +388,15 @@ const MENUS = [
 }
 
 .mb-item-label { flex: 1; white-space: nowrap; }
+
+/* Reserve a fixed check column so toggling on/off doesn't shift the label. */
+.mb-item-check {
+	display: inline-block;
+	width: 1.1em;
+	margin-left: -0.25rem;
+	color: var(--accent, #6cf);
+	font-weight: 700;
+}
 
 .mb-item-kbd {
 	font-size: 0.625rem;
