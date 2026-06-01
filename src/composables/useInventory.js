@@ -50,7 +50,12 @@ export function useInventory() {
 	function onInvFolder(d) {
 		if (!d?.folderId) return
 		if (d.error === 'cap_unavailable') {
-			const fset = new Set(inv.fetching); fset.delete(d.folderId); inv.fetching = fset
+			// WHY: mark as fetched (empty) so the pump doesn't retry this folder forever.
+			// cap_unavailable only arrives when capsReady=true (fetchFolders guards on it),
+			// so if the server still can't find the cap URL it's a session inconsistency —
+			// retrying won't help and causes an infinite hot loop.
+			console.warn('[INV] cap_unavailable for folder', d.folderId, '— marking fetched to stop retry')
+			inv.setItems(d.folderId, [])
 			return
 		}
 		inv.setItems(d.folderId, d.items || [])
@@ -90,6 +95,12 @@ export function useInventory() {
 			on(S.CAPS_READY,       onCapsReady)
 			on(S.INV_ITEM_CREATED, onItemCreated)
 			registered = true
+		}
+		// WHY: Safety net — if CAPS_READY arrived before this component mounted (edge case on fast
+		// resume), inv.capsReady is already true but onCapsReady was never called. Kick off fetching.
+		if (inv.capsReady) {
+			for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
+			fetchAll()
 		}
 	})
 	// Keep handlers registered for the session — module-level state survives component unmount.

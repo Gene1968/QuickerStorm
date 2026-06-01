@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { useDebugStore }	from '@/stores/debugStore'
 import { useUiStore }		from '@/stores/uiStore'
@@ -10,13 +10,49 @@ const debug		= useDebugStore()
 const ui		= useUiStore()
 const { playSound } = useAudio()
 
-onMounted(()   => playSound('pop.mp3', 0.7))
+onMounted(()   => { playSound('pop.mp3', 0.7); scrollToBottom() })
 onUnmounted(() => playSound('pop.mp3', 0.7))
 
 const COLOR = {
 	info:	'text-green-600',
 	warn:	'text-yellow-300',
 	error:	'text-red-400',
+}
+
+// ── Scroll behaviour ────────────────────────────────────────────────────────
+const scrollEl    = ref(null)
+const userScrolled = ref(false)
+
+function scrollToBottom() {
+	nextTick(() => {
+		if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+	})
+}
+
+function onScroll() {
+	if (!scrollEl.value) return
+	const { scrollTop, scrollHeight, clientHeight } = scrollEl.value
+	userScrolled.value = scrollHeight - scrollTop - clientHeight > 24
+}
+
+function resumeScroll() {
+	userScrolled.value = false
+	scrollToBottom()
+}
+
+// Auto-scroll when new lines arrive, unless user scrolled up.
+watch(() => debug.lines.length, () => {
+	if (!userScrolled.value) scrollToBottom()
+})
+
+// ── Copy ────────────────────────────────────────────────────────────────────
+const copied = ref(false)
+function copyLog() {
+	const text = debug.lines.map(l => l.msg).join('\n')
+	navigator.clipboard.writeText(text).then(() => {
+		copied.value = true
+		setTimeout(() => { copied.value = false }, 1500)
+	})
 }
 </script>
 
@@ -28,9 +64,20 @@ const COLOR = {
 		<div class="flex items-center gap-2 px-3 py-1.5 bg-card2 border-b border-brd shrink-0">
 			<span class="text-t1 font-semibold flex-1">🔌 Debug / Connection</span>
 			<span class="text-tm">{{ debug.lines.length }} lines</span>
-			<button class="text-tm hover:text-t1 ml-2" @click="debug.clear()">clear</button>
 			<button
-				class="text-tm hover:text-t1 text-xs leading-none ml-2 shrink-0 transition-colors"
+				v-if="userScrolled"
+				class="text-yellow-300 hover:text-yellow-100 ml-1 px-1.5 py-0.5 border border-yellow-600 rounded text-2xs leading-none"
+				title="Scroll paused — click to resume auto-scroll"
+				@click="resumeScroll"
+			>▼ paused</button>
+			<button
+				class="text-tm hover:text-t1 ml-1"
+				:title="copied ? 'Copied!' : 'Copy entire log to clipboard'"
+				@click="copyLog"
+			>{{ copied ? '✓ copied' : 'copy' }}</button>
+			<button class="text-tm hover:text-t1 ml-1" title="Clear log" @click="debug.clear()">clear</button>
+			<button
+				class="text-tm hover:text-t1 text-xs leading-none ml-1 shrink-0 transition-colors"
 				title="Close (Ctrl+Shift+4)"
 				@click="ui.toggleDebug()"
 			>✕</button>
@@ -55,7 +102,11 @@ const COLOR = {
 		</div>
 
 		<!-- Log stream -->
-		<div class="flex-1 overflow-y-auto px-3 py-1 flex flex-col gap-0.5">
+		<div
+			ref="scrollEl"
+			class="flex-1 overflow-y-auto px-3 py-1 flex flex-col gap-0.5"
+			@scroll="onScroll"
+		>
 			<div v-if="!debug.lines.length" class="text-tm italic py-2">
 				No server logs yet — logs captured from connection start.
 			</div>

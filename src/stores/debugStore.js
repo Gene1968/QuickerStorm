@@ -4,7 +4,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-const MAX = 80
+const MAX = 2000
 
 export const useDebugStore = defineStore('debug', () => {
 	const lines = ref([])  // [{ level, msg, id }]

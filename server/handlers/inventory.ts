@@ -19,8 +19,10 @@ export async function handleInventoryFetch(circuitId: string, folderIds: string[
 	const capName = INV_CAPS.find(n => s.caps.get(n))
 	const cap = capName ? s.caps.get(capName) : undefined
 	if (!cap) {
-		// WHY: seed-cap fetch (login.ts) may not have completed yet, or the grid doesn't offer it.
-		// Tell the client so it can clear its "fetching" flags and retry on CAPS_READY.
+		// WHY: grid doesn't offer FetchInventoryDescendents2/WebFetchInventoryDescendents, or
+		// the session hasn't had caps set yet. Log with which cap names the session has so we
+		// can tell "no caps at all" from "wrong cap name" from "seed-cap fetch pending".
+		slog.warn(s.ws, `[Inv] cap_unavailable — session has ${s.caps.size} cap(s): ${[...s.caps.keys()].join(', ') || '(none)'}`)
 		for (const folderId of ids) {
 			s.ws.send(JSON.stringify({ t: S.INV_FOLDER, d: { folderId, items: [], error: 'cap_unavailable' } }))
 		}
