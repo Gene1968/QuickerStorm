@@ -1577,6 +1577,16 @@ export function useWorldEngine(canvasRef) {
 		if (!p || p.length < 3) return
 		const [x, y, z] = p
 		if (x === 0 && y === 0 && z === 0) return
+		// WHY: OpenSim periodically re-sends AgentMovementComplete mid-walk (physics refresh /
+		// session re-anchor). It arrives with the original spawn position, not the current one.
+		// Snapping while moving jumps the avatar 10–15m back to where it started.
+		// Suppress if we already have a position and are actively moving — TeleportLocal is safe
+		// because the user isn't holding movement keys when they click a landmark/map pin.
+		const movingNow = avatarSLPos && (MOVE_KEYS.some(k => keys[k]) || drVelX !== 0 || drVelY !== 0)
+		if (movingNow) {
+			debugStore.push('info', `[3D] AgentMovementComplete ignored mid-walk — suppressing rubber-band snap`)
+			return
+		}
 		avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates in-place
 		worldStore.setAvatarPos(x, y, z)
 		worldStore.setSpawnPos(x, y, z)  // also update persistent store for future remounts
