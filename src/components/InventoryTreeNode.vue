@@ -11,9 +11,10 @@ const props = defineProps({
 	depth:    { type: Number, default: 0 },
 })
 
-const inv = useInventoryStore()
+const inv    = useInventoryStore()
 const { fetchFolder } = useInventory()
-const f = inject('invFilter')
+const f      = inject('invFilter')
+const invSel = inject('invSelection')
 
 const folder   = computed(() => inv.folders.get(props.folderId))
 const children = computed(() => inv.childFolders(props.folderId).filter(c => f.folderHasMatch(c.folderId)))
@@ -22,7 +23,8 @@ const visible  = computed(() => f.folderHasMatch(props.folderId))
 const open     = computed(() => inv.isExpanded(props.folderId) || f.filtersActive.value)
 const loading  = computed(() => inv.isFetching(props.folderId))
 const fIcon    = computed(() => folderIcon(folder.value?.typeDefault, open.value))
-const selected = computed(() => inv.selectedId === props.folderId)
+const selected  = computed(() => invSel.isSelected(props.folderId))
+const isAnchor  = computed(() => invSel.anchorId.value === props.folderId)
 // FS-style "(items/folders)" recursive descendant count badge.
 const counts   = computed(() => inv.descendantCounts(props.folderId))
 // Item list: when filters active show only matching items; if folder name matched (text only), all.
@@ -50,11 +52,22 @@ function permTags(it) {
 
 // WHY: single-click selects (highlight); expand is via the chevron or a double-click — matches FS,
 // so browsing/selecting doesn't keep collapsing folders. Fetch items lazily on expand.
-function onSelect() { inv.select(props.folderId) }
+function onSelect(id, event)  { invSel.selectionSelect(id, event) }
 function toggleExpand() {
-	inv.select(props.folderId)
+	invSel.selectionSelect(props.folderId, {})
 	inv.toggle(props.folderId)
 	if (inv.isExpanded(props.folderId)) fetchFolder(props.folderId)
+}
+// WHY: right-clicking an already-selected row keeps the multi-selection so a future
+// "Delete X items" context menu action can act on all of them. Clicking an unselected
+// row first clears to a single selection (standard file-manager behavior).
+function onContextMenuFolder(event) {
+	if (!invSel.isSelected(props.folderId)) invSel.selectionSelect(props.folderId, {})
+	inv.openContextMenu(event.clientX, event.clientY, 'folder', folder.value)
+}
+function onContextMenuItem(event, it) {
+	if (!invSel.isSelected(it.itemId)) invSel.selectionSelect(it.itemId, {})
+	inv.openContextMenu(event.clientX, event.clientY, 'item', it)
 }
 </script>
 
@@ -64,15 +77,15 @@ function toggleExpand() {
 			class="flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer text-xs text-t1 select-none"
 			:class="selected ? 'bg-accent/30' : 'hover:bg-white/10'"
 			:style="{ paddingLeft: padLeft }"
-			@click="onSelect"
+			@click="onSelect(folderId, $event)"
 			@dblclick="toggleExpand"
-			@contextmenu.prevent.stop="inv.select(folderId); inv.openContextMenu($event.clientX, $event.clientY, 'folder', folder)"
+			@contextmenu.prevent.stop="onContextMenuFolder($event)"
 		>
 			<component :is="open ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 shrink-0 opacity-60 hover:opacity-100" @click.stop="toggleExpand" />
 			<span class="shrink-0">{{ fIcon }}</span>
 			<span class="truncate">{{ folder.name }}</span>
-			<!-- FS-style count shown only for the selected folder, in parens. -->
-			<span v-if="selected" class="shrink-0 ml-auto pl-1 text-2xs text-white/55 tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
+			<!-- FS-style count shown only for the anchor (last individually clicked) folder, in parens. -->
+			<span v-if="isAnchor" class="shrink-0 ml-auto pl-1 text-2xs text-white/55 tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
 		</div>
 
 		<template v-if="open">
@@ -87,11 +100,11 @@ function toggleExpand() {
 				v-for="it in items"
 				:key="it.itemId"
 				class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer"
-				:class="inv.selectedId === it.itemId ? 'bg-accent/30' : 'hover:bg-white/10'"
+				:class="invSel.isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'"
 				:style="{ paddingLeft: itemPad }"
 				:title="it.desc || it.name"
-				@click="inv.select(it.itemId)"
-				@contextmenu.prevent.stop="inv.select(it.itemId); inv.openContextMenu($event.clientX, $event.clientY, 'item', it)"
+				@click="invSel.selectionSelect(it.itemId, $event)"
+				@contextmenu.prevent.stop="onContextMenuItem($event, it)"
 			>
 				<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 				<span class="truncate">{{ it.name }}</span>

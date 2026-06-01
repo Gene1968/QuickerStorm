@@ -108,6 +108,79 @@ function folderHasMatch(folderId) {
 // Provide filter context to InventoryTreeNode (recursive, so provide on the floater works).
 provide('invFilter', { filtering, filtersActive, typeFilter: localTypeFilter, folderHasMatch, itemVisible, folderNameMatches, nameMatches })
 
+// ── Per-floater multi-selection ───────────────────────────────────────────────
+// State is local so each of the up-to-6 inventory windows has independent selection.
+const selectedIds = ref(new Set())
+const anchorId    = ref(null)
+
+function isSelected(id)  { return selectedIds.value.has(id) }
+function clearSelection() { selectedIds.value = new Set(); anchorId.value = null }
+
+function _applyRange(id, order) {
+	const a = order.indexOf(anchorId.value), b = order.indexOf(id)
+	if (a === -1 || b === -1) { selectedIds.value = new Set([id]); return }
+	const [lo, hi] = a < b ? [a, b] : [b, a]
+	selectedIds.value = new Set(order.slice(lo, hi + 1))
+}
+
+// Flat ordered list of visible IDs in the Inventory tree, mirroring render order
+// (folder → child folders recursively → folder's items). Used for shift-click range.
+function buildTreeOrder() {
+	const order = []
+	function walk(folderId) {
+		if (!folderHasMatch(folderId)) return
+		order.push(folderId)
+		if (inv.isExpanded(folderId) || filtersActive.value) {
+			for (const c of inv.childFolders(folderId).filter(ch => folderHasMatch(ch.folderId))) walk(c.folderId)
+			let its = inv.folderItems(folderId)
+			if (filtersActive.value) its = its.filter(it => itemVisible(it))
+			for (const it of inv.sortItems(its)) order.push(it.itemId)
+		}
+	}
+	if (inv.rootId) walk(inv.rootId)
+	if (inv.libRootId) walk(inv.libRootId)
+	return order
+}
+
+// Used by InventoryTreeNode (injected). Shift=range via tree order, Ctrl/Meta=toggle.
+function selectionSelect(id, event) {
+	if (event?.shiftKey && anchorId.value) {
+		_applyRange(id, buildTreeOrder())
+	} else if (event?.ctrlKey || event?.metaKey) {
+		const s = new Set(selectedIds.value)
+		if (s.has(id)) s.delete(id); else s.add(id)
+		selectedIds.value = s
+		anchorId.value = id
+	} else {
+		selectedIds.value = new Set([id])
+		anchorId.value = id
+	}
+}
+
+// Used by flat tabs (Recent/Worn/Favorites). Caller passes the ordered ID list.
+function selectionSelectFlat(id, order, event) {
+	if (event?.shiftKey && anchorId.value) {
+		_applyRange(id, order)
+	} else if (event?.ctrlKey || event?.metaKey) {
+		const s = new Set(selectedIds.value)
+		if (s.has(id)) s.delete(id); else s.add(id)
+		selectedIds.value = s
+		anchorId.value = id
+	} else {
+		selectedIds.value = new Set([id])
+		anchorId.value = id
+	}
+}
+
+const recentIds = computed(() => recentItems.value.map(i => i.itemId))
+const wornIds   = computed(() => wornItems.value.map(i => i.itemId))
+const favIds    = computed(() => favItems.value.map(i => i.itemId))
+
+// Clear stale highlights when the user switches tabs.
+watch(activeTab, clearSelection)
+
+provide('invSelection', { selectedIds, anchorId, isSelected, clearSelection, selectionSelect })
+
 // WHY: per-instance id so each floater has its own focus/z-index slot in the floater stack.
 const floaterId   = computed(() => `inventory-${props.index}`)
 const defaultPos  = computed(() => INVENTORY_DEFAULT_POS[props.index] ?? INVENTORY_DEFAULT_POS[0])
@@ -186,7 +259,7 @@ onUnmounted(() => {
 	<FloaterWindow
 		:id="floaterId"
 		:title="title"
-		:wrap-style="{ width: '15.5vw', height: '47vh', resize: 'both' }"
+		:wrap-style="{ width: '16.5vw', height: '47vh', resize: 'both' }"
 		:default-pos="defaultPos"
 		@close="close"
 		class="min-w-[16.5rem]"
@@ -250,7 +323,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'recent'">
 			<div v-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-white/10 text-xs text-t1/90 select-none" :title="it.desc || it.name">
+				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, recentIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
@@ -262,7 +335,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'worn'">
 			<div v-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-white/10 text-xs text-t1/90 select-none" :title="it.desc || it.name">
+				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, wornIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
@@ -273,7 +346,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'favorites'">
 			<div v-if="favItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-white/10 text-xs text-t1/90 select-none" :title="it.desc || it.name">
+				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, favIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>

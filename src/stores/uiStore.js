@@ -15,11 +15,11 @@ const INV_ROW_BOTTOM = [
 ]
 export const INVENTORY_DEFAULT_POS = [
 	{ left: '0.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #1
-	{ left: '15.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #2
-	{ left: '7.8125vw', bottom: INV_ROW_BOTTOM[1] }, // #3
-	{ left: '31.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #4
-	{ left: '23.3125vw', bottom: INV_ROW_BOTTOM[1] }, // #5
-	{ left: '46.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #6
+	{ left: '16.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #2
+	{ left: '8.8125vw', bottom: INV_ROW_BOTTOM[1] }, // #3
+	{ left: '33.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #4
+	{ left: '25.3125vw', bottom: INV_ROW_BOTTOM[1] }, // #5
+	{ left: '49.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #6
 ]
 
 export const useUiStore = defineStore('ui', () => {

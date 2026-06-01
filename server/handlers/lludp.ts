@@ -78,7 +78,7 @@ const HEARTBEAT_INTERVAL_MS = 2000
 const SIM_IDLE_TIMEOUT_MS = 65_000
 
 // Log every N packets to avoid flooding the debug panel
-const LOG_EVERY_N_PACKETS = 20
+const LOG_EVERY_N_PACKETS = 500
 
 /**
  * Cross-region teleport — swap session's UDP socket onto the new sim and replay the
@@ -471,17 +471,10 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `high:${HIGH_OBJECT_UPDATE}`) {
-		// WHY: onError callback lets decoder return partial results (objects decoded before
-		// the bad one) instead of throwing and losing the whole packet.
-		// onDiag logs each successful obj in multi-object packets to verify byte counts.
-		// zeroCoded logged to diagnose whether zero-expand output is correct length.
-		slog.info(session.ws, `[ObjUpd] zeroCoded=${hdr.zeroCoded} bufLen=${buf.length} dataOffset=${dataOffset}`)
 		const objects = decodeObjectUpdate(buf, dataOffset,
-			(errMsg)  => slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`),
-			(diagMsg) => slog.info(session.ws, `[ObjUpd:diag] ${diagMsg}`),
+			(errMsg) => slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`),
 		)
 		if (objects.length > 0) {
-			slog.info(session.ws, `ObjectUpdate: ${objects.length} objects (pcodes: ${objects.map(o=>o.pcode).join(',')})`)
 			session.objDecodedCount += objects.length
 			// Cache by localId for resync replay (page reload / "Resync World").
 			// Drop from cache-miss queue — sim just fulfilled the request so we don't need to ask again.
@@ -503,25 +496,8 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 
 	if (type === `high:${HIGH_OBJECT_UPDATE_TERSE}`) {
 		try {
-			// WHY: onRaw logs each entry before kill-sentinel filter so we can confirm whether
-			// own avatar's TerseUpdates ever arrive (sentinel or valid). Critical for movement diag.
-			const rawEntries: string[] = []
-			const objects = decodeImprovedTerseObjectUpdate(buf, dataOffset,
-				(localId, dataLen, pos, sentinel) => {
-					rawEntries.push(`${localId}(dlen=${dataLen} pos=${pos.map(v=>v.toFixed(1)).join(',')} ${sentinel?'SENTINEL':''})`)
-				},
-			)
-			if (rawEntries.length > 0) {
-				slog.info(session.ws, `[TerseRaw] ${rawEntries.join(' | ')}`)
-			}
+			const objects = decodeImprovedTerseObjectUpdate(buf, dataOffset)
 			if (objects.length > 0) {
-				// WHY: Log first TerseUpdate + every 50th so we can see which localIds the sim
-				// is sending position updates for. Critical for diagnosing whether own-avatar
-				// TerseUpdates are flowing when keys are pressed.
-				if (session.udpRxCount <= 25 || session.udpRxCount % 50 === 1) {
-					const ids = objects.slice(0, 5).map(o => `${o.localId}(${o.pos[0].toFixed(1)},${o.pos[1].toFixed(1)},${o.pos[2].toFixed(1)})`).join(' ')
-					slog.info(session.ws, `[TerseUpd] ${objects.length} objs: ${ids}`)
-				}
 				// Update cached position so a resync replay reflects current state, not the
 				// stale spawn position from the first ObjectUpdate.
 				for (const o of objects) {

@@ -985,15 +985,13 @@ export function decodeObjectUpdate(
       // `continue` because off would be corrupted after the failed TE variable-field skip.
       // avatarSLPos and ownAvatarLocalId survive any avatar-packet loss via worldStore
       // restore in onMounted (see useWorldEngine.js).
-      // WHY pcode=0: OpenSim emits pcode=0 objects with garbage scale/CRC=0 in some
-      // multi-object packets. These are not standard LLUDP prims/avatars and decode to
-      // absurd ObjectData lengths (235+), pushing @TE OOB. Silent break sacrifices any
-      // remaining objects in this packet but prevents log spam and decode-cascade errors.
-      // TODO Phase 2 polish: byte-scan forward for next valid localId pattern to recover
-      // subsequent objects rather than abandoning the whole packet.
-      if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) {
-        // WHY: pcode=0 trailing entries are OpenSim tombstones — benign when at packet end.
-        // Only warn when we're actually losing data (remaining > 0).
+      // pcode=0 tombstone: OpenSim inserts these mid-packet with non-zero localId but
+      // zeros for fullId/CRC. All 26 header bytes (localId+state+fullId+CRC+pcode) have
+      // already been consumed — just continue; the next object follows immediately.
+      if (pcode === 0) { continue }
+      // pcode=3/95/255 (legacy particle/grass/tree): variable-length ObjectData with
+      // non-standard TE layout — can't advance `off` reliably. Drop remaining objects.
+      if (pcode === 3 || pcode === 95 || pcode === 255) {
         const remaining = count - i - 1
         if (remaining > 0) {
           onError?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} unsupported; remaining ${remaining} objects in packet dropped`)
