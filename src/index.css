@@ -25,6 +25,20 @@
 	--color-accent: #E9972D;				/* carrot — primary interactive */
 	--color-accent2:#C4501B;				/* sinopia */
 	--color-accent3:#F2C181;				/* carrot-60 tint */
+	/* RGB channel triplets — enable Tailwind opacity modifiers (bg-card/50 etc.) */
+	--color-bg-ch:      32 11 5;
+	--color-bg2-ch:     64 22 11;
+	--color-card-ch:    96 32 16;
+	--color-card2-ch:   26 55 38;
+	--color-side-ch:    8 22 16;
+	--color-brd-ch:     128 43 22;
+	--color-brd2-ch:    160 54 27;
+	--color-t1-ch:      245 234 224;
+	--color-t2-ch:      198 134 118;
+	--color-tm-ch:      179 94 73;
+	--color-accent-ch:  233 151 45;
+	--color-accent2-ch: 196 80 27;
+	--color-accent3-ch: 242 193 129;
 	--color-blue:   #2979ff;				/* functional info/link */
 	--color-teal:   #E9972D;				/* carrot alias */
 	--color-green:  #2B5B3F;				/* hunter */
@@ -63,6 +77,20 @@ html.light {
 	--color-accent2:#802B16;					/* rufous-s20 */
 	--color-accent3:#C4501B;					/* sinopia */
 	--fp-svg-bg:    #FDECD8;
+	/* RGB channel triplets for Tailwind opacity modifiers */
+	--color-bg-ch:      251 234 213;
+	--color-bg2-ch:     254 252 250;
+	--color-card-ch:    246 235 232;
+	--color-card2-ch:   243 220 209;
+	--color-side-ch:    160 54 27;
+	--color-brd-ch:     198 134 118;
+	--color-brd2-ch:    179 94 73;
+	--color-t1-ch:      26 9 5;
+	--color-t2-ch:      128 43 22;
+	--color-tm-ch:      96 32 16;
+	--color-accent-ch:  160 54 27;
+	--color-accent2-ch: 128 43 22;
+	--color-accent3-ch: 196 80 27;
 }
 
 

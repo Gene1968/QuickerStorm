@@ -68,7 +68,7 @@ Naming: stores use `*Store` suffix; composables use `use*` prefix.
 - **Tabs**, not spaces (enforced via `.editorconfig`).
 - Vue SFCs: `<script setup>` composition API. Order: `<script setup>` → `<template>` → `<style scoped>`.
 - **Styling priority**: Tailwind utility classes first → `qs-panel`/`qs-btn` layer components (`src/index.css @layer components`) → `<style scoped>` last resort.
-- **Theme colors**: Use Tailwind tokens (`bg-card`, `text-t1`, `border-brd`, `text-accent`, etc.) — these reference CSS vars defined in `index.css` and switch automatically with `html.light`. **Opacity modifiers (`bg-card/50`) do not work with CSS-var colors** — use `rgba()` inline or arbitrary class.
+- **Theme colors**: Use Tailwind tokens (`bg-card`, `text-t1`, `border-brd`, `text-accent`, etc.) — these reference CSS vars defined in `index.css` and switch automatically with `html.light`. **Opacity modifiers work** (`bg-card/50`, `text-t1/80`) via `--color-X-ch` channel-triplet vars alongside each full-color var. Note: `bg-side/N` ignores `--color-side`'s built-in alpha.
 - **Units**: `rem` for sizing/spacing/fonts. Border widths may use `px` (`border-2`, `border-[3px]`).
 - Import paths use `@/` for `src/` and `@shared/` for `shared/`.
 - Config always via `import { config } from '@/config/configuration.js'`.

@@ -69,22 +69,23 @@ export default {
 				 * html.light class toggle.  Do NOT replace with hardcoded hex here —
 				 * that would break the light/dark theme.
 				 *
-				 * Opacity modifiers (bg-card/50) do NOT work with CSS-var colors;
-				 * use inline style or a rgba() value directly if you need translucency.
+				 * Opacity modifiers (bg-card/50) work via the -ch channel-triplet vars
+				 * defined alongside each color in index.css.  --color-side keeps its
+				 * built-in alpha so opacity modifiers on `side` ignore that base alpha.
 				 */
-				bg: 'var(--color-bg)',
-				bg2: 'var(--color-bg2)',
-				card: 'var(--color-card)',
-				card2: 'var(--color-card2)',
-				side: 'var(--color-side)',
-				brd: 'var(--color-brd)',
-				brd2: 'var(--color-brd2)',
-				t1: 'var(--color-t1)',
-				t2: 'var(--color-t2)',
-				tm: 'var(--color-tm)',
-				accent: 'var(--color-accent)',
-				accent2: 'var(--color-accent2)',
-				accent3: 'var(--color-accent3)',
+				bg: 'rgb(var(--color-bg-ch) / <alpha-value>)',
+				bg2: 'rgb(var(--color-bg2-ch) / <alpha-value>)',
+				card: 'rgb(var(--color-card-ch) / <alpha-value>)',
+				card2: 'rgb(var(--color-card2-ch) / <alpha-value>)',
+				side: 'rgb(var(--color-side-ch) / <alpha-value>)',
+				brd: 'rgb(var(--color-brd-ch) / <alpha-value>)',
+				brd2: 'rgb(var(--color-brd2-ch) / <alpha-value>)',
+				t1: 'rgb(var(--color-t1-ch) / <alpha-value>)',
+				t2: 'rgb(var(--color-t2-ch) / <alpha-value>)',
+				tm: 'rgb(var(--color-tm-ch) / <alpha-value>)',
+				accent: 'rgb(var(--color-accent-ch) / <alpha-value>)',
+				accent2: 'rgb(var(--color-accent2-ch) / <alpha-value>)',
+				accent3: 'rgb(var(--color-accent3-ch) / <alpha-value>)',
 
 				lighten: '#ffffff51',
 				darken: '#00000051',
