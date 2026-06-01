@@ -141,32 +141,11 @@ These hardcoded rgba values reference the old blue palette and must be updated:
 
 | Location | Old | New |
 |----------|-----|-----|
-| `.hud-btn` bg | `rgba(13,21,32,0.85)` | `var(--color-floater)` |
-| `.hud-btn:hover` bg | `rgba(19,28,46,0.9)` | `rgba(36,17,8,0.9)` |
-| `.hud-btn.active` bg | `rgba(0,119,182,0.15)` | `rgba(233,151,45,0.15)` |
-| `.hud-btn.active` border | `var(--color-accent)` | keep (now carrot) |
-| `.door-label` bg | `rgba(8,13,20,0.45)` | `var(--color-floater-sm)` |
-| `.door-label` border | `rgba(0,180,216,0.15)` | `rgba(233,151,45,0.15)` |
-| `.door-label--nav` bg | `rgba(8,13,20,0.88)` | `var(--color-floater)` |
-| `.door-label--nav` border | `rgba(0,180,216,0.6)` | `rgba(233,151,45,0.6)` |
-| `.door-label--nav:hover` bg | `rgba(0,180,216,0.14)` | `rgba(233,151,45,0.14)` |
-| `.room-name-label` bg | `rgba(8,13,20,0.82)` | `var(--color-floater)` |
-| `.room-name-label` border | `rgba(0,180,216,0.45)` | `rgba(233,151,45,0.45)` |
-| `.room-name-label:hover` bg | `rgba(0,180,216,0.18)` | `rgba(233,151,45,0.18)` |
-| `.room-name-label:hover` border | `#00b4d8` | `#E9972D` |
-| `.ava-btn:hover` bg | `rgba(0,180,216,0.1)` | `rgba(233,151,45,0.1)` |
-| `.ava-btn:hover` border | `var(--color-accent)` | keep (now carrot) |
-| `.ava-close:hover` bg | `rgba(255,255,255,0.07)` | keep |
 | Animated border (dark) gradient | `#00b4d8` / `#2979ff` | `#E9972D` / `#A0361B` |
 | Animated border (light) gradient | `#0044c8` / `#7722ee` | `#A0361B` / `#2B5B3F` |
 
 ### `html.light` overrides to update
-- `.hud-btn` — update bg/border/color to cream/rufous equivalents
-- `.door-label`, `.door-label--nav` — cream BG, rufous borders
-- `.avatar-trigger` — cream BG
-- `.room-hud-text` — warm cream/tan
 - `.voice-bar` — rufous toned
-- `.shelf-inner` — rufous sidebar variant
 
 ---
 

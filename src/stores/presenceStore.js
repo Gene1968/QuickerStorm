@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 
 /**
  * presenceStore — tracks who is in which room.
- * Updated by `usePresence` (poll + heartbeat; Supabase Realtime when configured).
+ * Updated by `usePresence` via the WS server relay.
  */
 export const usePresenceStore = defineStore('presence', () => {
 	// ── State ──────────────────────────────────────────────────────

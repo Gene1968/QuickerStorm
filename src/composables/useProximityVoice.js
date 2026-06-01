@@ -1,5 +1,8 @@
 /**
- * useProximityVoice — WebRTC proximity-based audio.
+
+* This is outdated from old app "room" concept may now make more sense as "region" or "nearby". Removed door, knock, admit.
+
+* useProximityVoice — WebRTC proximity-based audio.
  *
  * Architecture:
  *   • Each client connects to a simple signaling server (WebSocket).
@@ -9,7 +12,6 @@
  *
  * Signaling server setup:
  *   A lightweight Node.js/WS server is needed (not included here).
- *   Set VITE_SIGNAL_URL=wss://your-signaling-server in .env.
  *   The server routes offers/answers/ICE candidates by roomId + userId.
  *
  *   For a quick self-hosted option: https://github.com/peers/peerjs-server
@@ -55,46 +57,8 @@ export const localVoiceEnabled = ref(false)
 let _muteLocalFn = null
 export function muteLocal () { _muteLocalFn?.() }
 
-// ── Room privacy state (exported for UI) ─────────────────────────────
-/** true when the current voice room is locked (private) */
-export const roomLocked = ref(false)
-/** roomId we're waiting to enter (blocked by lock) — null when not waiting */
-export const knockPending = ref(null)
-/** whether we've sent a knock and are awaiting response */
-export const knockSent = ref(false)
-/** knocker userIds waiting for admit decision (only populated for occupants) */
-export const pendingKnockers = ref([])
 
-// roomId we were just admitted to — used to send admitted=true on the initial
-// join when a user who was knock-admitted enables voice AFTER arriving in the
-// locked room (the presence-admit flow skips the signal-server's knock queue,
-// so the server's lockSet doesn't know about us on a cold voice join).
-// Module-level so it survives across useProximityVoice() instances and the
-// enable/disable cycle (enable creates a fresh WS connection that needs the flag).
-let _admittedToRoom = null
-// Reactive ref set when the user is knock-admitted into a room. Watched inside the
-// composable to trigger a voice room change even when the engine's navigateTo is a
-// no-op (user already physically in the room).
-const _pendingAdmitRoom = ref(null)
-// Single module-level listener; previously registered per-composable-instance
-// which leaked handlers on every mount.
-if (typeof window !== 'undefined') {
-	window.addEventListener('ava-knock-admitted', (e) => {
-		_admittedToRoom = e.detail?.roomId ?? null
-		_pendingAdmitRoom.value = e.detail?.roomId ?? null
-	})
-}
 
-/**
- * Clear client-side lock UI state without sending a signal-server message.
- * Used by usePresence on room change so a stale "Private Room" badge doesn't
- * persist after we leave the locked room. Server-side lockSet is already
- * cleaned up by handleLeave when the room actually changes.
- */
-export function resetLockState () {
-	roomLocked.value = false
-	pendingKnockers.value = []
-}
 
 /**
  * Per-peer audio analysers keyed by signalingId.
@@ -128,11 +92,10 @@ export function useProximityVoice () {
 	let myUserId = null
 	let myRoomId = null
 
-	// Keep myUserId in sync with the presence list-item ID.
-	// Auto-join fires before presence loads (child onMounted < parent onMounted),
-	// so enable() may capture authUserId instead of the list-item ID.
-	// Once presence resolves, update myUserId so talkingPeers carries the correct
-	// key that avatarGroups uses — otherwise setAvatarTalking() can't find the avatar.
+	// WHY: Keep myUserId in sync with the presence list-item ID.
+	// Auto-join fires before presence loads so enable() may capture a stale ID.
+	// Once presence resolves, update so talkingPeers carries the correct key
+	// that avatarGroups uses — otherwise setAvatarTalking() can't find the avatar.
 	watch(() => presenceStore.myUserId, (id) => {
 		if (id) myUserId = id
 	})
@@ -219,8 +182,6 @@ export function useProximityVoice () {
 				if (!msg.users.includes(peerId)) removePeer(peerId)
 			}
 			voiceRoomId = myRoomId
-			knockPending.value = null
-			knockSent.value = false
 			nearbyUsers.value = msg.users.filter(u => u !== userId)
 		})
 
@@ -233,43 +194,6 @@ export function useProximityVoice () {
 			talkingPeers.value = next
 		})
 
-		// Privacy messages
-		_on('room-locked', (msg) => {
-			knockPending.value = msg.roomId
-			knockSent.value = false
-			myRoomId = voiceRoomId
-		})
-
-		_on('admitted', (msg) => {
-			for (const peerId of [...peers.keys()]) removePeer(peerId)
-			if (msg.roomId) {
-				myRoomId = msg.roomId
-				voiceRoomId = msg.roomId
-			}
-			_admittedToRoom = null
-			knockPending.value = null
-			knockSent.value = false
-			if (msg.roomId) {
-				window.dispatchEvent(new CustomEvent('ava-knock-admitted', {
-					detail: { roomId: msg.roomId },
-				}))
-			}
-		})
-
-		_on('denied', (msg) => {
-			knockPending.value = null
-			knockSent.value = false
-			window.dispatchEvent(new CustomEvent('ava-knock-denied', { detail: { roomId: msg.roomId } }))
-		})
-
-		_on('knock-received', (msg) => {
-			pendingKnockers.value = [...pendingKnockers.value, msg.knockerId]
-		})
-
-		_on('room-lock-state', (msg) => {
-			roomLocked.value = msg.locked
-			if (!msg.locked) pendingKnockers.value = []
-		})
 
 		// Handle open / reconnect — send join when socket opens
 		_on('_open', () => {
@@ -277,13 +201,10 @@ export function useProximityVoice () {
 				micError.value = null
 			}
 			const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-			const admitted = _admittedToRoom === myRoomId
-			if (_admittedToRoom && admitted) _admittedToRoom = null
-			send({ type: 'join', userId: signalingId, roomId: myRoomId, admitted })
+			// const admitted = _admittedToRoom === myRoomId
+			// if (_admittedToRoom && admitted) _admittedToRoom = null
+			send({ type: 'join', userId: signalingId, roomId: myRoomId })
 			if (!isPTT.value) startVAD()
-			if (roomLocked.value) {
-				send({ type: 'lock-room', userId: signalingId, roomId: myRoomId })
-			}
 		})
 
 		_on('_error', () => {
@@ -297,13 +218,10 @@ export function useProximityVoice () {
 		// If already connected, send join immediately
 		if (rtSocket.connected.value) {
 			const signalingId = userId ? `${userId}_${voiceSessionId}` : voiceSessionId
-			const admitted = _admittedToRoom === roomId
-			if (_admittedToRoom && admitted) _admittedToRoom = null
-			send({ type: 'join', userId: signalingId, roomId, admitted })
+			// const admitted = _admittedToRoom === roomId
+			// if (_admittedToRoom && admitted) _admittedToRoom = null
+			send({ type: 'join', userId: signalingId, roomId })
 			if (!isPTT.value) startVAD()
-			if (roomLocked.value) {
-				send({ type: 'lock-room', userId: signalingId, roomId })
-			}
 		}
 	}
 
@@ -572,38 +490,16 @@ export function useProximityVoice () {
 	function changeRoom (roomId) {
 		if (!isEnabled.value) return
 		// Already in this room — do nothing. This is the normal post-admit path:
-		// 'admitted' set myRoomId = target, so the navigateTo → setCurrentRoom
 		// watcher that fires moments later finds us already in place and does
 		// not emit a redundant change-room that would tear down the peer
 		// connection the server just established.
 		if (roomId === myRoomId) return
-		// Leaving the previous voice room — reset client-side lock UI. The server
-		// removes us from the old lockSet via handleLeave, and we don't know the
-		// new room's lock state yet (a room-lock-state message arrives from the
-		// server if needed). Without this, the "Private Room" badge persists.
-		roomLocked.value = false
-		pendingKnockers.value = []
-		const admitted = _admittedToRoom === roomId
 		myRoomId = roomId
-		knockPending.value = null
-		knockSent.value = false
-		_admittedToRoom = null
 		const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-		send({ type: 'change-room', userId: signalingId, roomId, admitted })
-		// Don't tear down peers yet — if the room is locked, we'll get
-		// 'room-locked' and need to stay on the old voice room's peers.
+		send({ type: 'change-room', userId: signalingId, roomId })
 		// Peers are cleaned up on successful join (room-users) or on
 		// explicit navigation away.
 	}
-
-	// When knock-admitted, trigger a voice room change even if the engine's
-	// navigateTo was a no-op (user already physically in the room, so
-	// currentRoomId didn't change and the watcher above didn't fire).
-	watch(_pendingAdmitRoom, (roomId) => {
-		if (!roomId || !isEnabled.value) return
-		_pendingAdmitRoom.value = null
-		changeRoom(roomId)
-	})
 
 	// ── Cleanup ──────────────────────────────────────────────────────
 	function disable () {
@@ -618,47 +514,10 @@ export function useProximityVoice () {
 		localVoiceEnabled.value = false
 		isTalking.value = false
 		isMuted.value = true
-		roomLocked.value = false
-		knockPending.value = null
-		knockSent.value = false
-		pendingKnockers.value = []
 		voiceRoomId = null
 	}
 
-	// ── Room privacy controls ───────────────────────────────────────
-	function lockRoom () {
-		roomLocked.value = true
-		if (!isEnabled.value) return   // UI updates, but signal only sent if voice is active
-		const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-		send({ type: 'lock-room', userId: signalingId, roomId: voiceRoomId || myRoomId })
-	}
 
-	function unlockRoom () {
-		roomLocked.value = false
-		pendingKnockers.value = []
-		if (!isEnabled.value) return
-		const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-		send({ type: 'unlock-room', userId: signalingId, roomId: voiceRoomId || myRoomId })
-	}
-
-	function knock (roomId) {
-		if (!isEnabled.value) return
-		const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-		send({ type: 'knock', userId: signalingId, roomId })
-		knockSent.value = true
-	}
-
-	function admitKnocker (knockerId) {
-		const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-		send({ type: 'admit', userId: signalingId, knockerId })
-		pendingKnockers.value = pendingKnockers.value.filter(id => id !== knockerId)
-	}
-
-	function denyKnocker (knockerId) {
-		const signalingId = myUserId ? `${myUserId}_${voiceSessionId}` : voiceSessionId
-		send({ type: 'deny', userId: signalingId, knockerId })
-		pendingKnockers.value = pendingKnockers.value.filter(id => id !== knockerId)
-	}
 
 	// ── Device management ────────────────────────────────────────────
 	async function loadDevices () {
@@ -734,14 +593,8 @@ export function useProximityVoice () {
 		toggleMute,
 		setPTTMode,
 		setDistance,
-		changeRoom,
 		loadDevices,
 		setMicDevice,
 		setSpeakerDevice,
-		lockRoom,
-		unlockRoom,
-		knock,
-		admitKnocker,
-		denyKnocker,
 	}
 }

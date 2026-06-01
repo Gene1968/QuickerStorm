@@ -1,11 +1,8 @@
 /**
  * useRealtimeSocket — Singleton WebSocket connection to the quickerSTORM server.
  *
- * Replaces the per-composable WebSocket connections (signal-server for voice,
- * Supabase Realtime for presence/pose/chat) with a single multiplexed socket.
- *
- * Phase 1: Carries signaling + room privacy (same JSON format as signal-server.js).
- * Phase 2+: Will carry presence, pose, cursor, chat via { t, d } envelope.
+ * Single multiplexed WebSocket for all real-time communication with the server.
+ * Carries signaling, pose, chat, and LLUDP relay via { t, d } envelope.
  *
  * Usage:
  *   import { useRealtimeSocket } from '@/composables/useRealtimeSocket.js'

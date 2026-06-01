@@ -1,4 +1,7 @@
 /**
+ *
+ * This still has a lot of code from the older app we started from
+ *
  * useAudio — procedural sound effects via Web Audio API + file-based MP3 playback.
  *
  * AudioContext is unlocked on the first user click or keydown — no consent modal needed.

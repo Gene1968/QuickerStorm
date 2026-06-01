@@ -1,10 +1,6 @@
 /**
  * userStore — current signed-in user (identity only).
  *
- * Identity comes from Supabase Auth (Google OAuth). AuthRepo.getUser() returns
- * a SP-shaped object (Title/Email/UserPrincipalName/Id) so avatarStore and
- * presence code that predates the Supabase cut-over keeps working.
- *
  * This store is intentionally small — avatar/preferences live in avatarStore,
  * presence lives in presenceStore. Only keep identity here.
  */
