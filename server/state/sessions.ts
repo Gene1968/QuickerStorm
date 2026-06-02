@@ -115,6 +115,10 @@ export interface CircuitState {
 	// Keyed by `${patchX},${patchY}` — last decoded LAND patch for that tile.
 	// WHY: WATER layer omitted (water plane is fixed flat).
 	terrainCache: Map<string, { patchSize: number; x: number; y: number; heights: number[] }>
+	// WHY: Track which patches have received real LAND (0x4C/0x4D) data. WATER_FLOOR (0x37)
+	// patches are only forwarded for keys NOT in this set — prevents the original bug where
+	// 0x37 arrived after LAND and overwrote h=23m with h≈0.
+	coveredLandPatches: Set<string>
 	// WHY: Cache the last full ObjectUpdate per localId. On WS reconnect / manual resync we
 	// replay these so prims and avatars reappear without waiting for the sim to re-blast its
 	// interest list. TerseUpdates (position deltas) layer on top — they reference the localId

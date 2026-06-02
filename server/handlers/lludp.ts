@@ -100,6 +100,7 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	session.pendingAcks.length = 0
 	session.objCache.clear()
 	session.terrainCache.clear()
+	session.coveredLandPatches.clear()
 	session.caps.clear()
 	session.seqNum = 0
 	session.lastPingAt = 0
@@ -472,7 +473,12 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 
 	if (type === `high:${HIGH_OBJECT_UPDATE}`) {
 		const objects = decodeObjectUpdate(buf, dataOffset,
-			(errMsg) => slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`),
+			(errMsg) => {
+				// WHY: PSBlock OOB is expected for OpenSim extended particle systems (>86 bytes).
+				// The prim renders fine via push-partial. Downgrade to info to avoid log spam.
+				const level = errMsg.includes('PSBlock:') ? 'info' : 'warn'
+				slog[level](session.ws, `[ObjUpd] partial decode error: ${errMsg}`)
+			},
 		)
 		if (objects.length > 0) {
 			session.objDecodedCount += objects.length
@@ -560,22 +566,25 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		// which (px,py) the decoder is silently dropping.
 		const keyList = result.patches.map(p => `${p.x},${p.y}`).join(' ')
 		slog.info(session.ws, `[terrain] ${result.type} patches=${result.patches.length} patchSize=${result.patchSize} first=[${p0.x},${p0.y}] h0=${h0}m hN=${hN}m keys=[${keyList}]`)
-		const wirePatches = result.patches.map(p => ({
+		let wirePatches = result.patches.map(p => ({
 			x: p.x,
 			y: p.y,
 			heights: Array.from(p.heights),
 		}))
-		// Cache LAND patches for resync replays. WATER plane is fixed flat so skip.
 		if (result.type === 'LAND') {
+			// Cache LAND patches for resync replays and mark as covered so WATER_FLOOR can't overwrite.
 			for (const p of wirePatches) {
-				session.terrainCache.set(`${p.x},${p.y}`, {
-					patchSize: result.patchSize,
-					x: p.x,
-					y: p.y,
-					heights: p.heights,
-				})
+				const key = `${p.x},${p.y}`
+				session.terrainCache.set(key, { patchSize: result.patchSize, x: p.x, y: p.y, heights: p.heights })
+				session.coveredLandPatches.add(key)
 			}
 			slog.info(session.ws, `[terrain] cache size after packet: ${session.terrainCache.size}`)
+		} else if (result.type === 'WATER_FLOOR') {
+			// WHY: Only forward WATER_FLOOR patches for coords not already covered by LAND.
+			// LAND patches are authoritative; 0x37 only fills genuine ocean-floor gaps.
+			// Prevents the original overwrite bug (NeverWorld: LAND h=23m → 0x37 h≈0).
+			wirePatches = wirePatches.filter(p => !session.coveredLandPatches.has(`${p.x},${p.y}`))
+			if (wirePatches.length === 0) return
 		}
 		session.ws.send(JSON.stringify({
 			t: S.TERRAIN_PATCH,

@@ -12,7 +12,7 @@ export interface TerrainPatch {
 }
 
 export interface LayerDataResult {
-	type: 'LAND'
+	type: 'LAND' | 'WATER_FLOOR'
 	patchSize: number
 	patches: TerrainPatch[]
 }
@@ -338,28 +338,25 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 		// WHY: LayerData type byte (LayerID.Type) uses ASCII values derived from message_template.msg:
 		//   0x4C ('L') = LAND         — classic SL and standard OpenSim
 		//   0x4D ('M') = LandExtended — var-region terrain (512×512, 1024×1024), patchSize=32
-		//   0x37 ('7') = OSGrid water-floor terrain — SEPARATE layer at sea-floor depth.
-		//                Must NOT be applied to LAND heightmap: its patch coords overlap LAND
-		//                and would overwrite real ground with h≈0, dropping avatars through
-		//                to "water" at any (slX,slY) where 0x37 arrives after LAND. Confirmed
-		//                2026-05-27 on NeverWorld: patch (0,0) real h=23m clobbered by 0x37
-		//                pseudo-patch at h≈0. Skip until a separate sea-floor mesh exists.
+		//   0x37 ('7') = OSGrid water-floor — ocean floor at h≈0–1m. Same bit-packed codec as
+		//                LAND, 10-bit patch IDs. Decoded as WATER_FLOOR so the server can apply
+		//                only to patches not already covered by a real LAND packet (prevents the
+		//                original overwrite bug where 0x37 arrived after LAND and clobbered h=23m).
 		//   0x57 ('W') = WIND  — wind field (not terrain, skip)
 		//   0x43 ('C') = CLOUD — cloud field (not terrain, skip)
 		//   0x38 ('8') = WATER — water field (not terrain, skip)
 		// NOTE: 0x06 was briefly added as "OSGrid LAND int enum" but that was wrong — Medium 6
 		// is CoarseLocationUpdate; those packets were never LayerData. Removed 2026-05-25.
 		const isLandExtended = layerTypeByte === 0x4D  // ASCII 'M' — LandExtended (var-regions >256m, 32-bit patch IDs)
-		const isLand = layerTypeByte === 0x4C          // ASCII 'L' — LAND (standard ≤256m, 10-bit patch IDs)
-		            || isLandExtended
-		const type = isLand ? 'LAND' : null
+		const isLand        = layerTypeByte === 0x4C || isLandExtended
+		const isWaterFloor  = layerTypeByte === 0x37
+		const type: 'LAND' | 'WATER_FLOOR' | null = isLand ? 'LAND' : isWaterFloor ? 'WATER_FLOOR' : null
 		if (!type) {
-			const label = layerTypeByte === 0x37 ? 'OSGrid-water-floor(0x37)'
-			            : layerTypeByte === 0x57 ? 'WIND(0x57)'
+			const label = layerTypeByte === 0x57 ? 'WIND(0x57)'
 			            : layerTypeByte === 0x43 ? 'CLOUD(0x43)'
 			            : layerTypeByte === 0x38 ? 'WATER(0x38)'
 			            : `unknown(0x${layerTypeByte.toString(16)})`
-			dbg(`skipping non-LAND layer type=${label}`)
+			dbg(`skipping non-terrain layer type=${label}`)
 			return null
 		}
 
@@ -417,7 +414,7 @@ export function decodeLayerData(buf: Buffer, dataOffset: number, ws?: { send(s: 
 			dbg(`decode loop done attempts=${attemptCount} patches=${patches.length} oob=${oobCount} exit=${exitReason}`)
 		}
 
-		return { type: 'LAND', patchSize: groupHdr.patchSize, patches }
+		return { type, patchSize: groupHdr.patchSize, patches }
 	} catch (e) {
 		dbg(`exception: ${(e as Error).message}`)
 		return null

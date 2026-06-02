@@ -208,6 +208,7 @@ export async function handleLogin(
 		userKey,
 		cachedLoginOk,
 		terrainCache:       new Map(),
+		coveredLandPatches: new Set(),
 		objCache:           new Map(),
 	}
 

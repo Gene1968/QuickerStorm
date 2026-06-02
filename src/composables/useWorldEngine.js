@@ -799,9 +799,9 @@ export function useWorldEngine(canvasRef) {
 		if      (d <= -20) rgb = [0.08, 0.30, 0.60]                                          // deep
 		else if (d <= -10) rgb = lerpRgb([0.16, 0.50, 0.83], [0.25, 0.55, 0.45], (d + 20) / 10)  // shallow → low land
 		else if (d <=  -1) rgb = lerpRgb([0.25, 0.55, 0.45], TAN,                (d + 10) / 9)    // low land → tan
-		else if (d <=   1) rgb = lerpRgb(TAN, SAND,                              (d + 1) / 2)     // tan → sand at shoreline
-		else if (d <=   2) rgb = lerpRgb(SAND, GRASS,                            (d - 1) / 1)     // sand → grass, done at d=2 (22m @ water=20)
-		else if (d <=  30) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],             (d - 2) / 28)     // grass → earthy
+		else if (d <=   0) rgb = lerpRgb(TAN, SAND,                              (d + 1) / 1)     // tan → sand at shoreline (d=-1..0)
+		else if (d <=   1) rgb = lerpRgb(SAND, GRASS,                            (d - 0) / 1)     // sand → grass, done at d=1 (avatar at 22m = terrain 21m = d=1)
+		else if (d <=  30) rgb = lerpRgb(GRASS, [0.45, 0.42, 0.35],             (d - 1) / 29)     // grass → earthy
 		else               rgb = lerpRgb([0.45, 0.42, 0.35], [0.60, 0.58, 0.58], Math.min((d - 30) / 60, 1))  // earthy → stone
 		return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]
 	}
