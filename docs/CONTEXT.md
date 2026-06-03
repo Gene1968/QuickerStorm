@@ -24,7 +24,7 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
                                              └── HTTP capability proxy → seed-cap dict + LLSD caps (FetchInventoryDescendents2, GetTexture, …)
 ```
 
-- **Frontend**: Vue 3 SPA, hash-based routing for SharePoint/standalone embed.
+- **Frontend**: Vue 3 SPA, hash-based routing for standalone embed.
 - **Bun WS server**: bridges LLUDP UDP packets to/from the browser via JSON messages; holds circuit state (`server/state/sessions.ts`).
 - **No backend database**. No Supabase, no Slack, no Google. Earlier scaffolding for those was removed per the `docs/superpowers/specs/` spec.
 

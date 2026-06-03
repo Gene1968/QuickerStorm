@@ -24,7 +24,7 @@ OpenSim or SL users who want a lighter way into their grid: a browser bookmark i
 
 ## Key Constraints
 
-- **Hash-based routing** (`createWebHashHistory`) — required for SharePoint host and standalone embed (see ADR-0001).
+- **Hash-based routing** (`createWebHashHistory`) — required for standalone embed (see ADR-0001).
 - **All LLUDP traffic goes through the Bun WS server.** Browsers cannot speak UDP. The server is mandatory infrastructure.
 - **Sim is authoritative for world state.** Local position is best-effort (dead reckoning matched to SL physics 3.2/5.2/11 m/s); sim corrections via TerseUpdate blend in.
 - **Three.js r152+ uses sRGB output color space.** Vertex colors and material colors must be stored in linear space; convert via `Color.convertSRGBToLinear()` or `pow(c, 2.4)`.

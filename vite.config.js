@@ -4,19 +4,6 @@ import { defineConfig, loadEnv } from "vite"
 import path from "path"
 import vue from "@vitejs/plugin-vue"
 
-// renaming the index as plugin
-const renameIndexPlugin = (newFilename) => {
-	return {
-		name: "renameIndex",
-		enforce: "post",
-		generateBundle (options, bundle) {
-			const indexHtml = bundle["index.html"]
-			if (!newFilename) indexHtml.fileName = "index.html"
-			else indexHtml.fileName = newFilename
-		},
-	}
-}
-
 // main config export
 export default ({ mode }) => {
 	// eslint-disable-next-line no-undef
@@ -42,10 +29,7 @@ export default ({ mode }) => {
 		},
 	})]
 	console.log("Mode: ", mode)
-	// SharePoint hosting expects index.aspx; standalone hosting (Railway/staging) keeps index.html.
-	const isSharePointHost = mode === "im" || mode === "production"
 	if (mode !== "development") {
-		if (isSharePointHost) plugins.push(renameIndexPlugin("index.aspx"))
 		plugins.push(versionPlugin)
 	}
 
@@ -61,7 +45,7 @@ export default ({ mode }) => {
 		outDir = path.join(__dirname, "dist/staging")
 	} else {
 		// eslint-disable-next-line no-undef
-		outDir = path.join(__dirname, "dist/usaf")
+		outDir = path.join(__dirname, "dist/prod")
 	}
 
 	return defineConfig({
@@ -105,8 +89,6 @@ export default ({ mode }) => {
 		// esbuild: {
 		//   drop: ['console', 'debugger']
 		// },
-		// SP hosting needs the asset path prefix (/quickerSTORM/SiteAssets/);
-		// standalone hosting (Railway) serves from root.
 		// eslint-disable-next-line no-undef
 		base: '/',
 	})

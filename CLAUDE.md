@@ -23,18 +23,18 @@ npm run format
 
 # Build targets
 npm run build:staging    # → dist/staging/
-npm run build:prod       # → dist/usaf/ + index.aspx (SharePoint host)
+npm run build:prod       # → dist/prod/
 ```
 
 Copy `.env.development.local-example` → `.env.development.local` before first run. The file selects the WS server (`VITE_SIGNAL_URL`) — point to `ws://localhost:8787` for local or the staging Railway URL to skip running the server locally.
 
 ## Architecture
 
-### Frontend → Bun WS → Supabase
+### Frontend → Bun WS → OpenSim
 
-- **Vite SPA** served standalone or from SharePoint (`mode=im|production` → `index.aspx` + `VITE_PATH` base).
+- **Vite SPA** served standalone (Railway, static host, or local).
 - **Bun WS server** (`server/index.ts`) handles signaling, presence relay, pose sync, chat, cursors, reactions — all in real time. Modular handlers under `server/handlers/`.
-- **Hash-based routing** (`createWebHashHistory`) — required for SharePoint and standalone embedding. Two routes: `/setup` and `/office`. All unknown paths → `/office`.
+- **Hash-based routing** (`createWebHashHistory`) — required for standalone embedding. Two routes: `/setup` and `/office`. All unknown paths → `/office`.
 
 ### Key Composables
 

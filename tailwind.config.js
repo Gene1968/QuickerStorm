@@ -5,7 +5,7 @@ import plugin from "tailwindcss/plugin";
 
 export default {
 	// important: true, // Add !important to all Tailwind utilities to override Bootstrap
-	content: ['./index.html', './index.aspx', './src/**/*.{vue,js,ts,jsx,tsx}'],
+	content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
 	safelist: [
 		'outline',
 		'outline-2',
