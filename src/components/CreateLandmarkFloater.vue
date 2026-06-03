@@ -24,7 +24,8 @@ const notes = ref('')
 
 // Folder options recompute as inventory loads (Favorites + Landmarks tree, indented).
 const folderOptions = computed(() => inv.landmarkTargetFolders())
-const selectedFolder = ref('')
+// Pre-select from prefill folderId if provided (e.g. opened from Places › Favorites tab).
+const selectedFolder = ref(ui.createLandmarkPrefill?.folderId || '')
 
 // Default the selection to the Landmarks folder (or first option) once options appear.
 watch(folderOptions, (opts) => {

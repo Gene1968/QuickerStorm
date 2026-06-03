@@ -16,7 +16,6 @@ const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background
 const PUMP_MS      = 150
 
 let registered = false
-let saveWatcherRegistered = false
 let pump = null
 
 export function useInventory() {
@@ -91,6 +90,18 @@ export function useInventory() {
 		inv.setCaps(d?.caps || [])
 		// Load cache BEFORE starting fetches so items appear immediately.
 		await loadCache()
+		// WHY: one-shot save watcher registered here (not at module level) so it is fresh for
+		// every login, including SPA re-logins where module-level flags would stay true after the
+		// previous WorldView unmounted. Calls stopSave() on first fire so it doesn't re-run.
+		const stopSave = watch(() => inv.allAgentFetched, async (done) => {
+			if (!done || !session.agentId) return
+			stopSave()
+			const pairs = []
+			inv.items.forEach((list, folderId) => {
+				if (list.length > 0) pairs.push([folderId, list])
+			})
+			await saveCachedInventory(session.agentId, pairs)
+		})
 		// Backfill folders the user expanded before caps were ready (root auto-expands on load).
 		for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
 		// Kick off the background full load so totals reach the exact count.
@@ -115,20 +126,6 @@ export function useInventory() {
 		emit(C.CREATE_INV_FOLDER, { folderId, parentId, name: name || 'New Folder' })
 		inv.addFolderOptimistic({ folderId, parentId, name: name || 'New Folder', typeDefault })
 		return folderId
-	}
-
-	// WHY: Single watcher for the session — saves cache when full sync completes.
-	// Guarded so only the first useInventory() call (from WorldView) registers it.
-	if (!saveWatcherRegistered) {
-		watch(() => inv.allAgentFetched, async (done) => {
-			if (!done || !session.agentId) return
-			const pairs = []
-			inv.items.forEach((list, folderId) => {
-				if (list.length > 0) pairs.push([folderId, list])
-			})
-			await saveCachedInventory(session.agentId, pairs)
-		})
-		saveWatcherRegistered = true
 	}
 
 	onMounted(() => {

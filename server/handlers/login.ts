@@ -70,15 +70,19 @@ export async function handleLogin(
 				},
 			}))
 		}
-		// WHY: resume skips the seed-cap fetch (caps already stored on the held circuit). Re-send
-		// the cap list so the client re-arms inventory fetching after loadFromLogin cleared it.
-		if (circuit.caps && circuit.caps.size) {
-			ws.send(JSON.stringify({ t: S.CAPS_READY, d: { caps: [...circuit.caps.keys()] } }))
-		}
-		// WHY: Replay cached world snapshot immediately on resume so terrain, region name,
-		// and spawn position are restored without the user clicking anything. Sim won't
-		// re-send RegionHandshake/LayerData on its own — the circuit is already established.
-		replayCachedWorld(circuit)
+		// WHY: defer CAPS_READY + world replay — LOGIN_OK triggers an async router navigation on
+		// the client; without a small gap, these messages arrive before WorldView mounts and the
+		// CAPS_READY handler is never registered, leaving inventory in a permanently cap-less state.
+		// 300ms is more than enough for Vue Router to complete navigation and call useInventory().
+		setTimeout(() => {
+			if (circuit.caps && circuit.caps.size) {
+				ws.send(JSON.stringify({ t: S.CAPS_READY, d: { caps: [...circuit.caps.keys()] } }))
+			}
+			// WHY: Replay cached world snapshot on resume so terrain, region name, and spawn
+			// position are restored without the user clicking anything. Sim won't re-send
+			// RegionHandshake/LayerData on its own — the circuit is already established.
+			replayCachedWorld(circuit)
+		}, 300)
 		return
 	}
 
