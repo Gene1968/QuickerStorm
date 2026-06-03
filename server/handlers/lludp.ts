@@ -32,6 +32,8 @@ import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
 import { decodeLayerData } from '../lib/terrain-codec.js'
 import { replayCachedWorld } from '../lib/resync'
+import { parseLLSD } from '../lib/llsd'
+import { startEventQueue, stopEventQueue } from '../lib/eventQueue'
 
 // Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
 // WHY: High-freq = 1-byte prefix. Medium-freq = 0xFF + 1-byte ID. Low-freq = 0xFF 0xFF + U16LE.
@@ -97,6 +99,10 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	const ws = session.ws
 
 	slog.info(ws, `↻ swapCircuit: ${session.simIp}:${session.simPort} → ${newSimIp}:${newSimPort}`)
+
+	// Stop polling the OLD region's event queue — we're leaving it. A fresh poll starts once the
+	// destination seed cap is fetched below.
+	stopEventQueue(sessionId)
 
 	// Tear down old socket; in-flight reliable packets are abandoned by design (new sim
 	// won't ack them, so retransmission would loop forever).
@@ -171,23 +177,90 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	})
 
 	// Same 3s convention as login: POST to new seed cap so SentSeeds flag flips.
+	// WHY EventQueueGet here too: the destination region has its OWN event queue. Without starting
+	// a poll on it, the NEXT cross-region TP out of this region would silently fail the same way
+	// the first one did before this fix.
 	if (newSeedCap) {
 		setTimeout(async () => {
 			try {
+				const reqBody = '<?xml version="1.0"?>\n<llsd><array>' +
+					DEST_REGION_CAPS.map(c => `<string>${c}</string>`).join('') +
+					'</array></llsd>'
 				const res = await fetch(newSeedCap, {
 					method: 'POST',
-					headers: { 'Content-Type': 'application/llsd+xml' },
-					body: '<?xml version="1.0"?>\n<llsd><array><string>RebakeAvatarTextures</string></array></llsd>',
+					headers: { 'Content-Type': 'application/llsd+xml', 'Accept': 'application/llsd+xml' },
+					body: reqBody,
 				})
 				slog.info(ws, `[swap] ✓ new seed cap fetched (${res.status})`)
-				const xml = await res.text()
-				const m = xml.match(/RebakeAvatarTextures<\/key>\s*<string>([^<]+)<\/string>/)
+				const map = parseLLSD(await res.text()) as Record<string, unknown> | null
 				const s = getSession(sessionId)
-				if (s && m) s.caps.set('RebakeAvatarTextures', m[1].trim())
+				if (s && map && typeof map === 'object') {
+					for (const [name, url] of Object.entries(map)) {
+						if (typeof url === 'string' && url) s.caps.set(name, url)
+					}
+					const eqUrl = s.caps.get('EventQueueGet')
+					if (eqUrl) startEventQueue(sessionId, eqUrl)
+					s.ws.send(JSON.stringify({ t: S.CAPS_READY, d: { caps: [...s.caps.keys()] } }))
+				}
 			} catch (e) {
 				slog.warn(ws, `[swap] seed cap fetch failed: ${(e as Error).message}`)
 			}
 		}, 3000)
+	}
+}
+
+// Caps requested against a destination region's seed after a cross-region swap. EventQueueGet is
+// the one that matters for further teleports; the rest keep inventory/texture/rebake working.
+const DEST_REGION_CAPS = [
+	'EventQueueGet',
+	'FetchInventoryDescendents2',
+	'FetchInventory2',
+	'GetTexture',
+	'GetMesh2',
+	'RebakeAvatarTextures',
+]
+
+/**
+ * Apply a decoded TeleportFinish from EITHER transport: the UDP Low #69 packet OR (the common
+ * cross-region case) the EventQueueGet `TeleportFinish` event. Same-sim → re-send
+ * CompleteAgentMovement so the sim re-places the avatar; cross-sim → swap the circuit onto the
+ * destination (which replays the handshake and starts a fresh event-queue poll there).
+ */
+export function applyTeleportFinish(
+	sessionId: string,
+	f: { simIp: string; simPort: number; regionHandle: bigint; seedCap: string; simAccess: number },
+): void {
+	const session = getSession(sessionId)
+	if (!session) return
+	const { simIp, simPort, regionHandle, seedCap, simAccess } = f
+	session.pendingTpHandle = undefined
+	session.tpDebugUntil = 0
+
+	const sameSim = simIp === session.simIp && simPort === session.simPort
+	if (sameSim) {
+		// Same sim/IP:port. OpenSim hosts multiple regions per process, so a cross-region TP can
+		// land here with regionHandle changed but address identical — notify the browser to clear
+		// the scene in that case. Re-send CompleteAgentMovement; AgentMovementComplete returns the
+		// new position, forwarded via AGENT_SPAWN_POS.
+		const sameRegion = regionHandle === session.regionHandle
+		session.regionHandle = regionHandle
+		const seq = nextSeq(session)
+		const pkt = encodeCompleteAgentMovement({ agentId: session.agentId, sessionId: session.sessionId, circuitCode: session.circuitCode, seq })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		if (!sameRegion) {
+			session.ws.send(JSON.stringify({ t: S.TELEPORT_FINISH, d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess } }))
+			slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, new region handle=${regionHandle}) — browser notified to clear scene`)
+		} else {
+			slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, same region) — awaiting AgentMovementComplete at new pos`)
+		}
+	} else {
+		// True cross-region teleport: swap UDP socket onto the new sim and replay the handshake.
+		// agentId/sessionId/circuitCode are preserved by SL protocol. Browser clears scene + awaits
+		// the new RegionHandshake.
+		slog.info(session.ws, `TeleportFinish cross-sim → ${simIp}:${simPort} — swapping circuit`)
+		session.ws.send(JSON.stringify({ t: S.TELEPORT_FINISH, d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess } }))
+		swapCircuit(sessionId, simIp, simPort, regionHandle, seedCap)
 	}
 }
 
@@ -711,46 +784,13 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		// WHY: TeleportFinish = cross-region teleport (or same-region TP on some OpenSim grids).
 		// For same sim IP/port: re-send CompleteAgentMovement; sim replies with AgentMovementComplete.
 		// For different sim: forward to browser for future cross-sim reconnection (Phase 2).
+		// NOTE: Cross-region TPs on most OpenSim grids do NOT arrive here — TeleportFinish is an
+		// EventQueueGet event (flavor=llsd), handled in eventQueue.ts. This UDP path covers same-sim
+		// position TPs and any grid that still sends Low #69. Both funnel through applyTeleportFinish.
 		try {
-			const { simIp, simPort, regionHandle, seedCap, simAccess } = decodeTeleportFinish(buf, dataOffset)
-			slog.info(session.ws, `✓ TeleportFinish: ${simIp}:${simPort} handle=${regionHandle} access=${simAccess} cap=${seedCap.slice(0, 40)}…`)
-
-			const sameSim = simIp === session.simIp && simPort === session.simPort
-			if (sameSim) {
-				// WHY: Same sim = position teleport within current circuit. Re-send CompleteAgentMovement
-				// so the sim re-places the avatar at the destination. AgentMovementComplete reply
-				// will arrive with new position and we forward it to the browser via AGENT_SPAWN_POS.
-				// WHY: OpenSim hosts multiple regions on one process (same IP:port). Cross-region TP
-				// arrives here with regionHandle changed but simIp/simPort identical. Notify browser
-				// so it clears the scene — without this the old terrain/objects stay on screen even
-				// though the avatar has moved to the new region.
-				const sameRegion = regionHandle === session.regionHandle
-				session.regionHandle = regionHandle
-				const seq = nextSeq(session)
-				const pkt = encodeCompleteAgentMovement({ agentId: session.agentId, sessionId: session.sessionId, circuitCode: session.circuitCode, seq })
-				trackReliable(session, seq, pkt)
-				session.udpSocket.send(pkt, session.simPort, session.simIp)
-				if (!sameRegion) {
-					session.ws.send(JSON.stringify({
-						t: S.TELEPORT_FINISH,
-						d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess },
-					}))
-					slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, new region handle=${regionHandle}) — browser notified to clear scene`)
-				} else {
-					slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, same region) — awaiting AgentMovementComplete at new pos`)
-				}
-			} else {
-				// WHY: Different sim = true cross-region teleport. Swap UDP socket onto new sim,
-				// replay circuit handshake (UseCircuitCode + CompleteAgentMovement + AgentThrottle +
-				// AgentHeightWidth). agentId/sessionId/circuitCode preserved by SL protocol.
-				// Notify browser so client clears the scene + waits for new RegionHandshake.
-				slog.info(session.ws, `TeleportFinish cross-sim → ${simIp}:${simPort} — swapping circuit`)
-				session.ws.send(JSON.stringify({
-					t: S.TELEPORT_FINISH,
-					d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess },
-				}))
-				swapCircuit(sessionId, simIp, simPort, regionHandle, seedCap)
-			}
+			const f = decodeTeleportFinish(buf, dataOffset)
+			slog.info(session.ws, `✓ TeleportFinish (UDP): ${f.simIp}:${f.simPort} handle=${f.regionHandle} access=${f.simAccess} cap=${f.seedCap.slice(0, 40)}…`)
+			applyTeleportFinish(sessionId, f)
 		} catch (e) { slog.warn(session.ws, `TeleportFinish decode error: ${(e as Error).message}`) }
 		return
 	}

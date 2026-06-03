@@ -11,10 +11,15 @@ import { slog } from '../lib/serverLog'
 import { S } from '../../shared/protocol.js'
 import { replayCachedWorld } from '../lib/resync'
 import { parseLLSD } from '../lib/llsd'
+import { startEventQueue } from '../lib/eventQueue'
 
 // WHY: caps we ask the seed for. The seed POST doubles as OpenSim's SentSeeds trigger (world init),
 // so we request the full set we'll use across Phase 3 — not just RebakeAvatarTextures.
 const REQUESTED_CAPS = [
+	// WHY: EventQueueGet is the HTTP long-poll the sim uses to deliver llsd-flavored messages —
+	// critically TeleportFinish for cross-region teleport (see server/lib/eventQueue.ts). Without
+	// it, cross-region TPs time out at the source sim. Listed first; it's the most important cap.
+	'EventQueueGet',
 	'FetchInventoryDescendents2',
 	'WebFetchInventoryDescendents',
 	'FetchInventory2',
@@ -327,6 +332,11 @@ export async function handleLogin(
 							if (typeof url === 'string' && url) { s.caps.set(name, url); offered.push(name) }
 						}
 						slog.info(ws, `✓ ${offered.length} caps stored: ${offered.join(', ')}`)
+						// WHY: start the EventQueueGet long-poll as soon as we have its URL. This is what
+						// delivers cross-region TeleportFinish (and EnableSimulator/CrossedRegion) — without
+						// it those events sit unread and cross-region teleport times out.
+						const eqUrl = s.caps.get('EventQueueGet')
+						if (eqUrl) startEventQueue(wsId, eqUrl)
 						// Notify browser which caps are usable (enables Inventory fetch, etc.).
 						s.ws.send(JSON.stringify({ t: S.CAPS_READY, d: { caps: offered } }))
 					} else {

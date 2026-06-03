@@ -84,6 +84,13 @@ export interface CircuitState {
 	} | null
 	// Capability URLs negotiated from seed cap (populated 3s after login)
 	caps: Map<string, string>
+	// ── EventQueueGet long-poll state ─────────────────────────────────────────
+	// WHY: Cross-region TeleportFinish (and EnableSimulator/CrossedRegion) arrive over the
+	// EventQueueGet HTTP cap, not UDP. eqGen is a generation counter — region crossing or logout
+	// bumps it so the in-flight poll loop bails when superseded. eqAbort cancels the suspended
+	// fetch immediately. See server/lib/eventQueue.ts.
+	eqGen?:   number
+	eqAbort?: AbortController
 	// ── Session resume fields ────────────────────────────────────────────
 	// WHY: On page reload, WS drops but sim circuit stays alive. Bun holds the
 	// circuit for CIRCUIT_HOLD_MS so the browser can reconnect without a full
@@ -157,6 +164,7 @@ export function deleteSession(id: string): void {
 	if (s) {
 		if (s.expireTimer) clearTimeout(s.expireTimer)
 		if (s.userKey) userSessions.delete(s.userKey)
+		s.eqAbort?.abort()   // stop the EventQueueGet long-poll
 		try { s.udpSocket.close() } catch { /* already closed */ }
 		sessions.delete(id)
 	}
