@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'bun:test'
-import { parseLLSD, llsdNum, llsdStr } from '../lib/llsd'
+import { parseLLSD, llsdNum, llsdStr, parseLLSDBinary } from '../lib/llsd'
+
+// ── Binary LLSD fixture builders (test-only; hand-assembled to avoid testing our own encoder) ──
+const U32BE = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b }
+const I32BE = (n: number) => { const b = Buffer.alloc(4); b.writeInt32BE(n); return b }
+const F64BE = (n: number) => { const b = Buffer.alloc(8); b.writeDoubleBE(n); return b }
+const lstr  = (marker: string, s: string) =>
+	Buffer.concat([Buffer.from(marker), U32BE(Buffer.byteLength(s)), Buffer.from(s)])
+const lkey  = (s: string) => lstr('k', s)
+const lint  = (n: number) => Buffer.concat([Buffer.from('i'), I32BE(n)])
 
 describe('llsd', () => {
 	it('parses a cap seed map (name → url)', () => {
@@ -86,5 +95,79 @@ describe('llsd', () => {
 
 	it('returns null on empty input', () => {
 		expect(parseLLSD('')).toBe(null)
+	})
+})
+
+describe('parseLLSDBinary', () => {
+	it('decodes a signed integer (network byte order) and reports bytes read', () => {
+		const buf = lint(42)
+		const { value, end } = parseLLSDBinary(buf)
+		expect(value).toBe(42)
+		expect(end).toBe(5)   // 1 marker + 4 bytes
+	})
+
+	it('decodes a real (big-endian double)', () => {
+		const { value } = parseLLSDBinary(Buffer.concat([Buffer.from('r'), F64BE(1.5)]))
+		expect(value).toBe(1.5)
+	})
+
+	it('decodes booleans (1=true, 0=false) and undef', () => {
+		expect(parseLLSDBinary(Buffer.from('1')).value).toBe(true)
+		expect(parseLLSDBinary(Buffer.from('0')).value).toBe(false)
+		expect(parseLLSDBinary(Buffer.from('!')).value).toBe(null)
+	})
+
+	it('decodes a length-prefixed string', () => {
+		const { value } = parseLLSDBinary(lstr('s', 'hello'))
+		expect(value).toBe('hello')
+	})
+
+	it('decodes a UUID into canonical hex form', () => {
+		const raw = Buffer.from([
+			0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+			0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+		])
+		const { value } = parseLLSDBinary(Buffer.concat([Buffer.from('u'), raw]))
+		expect(value).toBe('11223344-5566-7788-99aa-bbccddeeff00')
+	})
+
+	it('decodes binary leaf to a Buffer', () => {
+		const payload = Buffer.from([1, 2, 3, 4])
+		const buf = Buffer.concat([Buffer.from('b'), U32BE(4), payload])
+		const { value } = parseLLSDBinary(buf)
+		expect(Buffer.isBuffer(value)).toBe(true)
+		expect((value as Buffer).equals(payload)).toBe(true)
+	})
+
+	it('decodes an array', () => {
+		const buf = Buffer.concat([
+			Buffer.from('['), U32BE(2), lint(7), lstr('s', 'x'), Buffer.from(']'),
+		])
+		expect(parseLLSDBinary(buf).value).toEqual([7, 'x'])
+	})
+
+	it('decodes a nested map shaped like a mesh header', () => {
+		const high = Buffer.concat([
+			Buffer.from('{'), U32BE(2),
+			lkey('offset'), lint(100),
+			lkey('size'),   lint(200),
+			Buffer.from('}'),
+		])
+		const buf = Buffer.concat([
+			Buffer.from('{'), U32BE(2),
+			lkey('version'),  lint(1),
+			lkey('high_lod'), high,
+			Buffer.from('}'),
+		])
+		expect(parseLLSDBinary(buf).value).toEqual({
+			version: 1,
+			high_lod: { offset: 100, size: 200 },
+		})
+	})
+
+	it('skips the optional <? LLSD/Binary ?> header line', () => {
+		const body = Buffer.concat([Buffer.from('{'), U32BE(1), lkey('v'), lint(2), Buffer.from('}')])
+		const buf  = Buffer.concat([Buffer.from('<? LLSD/Binary ?>\n'), body])
+		expect(parseLLSDBinary(buf).value).toEqual({ v: 2 })
 	})
 })

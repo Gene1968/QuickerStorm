@@ -153,3 +153,72 @@ export function llsdNum(v: LLSDValue): number {
 export function llsdStr(v: LLSDValue): string {
 	return v == null ? '' : String(v)
 }
+
+// ── LLSD Binary ────────────────────────────────────────────────────────────
+// WHY: mesh asset headers (GetMesh/ViewerAsset) and a few caps speak LLSD *Binary*, not XML.
+// Format (llsdserialize.cpp, network/big-endian throughout): a 1-byte type marker followed by the
+// payload. '!' undef, '1'/'0' bool, 'i' int32, 'r'/'d' float64, 'u' 16-byte UUID, 's'/'l' u32-len
+// string, 'b' u32-len binary, '[' u32-count array ']', '{' u32-count map '}' where each map entry
+// is 'k'+u32-len key then a value. Binary leaves return a Buffer (raw bytes are more useful than
+// base64 here). Returns { value, end } so callers (mesh: absolute offset = headerSize) know how
+// many bytes the document consumed.
+
+function uuidHex(buf: Buffer, p: number): string {
+	const h = buf.toString('hex', p, p + 16)
+	return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`
+}
+
+function readBin(buf: Buffer, p: number): { value: any; end: number } {
+	const marker = buf[p]; p++
+	switch (marker) {
+		case 0x21: return { value: null, end: p }                                         // '!'
+		case 0x31: return { value: true, end: p }                                         // '1'
+		case 0x30: return { value: false, end: p }                                        // '0'
+		case 0x69: return { value: buf.readInt32BE(p), end: p + 4 }                        // 'i'
+		case 0x72:                                                                        // 'r'
+		case 0x64: return { value: buf.readDoubleBE(p), end: p + 8 }                       // 'd' (date→sec)
+		case 0x75: return { value: uuidHex(buf, p), end: p + 16 }                          // 'u'
+		case 0x73:                                                                        // 's'
+		case 0x6c: {                                                                      // 'l'
+			const len = buf.readUInt32BE(p); p += 4
+			return { value: buf.toString('utf8', p, p + len), end: p + len }
+		}
+		case 0x62: {                                                                      // 'b'
+			const len = buf.readUInt32BE(p); p += 4
+			return { value: Buffer.from(buf.subarray(p, p + len)), end: p + len }
+		}
+		case 0x5b: {                                                                      // '['
+			const count = buf.readUInt32BE(p); p += 4
+			const arr: any[] = []
+			for (let i = 0; i < count; i++) { const r = readBin(buf, p); arr.push(r.value); p = r.end }
+			if (buf[p] === 0x5d) p++                                                       // ']'
+			return { value: arr, end: p }
+		}
+		case 0x7b: {                                                                      // '{'
+			const count = buf.readUInt32BE(p); p += 4
+			const obj: Record<string, any> = {}
+			for (let i = 0; i < count; i++) {
+				if (buf[p] === 0x6b) p++                                                   // 'k'
+				const klen = buf.readUInt32BE(p); p += 4
+				const key = buf.toString('utf8', p, p + klen); p += klen
+				const r = readBin(buf, p); obj[key] = r.value; p = r.end
+			}
+			if (buf[p] === 0x7d) p++                                                       // '}'
+			return { value: obj, end: p }
+		}
+		default: return { value: null, end: p }
+	}
+}
+
+/**
+ * Parse an LLSD Binary document. Skips the optional `<? LLSD/Binary ?>\n` header line.
+ * Returns the decoded value plus `end` = byte index just past the document.
+ */
+export function parseLLSDBinary(buf: Buffer, start = 0): { value: any; end: number } {
+	let p = start
+	if (buf[p] === 0x3c && buf[p + 1] === 0x3f) {           // '<?' → skip header line
+		const nl = buf.indexOf(0x0a, p)
+		if (nl >= 0) p = nl + 1
+	}
+	return readBin(buf, p)
+}

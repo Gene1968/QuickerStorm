@@ -27,6 +27,15 @@ const REQUESTED_CAPS = [
 	'FetchLibDescendents2',
 	'GetTexture',
 	'GetMesh2',
+	// WHY: ViewerAsset is OpenSim's unified asset cap (textures/mesh/sound/anim/material) and is
+	// preferred over GetTexture/GetMesh2 when offered; GetMesh is the v1 fallback. RenderMaterials +
+	// ModifyMaterialParams carry legacy + GLTF-override material data. UploadBakedTexture is the
+	// client-bake upload endpoint (OpenSim has no server-bake). See caps-feature-map slice plan.
+	'ViewerAsset',
+	'GetMesh',
+	'RenderMaterials',
+	'ModifyMaterialParams',
+	'UploadBakedTexture',
 	'RebakeAvatarTextures',
 	'AgentPreferences',
 	'UpdateAgentInformation',

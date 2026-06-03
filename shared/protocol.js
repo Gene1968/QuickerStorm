@@ -29,6 +29,7 @@ export const C = {
 	TP_HOME:        'tp_home',         // {} — TeleportLandmarkRequest with zero UUID; sim sends avatar to stored home position
 	SET_HOME:       'set_home',        // { regionName, x, y, z } — SetStartLocationRequest (Low 204) LocationID=1
 	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } or { folderIds:[] } — fetch folder item(s) via FetchInventoryDescendents2 cap (batched)
+	ASSET_FETCH:      'asset_fetch',      // { assetType:'texture'|'mesh'|'sound'|..., uuid } — fetch via ViewerAsset/GetTexture/GetMesh cap (server transcodes J2C→PNG)
 	CREATE_LANDMARK:  'create_landmark',  // { name, desc, folderId } — CreateInventoryItem (Low 305) type/invType=3; sim builds LM from current pos
 	CREATE_INV_FOLDER:'create_inv_folder',// { folderId, parentId, name } — CreateInventoryFolder (Low 273); client supplies the new folderId
 	// ── Social (Phase 3) ──
@@ -69,6 +70,7 @@ export const S = {
 	CAPS_READY:      'caps_ready',    // { caps: string[] } — HTTP cap names available after seed-cap fetch
 	INV_FOLDER:      'inv_folder',    // { folderId, items: [{ itemId, parentId, name, desc, assetType, invType, assetId, flags }], error? } — FetchInventoryDescendents2 reply
 	INV_ITEM_CREATED:'inv_item_created', // { items: [{ itemId, parentId, assetId, name, desc, assetType, invType, flags, ownerMask }] } — UpdateCreateInventoryItem (Low 267)
+	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error? } — fetched asset; textures arrive as PNG (server-transcoded from J2C)
 	// ── Social (Phase 3) ──
 	// SOCIAL_INIT data is folded into LOGIN_OK under d.social (resume-safe) — no separate message.
 	FRIEND_STATUS:   'friend_status',  // { online:boolean, ids:string[] } — Online/OfflineNotification

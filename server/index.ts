@@ -11,6 +11,7 @@ import { handleLogin, handleLogout } from './handlers/login'
 import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
 import { handleInventoryFetch } from './handlers/inventory'
+import { handleAssetFetch } from './handlers/assets'
 import { deleteSession, resolveCircuitId, attachWs, detachWs, scheduleExpire, findCircuitByUser } from './state/sessions'
 import { C, S } from '../shared/protocol.js'
 import type { ServerWebSocket } from 'bun'
@@ -221,6 +222,11 @@ const server = Bun.serve<WSData>({
 				case C.INV_FETCH_FOLDER: {
 					const d = msg.d as { folderId?: string; folderIds?: string[] }
 					handleInventoryFetch(circuitId, d.folderIds ?? (d.folderId ? [d.folderId] : []))
+					break
+				}
+				case C.ASSET_FETCH: {
+					const d = msg.d as { assetType: string; uuid: string }
+					handleAssetFetch(circuitId, d)
 					break
 				}
 				default:

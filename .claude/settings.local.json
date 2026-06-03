@@ -168,7 +168,8 @@
       "Bash(xargs grep -l \"class LLMeshSkinInfo\\\\|struct LLMeshSkinInfo\")",
       "Bash(xargs grep -l \"InventoryAPIv3\\\\|FetchInventory\")",
       "Bash(xargs grep -l \"LLGenericStreamingMessage\")",
-      "Bash(xargs grep -l \"GetMesh\\\\|ViewerAsset.*mesh\\\\|MeshUpload\")"
+      "Bash(xargs grep -l \"GetMesh\\\\|ViewerAsset.*mesh\\\\|MeshUpload\")",
+      "Bash(echo \"EXIT: $?\")"
     ]
   }
 }
