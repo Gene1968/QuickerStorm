@@ -11,6 +11,21 @@ Testing with OSGrid, NeverWorld & DigiWorldz so far — the rest of the usual gr
 
 **Phase 3 in progress:** HTTP-capability foundation live (LLSD-XML parser, full cap dictionary, server-side cap proxy). Inventory browse-complete (folder tree + items via `FetchInventoryDescendents2`). Social layer shipped: friends/contacts store + live status + friend-request toasts + Notifications floater. Saved-accounts system shipped. Appearance/Outfits floater shell shipped. Textures (`GetTexture` → J2C) is the next major lever.
 
+**Phase 3 roadmap — caps slice plan (2026-06-03):** Rather than guess server shapes, we traced
+phoenix-firestorm → opensim for every remaining feature into a full-depth reference map
+(`docs/superpowers/specs/2026-06-03-caps-feature-map.md`). Key reality: OpenSim ≠ Second Life —
+**no AIS3** (inventory mutations are LLUDP), **no AgentProfile cap** (profile is LLUDP), **no
+server-bake** (client-bake only), **no RequestTaskInventory cap** (prim contents = UDP + Xfer).
+J2C (JPEG2000) decode is the keystone blocker shared by textures/mesh/map/profile/terrain.
+Build order (each slice = server→frontend→verify-live-once):
+
+> **0. Plumbing** (binary cap proxy · J2C transcode · LLSD-Binary parser · EventQueue extend) →
+> **1. Asset fetch** (`ViewerAsset`/`GetTexture`/`GetMesh`) → **2. Materials/PBR** (TextureEntry ·
+> `RenderMaterials` · GLTF) → **3. Inventory mgmt** (move/rename/copy/delete/link via LLUDP) →
+> **4. Object interaction** (contents · take/buy · link prims) → **5. Appearance** (wearables ·
+> COF · client-bake · rigged mesh) → **6. Profile** (read/edit via LLUDP) → **7. World/region**
+> (neighbor sims · parcel capacity · terrain textures) → **8. Suitcase** (HG inventory subtree).
+
 **✨ Parts already better than some other clients:**
 - Often can truly resume your grid session after a brief network drop or page reload with no re-login needed. Useful 'Resync World' feature if view bugs out
 - Clean avatar logout — it actually works. Takes some 2-way comm but not sure why others never had this for switching to your alts

@@ -147,7 +147,28 @@
       "PowerShell(npm run *)",
       "Bash(Select-String -NotMatch \"node_modules\")",
       "Bash(npx bun *)",
-      "Bash(node_modules/.bin/vite build *)"
+      "Bash(node_modules/.bin/vite build *)",
+      "Bash(grep -v \"//.*DECODE_IMAGE\\\\|state.*DECODE\\\\|setState.*DECODE\")",
+      "Bash(xargs grep -l \"FolderType\")",
+      "Bash(xargs grep -l \"InventoryAPIv3\\\\|LibraryAPIv3\\\\|AISv3\\\\|/ais3\\\\|/ais/\")",
+      "Bash(xargs grep -l \"FetchInventoryDescendents2\\\\|FetchLibDescendents2\\\\|FetchInventory2\\\\|MoveInventoryItem\\\\|MoveInventoryFolder\\\\|CreateInventoryFolder\\\\|LinkInventoryItem\\\\|RemoveInventoryFolder\\\\|PurgeInventoryDescendents\")",
+      "Bash(xargs grep -l \"enum FolderType\")",
+      "Bash(xargs grep -l \"AgentSetAppearance\\\\|AvatarAppearance\\\\|AgentWearablesRequest\\\\|UploadBakedTexture\")",
+      "Bash(xargs grep -l \"AgentSetAppearance\\\\|AvatarAppearance\\\\|AgentWearablesRequest\\\\|UploadBakedTexture\\\\|AppearanceService\")",
+      "Bash(xargs grep -l \"LLTextureEntry\\\\|packTextureEntry\\\\|unpackTextureEntry\")",
+      "Bash(xargs grep -l \"AvatarAppearance\\\\|AgentSetAppearance\")",
+      "Bash(xargs grep -l \"llappearancemgr\\\\|LLAppearanceMgr\\\\|appearancemgr\")",
+      "Bash(grep -v \"//\")",
+      "Bash(xargs grep -l \"TextureEntry\\\\|PackTEMessage\\\\|RenderMaterials\")",
+      "Bash(xargs grep -l \"FetchInventoryDescendents2\\\\|WebFetchInventoryDescendents\")",
+      "Bash(xargs grep -l \"ModifyMaterialParams\\\\|GLTFMaterial\\\\|gltf_json\\\\|GLTFMaterialOverride\")",
+      "Bash(xargs grep -l \"FaceMaterial\\\\|toOSD\\\\|NormMap\\\\|SpecMap\")",
+      "Bash(xargs grep -l \"class FaceMaterial\")",
+      "Bash(xargs grep -l \"TextureEntryFace\\\\|packTEField\\\\|GetBytes.*TextureEntry\")",
+      "Bash(xargs grep -l \"class LLMeshSkinInfo\\\\|struct LLMeshSkinInfo\")",
+      "Bash(xargs grep -l \"InventoryAPIv3\\\\|FetchInventory\")",
+      "Bash(xargs grep -l \"LLGenericStreamingMessage\")",
+      "Bash(xargs grep -l \"GetMesh\\\\|ViewerAsset.*mesh\\\\|MeshUpload\")"
     ]
   }
 }
