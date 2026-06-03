@@ -19,7 +19,7 @@ onBeforeUnmount(() => { for (const t of timers.values()) clearTimeout(t); timers
 </script>
 
 <template>
-	<div class="fixed top-14 right-3 z-[200] flex flex-col gap-2 w-[20rem] max-w-[90vw] pointer-events-none">
+	<div class="fixed top-[5.5rem] right-3 z-[200] flex flex-col gap-2 w-[20rem] max-w-[90vw] pointer-events-none">
 		<div
 			v-for="t in notif.toasts"
 			:key="t.id"

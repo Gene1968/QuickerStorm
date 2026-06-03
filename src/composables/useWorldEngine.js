@@ -7,6 +7,7 @@ import { useWorldStore, PCODE_AVATAR } from '@/stores/worldStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
@@ -126,10 +127,11 @@ const FOLLOW_HEIGHT = 2.0   // metres above avatar feet
 const LOOKAT_Y      = 1.25   // metres above avatar feet for camera lookAt (lower = avatar lower in frame)
 
 export function useWorldEngine(canvasRef) {
-	const worldStore   = useWorldStore()
-	const sessionStore = useSessionStore()
-	const uiStore      = useUiStore()
-	const debugStore   = useDebugStore()
+	const worldStore        = useWorldStore()
+	const sessionStore      = useSessionStore()
+	const uiStore           = useUiStore()
+	const debugStore        = useDebugStore()
+	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
 	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun } = useLLUDP()
 
@@ -191,6 +193,7 @@ export function useWorldEngine(canvasRef) {
 	// under a per-frame time budget. Dedupe is automatic (Set + fetch latest obj from worldStore).
 	const pendingMeshIds = new Set()  // localId → awaiting mesh build (prims only; avatars build inline)
 	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
+	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
 	let waterMaterial = null  // ShaderMaterial — uTime updated each frame for ripple
@@ -370,7 +373,8 @@ export function useWorldEngine(canvasRef) {
 	// shape (radius=8, fixed pitch) — visible "jump" on the first alt+drag pixel.
 	function enterOrbit() {
 		if (avatarSLPos) {
-			orbitPivot.copy(slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2]))
+			const ap = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			orbitPivot.set(ap.x, ap.y + LOOKAT_Y, ap.z)
 		} else {
 			const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
 			orbitPivot.copy(camera.position).addScaledVector(fwd, orbitRadius)
@@ -1584,6 +1588,19 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function onAgentSpawnPos(payload) {
+		// WHY: Two AgentSpawnPos arrive after a cross-region TP attempt:
+		//   1. Source sim responds to our proactive CompleteAgentMovement (~100ms) — scene not arrived
+		//   2. Destination sim confirms arrival (only if TP succeeds)
+		// _tpSceneCleared=true while waiting for first. Consume on first (don't clear overlay yet).
+		// On second SpawnPos with status still 'arriving' → destination confirmed → clear overlay.
+		// TeleportFailed also clears overlay on failure path.
+		if (_tpSceneCleared) {
+			_tpSceneCleared = false   // consumed: source sim responded, still waiting for destination
+		} else if (uiStore.teleportStatus === 'arriving') {
+			uiStore.teleportStatus = ''  // second SpawnPos = destination confirmed
+		} else {
+			uiStore.teleportStatus = ''
+		}
 		// WHY: AgentMovementComplete fires once after login — sim's authoritative spawn position.
 		// Also fires on TeleportLocal (same-region TP). Arrives before ObjectUpdate/TerseUpdate
 		// for the new location, so we snap avatarSLPos, camera, AND own avatar mesh ourselves.
@@ -1632,6 +1649,8 @@ export function useWorldEngine(canvasRef) {
 	// LayerData + ObjectUpdates rebuild from scratch. ownAvatarLocalId is nulled so
 	// re-attribution happens on the new sim's first ObjectUpdate for the agent.
 	function onTeleportFinish(d) {
+		uiStore.teleportStatus = 'arriving'
+		_tpSceneCleared = true
 		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
 		meshMap.forEach((mesh) => {
 			mesh.traverse(child => {
@@ -1648,19 +1667,36 @@ export function useWorldEngine(canvasRef) {
 		ownAvatarLocalId = null
 		vertVel = 0
 		cameraSnapRequested = true
-		// regionHandle decodes to (regionY << 32) | regionX in global meters. JSON serialised
-		// as string from server (bigint) — convert via BigInt for U32 splits.
+		// WHY: Handle format is (X_meters << 32) | Y_meters — upper 32 = X, lower 32 = Y.
+		// JSON serialised as string from server (bigint) — convert via BigInt for U32 splits.
 		if (d?.simIp)  sessionStore.simIp  = d.simIp
 		if (d?.simPort) sessionStore.simPort = d.simPort
 		if (d?.seedCap) sessionStore.seedCap = d.seedCap
 		if (d?.regionHandle) {
 			try {
 				const h = BigInt(d.regionHandle)
-				sessionStore.regionX = Number(h & 0xFFFFFFFFn)
-				sessionStore.regionY = Number(h >> 32n)
+				sessionStore.regionX = Number(h >> 32n)
+				sessionStore.regionY = Number(h & 0xFFFFFFFFn)
 			} catch { /* ignore parse error — non-blocking */ }
 		}
 		sessionStore.regionName = ''  // new RegionHandshake will set it
+	}
+
+	function onTeleportStarted() {
+		uiStore.teleportStatus = 'requesting'
+	}
+
+	function onTeleportProgress(d) {
+		const status = d?.status || 'contacting'
+		uiStore.teleportStatus = status
+	}
+
+	function onTeleportFailed(d) {
+		uiStore.teleportStatus = ''
+		_tpSceneCleared = false
+		const reason = d?.reason || 'Teleport failed.'
+		notificationStore.notify({ title: 'Teleport Failed', body: reason, icon: '✗', toast: true })
+		debugStore.push('warn', `[3D] TeleportFailed: ${reason}`)
 	}
 
 	// WHY: ObjectProperties reply — merge into worldStore so right-click Inspect / Edit floater
@@ -2247,8 +2283,11 @@ export function useWorldEngine(canvasRef) {
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
 		on(S.KILL_OBJECT,      onKillObject)
 		on(S.TERRAIN_PATCH,    onTerrainPatch)
-		on(S.TELEPORT_FINISH,  onTeleportFinish)
-		on(S.OBJECT_PROPS,     onObjectProps)
+		on(S.TELEPORT_STARTED,  onTeleportStarted)
+		on(S.TELEPORT_PROGRESS, onTeleportProgress)
+		on(S.TELEPORT_FINISH,   onTeleportFinish)
+		on(S.TELEPORT_FAILED,   onTeleportFailed)
+		on(S.OBJECT_PROPS,      onObjectProps)
 	})
 
 	onUnmounted(() => {
@@ -2280,8 +2319,11 @@ export function useWorldEngine(canvasRef) {
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
 		off(S.KILL_OBJECT,     onKillObject)
 		off(S.TERRAIN_PATCH,   onTerrainPatch)
-		off(S.TELEPORT_FINISH, onTeleportFinish)
-		off(S.OBJECT_PROPS,    onObjectProps)
+		off(S.TELEPORT_STARTED,  onTeleportStarted)
+		off(S.TELEPORT_PROGRESS, onTeleportProgress)
+		off(S.TELEPORT_FINISH,   onTeleportFinish)
+		off(S.TELEPORT_FAILED,   onTeleportFailed)
+		off(S.OBJECT_PROPS,      onObjectProps)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()

@@ -61,6 +61,13 @@ export interface CircuitState {
 	primIdsSnapshotDumped: boolean
 	// True once a MapLayerRequest has been sent on this circuit (one-shot probe).
 	mapLayerSent?: boolean
+	// Set when a cross-region TP is in flight; cleared on TeleportFinish/Failed.
+	// While set, every incoming UDP packet is logged with raw hex for diagnosis.
+	tpDebugUntil?: number
+	// Destination regionHandle for in-flight cross-region TP (set when MAP_TELEPORT sent).
+	pendingTpHandle?: bigint
+	// Timestamp of last TELEPORT_FAILED sent to browser — debounce duplicate reliable retransmits.
+	lastTeleportFailedAt?: number
 	// Diagnostic counters
 	wsMoveCount?: number  // total MOVE messages received from browser client
 	// Heartbeat: send AgentUpdate periodically to prevent sim 60s timeout

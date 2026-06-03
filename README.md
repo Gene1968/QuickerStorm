@@ -3,7 +3,7 @@
 ## A web-based 3D viewer for OpenSimulator and Second Life
 
 No install. Open a browser tab, log in, and you're in-world.
-Testing with OSGrid and NeverWorld so far — all the usual grids are listed for near-future testing.
+Testing with OSGrid, NeverWorld & DigiWorldz so far — the rest of the usual grids are listed for near-future testing.
 
 ## Current state · June 2026
 
@@ -19,7 +19,7 @@ Testing with OSGrid and NeverWorld so far — all the usual grids are listed for
 ---
 
 **🟢 Working now**
-- [x] Log in to various grids — splash page, Home, last location, or any region. Tested on OSGrid and NeverWorld
+- [x] Log in to various grids — splash page, Home, last location, or any region. Tested on OSGrid, NeverWorld, DigiWorldz
 - [x] Others on Firestorm see your avatar appearance and movement normally (outbound AgentUpdate stream)
 - [x] You see nearby users listed and they show up as simplified avatars (capsules w prim attachments) at the right places
 - [x] **Other avatars turn to face the right way as they walk** (TerseUpdate rotation decode)

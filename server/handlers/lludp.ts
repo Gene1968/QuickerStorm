@@ -50,8 +50,13 @@ const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spa
 const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
 const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
+const LOW_TELEPORT_PROGRESS   = 73    // Sim → viewer: TP in progress — OpenSim uses 73, SL standard is 65
+const LOW_TELEPORT_FAILED_STD = 66    // Sim → viewer: TP failed (SL standard Low #66)
+const LOW_TELEPORT_FAILED_OS  = 74    // Sim → viewer: TP failed (OpenSim observed Low #74)
 const LOW_IMPROVED_INSTANT_MSG= 254   // ImprovedInstantMessage — both directions (Low freq)
 const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circuit needed (Low freq)
+// WHY: OpenSim on this grid uses shifted Low IDs for teleport progress/failed (73/74 instead of 65/66).
+// TeleportFinish still uses 69. If future grids shift it, it would appear as "first-seen unhandled" in logs.
 const LOW_MAP_BLOCK_REPLY     = 409   // Sim → viewer: world-map region entries (Low freq)
 const LOW_MAP_LAYER_REPLY     = 406   // Sim → viewer: map layer info — alive-probe response
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
@@ -117,8 +122,9 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 		session.cachedLoginOk.simIp   = newSimIp
 		session.cachedLoginOk.simPort = newSimPort
 		session.cachedLoginOk.seedCap = newSeedCap
-		session.cachedLoginOk.regionX = Number(newRegionHandle & 0xFFFFFFFFn)
-		session.cachedLoginOk.regionY = Number(newRegionHandle >> 32n)
+		// WHY: Handle format is (X_meters << 32) | Y_meters — upper 32 = X, lower 32 = Y.
+		session.cachedLoginOk.regionX = Number(newRegionHandle >> 32n)
+		session.cachedLoginOk.regionY = Number(newRegionHandle & 0xFFFFFFFFn)
 	}
 
 	const newSock = dgram.createSocket('udp4')
@@ -224,6 +230,13 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (hdr.reliable) queueAck(session, hdr.seq)
 
 	const { type, dataOffset } = parseMsgType(buf, hdr.bodyOffset)
+
+	// WHY: When a cross-region TP is in flight, log EVERY packet with hex for 60s.
+	// Catches TeleportFinish regardless of whether it uses a shifted/unexpected ID.
+	if (session.tpDebugUntil && Date.now() < session.tpDebugUntil) {
+		const hex = buf.slice(hdr.bodyOffset, Math.min(hdr.bodyOffset + 12, buf.length)).toString('hex')
+		slog.info(session.ws, `[TPdbg] type=${type} size=${rawBuf.length}b zc=${hdr.zeroCoded} rel=${hdr.reliable} hex=${hex}`)
+	}
 
 	// Per-type RX counter for prim-dropout investigation. Lets us compare sim send vs
 	// decode-success vs relay-out rates across message types (#12 ObjectUpdate, #13
@@ -342,20 +355,56 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			// WHY: Extract region handle from packet (more authoritative than login estimate).
 			// Required for TeleportLocationRequest (user can teleport by editing LocationBar coords).
 			// readBigUInt64LE at offset+56 (after position(12) + lookAt(12) = 24 bytes past +32)
+			let newHandle = session.regionHandle
 			if (dataOffset + 64 <= buf.length) {
-				session.regionHandle = buf.readBigUInt64LE(dataOffset + 56)
+				newHandle = buf.readBigUInt64LE(dataOffset + 56)
+				session.regionHandle = newHandle
 			}
-			slog.info(session.ws, `✓ AgentMovementComplete: confirmed spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`)
+			slog.info(session.ws, `✓ AgentMovementComplete: confirmed spawn pos=${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${newHandle}`)
+
+			// WHY: Detect same-sim cross-region TP success. If AgentMovementComplete handle matches
+			// the destination handle we stored in pendingTpHandle, the TP succeeded. Send TELEPORT_FINISH
+			// NOW (the real signal to clear scene and update region) rather than on TeleportProgress.
+			// Resume AgentUpdates after success by clearing pendingTpHandle.
+			if (session.pendingTpHandle && newHandle === session.pendingTpHandle) {
+				slog.info(session.ws, `✓ Cross-region TP arrived at destHandle=${newHandle} — sending TELEPORT_FINISH to browser`)
+				session.ws.send(JSON.stringify({
+					t: S.TELEPORT_FINISH,
+					d: { simIp: session.simIp, simPort: session.simPort, regionHandle: newHandle.toString(), seedCap: '', simAccess: 13 },
+				}))
+				session.pendingTpHandle = undefined
+			}
+
 			// Cache for resync replays
 			session.cachedSpawnPos = [x, y, z]
 			// Forward confirmed sim-authoritative position to browser so it can correct
 			// worldStore.avatarPos before the first TerseUpdate arrives.
 			session.ws.send(JSON.stringify({ t: S.AGENT_SPAWN_POS, d: { pos: [x, y, z] } }))
 
-			// WHY: AgentSetAppearance NOT sent here despite being tempting for physics.
-			// OpenSim source confirms: appearance pipeline does NOT gate PhysicsActor creation.
-			// Sending with empty TextureEntry (our minimal stub) sets avatar texture data to null
-			// → all other viewers see avatar as invisible cloud. STAND_UP alone handles PhysicsActor.
+			// WHY: Send AgentSetAppearance after AgentMovementComplete so ScenePresence.Appearance
+			// is non-null on the source sim before any cross-region teleport is attempted.
+			// EntityTransferModule serialises sp.Appearance into AgentCircuitData for the destination
+			// sim's CreateAgent call — if null, destination rejects the agent and TeleportFinish is
+			// never sent, causing a 30-47s WaitForAgentArrivedAtDestination timeout then TeleportFailed.
+			// The stub sends empty TextureEntry (cloud look to others); we follow up with
+			// RebakeAvatarTextures cap so the sim rebakes proper textures from the bake service.
+			{
+				const seqA = nextSeq(session)
+				const appearPkt = encodeAgentSetAppearance({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA })
+				trackReliable(session, seqA, appearPkt)
+				session.udpSocket.send(appearPkt, session.simPort, session.simIp)
+				slog.info(session.ws, `→ AgentSetAppearance sent (seq=${seqA}) — populates ScenePresence.Appearance for cross-region TP`)
+				// Trigger rebake so the sim fetches proper baked textures; use a small delay so
+				// the circuit is fully settled before the HTTP cap call.
+				const rebakeCap = session.caps.get('RebakeAvatarTextures')
+				if (rebakeCap) {
+					setTimeout(() => {
+						fetch(rebakeCap, { method: 'POST', body: '' })
+							.then(() => slog.info(session.ws, '✓ RebakeAvatarTextures → appearance updated from bake service'))
+							.catch(e => slog.warn(session.ws, `RebakeAvatarTextures failed: ${e.message}`))
+					}, 5000)
+				}
+			}
 
 			// WHY: Send AgentUpdate with AGENT_CONTROL_STAND_UP (0x00080000) once after
 			// AgentMovementComplete. OpenSim source (ScenePresence.cs line 2650):
@@ -474,10 +523,18 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (type === `high:${HIGH_OBJECT_UPDATE}`) {
 		const objects = decodeObjectUpdate(buf, dataOffset,
 			(errMsg) => {
-				// WHY: PSBlock OOB is expected for OpenSim extended particle systems (>86 bytes).
-				// The prim renders fine via push-partial. Downgrade to info to avoid log spam.
-				const level = errMsg.includes('PSBlock:') ? 'info' : 'warn'
-				slog[level](session.ws, `[ObjUpd] partial decode error: ${errMsg}`)
+				if (errMsg.includes('PSBlock:')) {
+					// WHY: PSBlock OOB is expected for OpenSim extended particle systems (>86 bytes).
+					// Prim renders fine as partial. Log once per localId to avoid flood.
+					const m = errMsg.match(/localId=(\d+)/)
+					const key = `psblock:${m?.[1] ?? 'unknown'}`
+					if (!session.loggedTypes.has(key)) {
+						session.loggedTypes.add(key)
+						slog.info(session.ws, `[ObjUpd] PSBlock overflow (once): ${errMsg}`)
+					}
+					return
+				}
+				slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`)
 			},
 		)
 		if (objects.length > 0) {
@@ -649,6 +706,8 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `low:${LOW_TELEPORT_FINISH}`) {
+		session.tpDebugUntil = 0
+		slog.info(session.ws, `[TP] TeleportFinish arrived (low:${LOW_TELEPORT_FINISH}) size=${rawBuf.length}b zc=${hdr.zeroCoded}`)
 		// WHY: TeleportFinish = cross-region teleport (or same-region TP on some OpenSim grids).
 		// For same sim IP/port: re-send CompleteAgentMovement; sim replies with AgentMovementComplete.
 		// For different sim: forward to browser for future cross-sim reconnection (Phase 2).
@@ -661,12 +720,25 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				// WHY: Same sim = position teleport within current circuit. Re-send CompleteAgentMovement
 				// so the sim re-places the avatar at the destination. AgentMovementComplete reply
 				// will arrive with new position and we forward it to the browser via AGENT_SPAWN_POS.
+				// WHY: OpenSim hosts multiple regions on one process (same IP:port). Cross-region TP
+				// arrives here with regionHandle changed but simIp/simPort identical. Notify browser
+				// so it clears the scene — without this the old terrain/objects stay on screen even
+				// though the avatar has moved to the new region.
+				const sameRegion = regionHandle === session.regionHandle
 				session.regionHandle = regionHandle
 				const seq = nextSeq(session)
 				const pkt = encodeCompleteAgentMovement({ agentId: session.agentId, sessionId: session.sessionId, circuitCode: session.circuitCode, seq })
 				trackReliable(session, seq, pkt)
 				session.udpSocket.send(pkt, session.simPort, session.simIp)
-				slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim) — awaiting AgentMovementComplete at new pos`)
+				if (!sameRegion) {
+					session.ws.send(JSON.stringify({
+						t: S.TELEPORT_FINISH,
+						d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess },
+					}))
+					slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, new region handle=${regionHandle}) — browser notified to clear scene`)
+				} else {
+					slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, same region) — awaiting AgentMovementComplete at new pos`)
+				}
 			} else {
 				// WHY: Different sim = true cross-region teleport. Swap UDP socket onto new sim,
 				// replay circuit handshake (UseCircuitCode + CompleteAgentMovement + AgentThrottle +
@@ -680,6 +752,53 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				swapCircuit(sessionId, simIp, simPort, regionHandle, seedCap)
 			}
 		} catch (e) { slog.warn(session.ws, `TeleportFinish decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_TELEPORT_PROGRESS}`) {
+		// WHY: Intermediate TP progress update. In this OpenSim build TeleportFinish (low:69) is
+		// never received by the proxy even though the sim sends it. Hypothesis: DigiWorldz runs
+		// multiple regions on the same simulator process (same IP:port) and TeleportFinish is
+		// delivered differently. Workaround: on TeleportProgress, proactively send CompleteAgentMovement
+		// to the current sim with the destination regionHandle (same-sim TP pattern), then notify
+		// the browser to clear the scene. This mirrors what the TeleportFinish sameSim handler does.
+		try {
+			const hex = buf.slice(dataOffset, Math.min(dataOffset + 32, buf.length)).toString('hex')
+			const rawStatus = buf.length > dataOffset + 3 ? buf.readUInt32LE(dataOffset) : 0
+			slog.info(session.ws, `[TP] TeleportProgress (low:${LOW_TELEPORT_PROGRESS}) rawStatus=0x${rawStatus.toString(16)} hex=${hex}`)
+
+			// Notify browser of progress: "Contacting new region."
+			session.ws.send(JSON.stringify({ t: S.TELEPORT_PROGRESS, d: { status: 'contacting' } }))
+
+			// AgentUpdates suppressed during TP (pendingTpHandle set, heartbeat + browser MOVE blocked).
+			// Just log — TP broker is running on sim; wait for TeleportFinish or TeleportFailed.
+		} catch { /**/ }
+		return
+	}
+
+	if (type === `low:${LOW_TELEPORT_FAILED_STD}` || type === `low:${LOW_TELEPORT_FAILED_OS}`) {
+		session.tpDebugUntil = 0
+		session.pendingTpHandle = undefined
+		// WHY: Deduplicate reliable retransmits — sim resends TeleportFailed if we don't ACK within
+		// ~300ms, but sendPendingAcks runs every 500ms, so we often process the same packet twice.
+		const now = Date.now()
+		if (session.lastTeleportFailedAt && now - session.lastTeleportFailedAt < 5000) return
+		session.lastTeleportFailedAt = now
+		// WHY: Sim rejected TeleportLocationRequest. Log reason + notify browser so UI can show feedback.
+		// Body: AgentID(16) + reason_len(1) + reason(N bytes). Some OpenSim builds use Low #74 instead of #66.
+		try {
+			const hex = buf.slice(dataOffset, Math.min(dataOffset + 48, buf.length)).toString('hex')
+			let reason = '(unknown)'
+			const off = dataOffset + 16  // skip AgentID
+			if (off < buf.length) {
+				const rLen = buf[off]
+				if (off + 1 + rLen <= buf.length) {
+					reason = buf.slice(off + 1, off + 1 + rLen).toString('utf8').replace(/\0/g, '').trim()
+				}
+			}
+			slog.warn(session.ws, `✗ TeleportFailed (${type}): reason="${reason}" hex=${hex}`)
+			session.ws.send(JSON.stringify({ t: S.TELEPORT_FAILED, d: { reason } }))
+		} catch (e) { slog.warn(session.ws, `TeleportFailed decode error: ${(e as Error).message}`) }
 		return
 	}
 
@@ -817,6 +936,22 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	if (type === `fixed:${FIXED_PACKET_ACK}`) {
+		// WHY: Sim sends standalone PacketAck (fixed:251) to ACK reliable packets we sent it.
+		// Without processing these, reliableOut keeps the packet and retransmitOverdue resends it.
+		// For TeleportLocationRequest this was critical: unACK'd TP requests retransmit every 1-2s,
+		// causing OpenSim to restart the TP broker on each retransmit and preventing TeleportFinish.
+		// Body: count(U8) + seq0(U32BE) + seq1(U32BE) + ...
+		// WHY: Standalone PacketAck body uses LE (standard message field convention).
+		// Piggybacked acks (FLAG_HAS_ACKS) use BE per LLUDP spec — handled separately above.
+		const count = buf[dataOffset]
+		for (let i = 0; i < count; i++) {
+			const seq = buf.readUInt32LE(dataOffset + 1 + i * 4)
+			ackReceived(session, seq)
+		}
+		return
+	}
+
 	// WHY: Log each unknown packet type once so we can detect unhandled messages.
 	// Handled: high:1,11,12,14,15,16 med:6 low:64,69,139,148,152,250 fixed:251.
 	if (!session.loggedTypes.has(type)) {
@@ -865,6 +1000,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// Save for heartbeat retransmit when client is idle
 		session.lastAgentParams    = d
 		session.lastAgentUpdateAt  = Date.now()
+		// WHY: Match FS `send_agent_update()` line 4188 — no AgentUpdates during teleport.
+		// The sim treats incoming AgentUpdates as "avatar still active here", which appears to
+		// prevent TeleportFinish from routing back. pendingTpHandle is cleared on arrival or failure.
+		if (session.pendingTpHandle) return
 		const seq = nextSeq(session)
 		const pkt = encodeAgentUpdate({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
@@ -1256,9 +1395,14 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 
 	if (msg.t === C.MAP_TELEPORT) {
 		const d = msg.d as { regionX: number; regionY: number; x: number; y: number; z: number }
-		// regionX/Y are sim grid coords; pack into RegionHandle (Y<<32)|X scaled by 256.
-		// regionX/Y from MapBlockReply are grid indices; meters = idx*256. Handle = (Y_m<<32)|X_m.
-		const handle = ((BigInt(d.regionY) * 256n) << 32n) | (BigInt(d.regionX) * 256n)
+		// WHY: OpenSim/SL region handle = (X_meters << 32) | Y_meters.
+		// Empirically confirmed: sim extracts X from upper 32 bits and Y from lower 32 bits.
+		// Previous code had (Y<<32)|X — sim returned swapped coords and "region not found".
+		const handle = ((BigInt(d.regionX) * 256n) << 32n) | (BigInt(d.regionY) * 256n)
+		// Log every incoming UDP packet for 60s to catch TeleportFinish regardless of packet ID.
+		session.tpDebugUntil = Date.now() + 60_000
+		// Store destination handle so TeleportProgress handler can attempt same-sim completion.
+		session.pendingTpHandle = handle
 		const x = Math.max(1, Math.min(255, d.x))
 		const y = Math.max(1, Math.min(255, d.y))
 		const z = Math.max(0.5, d.z)
@@ -1273,6 +1417,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ MapTeleport: region(${d.regionX},${d.regionY}) pos=${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)} handle=${handle}`)
+		session.ws.send(JSON.stringify({ t: S.TELEPORT_STARTED, d: {} }))
 		return
 	}
 
@@ -1393,6 +1538,10 @@ function drainCacheMissQueue(s: CircuitState): void {
 function sendHeartbeat(s: CircuitState): void {
 	const now = Date.now()
 	if (now - s.lastAgentUpdateAt < HEARTBEAT_INTERVAL_MS) return
+	// WHY: FS `send_agent_update()` line 4188 — stops AgentUpdates while teleporting
+	// (except in TELEPORT_ARRIVING state). The sim treats incoming AgentUpdates as "avatar
+	// is still active here" which may prevent TeleportFinish from routing back to the viewer.
+	if (s.pendingTpHandle) return
 	s.lastAgentUpdateAt = now
 
 	// Use last known move data if available, else stand-still defaults.

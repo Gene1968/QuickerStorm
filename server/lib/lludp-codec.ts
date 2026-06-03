@@ -1161,12 +1161,17 @@ export function decodeObjectUpdate(
       let text = ''
       let textColor: [number, number, number, number] | undefined
       let tailOk = false
+      let _silentTail = false
       try {
         skipVar1('TA')  // TextureAnim (Variable1)
         // NameValue: Variable2
         if (off + 1 >= buf.length) throw new Error(`NV prefix OOB at off=${off}`)
         const nvLen = buf.readUInt16LE(off); off += 2
         _diag += ` NV=${nvLen}`
+        // WHY: nvLen > 2048 = misaligned pointer (pcode=1/2 and similar legacy pcodes whose
+        // tail layout diverges from standard after TE). Matches the TE > 2048 silent-break
+        // guard above. Partial object still pushed below; no onError to suppress log spam.
+        if (nvLen > 2048) { _silentTail = true; throw new Error(`NV: length ${nvLen} misaligned`) }
         if (off + nvLen > buf.length) throw new Error(`NV: length ${nvLen} exceeds remaining buf`)
         nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
         skipVar1('Data')
@@ -1188,7 +1193,7 @@ export function decodeObjectUpdate(
           off += 4
         }
         skipVar1('MediaURL')
-        skipVar1('PSBlock')      // particle system data, 0-86 bytes
+        skipVar1('PSBlock')      // particle system data, Variable1 (OpenSim extended can reach 192+)
         skipVar1('ExtraParams')
         off += 16   // Sound UUID
         off += 16   // OwnerID UUID
@@ -1200,7 +1205,7 @@ export function decodeObjectUpdate(
         off += 12   // JointAxisOrAnchor LLVector3
         tailOk = true
       } catch (tailErr) {
-        onError?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} tail decode OOB at off=${off}: ${(tailErr as Error).message}; pushing partial`)
+        if (!_silentTail) onError?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} tail decode OOB at off=${off}: ${(tailErr as Error).message}; pushing partial`)
       }
       objects.push({
         localId, fullId, pcode,

@@ -33,6 +33,7 @@ export const useUiStore = defineStore('ui', () => {
 	const inventoryInstances = ref([])
 	const showInventory      = computed(() => inventoryInstances.value.includes(0))
 	const showMap        = ref(false)
+	const teleportStatus = ref('')   // '' = idle, 'requesting'|'contacting'|'arriving' = in flight
 	const showNotifications = ref(false)
 	const showSettings       = ref(false)
 	const showDebug          = ref(false)    // debug/connection panel
@@ -275,5 +276,6 @@ export const useUiStore = defineStore('ui', () => {
 		pendingWarpPos, requestWarp, clearWarp,
 		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
 		gizmoMode, setGizmoMode,
+		teleportStatus,
 	}
 })

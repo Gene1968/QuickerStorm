@@ -53,8 +53,13 @@ function runAction(a) { try { a.run?.() } catch (e) { console.error('[notif acti
 					:class="it.read ? 'opacity-60' : 'bg-white/5'"
 					@click="onItemClick(it)"
 				>
-					<div class="text-xs text-t1 font-medium break-words">{{ it.title }}</div>
-					<div v-if="it.body" class="text-2xs text-tm mt-0.5 break-words">{{ it.body }}</div>
+					<div class="flex items-start gap-1">
+						<div class="flex-1 min-w-0">
+							<div class="text-xs text-t1 font-medium break-words">{{ it.title }}</div>
+							<div v-if="it.body" class="text-2xs text-tm mt-0.5 break-words">{{ it.body }}</div>
+						</div>
+						<button class="shrink-0 text-tm hover:text-t1 text-xs leading-none mt-0.5" title="Dismiss" @click.stop="notif.removeItem(it.id)">✕</button>
+					</div>
 					<div v-if="it.actions?.length" class="flex gap-2 mt-1.5">
 						<button
 							v-for="(a, i) in it.actions"

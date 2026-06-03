@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useUiStore }      from '@/stores/uiStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore }   from '@/stores/worldStore'
@@ -34,6 +34,8 @@ const searchQuery    = ref('')
 const searchResults  = ref([])
 const selectedResult = ref(null)
 const status         = ref('')
+const searchEl       = ref(null)
+let _autoSelectDone  = false
 
 // Current region grid coords (indices, not meters).
 const curRegionX = computed(() => Math.floor((session.regionX ?? 0) / 256))
@@ -355,6 +357,10 @@ function onMapBlocks(d) {
 	if (q) {
 		const hits = [...map.regions.values()].filter(b => b.name.toLowerCase().includes(q))
 		searchResults.value = hits.slice(0, 50)
+		if (!_autoSelectDone && searchResults.value.length > 0) {
+			_autoSelectDone = true
+			selectResult(searchResults.value[0])
+		}
 	}
 }
 
@@ -396,7 +402,34 @@ function doQuery() {
 }
 
 function doTeleport() {
-	requestTeleport({ x: Number(coordX.value), y: Number(coordY.value), z: Number(coordZ.value) })
+	const x = Number(coordX.value)
+	const y = Number(coordY.value)
+	const z = Number(coordZ.value)
+	const r = selectedResult.value
+	if (r && (r.regionX !== curRegionX.value || r.regionY !== curRegionY.value)) {
+		playSound('woosh.mp3')
+		sendMapTeleport(r.regionX, r.regionY, x, y, z)
+		flashStatus(`Teleporting to ${r.name}…`)
+	} else {
+		requestTeleport({ x, y, z })
+	}
+	ui.toggleMap()
+}
+
+function teleportToResult(r) {
+	if (!r) return
+	if (r.access === 254 || r.access === 255) { flashStatus(`"${r.name}" is offline.`); return }
+	selectResult(r)
+	const z = resolveTeleportZ(r.regionX, r.regionY, 128, 128, r, false)
+	coordZ.value = z
+	if (r.regionX !== curRegionX.value || r.regionY !== curRegionY.value) {
+		playSound('woosh.mp3')
+		sendMapTeleport(r.regionX, r.regionY, 128, 128, z)
+	} else {
+		requestTeleport({ x: 128, y: 128, z })
+	}
+	flashStatus(`Teleporting to ${r.name}…`)
+	ui.toggleMap()
 }
 
 function copySlurl() {
@@ -428,8 +461,13 @@ function doSearch() {
 	const q = searchQuery.value.trim()
 	if (!q) return
 	if (searchRetryTimer) clearTimeout(searchRetryTimer)
+	_autoSelectDone = false
+	selectedResult.value = null
 	const wanted = q.toLowerCase()
 	const beforeHits = [...map.regions.values()].filter(b => b.name.toLowerCase().includes(wanted)).length
+	// Populate immediately from cache before sending the network request.
+	const cached = [...map.regions.values()].filter(b => b.name.toLowerCase().includes(wanted))
+	searchResults.value = cached.slice(0, 30)
 	sendMapNameQuery(q)
 	flashStatus(`Searching "${q}"…`)
 	searchRetryTimer = setTimeout(() => {
@@ -441,12 +479,28 @@ function doSearch() {
 	}, 2000)
 }
 
+// Enter in search box: teleport if result selected/available, else search.
+function onSearchEnter() {
+	if (selectedResult.value) {
+		teleportToResult(selectedResult.value)
+	} else if (searchResults.value.length > 0) {
+		teleportToResult(searchResults.value[0])
+	} else {
+		doSearch()
+	}
+}
+
 // When MapBlockReply arrives from a name query, surface single-match results.
+// Also auto-select the first result if nothing was explicitly chosen.
 watch(() => map.regions.size, () => {
 	if (!searchQuery.value) return
 	const q = searchQuery.value.toLowerCase()
 	const hits = [...map.regions.values()].filter(b => b.name.toLowerCase().includes(q))
 	searchResults.value = hits.slice(0, 30)
+	if (!_autoSelectDone && searchResults.value.length > 0) {
+		_autoSelectDone = true
+		selectResult(searchResults.value[0])
+	}
 })
 
 function centerOnMe() {
@@ -514,6 +568,18 @@ onMounted(() => {
 		map.setCenter(curRegionX.value + 0.5, curRegionY.value + 0.5)
 	}
 	doQuery()
+	// Focus search field; select existing text so user can immediately retype.
+	nextTick(() => {
+		if (searchEl.value) {
+			searchEl.value.focus()
+			searchEl.value.select()
+		}
+		// If there's an existing query with results cached, auto-select first.
+		if (searchQuery.value && searchResults.value.length > 0 && !_autoSelectDone) {
+			_autoSelectDone = true
+			selectResult(searchResults.value[0])
+		}
+	})
 })
 
 onUnmounted(() => {
@@ -777,11 +843,12 @@ onUnmounted(() => {
 					<div class="flex gap-1">
 						<div class="relative flex-1 min-w-0">
 							<input
+								ref="searchEl"
 								v-model="searchQuery"
 								type="text"
 								placeholder="Regions by name…"
 								class="w-full bg-card2 border border-brd rounded-xl text-t1 placeholder-tm pl-1.5 pr-6 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
-								@keydown.enter="doSearch"
+								@keydown.enter="onSearchEnter"
 							/>
 							<button
 								v-if="searchQuery"
@@ -812,6 +879,7 @@ onUnmounted(() => {
 							class="w-full text-left px-2 py-1 text-xs truncate hover:bg-accent/20 transition-colors flex items-center gap-1.5"
 							:class="selectedResult?.name === r.name ? 'bg-accent/30 text-white' : 'text-t1'"
 							@click="selectResult(r)"
+							@dblclick.stop="teleportToResult(r)"
 						>
 							<span
 								:class="['inline-flex items-center justify-center shrink-0 rounded-sm font-bold text-2xs w-4 h-4 leading-none', accessBadge(r.access).cls]"

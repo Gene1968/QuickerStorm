@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useGridLogin } from '@/composables/useGridLogin'
 import { useGridStore } from '@/stores/gridStore'
 import { useAccountsStore } from '@/stores/accountsStore'
@@ -24,6 +24,16 @@ const rememberMe = ref(true)
 watch(() => gridStore.selectedNick, () => {
 	username.value = ''
 	password.value = ''
+})
+
+// Pre-fill last used account on load
+onMounted(async () => {
+	const last = accountsStore.accounts[0]
+	if (!last) return
+	gridStore.selectGrid(last.gridNick)
+	await nextTick() // let the clear-watcher fire first (fields are blank anyway)
+	username.value = last.username
+	password.value = last.password
 })
 
 
@@ -55,11 +65,10 @@ function toggleAccountSuggestions() {
 function closeAccountSuggestions() {
 	showAccountSuggestions.value = false
 }
-function pickAccount(acct) {
+async function pickAccount(acct) {
 	closeAccountSuggestions()
-	// WHY: Vue watchers flush async (next microtask). selectGrid() queues the
-	// blank-fields watcher; synchronous assignments below are the last writes.
 	gridStore.selectGrid(acct.gridNick)
+	await nextTick() // let clear-watcher fire before setting fields
 	username.value = acct.username
 	password.value = acct.password
 }

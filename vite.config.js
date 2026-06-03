@@ -108,6 +108,6 @@ export default ({ mode }) => {
 		// SP hosting needs the asset path prefix (/quickerSTORM/SiteAssets/);
 		// standalone hosting (Railway) serves from root.
 		// eslint-disable-next-line no-undef
-		base: isSharePointHost ? process.env.VITE_PATH : '/',
+		base: '/',
 	})
 }

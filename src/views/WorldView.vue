@@ -122,6 +122,21 @@ watch(
 			<div class="flex-1 relative overflow-hidden">
 				<WorldCanvas class="absolute inset-0" />
 
+				<!-- Teleport progress overlay — FS-style, shows while TP is in flight -->
+				<Transition name="fade">
+					<div
+						v-if="ui.teleportStatus"
+						class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm"
+					>
+						<div class="flex flex-col items-center gap-3 px-6 py-5 bg-card/80 border border-brd rounded-xl shadow-xl text-center max-w-xs">
+							<div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+							<p class="text-t1 text-sm font-semibold">
+								{{ { requesting: 'Requesting Teleport…', contacting: 'Contacting new region…', arriving: 'Arriving…' }[ui.teleportStatus] ?? 'Teleporting…' }}
+							</p>
+						</div>
+					</div>
+				</Transition>
+
 				<!-- Overlay/floater layer — hidden as a unit by Ctrl+Alt+F1.
 				     Absolute children are hidden by display:none on this wrapper.
 				     FloaterWindow children are position:fixed and escape display:none;
@@ -208,4 +223,8 @@ watch(
 .dc-fade-leave-active { transition: opacity 0.2s; }
 .dc-fade-enter-from,
 .dc-fade-leave-to     { opacity: 0; }
+.fade-enter-active { transition: opacity 0.2s; }
+.fade-leave-active { transition: opacity 0.3s; }
+.fade-enter-from,
+.fade-leave-to     { opacity: 0; }
 </style>
