@@ -609,6 +609,21 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				}
 				slog.warn(session.ws, `[ObjUpd] partial decode error: ${errMsg}`)
 			},
+			(diagMsg) => {
+				const odMatch = diagMsg.match(/od=(\d+)/)
+				const od = odMatch ? parseInt(odMatch[1]) : 0
+				const lidMatch = diagMsg.match(/localId=(\d+)/)
+				const lid = lidMatch?.[1] ?? 'unknown'
+				// Log non-standard odLen OR the specific suspect chain
+				const watchIds = new Set(['676079054', '676079037'])
+				if (od !== 60 && od !== 76 || watchIds.has(lid)) {
+					const key = `oddod:${lid}`
+					if (!session.loggedTypes.has(key)) {
+						session.loggedTypes.add(key)
+						slog.info(session.ws, `[ODD-OD] ${diagMsg}`)
+					}
+				}
+			},
 		)
 		if (objects.length > 0) {
 			session.objDecodedCount += objects.length
@@ -620,6 +635,17 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					session.distinctLocalIds.add(o.localId)
 					const idx = session.cacheMissPending.indexOf(o.localId)
 					if (idx >= 0) session.cacheMissPending.splice(idx, 1)
+					// DIAG: child prims — look up parent's cached pos to see if parent is underwater
+					// DIAG: root prims (parentId=0) placed below water = decode or sim issue
+					if ((o.parentId ?? 0) !== 0) {
+						const par = session.objCache.get(o.parentId!) as { pos?: [number,number,number], parentId?: number } | undefined
+						const wh = session.cachedRegionEnv?.waterHeight ?? 20
+						// Only flag when PARENT is a root prim (grandparent=0) — avoids false positives
+						// from intermediate chain nodes whose cached pos is a local offset, not region Z
+						if (par?.pos && (par.parentId ?? 0) === 0 && par.pos[2] < wh) {
+							slog.info(session.ws, `[ROOT-UW] waterH=${wh} child=${o.localId} rootParent=${o.parentId} rootPos=[${par.pos.map(v=>v.toFixed(2)).join(',')}]`)
+						}
+					}
 				}
 			}
 			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))

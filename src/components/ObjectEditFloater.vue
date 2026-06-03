@@ -217,9 +217,9 @@ function close() {
 					<div class="border-t border-brd pt-2">
 						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Position (SL)</div>
 						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-white/40">X</span> <span class="text-t1 font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-white/40">Y</span> <span class="text-t1 font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-white/40">Z</span> <span class="text-t1 font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-red-500 font-bold">X</span> <span class="text-t1 font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-green-500 font-bold">Y</span> <span class="text-t1 font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-blue-500 font-bold">Z</span> <span class="text-t1 font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
 						</div>
 					</div>
 					<div>

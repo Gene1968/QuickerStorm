@@ -916,6 +916,22 @@ export function decodeObjectUpdateCompressed(
       const ry = buf.readFloatLE(off);     off += 4
       const rz = buf.readFloatLE(off);     off += 4
       const rw = Math.sqrt(Math.max(0, 1 - rx * rx - ry * ry - rz * rz))
+      // WHY: After Rot comes SpecialCode (U32), then an ALWAYS-present Owner UUID (16B), then the
+      // optional fields. Per Firestorm (llviewerobject.cpp sObjectDataMap + unpackParentID):
+      //   SpecialCode(U32) | Owner(UUID,16) | Omega(Vec3,12 — only if 0x80) | ParentID(U32 — only if 0x20)
+      // The previous code skipped on the wrong bits (0x08/0x10 as "velocity") and NEVER skipped the
+      // 16-byte Owner UUID, so ParentID was read from inside Owner → children got a garbage parentId,
+      // were treated as roots, and rendered at their parent-local offset as region coords → underwater
+      // near origin. Correct bits: 0x80 = HasAngularVelocity (Omega), 0x20 = HasParent.
+      let parentId = 0
+      if (off + 4 <= dataEnd) {
+        const cflags = buf.readUInt32LE(off); off += 4
+        off += 16                       // Owner UUID — always present
+        if (cflags & 0x80) off += 12    // Omega (angular velocity)
+        if ((cflags & 0x20) && off + 4 <= dataEnd) {
+          parentId = buf.readUInt32LE(off); off += 4
+        }
+      }
       // Skip remaining payload — conditionals + shape + TE not parsed in MVP.
       off = dataEnd
       // Trees/grass/particles render-skipped (same convention as full ObjectUpdate decoder).
@@ -926,7 +942,7 @@ export function decodeObjectUpdateCompressed(
         pos:   [px, py, pz],
         rot:   [rx, ry, rz, rw],
         nameValue: '',
-        parentId:  0,
+        parentId,
         // No shape → buildPrimGeometry falls back to BoxGeometry (cube). Adequate visual
         // stand-in until full Compressed shape decode lands.
       })
@@ -1224,7 +1240,7 @@ export function decodeObjectUpdate(
       // WHY: log each successful decode + 40 bytes AFTER endOff so we can see whether
       // the bytes immediately following are the next real object header or zero-padding.
       // This lets us diagnose the 25-zero gap that appears between objects in multi-object packets.
-      if (count > 1) {
+      if (count >= 1) {
         const _nextHex = buf.slice(off, Math.min(buf.length, off + 40)).toString('hex')
         onDiag?.(`obj[${i}/${count}] localId=${localId} pcode=${pcode} startOff=${objStartOff} endOff=${off} [${_diag}] NEXT40=${_nextHex}`)
       }

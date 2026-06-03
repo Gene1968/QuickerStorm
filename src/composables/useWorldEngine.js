@@ -21,7 +21,7 @@ function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 // (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
 // sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,
 // 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
-// mesh.scale.set applies the prim's sx/sy/sz afterwards. Hollow deferred to Phase 3
+// bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
 // (true CSG needed); Twist + Taper applied as per-vertex deformation below.
 function buildPrimGeometry(shape) {
 	const pc = shape?.pathCurve ?? 16
@@ -85,6 +85,16 @@ function applyShapeDeformation(geom, shape) {
 	}
 	pos.needsUpdate = true
 	geom.computeVertexNormals()
+	return geom
+}
+
+// WHY: Bake the prim's SL scale into its GEOMETRY so the mesh node scale stays (1,1,1). Linked
+// children attach to the parent mesh in the Three.js graph and would otherwise inherit the parent's
+// scale — and a non-uniform parent scale does not commute with a rotated child, shearing the child
+// into a region-spanning slab. SL never inherits scale across a link, so the parent's scale must
+// not enter the transform chain at all. Axis map matches slToThree magnitude: Three (x=sx,y=sz,z=sy).
+function bakePrimScale(geom, scale) {
+	if (scale) geom.scale(scale[0], scale[2], scale[1])
 	return geom
 }
 
@@ -1048,7 +1058,7 @@ export function useWorldEngine(canvasRef) {
 		gizmoMeshId = null
 	}
 
-	// SL convention for axis colors: X=red, Y=green, Z=blue. Matches FS prim handles.
+	// SL axis colors (X=red, Y=green, Z=blue); applied to Three.js axes with Y↔Z swap below.
 	const _GIZMO_X = 0xff5555
 	const _GIZMO_Y = 0x55ff55
 	const _GIZMO_Z = 0x5588ff
@@ -1099,19 +1109,21 @@ export function useWorldEngine(canvasRef) {
 		const X = new THREE.Vector3(1, 0, 0)
 		const Y = new THREE.Vector3(0, 1, 0)
 		const Z = new THREE.Vector3(0, 0, 1)
+		// WHY: Three.js Y=up maps to SL Z; Three.js Z maps to SL Y. Swap colors so
+		// gizmo RGB matches floater RGB (X=red, Y=green, Z=blue) not Three.js axes.
 		if (mode === 'rotate') {
 			root.add(_buildRing(_GIZMO_X, 'x'))
-			root.add(_buildRing(_GIZMO_Y, 'y'))
-			root.add(_buildRing(_GIZMO_Z, 'z'))
+			root.add(_buildRing(_GIZMO_Z, 'y'))  // Three.js Y = SL Z → blue
+			root.add(_buildRing(_GIZMO_Y, 'z'))  // Three.js Z = SL Y → green
 		} else if (mode === 'scale') {
 			root.add(_buildHandle(_GIZMO_X, X)); root.add(_buildHandle(_GIZMO_X, X.clone().negate()))
-			root.add(_buildHandle(_GIZMO_Y, Y)); root.add(_buildHandle(_GIZMO_Y, Y.clone().negate()))
-			root.add(_buildHandle(_GIZMO_Z, Z)); root.add(_buildHandle(_GIZMO_Z, Z.clone().negate()))
+			root.add(_buildHandle(_GIZMO_Z, Y)); root.add(_buildHandle(_GIZMO_Z, Y.clone().negate()))
+			root.add(_buildHandle(_GIZMO_Y, Z)); root.add(_buildHandle(_GIZMO_Y, Z.clone().negate()))
 		} else {
 			// 'move' arrows — both directions per axis so prim handles read like FS.
 			root.add(_buildArrow(_GIZMO_X, X)); root.add(_buildArrow(_GIZMO_X, X.clone().negate()))
-			root.add(_buildArrow(_GIZMO_Y, Y)); root.add(_buildArrow(_GIZMO_Y, Y.clone().negate()))
-			root.add(_buildArrow(_GIZMO_Z, Z)); root.add(_buildArrow(_GIZMO_Z, Z.clone().negate()))
+			root.add(_buildArrow(_GIZMO_Z, Y)); root.add(_buildArrow(_GIZMO_Z, Y.clone().negate()))
+			root.add(_buildArrow(_GIZMO_Y, Z)); root.add(_buildArrow(_GIZMO_Y, Z.clone().negate()))
 		}
 		return root
 	}
@@ -1238,7 +1250,7 @@ export function useWorldEngine(canvasRef) {
 			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
 			const geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
-				: buildPrimGeometry(obj.shape)
+				: bakePrimScale(buildPrimGeometry(obj.shape), obj.scale)
 			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit). MeshStandardMaterial
 			// caused directional-light flicker as the mesh rotated with yaw.
 			// WHY hashed-HSL fallback: legacy stand-in when TE decode produces no defaultColor.
@@ -1310,9 +1322,10 @@ export function useWorldEngine(canvasRef) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				mesh.position.set(t.x, t.y, t.z)
 			}
-			// WHY: Skip scale for avatars — capsule is fixed geometry; server scale would
-			// amplify the CSS2DObject label position and push it far above the head.
-			if (obj.scale && obj.pcode !== PCODE_AVATAR) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			// WHY: Prim scale is baked into the geometry (bakePrimScale above), NOT the mesh node —
+			// node scale stays (1,1,1) so linked children don't inherit it. Track the baked scale so
+			// a later full update can re-bake by ratio. Avatars: capsule is fixed geometry, no scale.
+			if (obj.pcode !== PCODE_AVATAR) mesh.userData.primScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
 			// WHY: Apply quaternion rotation for prims so walls/doors point right way.
 			// Skip for avatars — their orientation is driven by yaw in animate() (own) /
 			// face indicator (others) and applying server rot tilts the capsule.
@@ -1328,11 +1341,17 @@ export function useWorldEngine(canvasRef) {
 
 			// WHY: Linked-set children carry parentId != 0. Their pos/rot from sim are in
 			// parent-local space; Three.js applies them locally once mesh is added under parent.
-			// If parent mesh hasn't arrived yet, attach to scene as orphan — reparent on parent spawn.
+			// If parent mesh hasn't arrived yet, attach to scene as orphan hidden — reparent on
+			// parent spawn. WHY hidden: local child coords (e.g. X=-0.5 Y=-0.1 Z=6) interpreted
+			// as world coords land near region origin (underwater). Invisible until parented.
 			const parentLocalId = obj.parentId ?? 0
 			const parentMesh = parentLocalId ? meshMap.get(parentLocalId) : null
-			if (parentMesh) parentMesh.add(mesh)
-			else scene.add(mesh)
+			if (parentMesh) {
+				parentMesh.add(mesh)
+			} else {
+				if (parentLocalId) mesh.visible = false  // orphan child — hide until parent arrives
+				scene.add(mesh)
+			}
 			normalizeChildTransform(mesh)
 			meshMap.set(obj.localId, mesh)
 
@@ -1343,11 +1362,19 @@ export function useWorldEngine(canvasRef) {
 					other.parent?.remove(other)
 					mesh.add(other)
 					normalizeChildTransform(other)
+					other.visible = true  // parent arrived — unhide
 				}
 			})
 		} else {
 			// Existing mesh: scale update + animated position
-			if (obj.scale && obj.pcode !== PCODE_AVATAR) mesh.scale.set(obj.scale[0], obj.scale[2], obj.scale[1])
+			// WHY: scale lives in the geometry (node scale stays 1,1,1 so children don't inherit it).
+			// Re-bake by the ratio of new/previous baked scale — preserves the prim's shape geometry
+			// without a rebuild, and is a no-op when the scale is unchanged (the common resync case).
+			if (obj.scale && obj.pcode !== PCODE_AVATAR) {
+				const prev = mesh.userData.primScale || [1, 1, 1]
+				mesh.geometry.scale(obj.scale[0] / prev[0], obj.scale[2] / prev[2], obj.scale[1] / prev[1])
+				mesh.userData.primScale = obj.scale.slice()
+			}
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
 				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
 			}
@@ -1366,6 +1393,17 @@ export function useWorldEngine(canvasRef) {
 			if (obj.pcode !== PCODE_AVATAR) {
 				mesh.userData.baseScale = mesh.scale.clone()
 				mesh.userData.basePos   = mesh.position.clone()
+				// WHY: If this was an orphan (parent arrived after child was created), try to
+				// reparent now. parent === scene means still orphaned; check if parent is in meshMap.
+				const pid = mesh.userData.parentId ?? 0
+				if (pid && mesh.parent === scene) {
+					const pm = meshMap.get(pid)
+					if (pm) {
+						scene.remove(mesh)
+						pm.add(mesh)
+						mesh.visible = true
+					}
+				}
 				normalizeChildTransform(mesh)
 			}
 			// WHY: NameValue data can arrive in a later ObjectUpdate after the mesh was created.
