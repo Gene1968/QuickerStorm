@@ -125,7 +125,7 @@ async function submit() {
 </script>
 
 <template>
-	<form class="flex flex-col gap-3" @submit.prevent="submit">
+	<div class="flex flex-col gap-3">
 
 		<div class="relative">
 			<input
@@ -140,6 +140,7 @@ async function submit() {
 				@input="openAccountSuggestions"
 				@blur="closeAccountSuggestions"
 				@keydown.escape="closeAccountSuggestions"
+			@keydown.enter="submit"
 			/>
 			<button
 				type="button"
@@ -169,9 +170,10 @@ async function submit() {
 			v-model="password"
 			type="password"
 			placeholder="Password"
-			autocomplete="current-password"
+			autocomplete="new-password"
 			class="reset-input px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
 			required
+			@keydown.enter="submit"
 		/>
 
 		<!-- Grid -->
@@ -235,12 +237,13 @@ async function submit() {
 		<p v-if="error" class="text-red-300 text-sm break-words">{{ error }}</p>
 
 		<button
-			type="submit"
+			type="button"
 			class="px-4 py-2 rounded bg-accent2 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
 			:disabled="gridStore.loginState === 'loading'"
+			@click="submit"
 		>
 			{{ gridStore.loginState === 'loading' ? 'Connecting…' : 'Log In' }}
 		</button>
 
-	</form>
+	</div>
 </template>
