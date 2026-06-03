@@ -239,6 +239,11 @@ export const useUiStore = defineStore('ui', () => {
 	// "Edit" sets this and toggles showObjectEdit. null = floater shows empty-state.
 	const showObjectEdit = ref(false)
 	const editObjectId   = ref(null)
+	// WHY: FS "Edit linked" parity. OFF (default) → clicking any prim selects the whole linkset
+	// (its root); the gizmo centers on the full-object bbox. ON → clicking selects the individual
+	// prim under the cursor. Read by useWorldEngine's pick handler at click time.
+	const editLinked     = ref(false)
+	function setEditLinked(v) { editLinked.value = v }
 	// WHY: Phase 2 prim-handle preview — gizmo type rendered around the selected prim while
 	// Build Tools is open. Ctrl → 'rotate' rings, Ctrl+Shift → 'scale' cubes, default 'move' arrows.
 	// Edit actions are Phase 3 (HTTP-cap perms); this is purely the visual scaffold.
@@ -275,6 +280,7 @@ export const useUiStore = defineStore('ui', () => {
 		landMenu, openLandMenu, closeLandMenu,
 		pendingWarpPos, requestWarp, clearWarp,
 		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
+		editLinked, setEditLinked,
 		gizmoMode, setGizmoMode,
 		teleportStatus,
 	}

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon } from '@lucide/vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
@@ -9,23 +10,29 @@ const world = useWorldStore()
 
 const activeTab = ref('general')
 
-// WHY: FS-parity Build Tools toolbar — Focus/Move/Edit/Create/Land top-row buttons.
-// Phase 2: visual only. Edit corresponds to the prim-handle preview already wired through
-// uiStore.gizmoMode; clicking Move/Edit/Rotate (Ctrl)/Scale (Ctrl+Shift) lets the user
-// preview the gizmo type without holding modifiers. Focus/Create/Land are Phase 3 stubs.
-const buildTools = [
-	{ id: 'focus',  label: 'Focus',  hint: 'Camera focus (Phase 3)', mode: null,     disabled: true  },
-	{ id: 'move',   label: 'Move',   hint: 'Position handles',        mode: 'move',   disabled: false },
-	{ id: 'edit',   label: 'Edit',   hint: 'Edit linked',             mode: 'move',   disabled: false },
-	{ id: 'rotate', label: 'Rotate', hint: 'Rotation rings (Ctrl)',  mode: 'rotate', disabled: false },
-	{ id: 'scale',  label: 'Scale',  hint: 'Scale handles (Ctrl+Shift)', mode: 'scale', disabled: false },
-	{ id: 'create', label: 'Create', hint: 'Create prim (Phase 3)',  mode: null,     disabled: true  },
-	{ id: 'land',   label: 'Land',   hint: 'Edit land (Phase 3)',    mode: null,     disabled: true  },
+// WHY: FS-parity Build Tools. Top row = the five major tools (Focus/Move/Edit/Create/Land) as a
+// radio group; Edit is the default while editing. Focus/Create/Land are Phase 3 stubs (disabled).
+// The Move/Rotate/Stretch sub-row below selects the gizmo operation (uiStore.gizmoMode), which is
+// also driven by Ctrl / Ctrl+Shift modifier keys in useWorldEngine.
+const buildTool = ref('edit')
+const tools = [
+	{ id: 'focus',  label: 'Focus',  icon: ZoomInIcon,    disabled: true  },
+	{ id: 'move',   label: 'Move',   icon: HandIcon,     disabled: false },
+	{ id: 'edit',   label: 'Edit',   icon: SquareMousePointerIcon,   disabled: false },
+	{ id: 'create', label: 'Create', icon: WandIcon,      disabled: true  },
+	{ id: 'land',   label: 'Land',   icon: PickaxeIcon, disabled: true  },
 ]
 function pickTool(t) {
-	if (t.disabled || !t.mode) return
-	ui.setGizmoMode(t.mode)
+	if (t.disabled) return
+	buildTool.value = t.id
 }
+
+// Gizmo operation radios — tied to uiStore.gizmoMode (and the Ctrl / Ctrl+Shift modifiers).
+const gizmoOps = [
+	{ id: 'move',   label: 'Move',    hint: 'Position handles' },
+	{ id: 'rotate', label: 'Rotate',  hint: 'Rotation rings (Ctrl)' },
+	{ id: 'scale',  label: 'Stretch', hint: 'Scale handles (Ctrl+Shift)' },
+]
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
 const tabs = [
@@ -109,6 +116,54 @@ const linkCount = computed(() => {
 	return count
 })
 
+// WHY: walk parentId → root so link controls operate on the whole linkset regardless of which
+// part is currently selected. Cycle-guarded; stops at the highest known ancestor.
+function rootOf(localId) {
+	let id = localId
+	const seen = new Set()
+	while (id != null && !seen.has(id)) {
+		seen.add(id)
+		const pid = world.objects.get(id)?.parentId ?? 0
+		if (!pid || !world.objects.has(pid)) break
+		id = pid
+	}
+	return id
+}
+
+// Ordered linkset members: root first (link #1), then direct children by localId — best-effort
+// since the sim's true link order isn't tracked. Drives prev/next cycling + link number.
+const linksetMembers = computed(() => {
+	if (!obj.value) return []
+	const root = rootOf(obj.value.localId)
+	const kids = []
+	for (const o of world.objects.values()) {
+		if (o.parentId === root && o.localId !== root) kids.push(o.localId)
+	}
+	kids.sort((a, b) => a - b)
+	return [root, ...kids]
+})
+
+const canCycle      = computed(() => linksetMembers.value.length > 1)
+const linkNumber    = computed(() => {
+	const i = linksetMembers.value.indexOf(ui.editObjectId)
+	return i >= 0 ? i + 1 : (obj.value ? 1 : '—')
+})
+// WHY: no real resource-cost (land impact) or parcel-capacity feed yet (Phase 3 caps). Use the
+// prim count as the legacy land-impact proxy; capacity stays a placeholder until parcel data lands.
+const objectsSelected   = computed(() => (obj.value ? 1 : 0))
+const landImpact        = computed(() => linksetMembers.value.length || '—')
+const remainingCapacity = computed(() => '—')
+
+// Select previous/next linked part. Implies part-level editing, so force "Edit linked" on.
+function selectLink(delta) {
+	const m = linksetMembers.value
+	if (m.length < 2) return
+	ui.setEditLinked(true)
+	const i = m.indexOf(ui.editObjectId)
+	const ni = ((i < 0 ? 0 : i) + delta + m.length) % m.length
+	ui.editObjectId = m[ni]
+}
+
 function close() {
 	ui.editObjectId = null
 	ui.showObjectEdit = false
@@ -124,24 +179,89 @@ function close() {
 		@close="close"
 	>
 		<div class="flex flex-col h-full text-xs">
-			<!-- Build-tools toolbar (FS-parity placeholder) ─────────────────────── -->
-			<div class="shrink-0 px-2 py-1.5 border-b border-brd flex items-center gap-1">
-				<button
-					v-for="t in buildTools"
-					:key="t.id"
-					:title="t.hint"
-					:disabled="t.disabled"
-					class="ui-btn flex-1 min-w-0 px-1.5 py-1 text-2xs rounded border transition-colors truncate"
-					:class="t.disabled
-						? 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'
-						: ui.gizmoMode === t.mode && t.id !== 'edit'
+			<!-- Build-tools toolbar (FS-parity) ──────────────────────────────────── -->
+			<div class="shrink-0 px-2 py-1.5 border-b border-brd space-y-1.5">
+				<!-- Top row: five major tools (icon radio) -->
+				<div class="flex items-center gap-1">
+					<button
+						v-for="t in tools"
+						:key="t.id"
+						:title="t.label"
+						:disabled="t.disabled"
+						class="ui-btn flex-1 flex items-center justify-center px-1.5 py-1.5 rounded border transition-colors"
+						:class="t.disabled
+							? 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'
+							: buildTool === t.id
+								? 'border-accent text-accent bg-accent/10'
+								: 'border-brd text-white/70 hover:text-t1 hover:bg-white/5'"
+						@click="pickTool(t)"
+					>
+						<component :is="t.icon" class="w-4 h-4" />
+					</button>
+				</div>
+				<!-- Sub row: gizmo operation (Move / Rotate / Stretch), tied to modifier keys -->
+				<div class="flex items-center gap-1">
+					<button
+						v-for="g in gizmoOps"
+						:key="g.id"
+						:title="g.hint"
+						class="ui-btn flex-1 min-w-0 px-1.5 py-1 text-2xs rounded border transition-colors truncate"
+						:class="ui.gizmoMode === g.id
 							? 'border-accent text-accent bg-accent/10'
 							: 'border-brd text-white/70 hover:text-t1 hover:bg-white/5'"
-					@click="pickTool(t)"
-				>{{ t.label }}</button>
+						@click="ui.setGizmoMode(g.id)"
+					>{{ g.label }}</button>
+				</div>
 			</div>
-			<div class="shrink-0 px-2 py-1 text-2xs text-white/40 italic border-b border-brd">
-				Click a prim to select • Ctrl = rotate • Ctrl+Shift = scale
+			<div class="shrink-0 px-2 py-1 flex items-center gap-2 border-b border-brd">
+				<label
+					class="flex items-center gap-1.5 text-2xs text-t1 cursor-pointer select-none"
+					title="Off: clicking selects the whole linked object. On: selects the individual prim under the cursor."
+				>
+					<input type="checkbox" v-model="ui.editLinked" class="accent-accent" />
+					Edit linked
+				</label>
+				<span class="text-2xs text-white/40 italic ml-auto truncate">Ctrl = rotate • Ctrl+Shift = scale</span>
+			</div>
+
+			<!-- Link controls (FS-parity) ─────────────────────────────────────── -->
+			<div class="shrink-0 px-2 py-1.5 border-b border-brd space-y-1.5">
+				<div class="flex items-center gap-1">
+					<button
+						title="Select previous linked part or face"
+						:disabled="!canCycle"
+						class="ui-btn px-2 py-1 text-2xs rounded border transition-colors"
+						:class="canCycle ? 'border-brd text-white/70 hover:text-t1 hover:bg-white/5' : 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'"
+						@click="selectLink(-1)"
+					>◄</button>
+					<button
+						title="Select next linked part or face"
+						:disabled="!canCycle"
+						class="ui-btn px-2 py-1 text-2xs rounded border transition-colors"
+						:class="canCycle ? 'border-brd text-white/70 hover:text-t1 hover:bg-white/5' : 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'"
+						@click="selectLink(1)"
+					>►</button>
+					<button
+						title="Link selected objects (Phase 3 — perms)"
+						disabled
+						class="ui-btn flex-1 px-2 py-1 text-2xs rounded border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
+					>Link</button>
+					<button
+						title="Unlink selected object (Phase 3 — perms)"
+						disabled
+						class="ui-btn flex-1 px-2 py-1 text-2xs rounded border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
+					>Unlink</button>
+					<button
+						title="More info (Phase 3)"
+						disabled
+						class="ui-btn ml-auto px-2 py-1 text-2xs rounded border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
+					>More info</button>
+				</div>
+				<div class="text-2xs text-white/60 font-mono space-y-0.5">
+					<div v-show="ui.editLinked">Link number: <span class="text-t1">{{ linkNumber }}</span></div>
+					<div>{{ objectsSelected }} object{{ objectsSelected === 1 ? '' : 's' }} selected, land impact <span class="text-t1">{{ landImpact }}</span></div>
+					<div>Remaining capacity <span class="text-t1">{{ remainingCapacity }}</span></div>
+				</div>
 			</div>
 
 			<!-- Tab strip -->

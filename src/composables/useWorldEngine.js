@@ -531,8 +531,12 @@ export function useWorldEngine(canvasRef) {
 				let m = hits[0].object
 				while (m && m.userData?.localId === undefined) m = m.parent
 				if (m?.userData?.localId != null) {
-					// WHY: stopSelSyncWatch reacts to editObjectId and emits the ObjectSelect.
-					uiStore.editObjectId = m.userData.localId
+					// WHY: FS parity — unless "Edit linked" is on, a click selects the whole linkset
+					// (walk up to the root prim). positionGizmo() bboxes the root mesh, which contains
+					// all linked children, so the gizmo centers on the entire object. stopSelSyncWatch
+					// reacts to editObjectId and emits the ObjectSelect.
+					const clicked = m.userData.localId
+					uiStore.editObjectId = uiStore.editLinked ? clicked : resolveRootLocalId(clicked)
 					return
 				}
 			}
@@ -1126,6 +1130,22 @@ export function useWorldEngine(canvasRef) {
 			root.add(_buildArrow(_GIZMO_Y, Z)); root.add(_buildArrow(_GIZMO_Y, Z.clone().negate()))
 		}
 		return root
+	}
+
+	// WHY: Walk the parentId chain (child → root) so a click selects the whole linkset, FS-style.
+	// SL linksets are normally one level deep, but follow the chain in case of nested parents.
+	// Stops if the parent mesh isn't loaded yet (selects the highest loaded ancestor). Guarded
+	// against cycles via the seen set.
+	function resolveRootLocalId(localId) {
+		let id = localId
+		const seen = new Set()
+		while (id != null && !seen.has(id)) {
+			seen.add(id)
+			const pid = meshMap.get(id)?.userData?.parentId ?? 0
+			if (!pid || !meshMap.has(pid)) break
+			id = pid
+		}
+		return id
 	}
 
 	function refreshGizmo() {
