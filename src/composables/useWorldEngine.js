@@ -15,6 +15,7 @@ import { useTeleport } from './useTeleport.js'
 import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
+import { getMesh } from './useMeshFetch.js'
 import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -1316,6 +1317,49 @@ export function useWorldEngine(canvasRef) {
 				: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			if (hasMaterial && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+
+			// ── Mesh geometry: replace the cube with the real decoded mesh ──────
+			// WHY: server decodes the mesh asset to submesh arrays (SL-space verts). Convert SL→Three
+			// (swap Y/Z) like buildPrimGeometry's output, flip triangle winding (the axis swap flips
+			// handedness), concatenate submeshes into one geometry (one material group each), then
+			// bakePrimScale by obj.scale exactly as the cube path does.
+			if (!isAvatar && !obj._placeholder && obj.meshId) {
+				getMesh(obj.meshId).then(subs => {
+					if (!subs || !subs.length || !mesh.parent || mesh.material !== mat) return
+					let vTotal = 0, iTotal = 0
+					for (const s of subs) { vTotal += s.positions.length / 3; iTotal += s.indices.length }
+					const pos = new Float32Array(vTotal * 3), nor = new Float32Array(vTotal * 3), uv = new Float32Array(vTotal * 2)
+					const idx = new Uint32Array(iTotal)
+					let vOff = 0, iOff = 0
+					const g = new THREE.BufferGeometry()
+					for (let gi = 0; gi < subs.length; gi++) {
+						const s = subs[gi]
+						const v = s.positions.length / 3
+						for (let k = 0; k < v; k++) {
+							// SL→Three matches slToThree(x,y,z)=(x,z,-y) — a pure 90° rotation about X
+							// (det +1), so handedness is preserved and winding stays as-is.
+							pos[(vOff + k) * 3 + 0] = s.positions[k * 3 + 0]    // x
+							pos[(vOff + k) * 3 + 1] = s.positions[k * 3 + 2]    // y ← SL z
+							pos[(vOff + k) * 3 + 2] = -s.positions[k * 3 + 1]   // z ← -SL y
+							nor[(vOff + k) * 3 + 0] = s.normals[k * 3 + 0]
+							nor[(vOff + k) * 3 + 1] = s.normals[k * 3 + 2]
+							nor[(vOff + k) * 3 + 2] = -s.normals[k * 3 + 1]
+							uv[(vOff + k) * 2 + 0] = s.uvs[k * 2 + 0]
+							uv[(vOff + k) * 2 + 1] = s.uvs[k * 2 + 1]
+						}
+						for (let t = 0; t < s.indices.length; t++) idx[iOff + t] = s.indices[t] + vOff
+						g.addGroup(iOff, s.indices.length, gi)
+						vOff += v; iOff += s.indices.length
+					}
+					g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+					g.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
+					g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+					g.setIndex(new THREE.BufferAttribute(idx, 1))
+					const old = mesh.geometry
+					mesh.geometry = bakePrimScale(g, obj.scale)
+					old.dispose()
+				})
+			}
 
 			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
 			// already full-bright). Glow adds emissive bloom-ish lift; fullbright ignores lighting.

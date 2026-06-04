@@ -1,0 +1,83 @@
+// server/lib/meshDecode.ts — decode SL/OpenSim mesh assets (application/vnd.ll.mesh).
+// Layout: an LLSD-binary header map { <lod>: {offset,size}, … } followed by data blocks. Each LOD
+// block is zlib-deflated LLSD-binary: an array of submeshes (Position/Normal/TexCoord0 as U16-
+// quantized blobs un-quantized via *Domain, TriangleList as U16 indices). Offsets in the header are
+// relative to headerSize (the byte just past the header). Verified against a captured real asset.
+import { parseLLSDBinary } from './llsd'
+import { inflateSync, inflateRawSync } from 'zlib'
+
+export interface LodRef { offset: number; size: number }
+export interface MeshHeader {
+	headerSize: number
+	lods: { high?: LodRef; medium?: LodRef; low?: LodRef; lowest?: LodRef }
+}
+export interface Submesh {
+	positions: Float32Array
+	normals: Float32Array
+	uvs: Float32Array
+	indices: Uint16Array
+}
+
+/** Parse the mesh asset header. Offsets in the header are relative to headerSize (end of header). */
+export function parseMeshHeader(buf: Buffer): MeshHeader {
+	const { value, end } = parseLLSDBinary(buf, 0)
+	const m = (value && typeof value === 'object') ? value as Record<string, any> : {}
+	const ref = (k: string): LodRef | undefined => {
+		const r = m[k]
+		return r && typeof r === 'object' && typeof r.offset === 'number' && typeof r.size === 'number'
+			? { offset: r.offset, size: r.size } : undefined
+	}
+	return {
+		headerSize: end,
+		lods: { high: ref('high_lod'), medium: ref('medium_lod'), low: ref('low_lod'), lowest: ref('lowest_lod') },
+	}
+}
+
+function inflateLod(slice: Buffer): Buffer {
+	try { return inflateSync(slice) } catch { return inflateRawSync(slice) }
+}
+
+// Un-quantize a U16 (0..65535) to [lo, hi].
+const dequant = (u: number, lo: number, hi: number) => lo + (u / 65535) * (hi - lo)
+
+/** Decode one LOD block into submesh geometry arrays (positions/normals/uvs un-quantized). */
+export function decodeMeshLOD(buf: Buffer, headerSize: number, lod: LodRef): Submesh[] {
+	const slice = buf.subarray(headerSize + lod.offset, headerSize + lod.offset + lod.size)
+	const inflated = inflateLod(slice)
+	const { value } = parseLLSDBinary(inflated, 0)
+	const arr = Array.isArray(value) ? value : []
+	const out: Submesh[] = []
+	for (const sm of arr) {
+		if (!sm || typeof sm !== 'object' || sm.NoGeometry) continue
+		const posBuf = sm.Position, normBuf = sm.Normal, uvBuf = sm.TexCoord0, idxBuf = sm.TriangleList
+		if (!Buffer.isBuffer(posBuf) || !Buffer.isBuffer(idxBuf)) continue
+		// Sanitize domains: a non-finite Min/Max would make every un-quantized coord NaN → NaN
+		// BufferGeometry ("Computed radius is NaN"). Fall back to a unit cube / 0..1 UV.
+		const fin = (a: any, def: number[]) => (Array.isArray(a) && a.length >= def.length && a.every(Number.isFinite)) ? a : def
+		const pd = { Min: fin(sm.PositionDomain?.Min, [-0.5, -0.5, -0.5]), Max: fin(sm.PositionDomain?.Max, [0.5, 0.5, 0.5]) }
+		const tcd = { Min: fin(sm.TexCoord0Domain?.Min, [0, 0]), Max: fin(sm.TexCoord0Domain?.Max, [1, 1]) }
+		const vCount = Math.floor(posBuf.length / 6)
+		const positions = new Float32Array(vCount * 3)
+		const normals = new Float32Array(vCount * 3)
+		const uvs = new Float32Array(vCount * 2)
+		for (let v = 0; v < vCount; v++) {
+			positions[v * 3 + 0] = dequant(posBuf.readUInt16LE(v * 6 + 0), pd.Min[0], pd.Max[0])
+			positions[v * 3 + 1] = dequant(posBuf.readUInt16LE(v * 6 + 2), pd.Min[1], pd.Max[1])
+			positions[v * 3 + 2] = dequant(posBuf.readUInt16LE(v * 6 + 4), pd.Min[2], pd.Max[2])
+			if (Buffer.isBuffer(normBuf) && normBuf.length >= v * 6 + 6) {
+				normals[v * 3 + 0] = dequant(normBuf.readUInt16LE(v * 6 + 0), -1, 1)
+				normals[v * 3 + 1] = dequant(normBuf.readUInt16LE(v * 6 + 2), -1, 1)
+				normals[v * 3 + 2] = dequant(normBuf.readUInt16LE(v * 6 + 4), -1, 1)
+			}
+			if (Buffer.isBuffer(uvBuf) && uvBuf.length >= v * 4 + 4) {
+				uvs[v * 2 + 0] = dequant(uvBuf.readUInt16LE(v * 4 + 0), tcd.Min[0], tcd.Max[0])
+				uvs[v * 2 + 1] = dequant(uvBuf.readUInt16LE(v * 4 + 2), tcd.Min[1], tcd.Max[1])
+			}
+		}
+		const triCount = Math.floor(idxBuf.length / 2)
+		const indices = new Uint16Array(triCount)
+		for (let i = 0; i < triCount; i++) indices[i] = idxBuf.readUInt16LE(i * 2)
+		out.push({ positions, normals, uvs, indices })
+	}
+	return out
+}

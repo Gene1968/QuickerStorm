@@ -929,6 +929,13 @@ export function parseMaterialsExtraParam(buf: Buffer, start: number, len: number
   return faces
 }
 
+// ExtraParam type 0x30 (Sculpt/Mesh): [sculptTexture UUID 16B][sculptType U8]. sculptType & 0x07:
+// 1 sphere, 2 torus, 3 plane, 4 cylinder, 5 MESH. For mesh, the UUID is the mesh asset id.
+export function parseSculptExtraParam(buf: Buffer, start: number, len: number): { uuid: string; sculptType: number } | null {
+  if (len < 17) return null
+  return { uuid: bytesToUuid(buf, start), sculptType: buf[start + 16] }
+}
+
 export interface PrimShape {
   pathCurve:        number  // U8 — 16=line/box, 32=circle, 33=half-circle (sphere top), etc.
   profileCurve:     number  // U8 — low nibble: 0=circle, 1=square, 2=isoTri, 3=eqTri, 4=rightTri, 5=halfCircle
@@ -973,6 +980,8 @@ export interface ObjectData {
   defaultMaterialId?: string            // TE legacy LLMaterial UUID (RenderMaterials cap)
   defaultPbrMaterial?: string           // GLTF PBR material asset UUID (ExtraParam 0x80, default face)
   pbrMaterials?:     Array<string | null>  // per-face GLTF PBR material asset UUIDs
+  meshId?:          string              // mesh asset UUID (Sculpt ExtraParam 0x30, sculptType&7==5)
+  sculptType?:      number              // raw sculpt type byte (1 sphere..4 cylinder, 5 mesh)
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
 }
@@ -1040,6 +1049,8 @@ export function decodeObjectUpdateCompressed(
       let shape: PrimShape | undefined
       let te: TEFields = {}
       let pbrFaces: Record<number, string> = {}
+      let meshId: string | undefined
+      let sculptType: number | undefined
       let text = ''
       let textColor: [number, number, number, number] | undefined
       try {
@@ -1070,6 +1081,10 @@ export function decodeObjectUpdateCompressed(
               const epType = buf.readUInt16LE(off); off += 2
               const epSize = buf.readUInt32LE(off); off += 4
               if (epType === 0x80 && off + epSize <= dataEnd) pbrFaces = parseMaterialsExtraParam(buf, off, epSize)
+              else if (epType === 0x30 && off + epSize <= dataEnd) {
+                const sc = parseSculptExtraParam(buf, off, epSize)
+                if (sc) { sculptType = sc.sculptType; if ((sc.sculptType & 0x07) === 5) meshId = sc.uuid }
+              }
               off += epSize
             }
           }
@@ -1136,6 +1151,8 @@ export function decodeObjectUpdateCompressed(
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
         ...(defaultPbr ? { defaultPbrMaterial: defaultPbr } : {}),
         ...(pbrKeys.length ? { pbrMaterials: Object.assign(new Array(32).fill(null), Object.fromEntries(Object.entries(pbrFaces))) } : {}),
+        ...(meshId ? { meshId } : {}),
+        ...(sculptType != null ? { sculptType } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
@@ -1326,6 +1343,8 @@ export function decodeObjectUpdate(
       let defaultTexture: string | undefined
       let faceTextures: Array<string | null> | undefined
       let pbrFaces: Record<number, string> = {}
+      let meshId: string | undefined
+      let sculptType: number | undefined
       try {
         const dtex = bytesToUuid(buf, off)
         if (dtex !== ZERO_UUID) defaultTexture = dtex
@@ -1430,6 +1449,10 @@ export function decodeObjectUpdate(
               const t = buf.readUInt16LE(q); q += 2
               const sz = buf.readUInt32LE(q); q += 4
               if (t === 0x80 && q + sz <= epEnd) pbrFaces = parseMaterialsExtraParam(buf, q, sz)
+              else if (t === 0x30 && q + sz <= epEnd) {
+                const sc = parseSculptExtraParam(buf, q, sz)
+                if (sc) { sculptType = sc.sculptType; if ((sc.sculptType & 0x07) === 5) meshId = sc.uuid }
+              }
               q += sz
             }
           }
@@ -1457,6 +1480,8 @@ export function decodeObjectUpdate(
         ...(defaultTexture ? { defaultTexture } : {}),
         ...(faceTextures ? { faceTextures } : {}),
         ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
+        ...(meshId ? { meshId } : {}),
+        ...(sculptType != null ? { sculptType } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
