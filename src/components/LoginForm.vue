@@ -15,6 +15,7 @@ const password		= ref('')
 const destType		= ref('last')// 'last' | 'home' | 'region'
 const destRegion	= ref('')	// region name when destType === 'region'
 const error			= ref('')
+const submitting	= ref(false)
 
 // WHY: Default true — auto-reconnect on reload is expected behaviour for a viewer.
 // User can uncheck to opt out.
@@ -105,7 +106,9 @@ const destination = computed(() => {
 watch(destType, v => { if (v !== 'region') destRegion.value = '' })
 
 async function submit() {
+	if (submitting.value) return
 	error.value = ''
+	submitting.value = true
 	if (destType.value === 'region' && destRegion.value.trim()) {
 		saveRecent(gridStore.selectedNick, destRegion.value.trim())
 	}
@@ -120,6 +123,7 @@ async function submit() {
 		if (remember) accountsStore.addOrUpdate(user, grid, pass)
 	} catch (e) {
 		error.value = e.message
+		submitting.value = false
 	}
 }
 </script>
@@ -239,10 +243,10 @@ async function submit() {
 		<button
 			type="button"
 			class="px-4 py-2 rounded bg-accent2 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
-			:disabled="gridStore.loginState === 'loading'"
+			:disabled="submitting"
 			@click="submit"
 		>
-			{{ gridStore.loginState === 'loading' ? 'Connecting…' : 'Log In' }}
+			{{ submitting ? 'Connecting…' : 'Log In' }}
 		</button>
 
 	</div>
