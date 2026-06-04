@@ -12,6 +12,7 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
+import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -132,9 +133,9 @@ const CTRL_FLY       = 0x2000  // sustained fly state
 // NOTE: Always-run is NOT a ControlFlags bit. It is sent via SetAlwaysRun (Low #21).
 // Bit 20 (0x00100000) is AGENT_CONTROL_NUDGE_AT_NEG and would make the sim auto-walk backward.
 
-const FOLLOW_DIST   = 1.0   // metres behind avatar (third-person)
-const FOLLOW_HEIGHT = 2.0   // metres above avatar feet
-const LOOKAT_Y      = 1.25   // metres above avatar feet for camera lookAt (lower = avatar lower in frame)
+const FOLLOW_DIST   = 2.75  // meters behind avatar (third-person)
+const FOLLOW_HEIGHT = 2.35  // meters above avatar feet
+const LOOKAT_Y      = 1.85  // meters above avatar feet for camera lookAt (lower = avatar lower in frame)
 
 export function useWorldEngine(canvasRef) {
 	const worldStore        = useWorldStore()
@@ -217,13 +218,19 @@ export function useWorldEngine(canvasRef) {
 	// WHY: simple per-session vertical velocity for gravity. SL standard g ≈ 9.8 m/s².
 	// Reset on fly/teleport. Terminal velocity caps fall so jumps off cliffs don't accelerate forever.
 	let vertVel = 0
+	// WHY: after landing, the sim still has the avatar in-air for ~RTT ms. TerseUpdates during
+	// that window can have d > 5m (arc height + any XY drift), triggering a Z snap that causes a
+	// single post-landing bounce. Grace period keeps airborne suppression active until those
+	// stale packets flush, even though vertVel just became 0.
+	let landingGraceTimer = 0
+	const LANDING_GRACE = 0.4  // seconds — covers ~200ms RTT with margin
 	const GRAVITY       = 9.8   // m/s²
 	const TERMINAL_VEL  = 50    // m/s downward cap
 	const FOOT_CLEAR    = 1.0   // m — capsule centre above terrain surface when grounded
-	// WHY: SL jump impulse — peak height = JUMP_VEL² / (2·GRAVITY). 5.5 m/s → ~1.54m peak,
-	// matching SL physics. FS goes higher (~2m) because it uses a slightly larger force;
-	// 5.5 is the OpenSim canonical value. Edge-triggered: applied once on E keydown.
-	const JUMP_VEL      = 5.5
+	// WHY: SL jump impulse — peak height = JUMP_VEL² / (2·GRAVITY). 9.0 m/s → ~4.1m peak,
+	// ~1.84s total duration. Matches Firestorm's observed ~4m jump height. Edge-triggered:
+	// applied once on E keydown.
+	const JUMP_VEL      = 9.0
 	const GROUNDED_EPS  = 0.2   // m — foot within this much of groundZ counts as grounded
 
 	// WHY: Bilinear-interpolated terrain height at SL coord (slX, slY). Stride matches
@@ -287,6 +294,11 @@ export function useWorldEngine(canvasRef) {
 	const CAM_POS_RATE  = 12  // ~0.06s half-life
 	const CAM_RETURN_RATE = 4 // gentle glide-back when exiting alt-orbit far away (~0.8s)
 	const CAM_LOOK_RATE = 8   // ~0.09s half-life — slower glide on rotation
+	// WHY: tight rate for both position and lookAt while airborne. The normal distToTarget
+	// boost is designed for horizontal orbit-exit, not vertical jumps — applying it during
+	// a parabola desynchronises position and lookAt rates and creates the post-landing bounce.
+	// A single tight rate keeps camera and view angle in lockstep through the arc.
+	const CAM_AIR_RATE  = 25  // snappy airborne tracking, ~0.028s half-life
 
 	// Alt-orbit (third-person camera): alt+drag orbits around a pivot
 	let isAltOrbit  = false
@@ -612,7 +624,7 @@ export function useWorldEngine(canvasRef) {
 		} else if (avatarSLPos) {
 			// WHY: Third-person — scroll zooms follow distance, not camera position.
 			// Camera position is driven by avatarSLPos + followDist in animate().
-			followDist = Math.max(1.5, Math.min(20, followDist - delta))
+			followDist = Math.max(2.0, Math.min(20, followDist - delta))
 		} else {
 			// Explore mode (no avatar yet): scroll moves camera forward
 			const spd = CAM_SPEED * 0.4
@@ -1290,6 +1302,29 @@ export function useWorldEngine(canvasRef) {
 			const primColor = obj._placeholder ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
 			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			mesh = new THREE.Mesh(geo, mat)
+
+			// ── Slice 1: real prim texture ──────────────────────────────────────
+			// WHY: TE default texture UUID (decoded server-side) → fetch via asset cap (server
+			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
+			// own colors rather than being tinted by the default-color fallback. Per-face textures
+			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
+			if (!isAvatar && !obj._placeholder && obj.defaultTexture) {
+				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
+				const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
+					? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
+					: null
+				getTexture(obj.defaultTexture, xform).then(tex => {
+					// Guard: region teardown may have disposed this mesh before the texture arrives.
+					if (tex && mesh.parent && mesh.material === mat) {
+						mat.map = tex
+						// SL renders texture × color tint. Keep the TE tint if present (else white) so a
+						// tinted prim with a plain texture isn't forced white.
+						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+						else mat.color.set(0xffffff)
+						mat.needsUpdate = true
+					}
+				})
+			}
 			mesh.userData.localId  = obj.localId
 			mesh.userData.parentId = obj.parentId ?? 0
 
@@ -1628,7 +1663,16 @@ export function useWorldEngine(canvasRef) {
 					// otherwise the ease toward the lagged sim pos re-introduces a pull the instant
 					// the key is released, mid-coast. Once fully stopped, settle gently.
 					const movingNow = MOVE_KEYS.some(k => keys[k]) || drVelX !== 0 || drVelY !== 0
-					const blend = d > 5 ? 1.0 : (movingNow ? 0 : 0.15)
+					// WHY: while airborne (vertVel !== 0) local physics owns the full arc — the sim's
+					// TerseUpdate position lags by ~RTT. XY corrections during flight cause horizontal
+					// shake; Z corrections cause the post-landing re-bounce (sim still shows avatar
+					// in-air → d can exceed 5m → snap to mid-air position → gravity pulls back down →
+					// next TerseUpdate snaps again, 2-4 times). Suppress all corrections while airborne;
+					// only hard-snap for genuine teleport-level distances (> 15m).
+					// landingGraceTimer extends the suppression for ~0.4s after touchdown so stale
+					// in-flight TerseUpdates from the jump arc can't trigger the single post-landing bounce.
+					const airborne = !isFlying && (vertVel !== 0 || landingGraceTimer > 0)
+					const blend = airborne ? (d > 15 ? 1.0 : 0) : (d > 5 ? 1.0 : (movingNow ? 0 : 0.15))
 					avatarSLPos[0] += (p[0] - avatarSLPos[0]) * blend
 					avatarSLPos[1] += (p[1] - avatarSLPos[1]) * blend
 					// WHY: on the ground, gravity owns Z — it clamps to terrain every frame. Blending
@@ -1724,6 +1768,7 @@ export function useWorldEngine(canvasRef) {
 		avatarSLPos = null
 		ownAvatarLocalId = null
 		vertVel = 0
+		landingGraceTimer = 0
 		cameraSnapRequested = true
 		// WHY: Handle format is (X_meters << 32) | Y_meters — upper 32 = X, lower 32 = Y.
 		// JSON serialised as string from server (bigint) — convert via BigInt for U32 splits.
@@ -2157,9 +2202,16 @@ export function useWorldEngine(canvasRef) {
 			// bit so the camera keeps pace with a walking avatar — BUT during an orbit-exit
 			// glide-back that boost is suppressed (a 50m gap × 1.5 → instant snap) in favour
 			// of the gentle CAM_RETURN_RATE so the camera eases home over ~0.8s.
-			const posRate = camReturning
-				? CAM_RETURN_RATE
-				: (isMoving ? CAM_POS_RATE + distToTarget * 1.5 : CAM_POS_RATE)
+			// WHY isAirborne: when the avatar is mid-jump, use CAM_AIR_RATE for BOTH position
+			// and lookAt so they stay in lockstep. The distToTarget boost is designed for
+			// horizontal orbit-exit; applying it vertically desyncs position from lookAt and
+			// produces the post-landing camera bounce.
+			const isAirborne = vertVel !== 0
+			const posRate = isAirborne
+				? CAM_AIR_RATE
+				: camReturning
+					? CAM_RETURN_RATE
+					: (isMoving ? CAM_POS_RATE + distToTarget * 1.5 : CAM_POS_RATE)
 			const posF = snap ? 1.0 : 1 - Math.exp(-posRate * dt)
 			camera.position.lerp(target, posF)
 			// WHY: lookAt at LOOKAT_Y above avatar feet. Camera at FOLLOW_HEIGHT looking
@@ -2168,7 +2220,7 @@ export function useWorldEngine(canvasRef) {
 			// view angle every frame (the main cause of the scene bobbing up/down).
 			const lookTarget = _v3a.set(t.x, t.y + LOOKAT_Y, t.z)
 			if (snap || !camLookInit) { camLook.copy(lookTarget); camLookInit = true }
-			else camLook.lerp(lookTarget, 1 - Math.exp(-(camReturning ? CAM_RETURN_RATE : CAM_LOOK_RATE) * dt))
+			else camLook.lerp(lookTarget, 1 - Math.exp(-(isAirborne ? CAM_AIR_RATE : camReturning ? CAM_RETURN_RATE : CAM_LOOK_RATE) * dt))
 			camera.lookAt(camLook)
 
 			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
@@ -2267,7 +2319,12 @@ export function useWorldEngine(canvasRef) {
 				// killed the impulse on the first frame and the jump never rose.
 				vertVel = Math.max(vertVel - GRAVITY * dt, -TERMINAL_VEL)
 				avatarSLPos[2] += vertVel * dt
-				if (avatarSLPos[2] < groundZ) { avatarSLPos[2] = groundZ; vertVel = 0 }
+				if (avatarSLPos[2] < groundZ) {
+					avatarSLPos[2] = groundZ
+					if (vertVel < 0) landingGraceTimer = LANDING_GRACE  // just touched down
+					vertVel = 0
+				}
+				landingGraceTimer = Math.max(0, landingGraceTimer - dt)
 			}
 			const ownMesh = meshMap.get(ownAvatarLocalId)
 			if (ownMesh) {
@@ -2388,6 +2445,7 @@ export function useWorldEngine(canvasRef) {
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
+		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()
 		worldStore.clearAll()
 	})

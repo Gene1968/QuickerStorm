@@ -1,0 +1,102 @@
+// src/lib/textureCache.js — persistent (IndexedDB) cache of decoded textures, keyed by asset UUID.
+// WHY: textures are immutable by UUID and a region pulls hundreds-to-thousands of them. Without
+// persistence every reload/relogin re-fetches + re-transcodes the whole scene (slow + hammers the
+// sim). This is our portable equivalent of Firestorm's on-disk texture cache: store the PNG data
+// URL by UUID, survive reloads, evict least-recently-fetched once a configurable size cap is hit.
+// (A second, server-side tier can come later once self-hosted on VPS/NAS.)
+const DB_NAME    = 'qs-tex'
+const DB_VERSION = 1
+const STORE      = 'tex'      // { uuid, url, bytes, lastUsed }
+const META       = 'meta'     // { k:'stats', totalBytes }
+
+// Default cap (~512 MB of PNG data URLs). Tunable; a real preference can drive this later.
+export const TEX_CACHE_CAP_BYTES = 512 * 1024 * 1024
+
+let _db = null
+
+function openDb() {
+	if (_db) return Promise.resolve(_db)
+	return new Promise((resolve, reject) => {
+		const req = indexedDB.open(DB_NAME, DB_VERSION)
+		req.onupgradeneeded = (e) => {
+			const db = e.target.result
+			const s = db.createObjectStore(STORE, { keyPath: 'uuid' })
+			s.createIndex('lastUsed', 'lastUsed')
+			db.createObjectStore(META, { keyPath: 'k' })
+		}
+		req.onsuccess = (e) => { _db = e.target.result; resolve(_db) }
+		req.onerror   = () => reject(req.error)
+	})
+}
+
+/**
+ * Pure LRU selection: given cache entries and a cap, return the uuids to evict (oldest first)
+ * until the total fits. Exported so the policy is unit-testable without IndexedDB.
+ */
+export function planEvictions(entries, capBytes) {
+	let total = entries.reduce((s, e) => s + e.bytes, 0)
+	if (total <= capBytes) return []
+	const evict = []
+	for (const e of [...entries].sort((a, b) => a.lastUsed - b.lastUsed)) {
+		if (total <= capBytes) break
+		evict.push(e.uuid)
+		total -= e.bytes
+	}
+	return evict
+}
+
+/** Look up a cached texture data URL by UUID. Touches lastUsed (LRU). Returns null on miss. */
+export async function texCacheGet(uuid, now = Date.now()) {
+	try {
+		const db = await openDb()
+		return await new Promise((resolve, reject) => {
+			const tx  = db.transaction(STORE, 'readwrite')
+			const st  = tx.objectStore(STORE)
+			const req = st.get(uuid)
+			req.onsuccess = () => {
+				const rec = req.result
+				if (rec) { rec.lastUsed = now; st.put(rec) }
+				resolve(rec ? rec.url : null)
+			}
+			req.onerror = () => reject(req.error)
+		})
+	} catch (e) {
+		console.warn('[TexCache] get failed:', e)
+		return null
+	}
+}
+
+/** Persist a texture data URL by UUID, then evict LRU entries if over the size cap. */
+export async function texCachePut(uuid, url, now = Date.now()) {
+	try {
+		const db = await openDb()
+		const bytes = url.length
+		await new Promise((resolve, reject) => {
+			const tx = db.transaction([STORE, META], 'readwrite')
+			const st = tx.objectStore(STORE)
+			const mt = tx.objectStore(META)
+			st.put({ uuid, url, bytes, lastUsed: now })
+			const mreq = mt.get('stats')
+			mreq.onsuccess = () => {
+				let total = (mreq.result?.totalBytes ?? 0) + bytes
+				if (total <= TEX_CACHE_CAP_BYTES) {
+					mt.put({ k: 'stats', totalBytes: total })
+					return
+				}
+				// Over cap → walk the lastUsed index oldest-first, deleting until under cap. Skip the
+				// row we just inserted (newest) so a single oversized put can't evict itself.
+				const cur = st.index('lastUsed').openCursor()
+				cur.onsuccess = () => {
+					const c = cur.result
+					if (!c || total <= TEX_CACHE_CAP_BYTES) { mt.put({ k: 'stats', totalBytes: total }); return }
+					if (c.value.uuid !== uuid) { total -= c.value.bytes; c.delete() }
+					c.continue()
+				}
+			}
+			tx.oncomplete = resolve
+			tx.onerror    = () => reject(tx.error)
+		})
+	} catch (e) {
+		console.warn('[TexCache] put failed:', e)
+	}
+}

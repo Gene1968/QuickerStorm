@@ -125,7 +125,7 @@ async function submit() {
 </script>
 
 <template>
-	<div class="flex flex-col gap-3">
+	<form class="flex flex-col gap-3" autocomplete="off" @submit.prevent>
 
 		<div class="relative">
 			<input
@@ -245,5 +245,5 @@ async function submit() {
 			{{ gridStore.loginState === 'loading' ? 'Connecting…' : 'Log In' }}
 		</button>
 
-	</div>
+	</form>
 </template>

@@ -833,6 +833,72 @@ function readFaceBitfield(buf: Buffer, off: number, end: number): { bits: number
   return { bits, next: cur }
 }
 
+// Decode the color + texture fields of a TextureEntry blob spanning [start, end).
+// WHY: shared by the full ObjectUpdate and ObjectUpdateCompressed decoders. Layout:
+//   defaultTex(16B) → [faceBitfield + texUUID]* → defaultColor(4B) → [faceBitfield + RGBA]* → …
+// Colors are stored inverted on the wire (actual = (255-byte)/255). Best-effort: a truncated blob
+// yields whatever decoded so far.
+interface TEFields {
+  defaultColor?:    [number, number, number, number]
+  faceColors?:      Array<[number, number, number, number] | null>
+  defaultTexture?:  string
+  faceTextures?:    Array<string | null>
+  defaultRepeats?:  [number, number]   // scale_s / scale_t (UV tiling); SL default 1,1
+  defaultOffset?:   [number, number]   // offset_s / offset_t; SL default 0,0
+  defaultRotation?: number             // radians; SL default 0
+}
+
+// Read one TextureEntry field: a default value, then [faceBitfield + value]* overrides, then the
+// 0x00 terminator. Returns the default plus a per-face array (or null) and the next read offset.
+// WHY generic: a TE packs 7+ such fields back-to-back (texture, color, scaleS, scaleT, offsetS,
+// offsetT, rotation, …). Each must be fully consumed — including its overrides — to reach the next.
+function readTEField<T>(
+  buf: Buffer, p: number, end: number, size: number, read: (b: Buffer, o: number) => T,
+): { def: T; faces: Array<T | null> | null; next: number } {
+  if (p + size > end) return { def: read(buf, p), faces: null, next: end }
+  const def = read(buf, p); p += size
+  let faces: Array<T | null> | null = null
+  while (p < end) {
+    const { bits, next } = readFaceBitfield(buf, p, end); p = next
+    if (bits === 0) break
+    if (p + size > end) break
+    const v = read(buf, p); p += size
+    if (!faces) faces = new Array(32).fill(null)
+    for (let f = 0; f < 32; f++) if (bits & (1 << f)) faces[f] = v
+  }
+  return { def, faces, next: p }
+}
+
+function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFields {
+  const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
+  const res: TEFields = {}
+  const rUuid  = (b: Buffer, o: number) => bytesToUuid(b, o)
+  const rColor = (b: Buffer, o: number): [number, number, number, number] =>
+    [(255 - b[o]) / 255, (255 - b[o + 1]) / 255, (255 - b[o + 2]) / 255, (255 - b[o + 3]) / 255]
+  const rF32   = (b: Buffer, o: number) => b.readFloatLE(o)
+  const rOff   = (b: Buffer, o: number) => b.readInt16LE(o) / 0x7fff           // -1..1
+  const rRot   = (b: Buffer, o: number) => (b.readInt16LE(o) / 0x8000) * Math.PI * 2
+  try {
+    let p = start
+    const tex    = readTEField(buf, p, end, 16, rUuid);  p = tex.next
+    const color  = readTEField(buf, p, end, 4,  rColor); p = color.next
+    const scaleS = readTEField(buf, p, end, 4,  rF32);   p = scaleS.next
+    const scaleT = readTEField(buf, p, end, 4,  rF32);   p = scaleT.next
+    const offS   = readTEField(buf, p, end, 2,  rOff);   p = offS.next
+    const offT   = readTEField(buf, p, end, 2,  rOff);   p = offT.next
+    const rot    = readTEField(buf, p, end, 2,  rRot);   p = rot.next
+
+    if (tex.def !== ZERO_UUID) res.defaultTexture = tex.def
+    if (tex.faces) res.faceTextures = tex.faces.map(t => (t && t !== ZERO_UUID ? t : null))
+    res.defaultColor = color.def
+    if (color.faces) res.faceColors = color.faces
+    res.defaultRepeats  = [scaleS.def, scaleT.def]
+    res.defaultOffset   = [offS.def, offT.def]
+    res.defaultRotation = rot.def
+  } catch { /* best-effort: partial TE still yields texture/color */ }
+  return res
+}
+
 export interface PrimShape {
   pathCurve:        number  // U8 — 16=line/box, 32=circle, 33=half-circle (sphere top), etc.
   profileCurve:     number  // U8 — low nibble: 0=circle, 1=square, 2=isoTri, 3=eqTri, 4=rightTri, 5=halfCircle
@@ -866,6 +932,11 @@ export interface ObjectData {
   shape?:        PrimShape
   defaultColor?: [number, number, number, number]   // RGBA 0..1 from TextureEntry default
   faceColors?:   Array<[number, number, number, number] | null>  // length up to 32; null where face uses defaultColor
+  defaultTexture?: string   // TextureEntry default face texture UUID (omitted if null UUID)
+  faceTextures?:  Array<string | null>  // length up to 32; per-face texture UUID override; null = use default
+  defaultRepeats?:  [number, number]    // TE scale_s/scale_t (UV tiling); SL default 1,1
+  defaultOffset?:   [number, number]    // TE offset_s/offset_t; SL default 0,0
+  defaultRotation?: number              // TE rotation in radians; SL default 0
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
 }
@@ -923,16 +994,83 @@ export function decodeObjectUpdateCompressed(
       // 16-byte Owner UUID, so ParentID was read from inside Owner → children got a garbage parentId,
       // were treated as roots, and rendered at their parent-local offset as region coords → underwater
       // near origin. Correct bits: 0x80 = HasAngularVelocity (Omega), 0x20 = HasParent.
+      // === Conditional zone → ExtraParams → shape → TextureEntry ===
+      // Field order + CompressedFlags bits are authoritative from OpenSim's encoder
+      // (LLClientView.cs CreateCompressedUpdateBlockZC) and verified against captured packets.
+      // CompressedFlags: 0x01 ScratchPad, 0x02 Tree, 0x04 HasText, 0x08 ParticlesLegacy,
+      // 0x10 HasSound, 0x20 HasParent, 0x40 TextureAnim, 0x80 AngularVelocity,
+      // 0x100 NameValues, 0x200 MediaURL, 0x400 ParticlesNew.
       let parentId = 0
-      if (off + 4 <= dataEnd) {
+      let shape: PrimShape | undefined
+      let te: TEFields = {}
+      let text = ''
+      let textColor: [number, number, number, number] | undefined
+      try {
+        if (off + 4 > dataEnd) throw new Error('cflags OOB')
         const cflags = buf.readUInt32LE(off); off += 4
-        off += 16                       // Owner UUID — always present
-        if (cflags & 0x80) off += 12    // Omega (angular velocity)
-        if ((cflags & 0x20) && off + 4 <= dataEnd) {
-          parentId = buf.readUInt32LE(off); off += 4
+        off += 16                                    // OwnerID — always present
+        if (cflags & 0x80) off += 12                 // AngularVelocity
+        if (cflags & 0x20) { parentId = buf.readUInt32LE(off); off += 4 }  // ParentID
+        // WHY bail on these: ScratchPad/Tree/ParticlesLegacy/ParticlesNew use raw blobs with no
+        // length prefix we can trust here → skipping risks desync. Emit pos/rot/scale only (cube)
+        // for the rare prims that set them rather than mis-parse the TE of every following object.
+        const RARE = cflags & (0x01 | 0x02 | 0x08 | 0x400)
+        if (!RARE) {
+          if (cflags & 0x04) {                       // HasText: null-terminated string + RGBA
+            const ts = off; while (off < dataEnd && buf[off] !== 0) off++
+            text = buf.toString('utf8', ts, off); off++
+            if (off + 4 <= dataEnd) {
+              textColor = [(255 - buf[off]) / 255, (255 - buf[off + 1]) / 255, (255 - buf[off + 2]) / 255, (255 - buf[off + 3]) / 255]
+              off += 4
+            }
+          }
+          if (cflags & 0x200) { while (off < dataEnd && buf[off] !== 0) off++; off++ }  // MediaURL
+          // ExtraParams — always present: count U8, then [type U16, size U32, data]×count
+          if (off < dataEnd) {
+            const epCount = buf[off++]
+            for (let e = 0; e < epCount && off + 6 <= dataEnd; e++) {
+              off += 2                                // param type U16
+              const epSize = buf.readUInt32LE(off); off += 4
+              off += epSize
+            }
+          }
+          if (cflags & 0x10) off += 25                // Sound: UUID16 + gain4 + flags1 + radius4
+          if (cflags & 0x100) { while (off < dataEnd && buf[off] !== 0) off++; off++ }  // NameValue
+          // Shape block — 23 bytes. NOTE: compressed order puts profileCurve at +16 (after all
+          // path fields), UNLIKE the full ObjectUpdate layout (profileCurve at +1).
+          if (off + 23 <= dataEnd) {
+            shape = {
+              pathCurve:        buf.readUInt8(off + 0),
+              pathBegin:        buf.readUInt16LE(off + 1),
+              pathEnd:          buf.readUInt16LE(off + 3),
+              pathScaleX:       buf.readUInt8(off + 5),
+              pathScaleY:       buf.readUInt8(off + 6),
+              pathShearX:       buf.readInt8(off + 7),
+              pathShearY:       buf.readInt8(off + 8),
+              pathTwist:        buf.readInt8(off + 9),
+              pathTwistBegin:   buf.readInt8(off + 10),
+              pathRadiusOffset: buf.readInt8(off + 11),
+              pathTaperX:       buf.readInt8(off + 12),
+              pathTaperY:       buf.readInt8(off + 13),
+              pathRevolutions:  buf.readUInt8(off + 14),
+              pathSkew:         buf.readInt8(off + 15),
+              profileCurve:     buf.readUInt8(off + 16),
+              profileBegin:     buf.readUInt16LE(off + 17),
+              profileEnd:       buf.readUInt16LE(off + 19),
+              profileHollow:    buf.readUInt16LE(off + 21),
+            }
+            off += 23
+            // TextureEntry — U32 length prefix (only low 16 bits used; high word must be 0).
+            // This differs from the full ObjectUpdate, where TE uses a U16 length.
+            if (off + 4 <= dataEnd) {
+              const teLen = buf.readUInt32LE(off); off += 4
+              if (teLen > 0 && (teLen & 0xffff0000) === 0 && off + teLen <= dataEnd) {
+                te = parseTextureEntryFields(buf, off, off + teLen)
+              }
+            }
+          }
         }
-      }
-      // Skip remaining payload — conditionals + shape + TE not parsed in MVP.
+      } catch { /* best-effort: emit pos/rot/scale + whatever parsed cleanly */ }
       off = dataEnd
       // Trees/grass/particles render-skipped (same convention as full ObjectUpdate decoder).
       if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) continue
@@ -943,8 +1081,16 @@ export function decodeObjectUpdateCompressed(
         rot:   [rx, ry, rz, rw],
         nameValue: '',
         parentId,
-        // No shape → buildPrimGeometry falls back to BoxGeometry (cube). Adequate visual
-        // stand-in until full Compressed shape decode lands.
+        ...(shape ? { shape } : {}),
+        ...(te.defaultColor   ? { defaultColor:   te.defaultColor }   : {}),
+        ...(te.faceColors     ? { faceColors:     te.faceColors }     : {}),
+        ...(te.defaultTexture ? { defaultTexture: te.defaultTexture } : {}),
+        ...(te.faceTextures   ? { faceTextures:   te.faceTextures }   : {}),
+        ...(te.defaultRepeats  ? { defaultRepeats:  te.defaultRepeats }  : {}),
+        ...(te.defaultOffset   ? { defaultOffset:   te.defaultOffset }   : {}),
+        ...(te.defaultRotation != null ? { defaultRotation: te.defaultRotation } : {}),
+        ...(text ? { text } : {}),
+        ...(textColor ? { textColor } : {}),
       })
     } catch (e) {
       onError?.(`compressedObj[${i}/${count}] failOff=${off}: ${(e as Error).message}`)
@@ -1121,20 +1267,32 @@ export function decodeObjectUpdate(
       // WHY: TE colors are stored inverted (actual = (255-byte)/255) so uninitialized
       // 0xFFFFFFFF decodes to transparent black, signaling "use default."
       // Format: defaultTex(16B) → [bitfield + texUUID]* → defaultColor(4B) → [bitfield + RGBA]* → ...
-      // Skip texture UUIDs (Phase 3 asset fetch); only need default + face color.
+      // We capture the texture UUIDs (default + per-face) so the client can fetch them via the
+      // asset cap (slice 1), then continue on to default + face colors.
       if (off + 1 >= buf.length) throw new Error(`TE prefix OOB at off=${off}`)
       const _teLen = buf.readUInt16LE(off); off += 2
       _diag += ` TE=${_teLen}`
       const _teEnd = off + _teLen
+      const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
       let defaultColor: [number, number, number, number] | undefined
       let faceColors: Array<[number, number, number, number] | null> | undefined
+      let defaultTexture: string | undefined
+      let faceTextures: Array<string | null> | undefined
       try {
-        let p = off + 16  // skip default texture UUID
+        const dtex = bytesToUuid(buf, off)
+        if (dtex !== ZERO_UUID) defaultTexture = dtex
+        let p = off + 16  // past default texture UUID
         while (p < _teEnd) {
           const { bits, next } = readFaceBitfield(buf, p, _teEnd)
           p = next
           if (bits === 0) break
-          p += 16  // face texture UUID — skip (Phase 3)
+          if (p + 16 > _teEnd) break
+          const tex = bytesToUuid(buf, p)
+          p += 16  // face texture UUID
+          if (!faceTextures) faceTextures = new Array(32).fill(null)
+          for (let f = 0; f < 32; f++) {
+            if (bits & (1 << f)) faceTextures[f] = (tex === ZERO_UUID ? null : tex)
+          }
         }
         if (p + 4 <= _teEnd) {
           defaultColor = [
@@ -1230,6 +1388,8 @@ export function decodeObjectUpdate(
         shape,
         ...(defaultColor ? { defaultColor } : {}),
         ...(faceColors ? { faceColors } : {}),
+        ...(defaultTexture ? { defaultTexture } : {}),
+        ...(faceTextures ? { faceTextures } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })

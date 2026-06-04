@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
+import { join } from 'path'
 import { decodeJ2C, j2cToPng } from '../lib/j2c'
 import { decode as decodePng } from 'fast-png'
 
-// Real SL terrain texture codestream staged in the repo — exercises the actual decoder, not a mock.
-const fixture = readFileSync('src/assets/img/Terrain Dirt.j2c')
+// Real SL terrain texture codestreams staged in the repo — exercise the actual decoder, not a mock.
+// WHY join(import.meta.dir, …): resolve relative to this file so the path holds regardless of the
+// cwd bun runs from (single-file vs directory test invocation differ).
+const img = (name: string) => readFileSync(join(import.meta.dir, '../../src/assets/img', name))
+const fixture = img('terrain-dirt.j2c')
 
 describe('j2c', () => {
 	it('decodes a J2C codestream to raw pixels with frame info', async () => {
@@ -27,7 +31,7 @@ describe('j2c', () => {
 	it('copies pixels out of the WASM heap so repeated decodes do not clobber each other', async () => {
 		const a = await decodeJ2C(fixture)
 		const first = a.pixels[0]
-		await decodeJ2C(readFileSync('src/assets/img/Terrain Grass.j2c'))
+		await decodeJ2C(img('terrain-grass.j2c'))
 		expect(a.pixels[0]).toBe(first)   // 'a' must be unaffected by the second decode
 	})
 })

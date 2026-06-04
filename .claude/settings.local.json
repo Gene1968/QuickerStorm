@@ -169,7 +169,21 @@
       "Bash(xargs grep -l \"InventoryAPIv3\\\\|FetchInventory\")",
       "Bash(xargs grep -l \"LLGenericStreamingMessage\")",
       "Bash(xargs grep -l \"GetMesh\\\\|ViewerAsset.*mesh\\\\|MeshUpload\")",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"exit:$?\")",
+      "Bash(bun -e \"console.log\\(process.cwd\\(\\)\\); console.log\\(require\\('fs'\\).existsSync\\('src/assets/img/Terrain Dirt.j2c'\\)\\)\")",
+      "Bash(awk '{print $6, $7}')",
+      "Bash(xargs grep -l \"ObjectUpdateCompressed\\\\|CreateCompressedUpdate\\\\|CompressedFlags\")",
+      "Bash(xargs grep -l \"ObjectUpdateCompressed\\\\|CompressedFlags\\\\|OBJECT_UPDATE_COMPRESSED\")",
+      "Bash(xargs grep -l \"processUpdateCompressed\\\\|process_object_update\\\\|CompressedFlags\\\\|compressed_object\")",
+      "Bash(xargs grep -l \"processCompressedObjectUpdate\\\\|OUT_FULL_COMPRESSED\")",
+      "Bash(xargs grep -l \"Quaternion.*ToBytes\\\\|ToBytes.*Quaternion\\\\|void ToBytes.*b.*pos\")",
+      "Bash(xargs grep -l \"class Quaternion\")",
+      "Bash(xargs grep -l \"AddNormQuat\\\\|NormQuat\")",
+      "Bash(xargs grep -l \"void ToBytes.*byte.*12\\\\|ToBytes.*12.*Quaternion\\\\|class.*Quaternion\")",
+      "PowerShell(Stop-Process *)",
+      "Bash(head -1 MEMORY.md)",
+      "Bash(printf '\\\\n- [Hosting Target]\\(hosting-target.md\\) — prod is VPS/NAS not SharePoint; makes server-side Tier-2 asset cache viable\\\\n')"
     ]
   }
 }

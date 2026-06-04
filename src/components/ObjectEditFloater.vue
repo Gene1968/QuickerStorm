@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon } from '@lucide/vue'
-import FloaterWindow from '@/components/FloaterWindow.vue'
+import { ref, computed, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
+import { getTextureUrl } from '@/composables/useTextureFetch.js'
+import FloaterWindow from '@/components/FloaterWindow.vue'
+import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from '@lucide/vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
@@ -34,6 +35,14 @@ const gizmoOps = [
 	{ id: 'scale',  label: 'Stretch', hint: 'Scale handles (Ctrl+Shift)' },
 ]
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
+
+// Texture-tab thumbnail: fetch the selected prim's default texture as a PNG data URL.
+const texThumb = ref(null)
+watch(() => obj.value?.defaultTexture, (uuid) => {
+	texThumb.value = null
+	if (!uuid) return
+	getTextureUrl(uuid).then(url => { if (obj.value?.defaultTexture === uuid) texThumb.value = url })
+}, { immediate: true })
 
 const tabs = [
 	{ id: 'general',  label: 'General' },
@@ -230,17 +239,17 @@ function close() {
 					<button
 						title="Select previous linked part or face"
 						:disabled="!canCycle"
-						class="ui-btn px-2 py-1 text-2xs rounded border transition-colors"
+						class="ui-btn p-1 text-2xs rounded border transition-colors"
 						:class="canCycle ? 'border-brd text-white/70 hover:text-t1 hover:bg-white/5' : 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'"
 						@click="selectLink(-1)"
-					>◄</button>
+					><ChevronLeftIcon class="w-3 h-3" /></button>
 					<button
 						title="Select next linked part or face"
 						:disabled="!canCycle"
-						class="ui-btn px-2 py-1 text-2xs rounded border transition-colors"
+						class="ui-btn p-1 text-2xs rounded border transition-colors"
 						:class="canCycle ? 'border-brd text-white/70 hover:text-t1 hover:bg-white/5' : 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'"
 						@click="selectLink(1)"
-					>►</button>
+					><ChevronRightIcon class="w-3 h-3" /></button>
 					<button
 						title="Link selected objects (Phase 3 — perms)"
 						disabled
@@ -252,15 +261,22 @@ function close() {
 						class="ui-btn flex-1 px-2 py-1 text-2xs rounded border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
 					>Unlink</button>
 					<button
-						title="More info (Phase 3)"
+						title="World (Phase 3)"
 						disabled
 						class="ui-btn ml-auto px-2 py-1 text-2xs rounded border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
-					>More info</button>
+					>World <ChevronDownIcon class="w-4 h-4" /></button>
 				</div>
 				<div class="text-2xs text-white/60 font-mono space-y-0.5">
 					<div v-show="ui.editLinked">Link number: <span class="text-t1">{{ linkNumber }}</span></div>
 					<div>{{ objectsSelected }} object{{ objectsSelected === 1 ? '' : 's' }} selected, land impact <span class="text-t1">{{ landImpact }}</span></div>
-					<div>Remaining capacity <span class="text-t1">{{ remainingCapacity }}</span></div>
+					<div>
+						Remaining capacity <span class="me-2 text-t1">{{ remainingCapacity || '??' }}</span>
+						<a href="https://docs.opensimulator.org/en/latest/features/build-tools/" target="_blank" rel="noopener noreferrer"
+							title="More info (Phase 3)"
+							disabled
+							class="text-white/30 cursor-not-allowed"
+						>More info</a>
+					</div>
 				</div>
 			</div>
 
@@ -412,8 +428,15 @@ function close() {
 					<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
 						<div class="text-white/50 self-center">Texture</div>
 						<div class="flex items-center gap-2">
-							<div class="w-12 h-12 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs">No tex</div>
-							<button class="flex-1 px-2 py-1 border border-brd rounded text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Pick…</button>
+							<div class="w-12 h-12 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs overflow-hidden">
+								<img v-if="texThumb" :src="texThumb" class="w-full h-full object-cover" alt="texture" />
+								<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
+							</div>
+							<input
+								:value="obj.defaultTexture || '(none)'"
+								readonly
+								class="flex-1 bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono text-2xs"
+							/>
 						</div>
 						<div class="text-white/50 self-center">Color</div>
 						<div class="flex items-center gap-2">
@@ -447,16 +470,16 @@ function close() {
 							</select>
 							<div class="text-white/50 self-center">Repeats / face</div>
 							<div class="grid grid-cols-2 gap-1">
-								<input value="1.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
-								<input value="1.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input :value="(obj.defaultRepeats?.[0] ?? 1).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input :value="(obj.defaultRepeats?.[1] ?? 1).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 							</div>
 							<div class="text-white/50 self-center">Offset</div>
 							<div class="grid grid-cols-2 gap-1">
-								<input value="0.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
-								<input value="0.00" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input :value="(obj.defaultOffset?.[0] ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input :value="(obj.defaultOffset?.[1] ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 							</div>
 							<div class="text-white/50 self-center">Rotation°</div>
-							<input value="0.0" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+							<input :value="(((obj.defaultRotation ?? 0) * 180 / Math.PI)).toFixed(1)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 						</div>
 					</div>
 					<div class="border-t border-brd pt-2">
