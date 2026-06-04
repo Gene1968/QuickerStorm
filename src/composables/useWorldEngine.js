@@ -13,6 +13,8 @@ import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
 import { getTexture, clearTextureCache } from './useTextureFetch.js'
+import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
+import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -1253,6 +1255,10 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function upsertMesh(obj) {
+		// Guard: skip prims with non-finite pos/scale — they'd produce NaN geometry (Three.js
+		// "Computed radius is NaN" spam) and can't be placed. Bad decode or bad sim data.
+		const finite3 = (a) => Array.isArray(a) && a.length >= 3 && a.every(Number.isFinite)
+		if (!finite3(obj.pos) || !finite3(obj.scale)) return
 		const safety = classifySafety(obj)
 		if (safety.placeholder) {
 			// Shallow-copy so worldStore's original record stays intact. Clamp scale to 1m,
@@ -1300,8 +1306,23 @@ export function useWorldEngine(canvasRef) {
 				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 				: null
 			const primColor = obj._placeholder ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
-			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+			// ── Slice 2: hybrid lit materials ───────────────────────────────────
+			// Only prims that carry a material (legacy material_id / PBR ExtraParam 0x80) switch to a
+			// lit MeshStandardMaterial; plain prims + avatars keep the fast unlit MeshBasicMaterial
+			// (avoids the historical rotation-flicker on the bulk of the scene).
+			const hasMaterial = !isAvatar && !obj._placeholder && !!(obj.defaultPbrMaterial || obj.defaultMaterialId)
+			const mat = hasMaterial
+				? new THREE.MeshStandardMaterial({ color: primColor, metalness: 0, roughness: 1 })
+				: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+			if (hasMaterial && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+
+			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
+			// already full-bright). Glow adds emissive bloom-ish lift; fullbright ignores lighting.
+			if (hasMaterial && (obj.defaultFullbright || (obj.defaultGlow ?? 0) > 0)) {
+				mat.emissive = new THREE.Color(primColor)
+				mat.emissiveIntensity = obj.defaultFullbright ? 1.0 : Math.min(1, (obj.defaultGlow ?? 0) * 2)
+			}
 
 			// ── Slice 1: real prim texture ──────────────────────────────────────
 			// WHY: TE default texture UUID (decoded server-side) → fetch via asset cap (server
@@ -1323,6 +1344,41 @@ export function useWorldEngine(canvasRef) {
 						else mat.color.set(0xffffff)
 						mat.needsUpdate = true
 					}
+				})
+			}
+
+			// ── Slice 2: PBR (GLTF) — overrides the diffuse map above when present ───
+			if (obj.defaultPbrMaterial) {
+				getPbrMaterial(obj.defaultPbrMaterial).then(gltf => {
+					if (!gltf || !mesh.parent || mesh.material !== mat) return
+					const d = gltfToDescriptor(gltf)
+					mat.metalness = d.metallic
+					mat.roughness = d.roughness
+					mat.color.setRGB(d.baseColorFactor[0], d.baseColorFactor[1], d.baseColorFactor[2])
+					mat.emissive = new THREE.Color(d.emissiveFactor[0], d.emissiveFactor[1], d.emissiveFactor[2])
+					if (d.doubleSided) mat.side = THREE.DoubleSide
+					if (d.alphaMode === 'BLEND') mat.transparent = true
+					else if (d.alphaMode === 'MASK') mat.alphaTest = d.alphaCutoff
+					const setMap = (uuid, slot, srgb) => uuid && getTexture(uuid).then(t => {
+						if (t && mesh.material === mat) { if (srgb) t.colorSpace = THREE.SRGBColorSpace; mat[slot] = t; mat.needsUpdate = true }
+					})
+					setMap(d.baseColorTex, 'map', true)
+					setMap(d.normalTex, 'normalMap')
+					setMap(d.metallicRoughnessTex, 'metalnessMap')   // ORM-packed: same texture
+					setMap(d.metallicRoughnessTex, 'roughnessMap')
+					setMap(d.emissiveTex, 'emissiveMap', true)
+					mat.needsUpdate = true
+				})
+			} else if (obj.defaultMaterialId) {
+				// ── Slice 2: legacy RenderMaterials — normal + (specular→roughness approx) ──
+				getLegacyMaterial(obj.defaultMaterialId).then(m => {
+					if (!m || !mesh.parent || mesh.material !== mat) return
+					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat) { mat.normalMap = t; mat.needsUpdate = true } })
+					// MeshStandard has no spec map; approximate shininess via roughness (higher exp = smoother).
+					if (m.specExp) mat.roughness = Math.max(0.1, 1 - m.specExp / 255)
+					if (m.alphaMode === 1) mat.transparent = true
+					else if (m.alphaMode === 2) mat.alphaTest = (m.alphaCutoff ?? 128) / 255
+					mat.needsUpdate = true
 				})
 			}
 			mesh.userData.localId  = obj.localId

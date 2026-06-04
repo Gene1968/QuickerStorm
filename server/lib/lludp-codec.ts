@@ -846,6 +846,10 @@ interface TEFields {
   defaultRepeats?:  [number, number]   // scale_s / scale_t (UV tiling); SL default 1,1
   defaultOffset?:   [number, number]   // offset_s / offset_t; SL default 0,0
   defaultRotation?: number             // radians; SL default 0
+  defaultGlow?:      number            // 0..1 (TE field 10)
+  defaultShiny?:     number            // 0..3 (bump byte bits 7:6)
+  defaultFullbright?: boolean          // bump byte bit 5
+  defaultMaterialId?: string           // TE field 11 — legacy LLMaterial UUID (omitted if null)
 }
 
 // Read one TextureEntry field: a default value, then [faceBitfield + value]* overrides, then the
@@ -887,6 +891,12 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     const offS   = readTEField(buf, p, end, 2,  rOff);   p = offS.next
     const offT   = readTEField(buf, p, end, 2,  rOff);   p = offT.next
     const rot    = readTEField(buf, p, end, 2,  rRot);   p = rot.next
+    const bump   = readTEField(buf, p, end, 1,  (b, o) => b[o]); p = bump.next        // field 8
+    const media  = readTEField(buf, p, end, 1,  (b, o) => b[o]); p = media.next       // field 9 (unused)
+    const glow   = readTEField(buf, p, end, 1,  (b, o) => b[o] / 255); p = glow.next  // field 10
+    // field 11 material_id (optional — older blobs end before it)
+    let matId = ZERO_UUID
+    if (p < end) { const m = readTEField(buf, p, end, 16, rUuid); matId = m.def; p = m.next }
 
     if (tex.def !== ZERO_UUID) res.defaultTexture = tex.def
     if (tex.faces) res.faceTextures = tex.faces.map(t => (t && t !== ZERO_UUID ? t : null))
@@ -895,8 +905,28 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     res.defaultRepeats  = [scaleS.def, scaleT.def]
     res.defaultOffset   = [offS.def, offT.def]
     res.defaultRotation = rot.def
+    res.defaultGlow       = glow.def
+    res.defaultShiny      = (bump.def >> 6) & 0x03
+    res.defaultFullbright = ((bump.def >> 5) & 0x01) === 1
+    if (matId !== ZERO_UUID) res.defaultMaterialId = matId
   } catch { /* best-effort: partial TE still yields texture/color */ }
   return res
+}
+
+// ExtraParam type 0x80 (MaterialsEP): [count U8] then [te_index U8][asset_UUID 16B]×count → per-face
+// GLTF PBR material asset UUIDs. Returns a face→uuid map (zero UUIDs dropped).
+export function parseMaterialsExtraParam(buf: Buffer, start: number, len: number): Record<number, string> {
+  const faces: Record<number, string> = {}
+  let p = start
+  const end = start + len
+  if (p >= end) return faces
+  const count = buf[p++]
+  for (let i = 0; i < count && p + 17 <= end; i++) {
+    const te = buf[p++]
+    const uuid = bytesToUuid(buf, p); p += 16
+    if (uuid !== '00000000-0000-0000-0000-000000000000') faces[te] = uuid
+  }
+  return faces
 }
 
 export interface PrimShape {
@@ -937,6 +967,12 @@ export interface ObjectData {
   defaultRepeats?:  [number, number]    // TE scale_s/scale_t (UV tiling); SL default 1,1
   defaultOffset?:   [number, number]    // TE offset_s/offset_t; SL default 0,0
   defaultRotation?: number              // TE rotation in radians; SL default 0
+  defaultGlow?:      number             // TE glow 0..1
+  defaultShiny?:     number             // TE shiny 0..3
+  defaultFullbright?: boolean           // TE fullbright
+  defaultMaterialId?: string            // TE legacy LLMaterial UUID (RenderMaterials cap)
+  defaultPbrMaterial?: string           // GLTF PBR material asset UUID (ExtraParam 0x80, default face)
+  pbrMaterials?:     Array<string | null>  // per-face GLTF PBR material asset UUIDs
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
 }
@@ -1003,6 +1039,7 @@ export function decodeObjectUpdateCompressed(
       let parentId = 0
       let shape: PrimShape | undefined
       let te: TEFields = {}
+      let pbrFaces: Record<number, string> = {}
       let text = ''
       let textColor: [number, number, number, number] | undefined
       try {
@@ -1025,12 +1062,14 @@ export function decodeObjectUpdateCompressed(
             }
           }
           if (cflags & 0x200) { while (off < dataEnd && buf[off] !== 0) off++; off++ }  // MediaURL
-          // ExtraParams — always present: count U8, then [type U16, size U32, data]×count
+          // ExtraParams — always present: count U8, then [type U16, size U32, data]×count.
+          // Capture type 0x80 (MaterialsEP → per-face GLTF PBR material UUIDs); skip the rest.
           if (off < dataEnd) {
             const epCount = buf[off++]
             for (let e = 0; e < epCount && off + 6 <= dataEnd; e++) {
-              off += 2                                // param type U16
+              const epType = buf.readUInt16LE(off); off += 2
               const epSize = buf.readUInt32LE(off); off += 4
+              if (epType === 0x80 && off + epSize <= dataEnd) pbrFaces = parseMaterialsExtraParam(buf, off, epSize)
               off += epSize
             }
           }
@@ -1074,6 +1113,8 @@ export function decodeObjectUpdateCompressed(
       off = dataEnd
       // Trees/grass/particles render-skipped (same convention as full ObjectUpdate decoder).
       if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) continue
+      const pbrKeys = Object.keys(pbrFaces)
+      const defaultPbr = pbrFaces[0] ?? (pbrKeys.length ? pbrFaces[+pbrKeys[0]] : undefined)
       objects.push({
         localId, fullId, pcode,
         scale: [sx, sy, sz],
@@ -1089,6 +1130,12 @@ export function decodeObjectUpdateCompressed(
         ...(te.defaultRepeats  ? { defaultRepeats:  te.defaultRepeats }  : {}),
         ...(te.defaultOffset   ? { defaultOffset:   te.defaultOffset }   : {}),
         ...(te.defaultRotation != null ? { defaultRotation: te.defaultRotation } : {}),
+        ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
+        ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
+        ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
+        ...(defaultPbr ? { defaultPbrMaterial: defaultPbr } : {}),
+        ...(pbrKeys.length ? { pbrMaterials: Object.assign(new Array(32).fill(null), Object.fromEntries(Object.entries(pbrFaces))) } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
@@ -1278,6 +1325,7 @@ export function decodeObjectUpdate(
       let faceColors: Array<[number, number, number, number] | null> | undefined
       let defaultTexture: string | undefined
       let faceTextures: Array<string | null> | undefined
+      let pbrFaces: Record<number, string> = {}
       try {
         const dtex = bytesToUuid(buf, off)
         if (dtex !== ZERO_UUID) defaultTexture = dtex
@@ -1368,7 +1416,25 @@ export function decodeObjectUpdate(
         }
         skipVar1('MediaURL')
         skipVar1('PSBlock')      // particle system data, Variable1 (OpenSim extended can reach 192+)
-        skipVar1('ExtraParams')
+        // ExtraParams (Variable1) — parse for type 0x80 (PBR material UUIDs); advance like skipVar1.
+        {
+          if (off >= buf.length) throw new Error(`ExtraParams prefix OOB at off=${off}`)
+          const epLen = buf[off++]
+          _diag += ` ExtraParams=${epLen}`
+          if (off + epLen > buf.length) { off = buf.length; throw new Error(`ExtraParams length ${epLen} exceeds buffer`) }
+          const epEnd = off + epLen
+          let q = off
+          if (q < epEnd) {
+            const c = buf[q++]
+            for (let e = 0; e < c && q + 6 <= epEnd; e++) {
+              const t = buf.readUInt16LE(q); q += 2
+              const sz = buf.readUInt32LE(q); q += 4
+              if (t === 0x80 && q + sz <= epEnd) pbrFaces = parseMaterialsExtraParam(buf, q, sz)
+              q += sz
+            }
+          }
+          off += epLen
+        }
         off += 16   // Sound UUID
         off += 16   // OwnerID UUID
         off += 4    // SoundGain F32
@@ -1390,6 +1456,7 @@ export function decodeObjectUpdate(
         ...(faceColors ? { faceColors } : {}),
         ...(defaultTexture ? { defaultTexture } : {}),
         ...(faceTextures ? { faceTextures } : {}),
+        ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
