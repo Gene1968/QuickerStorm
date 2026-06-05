@@ -9,23 +9,36 @@ export function useCacheStats() {
 	async function refresh() {
 		texStats.value  = { ...texStats.value,  loading: true }
 		meshStats.value = { ...meshStats.value, loading: true }
-		const [tex, mesh] = await Promise.all([getTextureCacheStats(), getMeshCacheStats()])
-		texStats.value  = { ...tex,  loading: false }
-		meshStats.value = { ...mesh, loading: false }
+		try {
+			const [tex, mesh] = await Promise.all([getTextureCacheStats(), getMeshCacheStats()])
+			texStats.value  = { ...tex,  loading: false }
+			meshStats.value = { ...mesh, loading: false }
+		} catch {
+			texStats.value  = { ...texStats.value,  loading: false }
+			meshStats.value = { ...meshStats.value, loading: false }
+		}
 	}
 
 	async function clearTex() {
 		texStats.value = { ...texStats.value, loading: true }
-		await clearTextureCache()
-		const tex = await getTextureCacheStats()
-		texStats.value = { ...tex, loading: false }
+		try {
+			await clearTextureCache()
+			const tex = await getTextureCacheStats()
+			texStats.value = { ...tex, loading: false }
+		} catch {
+			texStats.value = { ...texStats.value, loading: false }
+		}
 	}
 
 	async function clearMesh() {
 		meshStats.value = { ...meshStats.value, loading: true }
-		await clearMeshCache()
-		const mesh = await getMeshCacheStats()
-		meshStats.value = { ...mesh, loading: false }
+		try {
+			await clearMeshCache()
+			const mesh = await getMeshCacheStats()
+			meshStats.value = { ...mesh, loading: false }
+		} catch {
+			meshStats.value = { ...meshStats.value, loading: false }
+		}
 	}
 
 	return { texStats, meshStats, refresh, clearTex, clearMesh }
