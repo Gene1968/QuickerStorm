@@ -28,6 +28,8 @@ function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 // 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
 // bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
 // (true CSG needed); Twist + Taper applied as per-vertex deformation below.
+const ZERO_TEX_UUID = '00000000-0000-0000-0000-000000000000'
+
 function buildPrimGeometry(shape) {
 	const pc = shape?.pathCurve ?? 16
 	const pf = (shape?.profileCurve ?? 1) & 0x0F
@@ -113,6 +115,34 @@ function geometryHasFiniteVerts(geom) {
 	if (!a || a.length === 0) return false
 	for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) return false
 	return true
+}
+
+// Dev diagnostic: client-only render warnings (e.g. Three.js "Computed radius is NaN") never reach
+// the server log. Patch console.warn/error to forward any message mentioning NaN/radius (deduped, with
+// a short stack) to the server via C.CLIENT_LOG so we can locate the source. Safe no-op if already on.
+const _fwdSeen = new Set()
+let _origWarn = null, _origError = null
+function installConsoleForwarder(emit) {
+	if (_origWarn) return
+	_origWarn = console.warn; _origError = console.error
+	const wrap = (orig, level) => (...args) => {
+		try {
+			const msg = args.map(a => (typeof a === 'string' ? a : (a && a.message) || '')).join(' ')
+			if (/NaN|Computed radius/i.test(msg) && !_fwdSeen.has(msg)) {
+				_fwdSeen.add(msg)
+				const stack = (new Error().stack || '').split('\n').slice(2, 7).join(' | ')
+				emit(C.CLIENT_LOG, { level, msg: msg.slice(0, 400), stack })
+			}
+		} catch { /* never let logging break logging */ }
+		orig.apply(console, args)
+	}
+	console.warn = wrap(_origWarn, 'warn')
+	console.error = wrap(_origError, 'error')
+}
+function uninstallConsoleForwarder() {
+	if (_origWarn) console.warn = _origWarn
+	if (_origError) console.error = _origError
+	_origWarn = _origError = null
 }
 
 // Quaternion: same axis remap as position (SL Z-up → Three Y-up). The imaginary
@@ -820,7 +850,10 @@ export function useWorldEngine(canvasRef) {
 			// 128m left ~97% of cache-miss requests unsatisfied in a sparse-corner spawn
 			// (4338 cached IDs requested → 44 ObjectUpdates returned over 70s). Firestorm
 			// default is 256m; matches FS behaviour and quadruples interest-list radius.
-			far:       256,
+			// 512m (was 256): on a 512m region ~half stayed out of interest (live unfulfilled=7673/15591).
+				// 512 reaches the whole standard region from any spawn so the sim satisfies region-wide
+				// cache-miss requests. Sim caps draw distance server-side, so over-asking is safe.
+				far:       512,
 		})
 	}
 
@@ -1350,12 +1383,13 @@ export function useWorldEngine(canvasRef) {
 
 			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
 			// WHY: defaultColor is RGBA; we previously used only RGB, so a prim the sim sent as
-			// semi-transparent rendered fully opaque. depthWrite off so it blends instead of occluding
-			// what's behind it. Texture-driven transparency is added once the map resolves (below).
+			// semi-transparent rendered fully opaque. Keep depthWrite ON: disabling it made overlapping
+			// prims see-through to the white background, washing the whole scene white. With depthWrite
+			// on, a translucent prim still occludes what's behind it (tinted-glass look) — correct enough
+			// without a full back-to-front transparent sort, and no white-out.
 			if (!isAvatar && !obj._placeholder && obj.defaultColor && obj.defaultColor[3] < 0.99) {
 				mat.transparent = true
 				mat.opacity = obj.defaultColor[3]
-				mat.depthWrite = false
 			}
 
 			// ── Mesh geometry: replace the cube with the real decoded mesh ──────
@@ -1430,11 +1464,13 @@ export function useWorldEngine(canvasRef) {
 						// tinted prim with a plain texture isn't forced white.
 						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 						else mat.color.set(0xffffff)
-						// Alpha (#17): a texture with real transparency (server-reported hasAlpha) blends.
-						// Without it the PNG's alpha is ignored and see-through regions render black.
+						// Alpha (#17): a texture with real transparency (server-reported hasAlpha). Use
+						// alphaTest (cutout) not blend: it discards fully-transparent fragments — fixing
+						// the black-where-transparent symptom — while KEEPING depthWrite, so alpha prims
+						// don't turn the scene see-through/white (the regression from depthWrite=false).
+						// Hard-edged vs smooth blend, but robust without a back-to-front transparent sort.
 						if (tex.userData?.hasAlpha) {
-							mat.transparent = true
-							mat.depthWrite = false
+							mat.alphaTest = 0.5
 						}
 						mat.needsUpdate = true
 					}
@@ -1577,7 +1613,15 @@ export function useWorldEngine(canvasRef) {
 			// without a rebuild, and is a no-op when the scale is unchanged (the common resync case).
 			if (obj.scale && obj.pcode !== PCODE_AVATAR) {
 				const prev = mesh.userData.primScale || [1, 1, 1]
-				mesh.geometry.scale(obj.scale[0] / prev[0], obj.scale[2] / prev[2], obj.scale[1] / prev[1])
+				// Guard: a prim can arrive with a 0 scale component (finite, so it passes classifySafety
+				// and bakes to a 0-width geometry). On the next update prev[i]=0 → new/0 = Inf, or 0/0 =
+				// NaN → NaN verts → Three.js "Computed radius is NaN" red. Fall back to ratio 1 (leave the
+				// axis as-is) when the divisor is 0 or either value is non-finite.
+				const ratio = (n, p) => (Number.isFinite(n) && Number.isFinite(p) && p !== 0) ? n / p : 1
+				const rx = ratio(obj.scale[0], prev[0])
+				const ry = ratio(obj.scale[2], prev[2])
+				const rz = ratio(obj.scale[1], prev[1])
+				if (rx !== 1 || ry !== 1 || rz !== 1) mesh.geometry.scale(rx, ry, rz)
 				mesh.userData.primScale = obj.scale.slice()
 			}
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
@@ -1657,7 +1701,13 @@ export function useWorldEngine(canvasRef) {
 			lastPrimDiagAt = now
 			const primCount = worldStore.prims.length
 			const avCount = worldStore.avatars.length
-			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} upsertFails=${upsertMeshFailures} placeholders=${placeholderCount} geoNaN=${geoNaNCount} skippedNoPos=${skippedNoPos}`)
+			// DIAG: distinguish "prim has a texture but it wasn't fetched" (fetch gap) from "prim has
+			// no texture at all" (decoder gap). withTex = prims carrying a non-zero defaultTexture;
+			// mapped = meshes that actually have material.map applied.
+			let withTex = 0, mapped = 0
+			for (const o of worldStore.prims) if (o.defaultTexture && o.defaultTexture !== ZERO_TEX_UUID) withTex++
+			for (const m of meshMap.values()) if (m.material && m.material.map) mapped++
+			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} withTex=${withTex} mapped=${mapped} upsertFails=${upsertMeshFailures} placeholders=${placeholderCount} geoNaN=${geoNaNCount} skippedNoPos=${skippedNoPos}`)
 			// Mirror to server-log via WS so server-log.txt has full client+server picture.
 			wsEmit(C.CLIENT_DIAG, {
 				received:     objsReceivedTotal,
@@ -1665,9 +1715,14 @@ export function useWorldEngine(canvasRef) {
 				prims:        primCount,
 				av:           avCount,
 				meshes:       meshMap.size,
+				withTex,
+				mapped,
 				upsertFails:  upsertMeshFailures,
 				skippedNoPos,
 				placeholders: placeholderCount,
+				geoNaN:       geoNaNCount,
+				tex:          getTextureStats(),
+				mesh:         getMeshStats(),
 			})
 		}
 		for (const obj of objs) {
@@ -2528,6 +2583,7 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
+		installConsoleForwarder(wsEmit)   // dev: forward NaN/radius console warnings to server-log
 		initScene()
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
 		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
@@ -2579,6 +2635,7 @@ export function useWorldEngine(canvasRef) {
 		clearGizmo()
 		endFocusGlide()
 		cancelAnimationFrame(animId)
+		uninstallConsoleForwarder()
 		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)

@@ -95,12 +95,14 @@ export function pixelsHaveAlpha(pixels: Uint8Array | number[], channels: number)
 }
 
 /** Decode a J2C codestream → PNG buffer plus a flag for whether it carries real transparency. */
-export async function j2cToPngWithAlpha(bytes: Buffer | Uint8Array): Promise<{ png: Buffer; hasAlpha: boolean }> {
+export async function j2cToPngWithAlpha(
+	bytes: Buffer | Uint8Array,
+): Promise<{ png: Buffer; hasAlpha: boolean; width: number; height: number; srcWidth: number; srcHeight: number }> {
 	const dec = await decodeJ2C(bytes)
 	const { channels } = dec
 	const { pixels, width, height } = downscalePixels(dec.pixels, dec.width, dec.height, channels, MAX_TEX_DIM)
 	const png = encodePng({ width, height, data: pixels, channels: channels as 1 | 2 | 3 | 4, depth: 8 })
-	return { png: Buffer.from(png), hasAlpha: pixelsHaveAlpha(pixels, channels) }
+	return { png: Buffer.from(png), hasAlpha: pixelsHaveAlpha(pixels, channels), width, height, srcWidth: dec.width, srcHeight: dec.height }
 }
 
 /** Decode a J2C codestream and re-encode it as a PNG buffer. */

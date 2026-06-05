@@ -22,6 +22,7 @@ export const C = {
 	OBJECT_DESELECT:'object_deselect', // { localIds: number[] } — outbound ObjectDeselect
 	SET_ALWAYS_RUN: 'set_always_run', // { alwaysRun: boolean } — outbound SetAlwaysRun (Low #21)
 	CLIENT_DIAG:    'client_diag',    // { received, stored, prims, av, meshes, upsertFails } — periodic mesh-side stats forwarded to server-log
+	CLIENT_LOG:     'client_log',     // { level, msg, stack } — dev: forward matched console errors/warns (e.g. NaN) to server-log
 	MAP_QUERY:      'map_query',      // { minX, maxX, minY, maxY } — MapBlockRequest range
 	MAP_NAME_QUERY: 'map_name_query', // { name } — MapNameRequest by region name
 	MAP_TELEPORT:   'map_teleport',   // { regionX, regionY, x, y, z } — TeleportLocationRequest to (regionX*256+x,...)

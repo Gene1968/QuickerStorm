@@ -484,8 +484,9 @@ onUnmounted(() => {
 						<div class="pf-cache-card">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Texture Cache</span>
-								<button class="qs-btn text-xs px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
 									Clear Textures
+									<small class="font-normal">(not recommended)</small>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -518,10 +519,12 @@ onUnmounted(() => {
 
 						<!-- Mesh Cache -->
 						<div class="pf-cache-card">
+							<span class="pf-cache-title">Asset/object Caches</span>
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Mesh Cache</span>
-								<button class="qs-btn text-xs px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
 									Clear Meshes
+									<small class="font-normal">(not recommended)</small>
 								</button>
 							</div>
 							<div class="pf-cache-stats">

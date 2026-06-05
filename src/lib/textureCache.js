@@ -9,8 +9,12 @@ const DB_VERSION = 1
 const STORE      = 'tex'      // { uuid, url, bytes, lastUsed }
 const META       = 'meta'     // { k:'stats', totalBytes }
 
-// Default cap (~512 MB of PNG data URLs). Tunable; a real preference can drive this later.
-export const TEX_CACHE_CAP_BYTES = 512 * 1024 * 1024
+// Default cap for cached PNG data URLs. 512 MB was an arbitrary early guess; with server-side
+// downscaling to ≤512px each texture is far smaller, so we can hold a whole region (and more) for
+// fast re-logins. 4 GB here (FS desktop caches use ~15 GB, but IndexedDB is bounded by the browser's
+// per-origin quota — typically a fraction of free disk — so the browser may evict below this anyway).
+// A real preference can drive this later.
+export const TEX_CACHE_CAP_BYTES = 8 * 1024 * 1024 * 1024
 
 let _db = null
 

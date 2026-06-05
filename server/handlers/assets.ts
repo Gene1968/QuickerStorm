@@ -58,15 +58,18 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 		if (!res.ok) { send({ error: `http_${res.status}` }); return }
 		const raw = Buffer.from(await res.arrayBuffer())
 
-		let out: Buffer, hasAlpha = false
-		if (spec.transcodeToPng) { const r = await j2cToPngWithAlpha(raw); out = r.png; hasAlpha = r.hasAlpha }
+		let out: Buffer, hasAlpha = false, dims = ''
+		if (spec.transcodeToPng) {
+			const r = await j2cToPngWithAlpha(raw); out = r.png; hasAlpha = r.hasAlpha
+			dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
+		}
 		else out = raw
 		send({
 			mime: spec.transcodeToPng ? spec.mime : (res.headers.get('content-type') || spec.mime),
 			dataB64: out.toString('base64'),
 			...(spec.transcodeToPng ? { hasAlpha } : {}),
 		})
-		slog.info(s.ws, `[Asset] ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcodeToPng ? ` → ${out.length}B png` : ''})`)
+		slog.info(s.ws, `[Asset] ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcodeToPng ? ` → ${out.length}B png${dims}` : ''})`)
 	} catch (e) {
 		slog.warn(s.ws, `[Asset] fetch failed ${assetType} ${uuid.slice(0, 8)}…: ${(e as Error).message}`)
 		send({ error: (e as Error).message })

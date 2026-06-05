@@ -494,7 +494,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				camCenter: [128, 128, 25] as [number, number, number],
 				camAt:     [1, 0, 0] as [number, number, number],
 				camLeft:   [0, 1, 0] as [number, number, number],
-				camUp:     [0, 0, 1] as [number, number, number], far: 128,
+				camUp:     [0, 0, 1] as [number, number, number], far: 512,
 			}
 			const seqS = nextSeq(session)
 			const standPkt = encodeAgentUpdate({
@@ -1062,7 +1062,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		d.camAt     = safeVec(d.camAt)
 		d.camLeft   = safeVec(d.camLeft)
 		d.camUp     = safeVec(d.camUp)
-		if (typeof d.far !== 'number') d.far = 64
+		if (typeof d.far !== 'number') d.far = 512   // draw distance → sim interest radius (region-wide)
 		// Save for heartbeat retransmit when client is idle
 		session.lastAgentParams    = d
 		session.lastAgentUpdateAt  = Date.now()
@@ -1405,14 +1405,26 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	if (msg.t === C.CLIENT_DIAG) {
 		// Client-side mirror of [PrimDiag] so server-log.txt holds both ends of the pipe.
 		// Without this we have no record of mesh-count or upsert failures after session ends.
+		type DiagStats = { requested?: number; done?: number; failed?: number; timeout?: number; inflight?: number; queued?: number; cached?: number }
 		const d = msg.d as {
 			received?: number; stored?: number; prims?: number; av?: number;
-			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number
+			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number;
+			geoNaN?: number; withTex?: number; mapped?: number; tex?: DiagStats; mesh?: DiagStats
 		}
+		const stat = (s?: DiagStats) => s
+			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
+			: '(n/a — frontend not reloaded?)'
 		slog.info(session.ws,
 			`[ClientDiag] received=${d.received ?? '?'} stored=${d.stored ?? '?'} ` +
 			`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
-			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'}`)
+			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'} geoNaN=${d.geoNaN ?? '?'} withTex=${d.withTex ?? '?'} mapped=${d.mapped ?? '?'} | ` +
+			`tex ${stat(d.tex)} | mesh ${stat(d.mesh)}`)
+		return
+	}
+
+	if (msg.t === C.CLIENT_LOG) {
+		const d = msg.d as { level?: string; msg?: string; stack?: string }
+		slog.warn(session.ws, `[ClientLog/${d.level ?? '?'}] ${d.msg ?? ''}${d.stack ? `  @ ${d.stack}` : ''}`)
 		return
 	}
 
@@ -1548,7 +1560,11 @@ function dumpPrimIdsSnapshot(s: CircuitState): void {
 
 function sendCacheMissBatch(s: CircuitState, queue: number[], cacheMissType: 0 | 1): void {
 	const BATCH = 16
-	const PER_TICK = 2
+	// PER_TICK 6 @ 500ms heartbeat = 96 ids/tick = 192 ids/sec. Bursting ~1100/s (348 batches in
+	// <5s) aged the sim's EntityUpdateQueue (only 113/4792 returned); 32/s was the over-correction
+	// (~4min/region drain). 192/s is the middle ground — fast enough to test/fill, paced enough that
+	// the queue keeps up. The looping retry below recovers whatever still gets dropped.
+	const PER_TICK = 6
 	for (let p = 0; p < PER_TICK; p++) {
 		if (queue.length === 0) break
 		const chunk = queue.splice(0, BATCH)
@@ -1574,30 +1590,49 @@ function drainCacheMissQueue(s: CircuitState): void {
 		sendCacheMissBatch(s, s.cacheMissPending, 0)
 		return
 	}
-	// Primary drain done. Initiate retry pass once with CacheMissType=1 for any
-	// asked-but-unfulfilled ids. Hypothesis: sim may treat the two CacheMissTypes differently,
-	// so a second pass with type=1 might coax it into satisfying requests it ignored at type=0.
-	// WHY 5s silence gate: sim sends ObjectUpdateCached enum over time as we settle in. An
-	// early empty-pending window mid-enum used to trigger retry with 0 unfulfilled; new
-	// cached batches then arrived but never triggered retry again. Wait until sim has been
-	// silent on enum for 5s to be confident enumeration is done.
-	if (!s.cacheMissRetryStarted) {
-		if (s.lastCacheEnumAt === 0) return  // sim never sent any cached enum yet
-		if (Date.now() - s.lastCacheEnumAt < 5000) return  // enum may still be in-flight
-		s.cacheMissRetryStarted = true
-		const unfulfilled: number[] = []
-		for (const id of s.cacheMissAskedEver) {
-			if (!s.distinctLocalIds.has(id)) unfulfilled.push(id)
-		}
-		s.cacheMissRetryPending = unfulfilled
-		slog.info(s.ws, `[CacheMissRetry] primary drain done — retrying ${unfulfilled.length} unfulfilled ids with CacheMissType=1`)
-	}
+	// A retry batch is mid-flight → keep draining it. When the last chunk goes out, stamp the
+	// cooldown so the NEXT pass waits for late replies before recomputing the unfulfilled set.
 	if (s.cacheMissRetryPending.length > 0) {
 		sendCacheMissBatch(s, s.cacheMissRetryPending, 1)
+		if (s.cacheMissRetryPending.length === 0) s.lastRetryPassAt = Date.now()
 		return
 	}
-	// Both phases drained — safe to dump snapshot now.
-	dumpPrimIdsSnapshot(s)
+
+	// No active batch. Decide whether to start another retry pass. The sim's EntityUpdateQueue
+	// drops some requested ids under backlog; re-asking the still-missing set across several passes
+	// recovers them. Stop when: nothing left, hit the pass cap, or progress stalls (plateau = sim
+	// structurally won't send those ids — phantom/temp/aged-out-of-region). Each pass uses
+	// CacheMissType=1 (CRC-mismatch) — some OpenSim builds honor it differently than type=0.
+	const MAX_RETRY_PASSES = 10
+	const RETRY_COOLDOWN_MS = 4000   // let late replies land before recomputing unfulfilled
+
+	// Gate the FIRST pass on 5s of enum silence so we don't retry mid-enumeration.
+	if (!s.cacheMissRetryStarted) {
+		if (s.lastCacheEnumAt === 0) return
+		if (Date.now() - s.lastCacheEnumAt < 5000) return
+	}
+	// Cooldown between passes.
+	if (s.lastRetryPassAt && Date.now() - s.lastRetryPassAt < RETRY_COOLDOWN_MS) return
+
+	const passCount = s.retryPassCount ?? 0
+	if (passCount >= MAX_RETRY_PASSES || (s.retryPlateauCount ?? 0) >= 2) {
+		dumpPrimIdsSnapshot(s)
+		return
+	}
+
+	const unfulfilled: number[] = []
+	for (const id of s.cacheMissAskedEver) if (!s.distinctLocalIds.has(id)) unfulfilled.push(id)
+	if (unfulfilled.length === 0) { dumpPrimIdsSnapshot(s); return }
+
+	// Progress / plateau tracking (compare against the count at the previous pass's start).
+	const prev = s.lastUnfulfilledCount
+	if (prev != null && unfulfilled.length >= prev) s.retryPlateauCount = (s.retryPlateauCount ?? 0) + 1
+	else s.retryPlateauCount = 0
+	s.lastUnfulfilledCount = unfulfilled.length
+	s.retryPassCount       = passCount + 1
+	s.cacheMissRetryStarted = true
+	s.cacheMissRetryPending = unfulfilled
+	slog.info(s.ws, `[CacheMissRetry] pass ${s.retryPassCount}/${MAX_RETRY_PASSES}: re-requesting ${unfulfilled.length} unfulfilled (prev=${prev ?? '—'}, plateau=${s.retryPlateauCount})`)
 }
 
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */
@@ -1621,7 +1656,7 @@ function sendHeartbeat(s: CircuitState): void {
 		camAt:     [1, 0, 0] as [number, number, number],
 		camLeft:   [0, 1, 0] as [number, number, number],
 		camUp:     [0, 0, 1] as [number, number, number],
-		far: 128,
+		far: 512,   // region-wide interest radius (matches client default)
 	}
 	const seq = nextSeq(s)
 	const pkt = encodeAgentUpdate({ agentId: s.agentId, sessionId: s.sessionId, seq, ...p })
