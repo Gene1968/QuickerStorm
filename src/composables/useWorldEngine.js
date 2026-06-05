@@ -1197,6 +1197,11 @@ export function useWorldEngine(canvasRef) {
 		div.style.color = c
 			? `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${c[3].toFixed(2)})`
 			: '#ffffff'
+		// WHY: Orphaned child prims sit at scene root with local-relative pos ≈ origin —
+		// their label would float at SL(0,0,0) until parent arrives. Hide CSS2DObject
+		// (CSS2DRenderer checks its own .visible, not the mesh's) until reparented.
+		const isOrphan = (obj.parentId ?? 0) !== 0 && mesh.parent === scene
+		mesh.userData.hoverLabel.visible = !isOrphan
 	}
 
 	// ── Selection gizmo (Phase 2 visual scaffold) ────────────────────────────
@@ -1659,7 +1664,8 @@ export function useWorldEngine(canvasRef) {
 					other.parent?.remove(other)
 					mesh.add(other)
 					normalizeChildTransform(other)
-					other.visible = true  // parent arrived — unhide
+					other.visible = true
+					if (other.userData.hoverLabel) other.userData.hoverLabel.visible = true
 				}
 			})
 		} else {
@@ -1707,6 +1713,7 @@ export function useWorldEngine(canvasRef) {
 						scene.remove(mesh)
 						pm.add(mesh)
 						mesh.visible = true
+						if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
 					}
 				}
 				normalizeChildTransform(mesh)
@@ -2607,10 +2614,23 @@ export function useWorldEngine(canvasRef) {
 
 		drainMeshQueue()  // perf: paced prim-mesh creation (bounded per frame)
 
-		// DEBUG: force all hover text visible to confirm mechanism works
-		for (const m of hoverTextMeshes) {
-			const div = m.userData.hoverDiv
-			if (div) { div.style.visibility = ''; div.style.opacity = '1' }
+		// WHY: CSS2DRenderer owns element.style.display — do not touch it.
+		// Fade by camera distance: zoom in → labels appear, zoom out → labels hide.
+		// Full at <15m, fade 15–20m, hidden beyond 20m.
+		if (hoverTextMeshes.size) {
+			const camPos = camera.position
+			for (const m of hoverTextMeshes) {
+				const div = m.userData.hoverDiv
+				if (!div) continue
+				m.getWorldPosition(_htVec3)
+				const dist = camPos.distanceTo(_htVec3)
+				if (dist > 20) {
+					div.style.visibility = 'hidden'
+				} else {
+					div.style.visibility = ''
+					div.style.opacity = dist < 15 ? '1' : ((20 - dist) / 5).toFixed(3)
+				}
+			}
 		}
 
 		renderer.render(scene, camera)
