@@ -7,7 +7,7 @@ import { meshCacheGet, meshCachePut } from '@/lib/meshCache.js'
 import { C, S } from '@shared/protocol.js'
 
 const FETCH_TIMEOUT_MS = 30_000
-const MAX_INFLIGHT = 6        // concurrent network mesh fetches
+const MAX_INFLIGHT = 12       // concurrent network mesh fetches (was 6; 0 timeouts at 6 → headroom)
 const mem = new Map()         // uuid → submeshes[] (typed arrays)
 const inflight = new Map()    // uuid → Promise<submeshes|null>
 const pending = new Map()     // uuid → resolve fn (awaiting S.MESH_DATA)

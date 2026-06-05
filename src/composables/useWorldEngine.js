@@ -890,7 +890,10 @@ export function useWorldEngine(canvasRef) {
 			for (let slX = 0; slX <= rx; slX++) {
 				const hIdx = slY * hStride + slX
 				const vi   = iy * vStride + slX
-				const h    = worldStore.terrainHeights[hIdx]
+				// Sanitize: a partial/failed terrain decode (log: "buf-exhausted") can leave NaN
+				// heights → NaN vertex → Three.js "Computed radius is NaN" + the patch goes invisible.
+				const raw  = worldStore.terrainHeights[hIdx]
+				const h    = Number.isFinite(raw) ? raw : 0
 				if (h !== 0) anyNonZero = true
 				pos.setY(vi, h)
 				applyHeightColor(col, vi, h)
@@ -2049,7 +2052,8 @@ export function useWorldEngine(canvasRef) {
 					const iy = ry - slY
 					const vi = iy * vStride + slX
 					const hIdx = Math.min(j, patchSize - 1) * patchSize + Math.min(i, patchSize - 1)
-					const h = heights[hIdx]
+					const raw = heights[hIdx]
+					const h = Number.isFinite(raw) ? raw : 0   // NaN-guard: partial decode → flat, not invisible
 					pos.setY(vi, h)
 					applyHeightColor(col, vi, h)
 				}

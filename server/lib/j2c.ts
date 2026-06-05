@@ -36,12 +36,52 @@ export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImag
 		// WHY copy: getDecodedBuffer() returns a view into the WASM heap that the next decode (and
 		// dec.delete()) will clobber. Copy into a standalone array before the buffer is reused.
 		const raw = dec.getDecodedBuffer()
+		// WHY explicit: openjpeg-wasm sometimes parses the header (real width/height/components) but
+		// produces an EMPTY pixel buffer for certain codestreams (progression order / truncation it
+		// can't handle). Without this, fast-png later throws the opaque "wrong data size. Found 0,
+		// expected N". Surface it as a clear, greppable decode failure instead.
+		const expected = fi.width * fi.height * fi.componentCount
+		if (raw.length < expected) {
+			throw new Error(`j2c_decode_incomplete: got ${raw.length} of ${expected}B (${fi.width}×${fi.height}×${fi.componentCount})`)
+		}
 		const pixels = new Uint8Array(raw.length)
 		pixels.set(raw)
 		return { width: fi.width, height: fi.height, channels: fi.componentCount, pixels }
 	} finally {
 		dec.delete?.()
 	}
+}
+
+// Max texture dimension after transcode. SL/OpenSim ship textures up to 1024² (sometimes 2048²);
+// at full res a region's ~1500 textures blow past browser GPU/heap limits and crash the tab. 512 is
+// the SL default detail size and plenty for a web viewer. Override with QS_MAX_TEX_DIM.
+const MAX_TEX_DIM = Number(process.env.QS_MAX_TEX_DIM) || 512
+
+// WHY pure + exported: box-downscale tested without a WASM decode. Halves interleaved 8-bit pixels
+// (averaging each 2×2 block per channel) until both dims ≤ max. SL textures are power-of-two so
+// repeated halving lands exactly; bails if a dimension is odd (can't cleanly halve) to stay in bounds.
+export function downscalePixels(
+	pixels: Uint8Array, width: number, height: number, channels: number, maxDim: number,
+): { pixels: Uint8Array; width: number; height: number } {
+	let w = width, h = height, px = pixels
+	while ((w > maxDim || h > maxDim) && w >= 2 && h >= 2 && w % 2 === 0 && h % 2 === 0) {
+		const nw = w >> 1, nh = h >> 1
+		const out = new Uint8Array(nw * nh * channels)
+		for (let y = 0; y < nh; y++) {
+			for (let x = 0; x < nw; x++) {
+				const sx = x << 1, sy = y << 1
+				for (let c = 0; c < channels; c++) {
+					const a = px[(sy * w + sx) * channels + c]
+					const b = px[(sy * w + sx + 1) * channels + c]
+					const cc = px[((sy + 1) * w + sx) * channels + c]
+					const d = px[((sy + 1) * w + sx + 1) * channels + c]
+					out[(y * nw + x) * channels + c] = (a + b + cc + d) >> 2
+				}
+			}
+		}
+		px = out; w = nw; h = nh
+	}
+	return { pixels: px, width: w, height: h }
 }
 
 // WHY pure + exported: lets the alpha-detection rule be unit-tested without a WASM decode.
@@ -56,7 +96,9 @@ export function pixelsHaveAlpha(pixels: Uint8Array | number[], channels: number)
 
 /** Decode a J2C codestream → PNG buffer plus a flag for whether it carries real transparency. */
 export async function j2cToPngWithAlpha(bytes: Buffer | Uint8Array): Promise<{ png: Buffer; hasAlpha: boolean }> {
-	const { width, height, channels, pixels } = await decodeJ2C(bytes)
+	const dec = await decodeJ2C(bytes)
+	const { channels } = dec
+	const { pixels, width, height } = downscalePixels(dec.pixels, dec.width, dec.height, channels, MAX_TEX_DIM)
 	const png = encodePng({ width, height, data: pixels, channels: channels as 1 | 2 | 3 | 4, depth: 8 })
 	return { png: Buffer.from(png), hasAlpha: pixelsHaveAlpha(pixels, channels) }
 }

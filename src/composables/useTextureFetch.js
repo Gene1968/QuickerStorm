@@ -16,7 +16,9 @@ const FETCH_TIMEOUT_MS = 30_000
 // for the session, and which ones win the race varies per load. Cap concurrent network fetches like
 // useMeshFetch does so the queue drains steadily instead of flooding. (texCacheGet/IDB hits and
 // in-memory hits don't go through the cap — only true network fetches do.)
-const MAX_INFLIGHT = 6
+// 12: live telemetry showed 0 timeouts at 6 and ~1.3 fetches/s (grid round-trip bound, parallelizable)
+// → headroom to roughly double throughput. Raise further only if timeouts stay 0.
+const MAX_INFLIGHT = 12
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
 const texInflight = new Map()  // uuid → Promise<THREE.Texture|null>
@@ -145,7 +147,14 @@ function getBaseTexture(uuid) {
 		.then(url => (url ? buildTexture(url) : null))
 		.then(tex => {
 			texInflight.delete(uuid)
-			if (tex) { tex.userData.hasAlpha = alphaCache.get(uuid) || false; cache.set(uuid, tex) }
+			if (tex) {
+				tex.userData.hasAlpha = alphaCache.get(uuid) || false
+				cache.set(uuid, tex)
+				// Free the in-memory PNG data URL now the GPU texture exists — these strings are big
+				// (100s of KB–MB each × ~1500 textures = the tab-crashing heap hog). Thumbnails re-read
+				// IndexedDB on demand via getTextureUrl; the GPU texture is what rendering needs.
+				urlCache.delete(uuid)
+			}
 			return tex
 		})
 
