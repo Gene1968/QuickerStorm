@@ -136,6 +136,7 @@ function onKey(e) {
 onMounted(() => {
 	originalDark.value = theme.isDark.value
 	window.addEventListener('keydown', onKey)
+	if (activeTab.value === 'network') cache.refresh()
 })
 onUnmounted(() => {
 	window.removeEventListener('keydown', onKey)
@@ -491,6 +492,10 @@ onUnmounted(() => {
 								<template v-if="cache.texStats.value.loading">
 									<span class="pf-cache-stat text-tm">Loading…</span>
 								</template>
+								<template v-else-if="cache.timedOut.value">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
+									<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh</button>
+								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
 										<span class="pf-cache-label">Entries</span>
@@ -503,7 +508,7 @@ onUnmounted(() => {
 									</span>
 								</template>
 							</div>
-							<div v-if="!cache.texStats.value.loading" class="pf-cache-bar-track">
+							<div v-if="!cache.texStats.value.loading && !cache.timedOut.value" class="pf-cache-bar-track">
 								<div
 									class="pf-cache-bar-fill"
 									:style="{ width: Math.min(100, cache.texStats.value.bytes / cache.texStats.value.capBytes * 100).toFixed(1) + '%' }"
@@ -522,6 +527,9 @@ onUnmounted(() => {
 							<div class="pf-cache-stats">
 								<template v-if="cache.meshStats.value.loading">
 									<span class="pf-cache-stat text-tm">Loading…</span>
+								</template>
+								<template v-else-if="cache.timedOut.value">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
@@ -819,6 +827,17 @@ onUnmounted(() => {
 	background: var(--color-accent);
 	border-radius: 9999px;
 	transition: width 0.3s ease;
+}
+
+.pf-cache-retry {
+	margin-left: 0.5rem;
+	font-size: 0.75rem;
+	color: var(--color-accent);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 0;
+	&:hover { text-decoration: underline; }
 }
 
 /* ── Footer ──────────────────────────────────────────────────────────────── */

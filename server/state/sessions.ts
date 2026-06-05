@@ -59,6 +59,13 @@ export interface CircuitState {
 	// True once we've dumped the prim-ids snapshot file after pending drained to 0. Prevents
 	// re-dumping every tick once drain completes.
 	primIdsSnapshotDumped: boolean
+	// Looping cache-miss retry: keep re-requesting still-unfulfilled localIds across multiple passes
+	// (sim's EntityUpdateQueue drops some under backlog; repeated asks eventually fill). Stops at
+	// MAX passes, or on plateau (2 consecutive passes with no progress = sim structurally won't send).
+	retryPassCount?:       number   // how many retry passes started
+	lastUnfulfilledCount?: number   // unfulfilled count at the start of the previous pass (progress check)
+	retryPlateauCount?:    number   // consecutive passes with no progress
+	lastRetryPassAt?:      number   // timestamp the last pass's batch finished queueing (cooldown gate)
 	// True once a MapLayerRequest has been sent on this circuit (one-shot probe).
 	mapLayerSent?: boolean
 	// Set when a cross-region TP is in flight; cleared on TeleportFinish/Failed.

@@ -2,18 +2,35 @@ import { ref } from 'vue'
 import { getTextureCacheStats, clearTextureCache } from '@/lib/textureCache.js'
 import { getMeshCacheStats, clearMeshCache } from '@/lib/meshCache.js'
 
+// IDB readonly txns are blocked by concurrent readwrite puts during world loading.
+// Race with a timeout so the panel never hangs; user can retry once loading settles.
+const STATS_TIMEOUT_MS = 4000
+
+function withTimeout(promise, ms) {
+	return Promise.race([
+		promise,
+		new Promise((_, reject) => setTimeout(() => reject(new Error('stats-timeout')), ms)),
+	])
+}
+
 export function useCacheStats() {
 	const texStats  = ref({ count: 0, bytes: 0, capBytes: 512 * 1024 * 1024, loading: false })
 	const meshStats = ref({ count: 0, bytes: 0, loading: false })
+	const timedOut  = ref(false)
 
 	async function refresh() {
+		timedOut.value  = false
 		texStats.value  = { ...texStats.value,  loading: true }
 		meshStats.value = { ...meshStats.value, loading: true }
 		try {
-			const [tex, mesh] = await Promise.all([getTextureCacheStats(), getMeshCacheStats()])
+			const [tex, mesh] = await withTimeout(
+				Promise.all([getTextureCacheStats(), getMeshCacheStats()]),
+				STATS_TIMEOUT_MS,
+			)
 			texStats.value  = { ...tex,  loading: false }
 			meshStats.value = { ...mesh, loading: false }
-		} catch {
+		} catch (e) {
+			if (e.message === 'stats-timeout') timedOut.value = true
 			texStats.value  = { ...texStats.value,  loading: false }
 			meshStats.value = { ...meshStats.value, loading: false }
 		}
@@ -23,7 +40,7 @@ export function useCacheStats() {
 		texStats.value = { ...texStats.value, loading: true }
 		try {
 			await clearTextureCache()
-			const tex = await getTextureCacheStats()
+			const tex = await withTimeout(getTextureCacheStats(), STATS_TIMEOUT_MS)
 			texStats.value = { ...tex, loading: false }
 		} catch {
 			texStats.value = { ...texStats.value, loading: false }
@@ -34,12 +51,12 @@ export function useCacheStats() {
 		meshStats.value = { ...meshStats.value, loading: true }
 		try {
 			await clearMeshCache()
-			const mesh = await getMeshCacheStats()
+			const mesh = await withTimeout(getMeshCacheStats(), STATS_TIMEOUT_MS)
 			meshStats.value = { ...mesh, loading: false }
 		} catch {
 			meshStats.value = { ...meshStats.value, loading: false }
 		}
 	}
 
-	return { texStats, meshStats, refresh, clearTex, clearMesh }
+	return { texStats, meshStats, timedOut, refresh, clearTex, clearMesh }
 }
