@@ -104,3 +104,35 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 		console.warn('[TexCache] put failed:', e)
 	}
 }
+
+/** Returns { count, bytes, capBytes } for the texture cache. */
+export async function getTextureCacheStats() {
+	try {
+		const db = await openDb()
+		return await new Promise((resolve, reject) => {
+			const tx = db.transaction([STORE, META], 'readonly')
+			const countReq = tx.objectStore(STORE).count()
+			const metaReq  = tx.objectStore(META).get('stats')
+			let count = 0
+			let bytes = 0
+			countReq.onsuccess = () => { count = countReq.result }
+			metaReq.onsuccess  = () => { bytes = metaReq.result?.totalBytes ?? 0 }
+			tx.oncomplete = () => resolve({ count, bytes, capBytes: TEX_CACHE_CAP_BYTES })
+			tx.onerror = () => reject(tx.error)
+		})
+	} catch { return { count: 0, bytes: 0, capBytes: TEX_CACHE_CAP_BYTES } }
+}
+
+/** Clears all texture cache entries and resets the totalBytes counter. */
+export async function clearTextureCache() {
+	try {
+		const db = await openDb()
+		await new Promise((resolve, reject) => {
+			const tx = db.transaction([STORE, META], 'readwrite')
+			tx.objectStore(STORE).clear()
+			tx.objectStore(META).put({ k: 'stats', totalBytes: 0 })
+			tx.oncomplete = resolve
+			tx.onerror = () => reject(tx.error)
+		})
+	} catch { /* ignore */ }
+}
