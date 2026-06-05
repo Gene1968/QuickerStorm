@@ -7,6 +7,10 @@ describe('formatBytes', () => {
 		expect(formatBytes(512)).toBe('512 B')
 	})
 
+	it('returns 0 B for negative input', () => {
+		expect(formatBytes(-512)).toBe('0 B')
+	})
+
 	it('formats KB', () => {
 		expect(formatBytes(1024)).toBe('1.0 KB')
 		expect(formatBytes(1536)).toBe('1.5 KB')
