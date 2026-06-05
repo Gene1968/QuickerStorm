@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { getTextureCacheStats, clearTextureCache } from '@/lib/textureCache.js'
 import { getMeshCacheStats, clearMeshCache } from '@/lib/meshCache.js'
+import { getObjectCacheStats, objCacheClearAll } from '@/lib/objectCache.js'
 
 // IDB readonly txns are blocked by concurrent readwrite puts during world loading.
 // Race with a timeout so the panel never hangs; user can retry once loading settles.
@@ -16,23 +17,27 @@ function withTimeout(promise, ms) {
 export function useCacheStats() {
 	const texStats  = ref({ count: 0, bytes: 0, capBytes: 512 * 1024 * 1024, loading: false })
 	const meshStats = ref({ count: 0, bytes: 0, loading: false })
+	const objStats  = ref({ regions: 0, objects: 0, loading: false })
 	const timedOut  = ref(false)
 
 	async function refresh() {
 		timedOut.value  = false
 		texStats.value  = { ...texStats.value,  loading: true }
 		meshStats.value = { ...meshStats.value, loading: true }
+		objStats.value  = { ...objStats.value,  loading: true }
 		try {
-			const [tex, mesh] = await withTimeout(
-				Promise.all([getTextureCacheStats(), getMeshCacheStats()]),
+			const [tex, mesh, obj] = await withTimeout(
+				Promise.all([getTextureCacheStats(), getMeshCacheStats(), getObjectCacheStats()]),
 				STATS_TIMEOUT_MS,
 			)
 			texStats.value  = { ...tex,  loading: false }
 			meshStats.value = { ...mesh, loading: false }
+			objStats.value  = { ...obj,  loading: false }
 		} catch (e) {
 			if (e.message === 'stats-timeout') timedOut.value = true
 			texStats.value  = { ...texStats.value,  loading: false }
 			meshStats.value = { ...meshStats.value, loading: false }
+			objStats.value  = { ...objStats.value,  loading: false }
 		}
 	}
 
@@ -58,5 +63,16 @@ export function useCacheStats() {
 		}
 	}
 
-	return { texStats, meshStats, timedOut, refresh, clearTex, clearMesh }
+	async function clearObj() {
+		objStats.value = { ...objStats.value, loading: true }
+		try {
+			await objCacheClearAll()
+			const obj = await withTimeout(getObjectCacheStats(), STATS_TIMEOUT_MS)
+			objStats.value = { ...obj, loading: false }
+		} catch {
+			objStats.value = { ...objStats.value, loading: false }
+		}
+	}
+
+	return { texStats, meshStats, objStats, timedOut, refresh, clearTex, clearMesh, clearObj }
 }

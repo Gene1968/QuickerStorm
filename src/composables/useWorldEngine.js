@@ -16,7 +16,9 @@ import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats } from './useMeshFetch.js'
+import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats } from './useTextureFetch.js'
+import { objCacheLoad, objCacheSave } from '@/lib/objectCache.js'
 import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -29,6 +31,40 @@ function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 // bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
 // (true CSG needed); Twist + Taper applied as per-vertex deformation below.
 const ZERO_TEX_UUID = '00000000-0000-0000-0000-000000000000'
+
+// Concatenate decoded submeshes (SL-space verts) into one THREE.BufferGeometry, converting SL→Three
+// (slToThree(x,y,z)=(x,z,-y), a pure 90° X rotation so winding is preserved) and baking prim scale.
+// Shared by the mesh (ExtraParam type 5) and legacy-sculpt (types 1-4) paths. Returns the baked geom.
+function swapSubmeshesToGeometry(subs, scale) {
+	let vTotal = 0, iTotal = 0
+	for (const s of subs) { vTotal += s.positions.length / 3; iTotal += s.indices.length }
+	const pos = new Float32Array(vTotal * 3), nor = new Float32Array(vTotal * 3), uv = new Float32Array(vTotal * 2)
+	const idx = new Uint32Array(iTotal)
+	let vOff = 0, iOff = 0
+	const g = new THREE.BufferGeometry()
+	for (let gi = 0; gi < subs.length; gi++) {
+		const s = subs[gi]
+		const v = s.positions.length / 3
+		for (let k = 0; k < v; k++) {
+			pos[(vOff + k) * 3 + 0] = s.positions[k * 3 + 0]    // x
+			pos[(vOff + k) * 3 + 1] = s.positions[k * 3 + 2]    // y ← SL z
+			pos[(vOff + k) * 3 + 2] = -s.positions[k * 3 + 1]   // z ← -SL y
+			nor[(vOff + k) * 3 + 0] = s.normals[k * 3 + 0]
+			nor[(vOff + k) * 3 + 1] = s.normals[k * 3 + 2]
+			nor[(vOff + k) * 3 + 2] = -s.normals[k * 3 + 1]
+			uv[(vOff + k) * 2 + 0] = s.uvs[k * 2 + 0]
+			uv[(vOff + k) * 2 + 1] = s.uvs[k * 2 + 1]
+		}
+		for (let t = 0; t < s.indices.length; t++) idx[iOff + t] = s.indices[t] + vOff
+		g.addGroup(iOff, s.indices.length, gi)
+		vOff += v; iOff += s.indices.length
+	}
+	g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+	g.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
+	g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+	g.setIndex(new THREE.BufferAttribute(idx, 1))
+	return bakePrimScale(g, scale)
+}
 
 function buildPrimGeometry(shape) {
 	const pc = shape?.pathCurve ?? 16
@@ -243,6 +279,8 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
+	const hoverTextMeshes = new Set()  // meshes that currently have hover text
+	const _htVec3 = new THREE.Vector3()  // reused for hover-text distance calc
 	// WHY (perf): prim mesh builds are deferred off the WS message handler into a paced per-frame
 	// drain. Region entry delivers thousands of ObjectUpdates; building all their Three.js geometry
 	// synchronously inside onmessage blocked the main thread (multi-second 'message handler took Nms'
@@ -252,6 +290,50 @@ export function useWorldEngine(canvasRef) {
 	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
 	let _assetStatsTimer = null  // setInterval handle for asset-loading telemetry
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
+		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
+		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
+		// clobbers an already-arrived localId). See lib/objectCache.js.
+		let _objCacheLoadedKey = null
+		let _lastObjSaveAt = 0
+		let _lastObjSaveCount = 0
+		const regionCacheKey = () => {
+			// Global region coords only — set at login, so identical at save AND load. (regionName
+			// arrives via RegionHandshake which can land AFTER the first ObjectUpdate, so including it
+			// made the load key miss the saved record.)
+			const rx = sessionStore.regionX, ry = sessionStore.regionY
+			return (!rx && !ry) ? null : `${rx}_${ry}`
+		}
+		async function loadRegionCache() {
+			const key = regionCacheKey()
+			if (!key || key === _objCacheLoadedKey) return
+			_objCacheLoadedKey = key
+			const cached = await objCacheLoad(key)
+			if (!cached || !cached.length) return
+			let n = 0
+			for (const o of cached) {
+				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
+				if (worldStore.objects.has(o.localId)) continue
+				worldStore.upsertObject(o)
+				pendingMeshIds.add(o.localId)
+				n++
+			}
+			if (n) debugStore.push('info', `[ObjCache] replayed ${n} cached objects for ${key}`)
+		}
+		function saveRegionCache(force = false) {
+			const key = regionCacheKey()
+			if (!key) return
+			const count = worldStore.objects.size
+			const now = Date.now()
+			if (!force) {
+				if (count < 50) return
+				if (now - _lastObjSaveAt < 20000) return
+				if (count === _lastObjSaveCount) return
+			}
+			_lastObjSaveAt = now; _lastObjSaveCount = count
+			const objs = [...worldStore.objects.values()].filter(o => o.pcode !== PCODE_AVATAR)
+			objCacheSave(key, objs)
+			debugStore.push('info', `[ObjCache] saved ${objs.length} objects for ${key}${force ? ' (force)' : ''}`)
+		}
 	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
@@ -1095,6 +1177,7 @@ export function useWorldEngine(canvasRef) {
 				mesh.remove(mesh.userData.hoverLabel)
 				mesh.userData.hoverDiv = null
 				mesh.userData.hoverLabel = null
+				hoverTextMeshes.delete(mesh)
 			}
 			return
 		}
@@ -1108,6 +1191,7 @@ export function useWorldEngine(canvasRef) {
 			mesh.userData.hoverDiv   = div
 			mesh.userData.hoverLabel = label
 		}
+		hoverTextMeshes.add(mesh)
 		if (div.textContent !== text) div.textContent = text
 		const c = obj.textColor
 		div.style.color = c
@@ -1392,51 +1476,23 @@ export function useWorldEngine(canvasRef) {
 				mat.opacity = obj.defaultColor[3]
 			}
 
-			// ── Mesh geometry: replace the cube with the real decoded mesh ──────
-			// WHY: server decodes the mesh asset to submesh arrays (SL-space verts). Convert SL→Three
-			// (swap Y/Z) like buildPrimGeometry's output, flip triangle winding (the axis swap flips
-			// handedness), concatenate submeshes into one geometry (one material group each), then
-			// bakePrimScale by obj.scale exactly as the cube path does.
+			// ── Mesh / sculpt geometry: replace the cube with the real decoded surface ──────
+			// WHY: server decodes the asset to SL-space submesh arrays. swapSubmeshesToGeometry converts
+			// SL→Three (swap Y/Z) like buildPrimGeometry's output and bakes prim scale, then we hot-swap
+			// the geometry. Mesh (ExtraParam type 5) and legacy sculpt (types 1-4) share this path.
+			const applyDecoded = (subs) => {
+				if (!subs || !subs.length || !mesh.parent || mesh.material !== mat) return
+				const baked = swapSubmeshesToGeometry(subs, obj.scale)
+				// NaN-vertex guard (#D): keep the cube rather than an invisible (culled) mesh.
+				if (!baked || !geometryHasFiniteVerts(baked)) { baked?.dispose?.(); geoNaNCount++; return }
+				const old = mesh.geometry
+				mesh.geometry = baked
+				old.dispose()
+			}
 			if (!isAvatar && !obj._placeholder && obj.meshId) {
-				getMesh(obj.meshId).then(subs => {
-					if (!subs || !subs.length || !mesh.parent || mesh.material !== mat) return
-					let vTotal = 0, iTotal = 0
-					for (const s of subs) { vTotal += s.positions.length / 3; iTotal += s.indices.length }
-					const pos = new Float32Array(vTotal * 3), nor = new Float32Array(vTotal * 3), uv = new Float32Array(vTotal * 2)
-					const idx = new Uint32Array(iTotal)
-					let vOff = 0, iOff = 0
-					const g = new THREE.BufferGeometry()
-					for (let gi = 0; gi < subs.length; gi++) {
-						const s = subs[gi]
-						const v = s.positions.length / 3
-						for (let k = 0; k < v; k++) {
-							// SL→Three matches slToThree(x,y,z)=(x,z,-y) — a pure 90° rotation about X
-							// (det +1), so handedness is preserved and winding stays as-is.
-							pos[(vOff + k) * 3 + 0] = s.positions[k * 3 + 0]    // x
-							pos[(vOff + k) * 3 + 1] = s.positions[k * 3 + 2]    // y ← SL z
-							pos[(vOff + k) * 3 + 2] = -s.positions[k * 3 + 1]   // z ← -SL y
-							nor[(vOff + k) * 3 + 0] = s.normals[k * 3 + 0]
-							nor[(vOff + k) * 3 + 1] = s.normals[k * 3 + 2]
-							nor[(vOff + k) * 3 + 2] = -s.normals[k * 3 + 1]
-							uv[(vOff + k) * 2 + 0] = s.uvs[k * 2 + 0]
-							uv[(vOff + k) * 2 + 1] = s.uvs[k * 2 + 1]
-						}
-						for (let t = 0; t < s.indices.length; t++) idx[iOff + t] = s.indices[t] + vOff
-						g.addGroup(iOff, s.indices.length, gi)
-						vOff += v; iOff += s.indices.length
-					}
-					g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-					g.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
-					g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
-					g.setIndex(new THREE.BufferAttribute(idx, 1))
-					const baked = bakePrimScale(g, obj.scale)
-					// NaN-vertex guard (#D): keep the existing cube rather than swapping in an
-					// invisible (frustum-culled) mesh if the decode produced non-finite verts.
-					if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
-					const old = mesh.geometry
-					mesh.geometry = baked
-					old.dispose()
-				})
+				getMesh(obj.meshId).then(applyDecoded)
+			} else if (!isAvatar && !obj._placeholder && obj.sculptId) {
+				getSculpt(obj.sculptId, obj.sculptType ?? 1).then(applyDecoded)
 			}
 
 			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
@@ -1675,6 +1731,7 @@ export function useWorldEngine(canvasRef) {
 			// WHY: Linked-set children sit under parent mesh, not scene. Detach from actual parent.
 			mesh.parent?.remove(mesh)
 			meshMap.delete(localId)
+			hoverTextMeshes.delete(mesh)
 		}
 	}
 
@@ -1692,6 +1749,7 @@ export function useWorldEngine(canvasRef) {
 		const objs = payload?.objects ?? []
 		objUpdateCount++
 		objsReceivedTotal += objs.length
+		loadRegionCache()   // once per region (guarded): instant repaint from IndexedDB before live fills
 		if (objUpdateCount === 1 || objUpdateCount % 20 === 0) {
 			const avCount = objs.filter(o => o.pcode === PCODE_AVATAR).length
 			debugStore.push('info', `[3D] ObjectUpdate #${objUpdateCount}: ${objs.length} objects (${avCount} av) agentId=${sessionStore.agentId?.slice(0,8)}`)
@@ -1699,6 +1757,7 @@ export function useWorldEngine(canvasRef) {
 		const now = Date.now()
 		if (now - lastPrimDiagAt >= 5000) {
 			lastPrimDiagAt = now
+			saveRegionCache()   // throttled persist of the settled scene for instant next-load
 			const primCount = worldStore.prims.length
 			const avCount = worldStore.avatars.length
 			// DIAG: distinguish "prim has a texture but it wasn't fetched" (fetch gap) from "prim has
@@ -1958,6 +2017,8 @@ export function useWorldEngine(canvasRef) {
 	function onTeleportFinish(d) {
 		uiStore.teleportStatus = 'arriving'
 		_tpSceneCleared = true
+		saveRegionCache(true)      // persist the region we're leaving before wiping the scene
+		_objCacheLoadedKey = null  // let the destination region's cache load fresh
 		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
 		meshMap.forEach((mesh) => {
 			mesh.traverse(child => {
@@ -1966,6 +2027,7 @@ export function useWorldEngine(canvasRef) {
 			mesh.parent?.remove(mesh)
 		})
 		meshMap.clear()
+		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
@@ -2545,6 +2607,12 @@ export function useWorldEngine(canvasRef) {
 
 		drainMeshQueue()  // perf: paced prim-mesh creation (bounded per frame)
 
+		// DEBUG: force all hover text visible to confirm mechanism works
+		for (const m of hoverTextMeshes) {
+			const div = m.userData.hoverDiv
+			if (div) { div.style.visibility = ''; div.style.opacity = '1' }
+		}
+
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
 	}
@@ -2659,11 +2727,13 @@ export function useWorldEngine(canvasRef) {
 		off(S.TELEPORT_FINISH,   onTeleportFinish)
 		off(S.TELEPORT_FAILED,   onTeleportFailed)
 		off(S.OBJECT_PROPS,      onObjectProps)
+		saveRegionCache(true)   // persist the scene on unmount so the next load is instant
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
+		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
 		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()

@@ -14,6 +14,7 @@ import { handleInventoryFetch } from './handlers/inventory'
 import { handleAssetFetch } from './handlers/assets'
 import { handleMaterialFetch } from './handlers/materials'
 import { handleMeshFetch } from './handlers/mesh'
+import { handleSculptFetch } from './handlers/sculpt'
 import { deleteSession, resolveCircuitId, attachWs, detachWs, scheduleExpire, findCircuitByUser } from './state/sessions'
 import { C, S } from '../shared/protocol.js'
 import type { ServerWebSocket } from 'bun'
@@ -239,6 +240,11 @@ const server = Bun.serve<WSData>({
 				case C.MESH_FETCH: {
 					const d = msg.d as { meshId: string }
 					handleMeshFetch(circuitId, d)
+					break
+				}
+				case C.SCULPT_FETCH: {
+					const d = msg.d as { sculptId: string; sculptType: number }
+					handleSculptFetch(circuitId, d)
 					break
 				}
 				default:

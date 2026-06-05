@@ -547,6 +547,36 @@ onUnmounted(() => {
 								</template>
 							</div>
 						</div>
+
+						<!-- Object Cache (persistent scene per region — instant reload paint) -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Object Cache</span>
+								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
+									Clear Objects
+									<small class="font-normal">(forces full re-stream)</small>
+								</button>
+							</div>
+							<div class="pf-cache-stats">
+								<template v-if="cache.objStats.value.loading">
+									<span class="pf-cache-stat text-tm">Loading…</span>
+								</template>
+								<template v-else-if="cache.timedOut.value">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
+								</template>
+								<template v-else>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Regions</span>
+										<span class="pf-cache-val">{{ cache.objStats.value.regions.toLocaleString() }}</span>
+									</span>
+									<span class="pf-cache-sep">·</span>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Objects</span>
+										<span class="pf-cache-val">{{ cache.objStats.value.objects.toLocaleString() }}</span>
+									</span>
+								</template>
+							</div>
+						</div>
 					</template>
 
 					<!-- ── SEARCH EMPTY STATE ── -->

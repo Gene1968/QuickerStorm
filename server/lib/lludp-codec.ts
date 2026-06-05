@@ -981,6 +981,7 @@ export interface ObjectData {
   defaultPbrMaterial?: string           // GLTF PBR material asset UUID (ExtraParam 0x80, default face)
   pbrMaterials?:     Array<string | null>  // per-face GLTF PBR material asset UUIDs
   meshId?:          string              // mesh asset UUID (Sculpt ExtraParam 0x30, sculptType&7==5)
+  sculptId?:        string              // legacy sculpt-map texture UUID (sculptType&7 == 1..4)
   sculptType?:      number              // raw sculpt type byte (1 sphere..4 cylinder, 5 mesh)
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
@@ -1050,6 +1051,7 @@ export function decodeObjectUpdateCompressed(
       let te: TEFields = {}
       let pbrFaces: Record<number, string> = {}
       let meshId: string | undefined
+      let sculptId: string | undefined
       let sculptType: number | undefined
       let text = ''
       let textColor: [number, number, number, number] | undefined
@@ -1083,7 +1085,7 @@ export function decodeObjectUpdateCompressed(
               if (epType === 0x80 && off + epSize <= dataEnd) pbrFaces = parseMaterialsExtraParam(buf, off, epSize)
               else if (epType === 0x30 && off + epSize <= dataEnd) {
                 const sc = parseSculptExtraParam(buf, off, epSize)
-                if (sc) { sculptType = sc.sculptType; if ((sc.sculptType & 0x07) === 5) meshId = sc.uuid }
+                if (sc) { sculptType = sc.sculptType; const t = sc.sculptType & 0x07; if (t === 5) meshId = sc.uuid; else if (t >= 1 && t <= 4) sculptId = sc.uuid }
               }
               off += epSize
             }
@@ -1153,6 +1155,7 @@ export function decodeObjectUpdateCompressed(
         ...(pbrKeys.length ? { pbrMaterials: Object.assign(new Array(32).fill(null), Object.fromEntries(Object.entries(pbrFaces))) } : {}),
         ...(meshId ? { meshId } : {}),
         ...(sculptType != null ? { sculptType } : {}),
+        ...(sculptId ? { sculptId } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
@@ -1344,6 +1347,7 @@ export function decodeObjectUpdate(
       let faceTextures: Array<string | null> | undefined
       let pbrFaces: Record<number, string> = {}
       let meshId: string | undefined
+      let sculptId: string | undefined
       let sculptType: number | undefined
       try {
         const dtex = bytesToUuid(buf, off)
@@ -1451,7 +1455,7 @@ export function decodeObjectUpdate(
               if (t === 0x80 && q + sz <= epEnd) pbrFaces = parseMaterialsExtraParam(buf, q, sz)
               else if (t === 0x30 && q + sz <= epEnd) {
                 const sc = parseSculptExtraParam(buf, q, sz)
-                if (sc) { sculptType = sc.sculptType; if ((sc.sculptType & 0x07) === 5) meshId = sc.uuid }
+                if (sc) { sculptType = sc.sculptType; const t = sc.sculptType & 0x07; if (t === 5) meshId = sc.uuid; else if (t >= 1 && t <= 4) sculptId = sc.uuid }
               }
               q += sz
             }
@@ -1482,6 +1486,7 @@ export function decodeObjectUpdate(
         ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
         ...(meshId ? { meshId } : {}),
         ...(sculptType != null ? { sculptType } : {}),
+        ...(sculptId ? { sculptId } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
