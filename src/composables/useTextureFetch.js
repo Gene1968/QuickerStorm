@@ -10,6 +10,13 @@ import { C, S } from '@shared/protocol.js'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 const FETCH_TIMEOUT_MS = 30_000
+// WHY cap: a region delivers ~1-2k textures. The server transcodes J2C→PNG on a single-instance
+// WASM decoder (CPU-bound, serialized on the event loop). Firing every request at once means the
+// late ones sit behind hundreds of decodes and blow FETCH_TIMEOUT_MS → negative-cached → invisible
+// for the session, and which ones win the race varies per load. Cap concurrent network fetches like
+// useMeshFetch does so the queue drains steadily instead of flooding. (texCacheGet/IDB hits and
+// in-memory hits don't go through the cap — only true network fetches do.)
+const MAX_INFLIGHT = 6
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
 const texInflight = new Map()  // uuid → Promise<THREE.Texture|null>
@@ -17,7 +24,13 @@ const urlInflight = new Map()  // uuid → Promise<string|null>  (IDB-or-network
 const pending     = new Map()  // uuid → { resolve, timer }     (in-flight WS request)
 const xformCache  = new Map()  // `uuid|repS|repT|offS|offT|rot` → cloned THREE.Texture w/ UV transform
 const urlCache    = new Map()  // uuid → PNG data URL (sync mirror; thumbnails + fast re-reads)
+const alphaCache  = new Map()  // uuid → bool: PNG carries real transparency (drives blend vs opaque)
 const failed      = new Set()  // uuids the sim couldn't serve — don't re-request this session
+const netQueue    = []         // queued network fetches awaiting a slot (runs: () => void)
+let   active      = 0          // in-flight network fetches (≤ MAX_INFLIGHT)
+
+// Live counters so we can watch steady population (vs flooding) — see getTextureStats().
+const stats = { requested: 0, done: 0, failed: 0, timeout: 0 }
 
 const EPS = 1e-4
 const isIdentityXform = (x) =>
@@ -31,29 +44,59 @@ function _wire() {
 	useRealtimeSocket().on(S.ASSET_DATA, _onAssetData)
 }
 
+// Free an in-flight slot and start the next queued fetch (if any).
+function _pump() {
+	while (active < MAX_INFLIGHT && netQueue.length) { active++; netQueue.shift()() }
+}
+
 // S.ASSET_DATA → resolve the pending WS request with a data URL (or null on error/missing).
 function _onAssetData(d) {
 	if (!d || d.assetType !== 'texture') return
 	const p = pending.get(d.uuid)
-	if (!p) return
+	if (!p) return            // already timed out (slot already freed) — ignore late arrival
 	pending.delete(d.uuid)
-	clearTimeout(p.timer)
-	if (d.error || !d.dataB64) { p.resolve(null); return }
+	if (d.error || !d.dataB64) { stats.failed++; p.resolve(null); return }
+	stats.done++
+	alphaCache.set(d.uuid, !!d.hasAlpha)
 	p.resolve(`data:${d.mime || 'image/png'};base64,${d.dataB64}`)
 }
 
-// Fetch a texture's PNG bytes from the server over WS. Resolves the data URL or null (timeout/miss).
+// Fetch a texture's PNG bytes from the server over WS, gated by MAX_INFLIGHT. Resolves the data URL
+// or null (timeout/miss). The slot is held from emit() until S.ASSET_DATA or timeout, so the server's
+// serialized J2C decoder is never asked for more than MAX_INFLIGHT textures at once.
 function _wsFetch(uuid) {
 	_wire()
-	const { emit } = useRealtimeSocket()
-	const p = new Promise(resolve => {
-		// WHY timeout: a UUID the sim can't serve never produces S.ASSET_DATA; without this the
-		// resolver (and inflight entry) would leak forever.
-		const timer = setTimeout(() => { pending.delete(uuid); resolve(null) }, FETCH_TIMEOUT_MS)
-		pending.set(uuid, { resolve, timer })
+	stats.requested++
+	return new Promise(resolve => {
+		const run = () => {
+			const { emit } = useRealtimeSocket()
+			// settle() runs exactly once: frees the slot, pumps the queue, resolves. Both the data
+			// path (via pending.resolve) and the timeout path go through it.
+			let settled = false
+			const settle = (url) => {
+				if (settled) return
+				settled = true
+				clearTimeout(timer)
+				pending.delete(uuid)
+				active--
+				_pump()
+				resolve(url)
+			}
+			// WHY timeout: a UUID the sim can't serve never produces S.ASSET_DATA; without this the
+			// resolver, the inflight entry, AND the slot would leak forever (starving the queue).
+			const timer = setTimeout(() => { stats.timeout++; settle(null) }, FETCH_TIMEOUT_MS)
+			pending.set(uuid, { resolve: settle, timer })
+			emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
+		}
+		// active was already incremented by _pump(); queue + pump keeps the bookkeeping in one place.
+		netQueue.push(run)
+		_pump()
 	})
-	emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
-	return p
+}
+
+/** Live fetch counters (textures). For watching steady population / confirming the cap holds. */
+export function getTextureStats() {
+	return { ...stats, inflight: active, queued: netQueue.length, cached: cache.size }
 }
 
 // Resolve a UUID to its PNG data URL through all cache layers. Deduped; populates IDB on a miss.
@@ -65,9 +108,9 @@ function getDataUrl(uuid) {
 
 	const p = (async () => {
 		const cached = await texCacheGet(uuid)         // IndexedDB (survives reloads)
-		if (cached) { urlCache.set(uuid, cached); return cached }
-		const net = await _wsFetch(uuid)               // server fetch + transcode
-		if (net) { urlCache.set(uuid, net); texCachePut(uuid, net); return net }   // persist for next time
+		if (cached) { urlCache.set(uuid, cached.url); alphaCache.set(uuid, cached.hasAlpha); return cached.url }
+		const net = await _wsFetch(uuid)               // server fetch + transcode (sets alphaCache)
+		if (net) { urlCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time
 		failed.add(uuid)
 		return null
 	})().then(url => { urlInflight.delete(uuid); return url })
@@ -100,7 +143,11 @@ function getBaseTexture(uuid) {
 
 	const p = getDataUrl(uuid)
 		.then(url => (url ? buildTexture(url) : null))
-		.then(tex => { texInflight.delete(uuid); if (tex) cache.set(uuid, tex); return tex })
+		.then(tex => {
+			texInflight.delete(uuid)
+			if (tex) { tex.userData.hasAlpha = alphaCache.get(uuid) || false; cache.set(uuid, tex) }
+			return tex
+		})
 
 	texInflight.set(uuid, p)
 	return p
@@ -123,6 +170,7 @@ export function getTexture(uuid, xform = null) {
 		if (!base) return null
 		if (xformCache.has(key)) return xformCache.get(key)
 		const t = base.clone()
+		t.userData.hasAlpha = base.userData.hasAlpha
 		t.wrapS = t.wrapT = THREE.RepeatWrapping
 		t.repeat.set(xform.repeat[0], xform.repeat[1])
 		t.offset.set(xform.offset[0], xform.offset[1])
@@ -150,6 +198,7 @@ export function clearTextureCache() {
 	cache.clear()
 	xformCache.clear()
 	urlCache.clear()
+	alphaCache.clear()
 	failed.clear()
 }
 

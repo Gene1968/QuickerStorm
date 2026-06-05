@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { decodeJ2C, j2cToPng } from '../lib/j2c'
+import { decodeJ2C, j2cToPng, j2cToPngWithAlpha, pixelsHaveAlpha } from '../lib/j2c'
 import { decode as decodePng } from 'fast-png'
 
 // Real SL terrain texture codestreams staged in the repo — exercise the actual decoder, not a mock.
@@ -33,5 +33,24 @@ describe('j2c', () => {
 		const first = a.pixels[0]
 		await decodeJ2C(img('terrain-grass.j2c'))
 		expect(a.pixels[0]).toBe(first)   // 'a' must be unaffected by the second decode
+	})
+
+	it('reports the opaque RGB terrain texture as having no alpha', async () => {
+		const { hasAlpha } = await j2cToPngWithAlpha(fixture)
+		expect(hasAlpha).toBe(false)
+	})
+})
+
+describe('pixelsHaveAlpha', () => {
+	it('returns false for non-RGBA channel counts', () => {
+		expect(pixelsHaveAlpha(new Uint8Array([10, 20, 30]), 3)).toBe(false)
+		expect(pixelsHaveAlpha(new Uint8Array([10]), 1)).toBe(false)
+	})
+	it('returns false when every alpha sample is fully opaque', () => {
+		expect(pixelsHaveAlpha(new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]), 4)).toBe(false)
+	})
+	it('returns true when any alpha sample is sub-255', () => {
+		expect(pixelsHaveAlpha(new Uint8Array([1, 2, 3, 255, 4, 5, 6, 128]), 4)).toBe(true)
+		expect(pixelsHaveAlpha(new Uint8Array([1, 2, 3, 0]), 4)).toBe(true)
 	})
 })

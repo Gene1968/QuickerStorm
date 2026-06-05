@@ -14,6 +14,7 @@ const pending = new Map()     // uuid → resolve fn (awaiting S.MESH_DATA)
 const failed = new Set()
 const queue = []              // uuids waiting for a network slot
 let active = 0
+const stats = { requested: 0, done: 0, failed: 0, timeout: 0 }  // live counters (see getMeshStats)
 
 let _wired = false
 function _wire() { if (_wired) return; _wired = true; useRealtimeSocket().on(S.MESH_DATA, _on) }
@@ -29,7 +30,8 @@ function _on(d) {
 	const resolve = pending.get(d?.meshId)
 	if (!resolve) return
 	pending.delete(d.meshId)
-	if (d.error || !d.submeshes) { resolve(null); return }
+	if (d.error || !d.submeshes) { stats.failed++; resolve(null); return }
+	stats.done++
 	const subs = d.submeshes.map(s => ({
 		positions: b64ToTyped(s.positions, Float32Array),
 		normals:   b64ToTyped(s.normals, Float32Array),
@@ -45,7 +47,7 @@ function _netFetch(uuid) {
 		const run = () => {
 			active++
 			const { emit } = useRealtimeSocket()
-			const timer = setTimeout(() => { pending.delete(uuid); _done(); resolve(null) }, FETCH_TIMEOUT_MS)
+			const timer = setTimeout(() => { stats.timeout++; pending.delete(uuid); _done(); resolve(null) }, FETCH_TIMEOUT_MS)
 			pending.set(uuid, v => { clearTimeout(timer); _done(); resolve(v) })
 			emit(C.MESH_FETCH, { meshId: uuid })
 		}
@@ -54,12 +56,18 @@ function _netFetch(uuid) {
 }
 function _done() { active--; if (queue.length && active < MAX_INFLIGHT) queue.shift()() }
 
+/** Live fetch counters (mesh). For watching steady population / confirming the cap holds. */
+export function getMeshStats() {
+	return { ...stats, inflight: active, queued: queue.length, cached: mem.size }
+}
+
 export function getMesh(uuid) {
 	if (!uuid) return Promise.resolve(null)
 	if (mem.has(uuid)) return Promise.resolve(mem.get(uuid))
 	if (failed.has(uuid)) return Promise.resolve(null)
 	if (inflight.has(uuid)) return inflight.get(uuid)
 	_wire()
+	stats.requested++
 	const p = (async () => {
 		const cached = await meshCacheGet(uuid)
 		if (cached) { mem.set(uuid, cached); return cached }

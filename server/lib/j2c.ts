@@ -44,9 +44,24 @@ export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImag
 	}
 }
 
-/** Decode a J2C codestream and re-encode it as a PNG buffer. */
-export async function j2cToPng(bytes: Buffer | Uint8Array): Promise<Buffer> {
+// WHY pure + exported: lets the alpha-detection rule be unit-tested without a WASM decode.
+// Reports transparency ONLY for 4-channel images that actually carry a sub-255 alpha sample —
+// a fully-opaque RGBA texture returns false so the client doesn't needlessly mark it transparent
+// (which would drop it into the blended/sorted pass for no reason).
+export function pixelsHaveAlpha(pixels: Uint8Array | number[], channels: number): boolean {
+	if (channels !== 4) return false
+	for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 255) return true
+	return false
+}
+
+/** Decode a J2C codestream → PNG buffer plus a flag for whether it carries real transparency. */
+export async function j2cToPngWithAlpha(bytes: Buffer | Uint8Array): Promise<{ png: Buffer; hasAlpha: boolean }> {
 	const { width, height, channels, pixels } = await decodeJ2C(bytes)
 	const png = encodePng({ width, height, data: pixels, channels: channels as 1 | 2 | 3 | 4, depth: 8 })
-	return Buffer.from(png)
+	return { png: Buffer.from(png), hasAlpha: pixelsHaveAlpha(pixels, channels) }
+}
+
+/** Decode a J2C codestream and re-encode it as a PNG buffer. */
+export async function j2cToPng(bytes: Buffer | Uint8Array): Promise<Buffer> {
+	return (await j2cToPngWithAlpha(bytes)).png
 }

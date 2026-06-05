@@ -5,7 +5,7 @@
 // on the server; the browser gets clean base64. Shapes from caps-feature-map cluster A.
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
-import { j2cToPng } from '../lib/j2c'
+import { j2cToPngWithAlpha } from '../lib/j2c'
 import { S } from '../../shared/protocol.js'
 
 export interface AssetRequestSpec {
@@ -58,8 +58,14 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 		if (!res.ok) { send({ error: `http_${res.status}` }); return }
 		const raw = Buffer.from(await res.arrayBuffer())
 
-		const out = spec.transcodeToPng ? await j2cToPng(raw) : raw
-		send({ mime: spec.transcodeToPng ? spec.mime : (res.headers.get('content-type') || spec.mime), dataB64: out.toString('base64') })
+		let out: Buffer, hasAlpha = false
+		if (spec.transcodeToPng) { const r = await j2cToPngWithAlpha(raw); out = r.png; hasAlpha = r.hasAlpha }
+		else out = raw
+		send({
+			mime: spec.transcodeToPng ? spec.mime : (res.headers.get('content-type') || spec.mime),
+			dataB64: out.toString('base64'),
+			...(spec.transcodeToPng ? { hasAlpha } : {}),
+		})
 		slog.info(s.ws, `[Asset] ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcodeToPng ? ` → ${out.length}B png` : ''})`)
 	} catch (e) {
 		slog.warn(s.ws, `[Asset] fetch failed ${assetType} ${uuid.slice(0, 8)}…: ${(e as Error).message}`)

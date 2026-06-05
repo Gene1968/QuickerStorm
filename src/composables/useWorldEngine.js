@@ -15,7 +15,8 @@ import { useTeleport } from './useTeleport.js'
 import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
-import { getMesh } from './useMeshFetch.js'
+import { getMesh, getMeshStats } from './useMeshFetch.js'
+import { getTextureStats } from './useTextureFetch.js'
 import { C, S } from '@shared/protocol.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -100,6 +101,18 @@ function applyShapeDeformation(geom, shape) {
 function bakePrimScale(geom, scale) {
 	if (scale) geom.scale(scale[0], scale[2], scale[1])
 	return geom
+}
+
+// WHY: a NaN/Inf vertex (bad shape-param deformation, degenerate mesh decode, etc.) makes
+// computeBoundingSphere produce a NaN radius → Three.js frustum-cull test fails → the mesh is
+// SILENTLY DROPPED from rendering, leaving only "Computed radius is NaN" console spam. classifySafety
+// only validates pos/scale, not the built vertices, so this slips through. Scan the final positions
+// and report so the caller can substitute a visible placeholder instead of an invisible prim.
+function geometryHasFiniteVerts(geom) {
+	const a = geom.attributes?.position?.array
+	if (!a || a.length === 0) return false
+	for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) return false
+	return true
 }
 
 // Quaternion: same axis remap as position (SL Z-up → Three Y-up). The imaginary
@@ -207,6 +220,8 @@ export function useWorldEngine(canvasRef) {
 	// under a per-frame time budget. Dedupe is automatic (Set + fetch latest obj from worldStore).
 	const pendingMeshIds = new Set()  // localId → awaiting mesh build (prims only; avatars build inline)
 	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
+	let _assetStatsTimer = null  // setInterval handle for asset-loading telemetry
+	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
@@ -1214,6 +1229,7 @@ export function useWorldEngine(canvasRef) {
 	const PLACEHOLDER_COLOR = 0xff1493   // hot pink — high-contrast marker, outside hashed-HSL palette
 	let skippedNoPos     = 0    // pos NaN/Inf or out of range — nowhere to draw
 	let placeholderCount = 0    // bad scale → magenta 1m cube at obj.pos
+	let geoNaNCount      = 0    // built geometry had NaN verts → shown as placeholder instead of culled
 	function classifySafety(obj) {
 		if (obj.pcode === PCODE_AVATAR) return { ok: true }
 		const p = obj.pos
@@ -1287,9 +1303,20 @@ export function useWorldEngine(canvasRef) {
 			const isAvatar = obj.pcode === PCODE_AVATAR
 			// WHY: Capsule radius 0.33 (+10% vs old 0.30) for wider silhouette.
 			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
-			const geo = isAvatar
+			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
 				: bakePrimScale(buildPrimGeometry(obj.shape), obj.scale)
+			// NaN-vertex guard (#D): a prim whose built geometry has non-finite verts would be
+			// frustum-culled = invisible. Swap in a 0.5m cube + placeholder color so it's findable.
+			let geoBad = false
+			if (!isAvatar && !geometryHasFiniteVerts(geo)) {
+				geo.dispose?.()
+				geo = new THREE.BoxGeometry(0.5, 0.5, 0.5)
+				geoBad = true
+				geoNaNCount++
+				if (geoNaNCount <= 10 || geoNaNCount % 50 === 0)
+					debugStore.push('warn', `[3D] NaN geometry localId=${obj.localId} pcode=${obj.pcode} → placeholder (#${geoNaNCount})`)
+			}
 			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit). MeshStandardMaterial
 			// caused directional-light flicker as the mesh rotated with yaw.
 			// WHY hashed-HSL fallback: legacy stand-in when TE decode produces no defaultColor.
@@ -1306,7 +1333,7 @@ export function useWorldEngine(canvasRef) {
 			const teColor = obj.defaultColor
 				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 				: null
-			const primColor = obj._placeholder ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
+			const primColor = (obj._placeholder || geoBad) ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
 			// ── Slice 2: hybrid lit materials ───────────────────────────────────
 			// Only prims that carry a material (legacy material_id / PBR ExtraParam 0x80) switch to a
 			// lit MeshStandardMaterial; plain prims + avatars keep the fast unlit MeshBasicMaterial
@@ -1317,6 +1344,16 @@ export function useWorldEngine(canvasRef) {
 				: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			if (hasMaterial && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+
+			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
+			// WHY: defaultColor is RGBA; we previously used only RGB, so a prim the sim sent as
+			// semi-transparent rendered fully opaque. depthWrite off so it blends instead of occluding
+			// what's behind it. Texture-driven transparency is added once the map resolves (below).
+			if (!isAvatar && !obj._placeholder && obj.defaultColor && obj.defaultColor[3] < 0.99) {
+				mat.transparent = true
+				mat.opacity = obj.defaultColor[3]
+				mat.depthWrite = false
+			}
 
 			// ── Mesh geometry: replace the cube with the real decoded mesh ──────
 			// WHY: server decodes the mesh asset to submesh arrays (SL-space verts). Convert SL→Three
@@ -1355,8 +1392,12 @@ export function useWorldEngine(canvasRef) {
 					g.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
 					g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
 					g.setIndex(new THREE.BufferAttribute(idx, 1))
+					const baked = bakePrimScale(g, obj.scale)
+					// NaN-vertex guard (#D): keep the existing cube rather than swapping in an
+					// invisible (frustum-culled) mesh if the decode produced non-finite verts.
+					if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
 					const old = mesh.geometry
-					mesh.geometry = bakePrimScale(g, obj.scale)
+					mesh.geometry = baked
 					old.dispose()
 				})
 			}
@@ -1386,6 +1427,12 @@ export function useWorldEngine(canvasRef) {
 						// tinted prim with a plain texture isn't forced white.
 						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 						else mat.color.set(0xffffff)
+						// Alpha (#17): a texture with real transparency (server-reported hasAlpha) blends.
+						// Without it the PNG's alpha is ignored and see-through regions render black.
+						if (tex.userData?.hasAlpha) {
+							mat.transparent = true
+							mat.depthWrite = false
+						}
 						mat.needsUpdate = true
 					}
 				})
@@ -1607,7 +1654,7 @@ export function useWorldEngine(canvasRef) {
 			lastPrimDiagAt = now
 			const primCount = worldStore.prims.length
 			const avCount = worldStore.avatars.length
-			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} upsertFails=${upsertMeshFailures}`)
+			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} upsertFails=${upsertMeshFailures} placeholders=${placeholderCount} geoNaN=${geoNaNCount} skippedNoPos=${skippedNoPos}`)
 			// Mirror to server-log via WS so server-log.txt has full client+server picture.
 			wsEmit(C.CLIENT_DIAG, {
 				received:     objsReceivedTotal,
@@ -2479,6 +2526,17 @@ export function useWorldEngine(canvasRef) {
 
 		initScene()
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
+		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
+		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
+		_assetStatsTimer = setInterval(() => {
+			const t = getTextureStats(), m = getMeshStats()
+			const busy = t.inflight || t.queued || m.inflight || m.queued
+			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
+			_lastTexReq = t.requested; _lastMeshReq = m.requested
+			debugStore.push('info',
+				`[Assets] tex ✓${t.done} ✗${t.failed} ⏱${t.timeout} inflight=${t.inflight} q=${t.queued} cache=${t.cached} | ` +
+				`mesh ✓${m.done} ✗${m.failed} ⏱${m.timeout} inflight=${m.inflight} q=${m.queued} cache=${m.cached}`)
+		}, 3000)
 		window.addEventListener('keydown', onKeyDown, { passive: false })
 		window.addEventListener('keyup',   onKeyUp)
 		window.addEventListener('blur',    onBlur)
@@ -2517,6 +2575,7 @@ export function useWorldEngine(canvasRef) {
 		clearGizmo()
 		endFocusGlide()
 		cancelAnimationFrame(animId)
+		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
 		window.removeEventListener('blur',    onBlur)

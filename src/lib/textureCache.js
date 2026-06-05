@@ -45,7 +45,11 @@ export function planEvictions(entries, capBytes) {
 	return evict
 }
 
-/** Look up a cached texture data URL by UUID. Touches lastUsed (LRU). Returns null on miss. */
+/**
+ * Look up a cached texture by UUID. Touches lastUsed (LRU). Returns `{ url, hasAlpha }` or null on
+ * miss. `hasAlpha` (whether the PNG carries real transparency) rides along so the client can pick
+ * blend-vs-opaque without re-fetching; old records pre-dating the field read as `false`.
+ */
 export async function texCacheGet(uuid, now = Date.now()) {
 	try {
 		const db = await openDb()
@@ -56,7 +60,7 @@ export async function texCacheGet(uuid, now = Date.now()) {
 			req.onsuccess = () => {
 				const rec = req.result
 				if (rec) { rec.lastUsed = now; st.put(rec) }
-				resolve(rec ? rec.url : null)
+				resolve(rec ? { url: rec.url, hasAlpha: !!rec.hasAlpha } : null)
 			}
 			req.onerror = () => reject(req.error)
 		})
@@ -67,7 +71,7 @@ export async function texCacheGet(uuid, now = Date.now()) {
 }
 
 /** Persist a texture data URL by UUID, then evict LRU entries if over the size cap. */
-export async function texCachePut(uuid, url, now = Date.now()) {
+export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now()) {
 	try {
 		const db = await openDb()
 		const bytes = url.length
@@ -75,7 +79,7 @@ export async function texCachePut(uuid, url, now = Date.now()) {
 			const tx = db.transaction([STORE, META], 'readwrite')
 			const st = tx.objectStore(STORE)
 			const mt = tx.objectStore(META)
-			st.put({ uuid, url, bytes, lastUsed: now })
+			st.put({ uuid, url, bytes, hasAlpha, lastUsed: now })
 			const mreq = mt.get('stats')
 			mreq.onsuccess = () => {
 				let total = (mreq.result?.totalBytes ?? 0) + bytes

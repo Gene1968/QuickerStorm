@@ -75,6 +75,7 @@ onUnmounted(() => {
 		</div>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="touch">Touch</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="sit">Sit Here</button>
-		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Take / Copy (Phase 3)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Refresh textures (to do)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Take / Copy (to do: Phase 3)</button>
 	</div>
 </template>
