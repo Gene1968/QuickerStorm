@@ -138,6 +138,11 @@ const TYPE_CLASS = {
 	2: 'text-yellow-400 font-semibold',  // shout
 }
 
+function formatTime(ts) {
+	const d = new Date(ts)
+	return `[${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}]`
+}
+
 function onInput() {
 	if (chatInput.value.length === 1) playSound('typing.mp3', 0.3)
 }
@@ -354,7 +359,9 @@ async function submitChat() {
 							:key="m.id"
 							:class="['text-xs leading-snug', TYPE_CLASS[m.chatType] ?? 'text-t1']"
 						>
-							<span class="text-accent font-medium">{{ m.fromName }}:</span>
+							<span class="text-tm text-2xs me-1 select-none">{{ formatTime(m.timestamp) }}</span>
+							<button v-if="m.sourceId" class="inline text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.sourceId)">{{ m.fromName }}</button>
+							<span v-else class="text-accent font-medium">{{ m.fromName }}</span>:
 							{{ m.message }}
 						</div>
 						<div v-if="!messages.length" class="py-4 text-gray-200 text-xs italic">
@@ -429,7 +436,9 @@ async function submitChat() {
 							:key="i"
 							class="text-xs leading-snug text-t1"
 						>
-							<span class="text-accent font-medium">{{ m.from }}:</span>
+							<span class="text-t1 text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
+							<button v-if="m.fromId" class="inline text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
+							<span v-else class="text-accent font-medium">{{ m.from }}</span>:
 							{{ m.text }}
 						</div>
 						<div v-if="!activeConv.messages.length" class="py-4 text-gray-200 text-xs italic">

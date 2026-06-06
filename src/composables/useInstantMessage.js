@@ -67,7 +67,7 @@ export function useInstantMessage() {
 		const isNew = !conversations.value.has(d.fromAgentId)
 		const conv = ensureConv(d.fromAgentId, d.fromAgentName)
 		if (isNew) playSound('chime.mp3', 0.5)
-		conv.messages.push({ from: d.fromAgentName, text: d.message, ts: d.timestamp * 1000, dialog: d.dialog })
+		conv.messages.push({ from: d.fromAgentName, fromId: d.fromAgentId, text: d.message, ts: d.timestamp * 1000, dialog: d.dialog })
 		conversations.value = new Map(conversations.value)
 		if (activeId.value !== d.fromAgentId) unreadCount.value++
 		persist(session.agentId)
