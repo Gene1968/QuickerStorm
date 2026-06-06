@@ -185,7 +185,17 @@
       "Bash(head -1 MEMORY.md)",
       "Bash(printf '\\\\n- [Hosting Target]\\(hosting-target.md\\) — prod is VPS/NAS not SharePoint; makes server-side Tier-2 asset cache viable\\\\n')",
       "PowerShell(Get-CimInstance *)",
-      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('scripts',{}\\), indent=2\\)\\)\")"
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('scripts',{}\\), indent=2\\)\\)\")",
+      "Bash(xargs grep -l \"RequestMultipleObjectsPacket\")",
+      "Bash(grep -nA8 \"function queueAck\" /c/Users/gene1/Downloads/Pages/git/QuickerStorm/server/handlers/lludp.ts)",
+      "Bash(grep -nB2 -A12 \"const THROTTLES\" /c/Users/gene1/Downloads/Pages/git/QuickerStorm/server/lib/lludp-codec.ts)",
+      "Bash(find C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\server\\\\handlers *)",
+      "Bash(xargs grep -l \"LLChatEntry\\\\|message.*time\\\\|chat.*timestamp\")",
+      "Bash(grep *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "Bash(awk ' *)",
+      "Bash(awk *)",
+      "Bash(timeout 180 bunx vite build --mode development)"
     ]
   }
 }

@@ -287,8 +287,12 @@ export function useWorldEngine(canvasRef) {
 	// violations). pendingMeshIds holds prim localIds awaiting a mesh; drainMeshQueue() builds them
 	// under a per-frame time budget. Dedupe is automatic (Set + fetch latest obj from worldStore).
 	const pendingMeshIds = new Set()  // localId → awaiting mesh build (prims only; avatars build inline)
+	// Orphan index: parentLocalId → Set(childLocalId) waiting for that root to build. Replaces an
+	// O(n) meshMap scan per build (was O(n²) overall — the dominant mesh-build cost on big regions).
+	const orphansByParent = new Map()
 	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
 	let _assetStatsTimer = null  // setInterval handle for asset-loading telemetry
+	let _meshDrainTimer = null   // mesh build/reparent driver — focus-independent (see onMounted)
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -1355,6 +1359,14 @@ export function useWorldEngine(canvasRef) {
 	let skippedNoPos     = 0    // pos NaN/Inf or out of range — nowhere to draw
 	let placeholderCount = 0    // bad scale → magenta 1m cube at obj.pos
 	let geoNaNCount      = 0    // built geometry had NaN verts → shown as placeholder instead of culled
+	// DIAG probes (P2 texture-apply): why cached textures don't reach materials.
+	let texCalls = 0, texNull = 0, texApplied = 0, texDropNoParent = 0, texDropMatSwap = 0
+	// P1: linkset-root backfill. ~380 missing roots orphan ~4000 children (hidden + mispositioned).
+	// RequestMultipleObjects can't surface them, but ObjectSelect makes the sim send
+	// ObjectProperties+ObjectUpdate even for prims it otherwise withholds. Ask each root once,
+	// paced, then deselect. Reparenting of waiting orphans is automatic (see upsertMesh parent scan).
+	const askedRoots = new Set()
+	const ROOT_BACKFILL_BATCH = 40   // roots per diag tick (~every 20 ObjectUpdates)
 	function classifySafety(obj) {
 		if (obj.pcode === PCODE_AVATAR) return { ok: true }
 		const p = obj.pos
@@ -1517,7 +1529,13 @@ export function useWorldEngine(canvasRef) {
 				const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
 					? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
 					: null
+				texCalls++
 				getTexture(obj.defaultTexture, xform).then(tex => {
+					// DIAG (P2): classify apply outcome to pin the white-scene cause.
+					if (!tex) texNull++
+					else if (!mesh.parent) texDropNoParent++
+					else if (mesh.material !== mat) texDropMatSwap++
+					else texApplied++
 					// Guard: region teardown may have disposed this mesh before the texture arrives.
 					if (tex && mesh.parent && mesh.material === mat) {
 						mat.map = tex
@@ -1651,23 +1669,33 @@ export function useWorldEngine(canvasRef) {
 			if (parentMesh) {
 				parentMesh.add(mesh)
 			} else {
-				if (parentLocalId) mesh.visible = false  // orphan child — hide until parent arrives
+				if (parentLocalId) {
+					mesh.visible = false  // orphan child — hide until parent arrives
+					let set = orphansByParent.get(parentLocalId)
+					if (!set) { set = new Set(); orphansByParent.set(parentLocalId, set) }
+					set.add(obj.localId)
+				}
 				scene.add(mesh)
 			}
 			normalizeChildTransform(mesh)
 			meshMap.set(obj.localId, mesh)
 
-			// WHY: This mesh may itself be a parent for orphans that arrived earlier. Scan and reparent.
-			meshMap.forEach((other) => {
-				if (other === mesh) return
-				if (other.userData.parentId === obj.localId && other.parent !== mesh) {
+			// WHY: O(1) reparent of orphans that were waiting on THIS mesh's localId. Replaces a
+			// per-build full meshMap scan (O(n²) overall — the dominant big-region build cost).
+			// Stale index entries (child removed/already parented) are skipped safely.
+			const waiting = orphansByParent.get(obj.localId)
+			if (waiting) {
+				for (const childId of waiting) {
+					const other = meshMap.get(childId)
+					if (!other || other.parent === mesh) continue
 					other.parent?.remove(other)
 					mesh.add(other)
 					normalizeChildTransform(other)
 					other.visible = true
 					if (other.userData.hoverLabel) other.userData.hoverLabel.visible = true
 				}
-			})
+				orphansByParent.delete(obj.localId)
+			}
 		} else {
 			// Existing mesh: scale update + animated position
 			// WHY: scale lives in the geometry (node scale stays 1,1,1 so children don't inherit it).
@@ -1737,6 +1765,14 @@ export function useWorldEngine(canvasRef) {
 			})
 			// WHY: Linked-set children sit under parent mesh, not scene. Detach from actual parent.
 			mesh.parent?.remove(mesh)
+			// WHY: CSS2DRenderer does NOT remove a label's DOM node when its object leaves the scene
+			// graph — the <div> leaks, frozen at its last screen position (stale avatar/hover labels
+			// that don't track the scene). Remove the element explicitly. Covers avatar (label2D) and
+			// prim hovertext (hoverLabel) labels.
+			for (const lbl of [mesh.userData?.label2D, mesh.userData?.hoverLabel]) {
+				if (lbl?.element?.parentNode) lbl.element.remove()
+				lbl?.parent?.remove(lbl)
+			}
 			meshMap.delete(localId)
 			hoverTextMeshes.delete(mesh)
 		}
@@ -1773,7 +1809,34 @@ export function useWorldEngine(canvasRef) {
 			let withTex = 0, mapped = 0
 			for (const o of worldStore.prims) if (o.defaultTexture && o.defaultTexture !== ZERO_TEX_UUID) withTex++
 			for (const m of meshMap.values()) if (m.material && m.material.map) mapped++
+			// P1 probe: children whose root prim is missing → orphaned (mispositioned + label hidden +
+			// whole linkset can be invisible). missingRoots = distinct root ids never delivered.
+			let children = 0, orphanLive = 0
+			const missingRoots = new Set()
+			for (const o of worldStore.prims) {
+				const pid = o.parentId ?? 0
+				if (pid === 0) continue
+				children++
+				if (!worldStore.objects.has(pid)) { orphanLive++; missingRoots.add(pid) }
+			}
+			let orphanMesh = 0
+			for (const m of meshMap.values()) if ((m.userData?.parentId ?? 0) !== 0 && m.parent === scene) orphanMesh++
 			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} withTex=${withTex} mapped=${mapped} upsertFails=${upsertMeshFailures} placeholders=${placeholderCount} geoNaN=${geoNaNCount} skippedNoPos=${skippedNoPos}`)
+			debugStore.push('info', `[Orphan] children=${children} orphanByMissingRoot=${orphanLive} distinctMissingRoots=${missingRoots.size} orphanMeshAtScene=${orphanMesh}`)
+			// P1 backfill: ObjectSelect a batch of not-yet-asked missing roots → sim sends their
+			// ObjectUpdate → orphaned children reparent automatically. Deselect shortly after.
+			const newRoots = []
+			for (const rid of missingRoots) {
+				if (askedRoots.has(rid)) continue
+				askedRoots.add(rid); newRoots.push(rid)
+				if (newRoots.length >= ROOT_BACKFILL_BATCH) break
+			}
+			if (newRoots.length) {
+				wsEmit(C.OBJECT_SELECT, { localIds: newRoots })
+				setTimeout(() => wsEmit(C.OBJECT_DESELECT, { localIds: newRoots }), 1500)
+				debugStore.push('info', `[RootBackfill] ObjectSelect ${newRoots.length} root(s) (asked=${askedRoots.size}/${missingRoots.size})`)
+			}
+			debugStore.push('info', `[TexApply] withTex=${withTex} mapped=${mapped} calls=${texCalls} null=${texNull} applied=${texApplied} dropNoParent=${texDropNoParent} dropMatSwap=${texDropMatSwap}`)
 			// Mirror to server-log via WS so server-log.txt has full client+server picture.
 			wsEmit(C.CLIENT_DIAG, {
 				received:     objsReceivedTotal,
@@ -1789,6 +1852,8 @@ export function useWorldEngine(canvasRef) {
 				geoNaN:       geoNaNCount,
 				tex:          getTextureStats(),
 				mesh:         getMeshStats(),
+				orphan:       { children, orphanByMissingRoot: orphanLive, distinctMissingRoots: missingRoots.size, orphanMeshAtScene: orphanMesh },
+				texApply:     { calls: texCalls, null: texNull, applied: texApplied, dropNoParent: texDropNoParent, dropMatSwap: texDropMatSwap },
 			})
 		}
 		for (const obj of objs) {
@@ -2036,6 +2101,7 @@ export function useWorldEngine(canvasRef) {
 		meshMap.clear()
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
+		orphansByParent.clear()
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
 		worldStore.clearTerrain()
@@ -2418,6 +2484,22 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// WHY: A child built before its root's MESH exists is added to scene at parent-LOCAL coords
+	// (mispositioned + label hidden), and the root's one-shot reparent scan already ran — so it's
+	// never reattached. Slow mesh-build makes this common. Periodic sweep: any scene-orphan whose
+	// parent mesh now exists gets moved under it (its local pos/rot then resolve correctly).
+	function reparentOrphans() {
+		for (const mesh of meshMap.values()) {
+			const pid = mesh.userData?.parentId ?? 0
+			if (pid === 0 || mesh.parent !== scene) continue
+			const parentMesh = meshMap.get(pid)
+			if (!parentMesh) continue
+			scene.remove(mesh)
+			parentMesh.add(mesh)
+			if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
+		}
+	}
+
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
 		// WHY (perf): when the page is unfocused (mouse on taskbar, another window, or devtools)
@@ -2612,7 +2694,9 @@ export function useWorldEngine(canvasRef) {
 		if (waterMaterial) waterMaterial.uniforms.uTime.value += dt
 		if (gizmoGroup) positionGizmo()
 
-		drainMeshQueue()  // perf: paced prim-mesh creation (bounded per frame)
+		// NOTE: mesh building moved off the rAF path to a focus-independent timer (see onMounted).
+		// The rAF loop returns early when unfocused (line above), which previously froze ALL mesh
+		// building whenever the window lost focus — so heavy regions only ever built ~30-50%.
 
 		// WHY: CSS2DRenderer owns element.style.display — do not touch it.
 		// Fade by camera distance: zoom in → labels appear, zoom out → labels hide.
@@ -2674,6 +2758,15 @@ export function useWorldEngine(canvasRef) {
 		installConsoleForwarder(wsEmit)   // dev: forward NaN/radius console warnings to server-log
 		initScene()
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
+		// WHY: Mesh building runs here (not in the rAF loop) so it keeps progressing while the window
+		// is unfocused — building is CPU/geometry work, not rendering, so it has no reason to be
+		// focus-gated. 12ms budget × ~33Hz ≈ 400ms/s of build time vs the old focus-gated rAF path.
+		// Reparent sweep is cheaper; run it every 4th tick.
+		let _drainTick = 0
+		_meshDrainTimer = setInterval(() => {
+			drainMeshQueue()
+			if ((_drainTick++ & 3) === 0) reparentOrphans()
+		}, 30)
 		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
 		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
 		_assetStatsTimer = setInterval(() => {
@@ -2725,6 +2818,7 @@ export function useWorldEngine(canvasRef) {
 		cancelAnimationFrame(animId)
 		uninstallConsoleForwarder()
 		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
+		if (_meshDrainTimer) { clearInterval(_meshDrainTimer); _meshDrainTimer = null }
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
 		window.removeEventListener('blur',    onBlur)
@@ -2755,6 +2849,7 @@ export function useWorldEngine(canvasRef) {
 		meshMap.clear()
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
+		orphansByParent.clear()
 		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()
 		worldStore.clearAll()

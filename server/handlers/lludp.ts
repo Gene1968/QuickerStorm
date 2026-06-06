@@ -62,6 +62,13 @@ const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circu
 const LOW_MAP_BLOCK_REPLY     = 409   // Sim → viewer: world-map region entries (Low freq)
 const LOW_MAP_LAYER_REPLY     = 406   // Sim → viewer: map layer info — alive-probe response
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
+// WHY: OpenSim LLUDPClient.DequeueOutgoing() STOPS sending when NeedAcks.Count() > 50
+// (unacked reliable packets). During the object-update flood (Task throttle ~700 KB/s ≈
+// 300+ reliable packets/500ms) acking only on the 500ms circuit tick pins the sim's unacked
+// window past 50 → object delivery stalls (≈half undelivered) and the resend queue overflows
+// → silent circuit death. Mirror Firestorm: flush acks as soon as enough accumulate so the
+// sim's window stays well under 50. Verified against OpenSim LLUDPClient.cs:608.
+const ACK_FLUSH_THRESHOLD     = 16    // flush pending acks immediately once this many queue up
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
 const MEDIUM_OBJECT_PROPERTIES      = 9  // ObjectProperties — sim's reply to ObjectSelect (Medium freq)
 // ── Social (Phase 3) inbound Low-freq message IDs ──
@@ -299,8 +306,12 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		buf = Buffer.concat([buf.slice(0, hdr.bodyOffset), body])
 	}
 
-	// Queue ack for reliable packets
-	if (hdr.reliable) queueAck(session, hdr.seq)
+	// Queue ack for reliable packets. Flush eagerly under load so the sim's unacked
+	// window never crosses its NeedAcks>50 send-stall threshold (see ACK_FLUSH_THRESHOLD).
+	if (hdr.reliable) {
+		queueAck(session, hdr.seq)
+		if (session.pendingAcks.length >= ACK_FLUSH_THRESHOLD) sendPendingAcks(session)
+	}
 
 	const { type, dataOffset } = parseMsgType(buf, hdr.bodyOffset)
 
@@ -1410,6 +1421,8 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			received?: number; stored?: number; prims?: number; av?: number;
 			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number;
 			geoNaN?: number; withTex?: number; mapped?: number; tex?: DiagStats; mesh?: DiagStats
+			orphan?: { children?: number; orphanByMissingRoot?: number; distinctMissingRoots?: number; orphanMeshAtScene?: number }
+			texApply?: { calls?: number; null?: number; applied?: number; dropNoParent?: number; dropMatSwap?: number }
 		}
 		const stat = (s?: DiagStats) => s
 			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
@@ -1419,6 +1432,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
 			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'} geoNaN=${d.geoNaN ?? '?'} withTex=${d.withTex ?? '?'} mapped=${d.mapped ?? '?'} | ` +
 			`tex ${stat(d.tex)} | mesh ${stat(d.mesh)}`)
+		if (d.orphan) slog.info(session.ws,
+			`[Orphan] children=${d.orphan.children ?? '?'} orphanByMissingRoot=${d.orphan.orphanByMissingRoot ?? '?'} distinctMissingRoots=${d.orphan.distinctMissingRoots ?? '?'} orphanMeshAtScene=${d.orphan.orphanMeshAtScene ?? '?'}`)
+		if (d.texApply) slog.info(session.ws,
+			`[TexApply] calls=${d.texApply.calls ?? '?'} null=${d.texApply.null ?? '?'} applied=${d.texApply.applied ?? '?'} dropNoParent=${d.texApply.dropNoParent ?? '?'} dropMatSwap=${d.texApply.dropMatSwap ?? '?'}`)
 		return
 	}
 

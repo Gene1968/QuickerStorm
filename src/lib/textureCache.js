@@ -58,12 +58,15 @@ export async function texCacheGet(uuid, now = Date.now()) {
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
-			const tx  = db.transaction(STORE, 'readwrite')
-			const st  = tx.objectStore(STORE)
-			const req = st.get(uuid)
+			// WHY readonly: a region replay fires 1000s of texCacheGet at once. A readwrite tx (to
+			// touch lastUsed) takes a store write-lock, so IndexedDB SERIALIZES them all one-at-a-time
+			// → textures trickle in (white scene). readonly tx run concurrently. LRU instead tracks
+			// lastUsed at put-time (age-since-cached); a cache hit defers a batched touch (see below).
+			const tx  = db.transaction(STORE, 'readonly')
+			const req = tx.objectStore(STORE).get(uuid)
 			req.onsuccess = () => {
 				const rec = req.result
-				if (rec) { rec.lastUsed = now; st.put(rec) }
+				if (rec) _touchLater(uuid, now)
 				resolve(rec ? { url: rec.url, hasAlpha: !!rec.hasAlpha } : null)
 			}
 			req.onerror = () => reject(req.error)
@@ -72,6 +75,34 @@ export async function texCacheGet(uuid, now = Date.now()) {
 		console.warn('[TexCache] get failed:', e)
 		return null
 	}
+}
+
+// Batched LRU touch: accumulate hit uuids and flush lastUsed in ONE readwrite tx every few seconds,
+// so the hot read path never takes a write-lock. Best-effort — drops on error.
+const _touchQueue = new Map()
+let _touchTimer = null
+function _touchLater(uuid, now) {
+	_touchQueue.set(uuid, now)
+	if (_touchTimer) return
+	_touchTimer = setTimeout(flushTouches, 4000)
+}
+async function flushTouches() {
+	_touchTimer = null
+	if (!_touchQueue.size) return
+	const batch = [..._touchQueue]; _touchQueue.clear()
+	try {
+		const db = await openDb()
+		await new Promise((resolve) => {
+			const tx = db.transaction(STORE, 'readwrite')
+			const st = tx.objectStore(STORE)
+			for (const [uuid, now] of batch) {
+				const g = st.get(uuid)
+				g.onsuccess = () => { const r = g.result; if (r) { r.lastUsed = now; st.put(r) } }
+			}
+			tx.oncomplete = resolve
+			tx.onerror = resolve
+		})
+	} catch { /* best-effort LRU */ }
 }
 
 /** Persist a texture data URL by UUID, then evict LRU entries if over the size cap. */
