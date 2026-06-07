@@ -209,17 +209,22 @@ function close() {
 					</button>
 				</div>
 				<!-- Sub row: gizmo operation (Move / Rotate / Stretch), tied to modifier keys -->
-				<div class="flex items-center gap-1">
-					<button
+				<div role="radiogroup" aria-label="Gizmo operation" class="flex items-center gap-2">
+					<label
 						v-for="g in gizmoOps"
 						:key="g.id"
 						:title="g.hint"
-						class="ui-btn flex-1 min-w-0 px-1.5 py-1 text-2xs rounded border transition-colors truncate"
-						:class="ui.gizmoMode === g.id
-							? 'border-accent text-accent bg-accent/10'
-							: 'border-brd text-white/70 hover:text-t1 hover:bg-white/5'"
-						@click="ui.setGizmoMode(g.id)"
-					>{{ g.label }}</button>
+						class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-t1 cursor-pointer select-none"
+					>
+						<input
+							type="radio"
+							name="gizmo-op"
+							class="accent-accent shrink-0"
+							:value="g.id"
+							v-model="ui.gizmoMode"
+						/>
+						<span class="truncate">{{ g.label }}</span>
+					</label>
 				</div>
 			</div>
 			<div class="shrink-0 px-2 py-1 flex items-center gap-2 border-b border-brd">
