@@ -195,7 +195,10 @@
       "PowerShell(Get-NetTCPConnection *)",
       "Bash(awk ' *)",
       "Bash(awk *)",
-      "Bash(timeout 180 bunx vite build --mode development)"
+      "Bash(timeout 180 bunx vite build --mode development)",
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 60)",
+      "PowerShell(npx vitest run src/__tests__/lib/primGeometry.test.js src/__tests__/composables/useMeshBaker.test.js 2>&1 | Select-Object -Last 25)",
+      "PowerShell(npx vitest run primGeometry useMeshBaker 2>&1 | Select-Object -Last 20)"
     ]
   }
 }

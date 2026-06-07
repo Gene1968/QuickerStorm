@@ -428,7 +428,7 @@ function close() {
 					<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
 						<div class="text-white/50 self-center">Texture</div>
 						<div class="flex items-center gap-2">
-							<div class="w-12 h-12 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs overflow-hidden">
+							<div class="w-16 h-16 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs overflow-hidden">
 								<img v-if="texThumb" :src="texThumb" class="w-full h-full object-cover" alt="texture" />
 								<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
 							</div>
@@ -452,7 +452,7 @@ function close() {
 								class="flex-1 bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono"
 							/>
 						</div>
-						<div class="text-white/50 self-center">Transparency %</div>
+						<div class="text-white/50 self-center">Trans %</div>
 						<input
 							:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
 							readonly

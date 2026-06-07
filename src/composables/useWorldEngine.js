@@ -20,16 +20,16 @@ import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats } from './useTextureFetch.js'
 import { objCacheLoad, objCacheSave } from '@/lib/objectCache.js'
 import { C, S } from '@shared/protocol.js'
+import {
+	bakePrimScale,            // bakes prim scale into the placeholder cube
+	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
+	geometryFromArrays,       // consumes worker-baked arrays in applySwap
+} from '@/lib/primGeometry.js'
+import { useMeshBaker } from '@/composables/useMeshBaker.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 
-// WHY: Map SL prim PathCurve+ProfileCurve to a Three.js geometry. Reference table
-// (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
-// sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,
-// 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
-// bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
-// (true CSG needed); Twist + Taper applied as per-vertex deformation below.
 const ZERO_TEX_UUID = '00000000-0000-0000-0000-000000000000'
 const BLANK_TEX_UUID = '5748decc-f629-461c-9a36-a35a221fe21f'  // SL built-in "Blank" (pure white)
 const isRealTex = (t) => !!t && t !== ZERO_TEX_UUID && t !== BLANK_TEX_UUID
@@ -47,127 +47,6 @@ function pickPrimTexture(obj) {
 		if (best) return best
 	}
 	return null
-}
-
-// Concatenate decoded submeshes (SL-space verts) into one THREE.BufferGeometry, converting SL→Three
-// (slToThree(x,y,z)=(x,z,-y), a pure 90° X rotation so winding is preserved) and baking prim scale.
-// Shared by the mesh (ExtraParam type 5) and legacy-sculpt (types 1-4) paths. Returns the baked geom.
-function swapSubmeshesToGeometry(subs, scale) {
-	let vTotal = 0, iTotal = 0
-	for (const s of subs) { vTotal += s.positions.length / 3; iTotal += s.indices.length }
-	const pos = new Float32Array(vTotal * 3), nor = new Float32Array(vTotal * 3), uv = new Float32Array(vTotal * 2)
-	const idx = new Uint32Array(iTotal)
-	let vOff = 0, iOff = 0
-	const g = new THREE.BufferGeometry()
-	for (let gi = 0; gi < subs.length; gi++) {
-		const s = subs[gi]
-		const v = s.positions.length / 3
-		for (let k = 0; k < v; k++) {
-			pos[(vOff + k) * 3 + 0] = s.positions[k * 3 + 0]    // x
-			pos[(vOff + k) * 3 + 1] = s.positions[k * 3 + 2]    // y ← SL z
-			pos[(vOff + k) * 3 + 2] = -s.positions[k * 3 + 1]   // z ← -SL y
-			nor[(vOff + k) * 3 + 0] = s.normals[k * 3 + 0]
-			nor[(vOff + k) * 3 + 1] = s.normals[k * 3 + 2]
-			nor[(vOff + k) * 3 + 2] = -s.normals[k * 3 + 1]
-			uv[(vOff + k) * 2 + 0] = s.uvs[k * 2 + 0]
-			uv[(vOff + k) * 2 + 1] = s.uvs[k * 2 + 1]
-		}
-		for (let t = 0; t < s.indices.length; t++) idx[iOff + t] = s.indices[t] + vOff
-		g.addGroup(iOff, s.indices.length, gi)
-		vOff += v; iOff += s.indices.length
-	}
-	g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-	g.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
-	g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
-	g.setIndex(new THREE.BufferAttribute(idx, 1))
-	return bakePrimScale(g, scale)
-}
-
-function buildPrimGeometry(shape) {
-	const pc = shape?.pathCurve ?? 16
-	const pf = (shape?.profileCurve ?? 1) & 0x0F
-	let geom
-	if (pc === 16) {
-		// HeightSegments=8 so Twist/Taper deformation has enough vertices to look smooth.
-		if (pf === 0)      geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 8)
-		else if (pf === 3) geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 3, 8)   // prism
-		else               geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
-	} else if (pc === 32 || pc === 33) {
-		if (pf === 5) geom = new THREE.SphereGeometry(0.5, 16, 12)
-		// torus / tube / ring — Three TorusGeometry stand-in; full profile sweep is Phase 3
-		else          geom = new THREE.TorusGeometry(0.35, 0.15, 12, 24)
-	} else {
-		geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
-	}
-	return applyShapeDeformation(geom, shape)
-}
-
-// WHY: SL Twist + Taper applied per-vertex. Twist rotates around the path axis (Three.js
-// local Y for our PathCurve=16/32 geometries) by an angle that lerps from PathTwistBegin
-// at the bottom to PathTwist at the top. Taper shrinks XZ scale linearly from bottom to
-// top. Both encoded as S8 with 0.01 quantization (libomv Primitive.cs TWIST_QUANTA).
-// Skip torus (PathCurve=32 + non-half-circle profile) — deformation doesn't follow the
-// same axis convention and would mangle the geometry.
-function applyShapeDeformation(geom, shape) {
-	if (!shape) return geom
-	const pc = shape.pathCurve ?? 16
-	const isTorusLike = (pc === 32 || pc === 33) && (shape.profileCurve & 0x0F) !== 5
-	if (isTorusLike) return geom
-	const twist      = (shape.pathTwist      || 0) * 0.01   // turns: -1..1
-	const twistBegin = (shape.pathTwistBegin || 0) * 0.01
-	const taperX     = (shape.pathTaperX     || 0) * 0.01
-	const taperY     = (shape.pathTaperY     || 0) * 0.01
-	if (twist === 0 && twistBegin === 0 && taperX === 0 && taperY === 0) return geom
-	const pos = geom.attributes.position
-	const TWO_PI = Math.PI * 2
-	for (let i = 0; i < pos.count; i++) {
-		let x = pos.getX(i)
-		const y = pos.getY(i)
-		let z = pos.getZ(i)
-		// t in [0, 1] from bottom (y=-0.5) to top (y=+0.5)
-		const t = y + 0.5
-		// Taper: pinches/expands at top (positive value = narrow at top, SL convention)
-		const sX = 1 - t * taperX
-		const sZ = 1 - t * taperY
-		x *= sX
-		z *= sZ
-		// Twist: rotation around Y axis, lerps begin → end across height
-		const angle = ((1 - t) * twistBegin + t * twist) * TWO_PI
-		if (angle !== 0) {
-			const ca = Math.cos(angle)
-			const sa = Math.sin(angle)
-			const xr = x * ca - z * sa
-			const zr = x * sa + z * ca
-			pos.setXYZ(i, xr, y, zr)
-		} else {
-			pos.setXYZ(i, x, y, z)
-		}
-	}
-	pos.needsUpdate = true
-	geom.computeVertexNormals()
-	return geom
-}
-
-// WHY: Bake the prim's SL scale into its GEOMETRY so the mesh node scale stays (1,1,1). Linked
-// children attach to the parent mesh in the Three.js graph and would otherwise inherit the parent's
-// scale — and a non-uniform parent scale does not commute with a rotated child, shearing the child
-// into a region-spanning slab. SL never inherits scale across a link, so the parent's scale must
-// not enter the transform chain at all. Axis map matches slToThree magnitude: Three (x=sx,y=sz,z=sy).
-function bakePrimScale(geom, scale) {
-	if (scale) geom.scale(scale[0], scale[2], scale[1])
-	return geom
-}
-
-// WHY: a NaN/Inf vertex (bad shape-param deformation, degenerate mesh decode, etc.) makes
-// computeBoundingSphere produce a NaN radius → Three.js frustum-cull test fails → the mesh is
-// SILENTLY DROPPED from rendering, leaving only "Computed radius is NaN" console spam. classifySafety
-// only validates pos/scale, not the built vertices, so this slips through. Scan the final positions
-// and report so the caller can substitute a visible placeholder instead of an invisible prim.
-function geometryHasFiniteVerts(geom) {
-	const a = geom.attributes?.position?.array
-	if (!a || a.length === 0) return false
-	for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) return false
-	return true
 }
 
 // Dev diagnostic: client-only render warnings (e.g. Three.js "Computed radius is NaN") never reach
@@ -244,6 +123,7 @@ export function useWorldEngine(canvasRef) {
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
 	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun } = useLLUDP()
+	const meshBaker = useMeshBaker()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
@@ -1434,8 +1314,8 @@ export function useWorldEngine(canvasRef) {
 		const safety = classifySafety(obj)
 		if (safety.placeholder) {
 			// Shallow-copy so worldStore's original record stays intact. Clamp scale to 1m,
-			// drop shape so buildPrimGeometry returns a vanilla cube, drop defaultColor so
-			// placeholder color applies. clampPos (if present) parks the marker at region
+			// drop shape so no real geometry is baked (the unit-cube placeholder stays), drop
+			// defaultColor so placeholder color applies. clampPos (if present) parks the marker at region
 			// corner 0,0,0 — FS convention for unrecoverable-pos objects.
 			obj = {
 				...obj,
@@ -1458,9 +1338,12 @@ export function useWorldEngine(canvasRef) {
 			const isAvatar = obj.pcode === PCODE_AVATAR
 			// WHY: Capsule radius 0.33 (+10% vs old 0.30) for wider silhouette.
 			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
+			// Prim shape: show a cheap unit cube immediately (instant, non-blocking); the real geometry
+			// is baked off-thread (useMeshBaker) and hot-swapped in via applySwap below. Box prims swap
+			// cube→box invisibly. Mesh/sculpt prims fetch their asset first, then bake its submeshes.
 			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
-				: bakePrimScale(buildPrimGeometry(obj.shape), obj.scale)
+				: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
 			// NaN-vertex guard (#D): a prim whose built geometry has non-finite verts would be
 			// frustum-culled = invisible. Swap in a 0.5m cube + placeholder color so it's findable.
 			let geoBad = false
@@ -1511,23 +1394,71 @@ export function useWorldEngine(canvasRef) {
 				mat.opacity = obj.defaultColor[3]
 			}
 
-			// ── Mesh / sculpt geometry: replace the cube with the real decoded surface ──────
-			// WHY: server decodes the asset to SL-space submesh arrays. swapSubmeshesToGeometry converts
-			// SL→Three (swap Y/Z) like buildPrimGeometry's output and bakes prim scale, then we hot-swap
-			// the geometry. Mesh (ExtraParam type 5) and legacy sculpt (types 1-4) share this path.
-			const applyDecoded = (subs) => {
-				if (!subs || !subs.length || !mesh.parent || mesh.material !== mat) return
-				const baked = swapSubmeshesToGeometry(subs, obj.scale)
-				// NaN-vertex guard (#D): keep the cube rather than an invisible (culled) mesh.
-				if (!baked || !geometryHasFiniteVerts(baked)) { baked?.dispose?.(); geoNaNCount++; return }
+			// ── Mesh / sculpt / prim geometry: bake off-thread, replace the placeholder cube ──────
+			// WHY: prim shapes, decoded mesh submeshes, and decoded sculpt submeshes all route through
+			// the worker baker (useMeshBaker), which returns the geometryFromArrays input shape. Mesh
+			// (ExtraParam type 5) and legacy sculpt (types 1-4) fetch their asset first (server decodes
+			// it to SL-space submesh arrays) then bake those submeshes; plain prims bake the shape.
+			// Hot-swap baked geometry (from the worker, or sync fallback) onto the live mesh. `out` is the
+			// geometryFromArrays input shape, or { bad:true } if the bake produced non-finite verts.
+			// Snapshot the scale the bakes are dispatched with. The update path (existing-mesh branch)
+			// may rescale the placeholder + advance mesh.userData.primScale while a bake is in flight;
+			// applySwap reconciles the worker geometry (baked at bakeScale) to the current primScale.
+			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			const applySwap = (out) => {
+				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
+					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
+					return
+				}
+				const baked = geometryFromArrays(out)
+				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
+				if (hasMaterial && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
+				// WHY: an in-flight update may have rescaled the placeholder + advanced primScale since
+				// dispatch. Re-apply the bakeScale→primScale ratio so the swapped geometry matches the
+				// current scale (same axis map as bakePrimScale / the update path). Divisor 0/non-finite → 1.
+				const cur = mesh.userData.primScale
+				if (cur) {
+					const ratio = (n, p) => (Number.isFinite(n) && Number.isFinite(p) && p !== 0) ? n / p : 1
+					const rx = ratio(cur[0], bakeScale[0])
+					const ry = ratio(cur[2], bakeScale[2])
+					const rz = ratio(cur[1], bakeScale[1])
+					if (rx !== 1 || ry !== 1 || rz !== 1) baked.scale(rx, ry, rz)
+				}
 				const old = mesh.geometry
 				mesh.geometry = baked
 				old.dispose()
 			}
+
+			// WHY: the worker's postMessage structured-clones its payload, and Vue/Pinia reactive
+			// Proxies (obj.shape from worldStore, decoded subs) are NOT cloneable → DataCloneError.
+			// Send PLAIN snapshots: the 6 scalar shape fields buildPrimGeometry/applyShapeDeformation
+			// read, and a plain {positions,normals,uvs,indices} per submesh (inner arrays are plain
+			// typed arrays from the decode cache, so they clone fine once the proxy wrapper is dropped).
+			const plainSubs = (subs) => subs.map(s => ({
+				positions: s.positions, normals: s.normals, uvs: s.uvs, indices: s.indices,
+			}))
+			const plainShape = obj.shape ? {
+				pathCurve:      obj.shape.pathCurve,
+				profileCurve:   obj.shape.profileCurve,
+				pathTwist:      obj.shape.pathTwist,
+				pathTwistBegin: obj.shape.pathTwistBegin,
+				pathTaperX:     obj.shape.pathTaperX,
+				pathTaperY:     obj.shape.pathTaperY,
+			} : undefined
+
 			if (!isAvatar && !obj._placeholder && obj.meshId) {
-				getMesh(obj.meshId).then(applyDecoded)
+				getMesh(obj.meshId).then(subs => {
+					if (!subs || !subs.length) return
+					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
+				})
 			} else if (!isAvatar && !obj._placeholder && obj.sculptId) {
-				getSculpt(obj.sculptId, obj.sculptType ?? 1).then(applyDecoded)
+				getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs => {
+					if (!subs || !subs.length) return
+					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
+				})
+			} else if (!isAvatar && !obj._placeholder) {
+				// plain prim shape → bake the real geometry off-thread, swap over the placeholder cube
+				meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale }).then(applySwap)
 			}
 
 			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
@@ -1801,7 +1732,7 @@ export function useWorldEngine(canvasRef) {
 	let objUpdateCount = 0
 	// Prim-dropout diagnostic: receive-side counters and 5s periodic summary so we can
 	// compare server-relayed prim count vs client-rendered mesh count. Failures in
-	// buildPrimGeometry/upsertMesh that previously crashed the loop are now caught + counted.
+	// upsertMesh that previously crashed the loop are now caught + counted.
 	let objsReceivedTotal = 0
 	let upsertMeshFailures = 0
 	let lastPrimDiagAt = 0
@@ -2490,10 +2421,17 @@ export function useWorldEngine(canvasRef) {
 	// current entry is safe per spec. Fetch the latest obj from worldStore so coalesced updates
 	// (multiple ObjectUpdates before the mesh existed) build at the newest state.
 	const MESH_DRAIN_BUDGET_MS = 8
+	// WHY: per-prim drain work is now cheap (geometry baking moved to the worker), so the drain can
+	// blow through thousands of pendingMeshIds per tick — each dispatching a bake. The single worker
+	// can't keep up, so in-flight job payloads (queued + posted clones + copied submesh arrays) pile
+	// up unbounded → OOM. Stop pulling new prims once the baker is saturated; the leftover ids stay in
+	// pendingMeshIds and the next interval tick resumes after the worker has drained below the cap.
+	const BAKE_INFLIGHT_CAP = 300
 	function drainMeshQueue() {
 		if (!pendingMeshIds.size) return
 		const start = performance.now()
 		for (const localId of pendingMeshIds) {
+			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) break   // backpressure: let the worker catch up
 			pendingMeshIds.delete(localId)
 			const obj = worldStore.objects.get(localId)
 			if (!obj) continue  // killed before its mesh was built
@@ -2919,6 +2857,7 @@ export function useWorldEngine(canvasRef) {
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
 		orphansByParent.clear()
+		meshBaker.dispose()     // terminate the off-thread geometry-bake worker
 		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()
 		worldStore.clearAll()
