@@ -383,6 +383,7 @@ async function submitChat() {
 						/>
 						<div class="relative shrink-0">
 							<button
+								type="button"
 								title="Show emoji panel"
 								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
 								@click="toggleEmoji"
@@ -460,6 +461,7 @@ async function submitChat() {
 						/>
 						<div class="relative shrink-0">
 							<button
+								type="button"
 								title="Show emoji panel"
 								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
 								@click="toggleEmoji"
