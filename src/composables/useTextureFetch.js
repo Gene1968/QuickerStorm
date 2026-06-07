@@ -27,7 +27,14 @@ const pending     = new Map()  // uuid → { resolve, timer }     (in-flight WS 
 const xformCache  = new Map()  // `uuid|repS|repT|offS|offT|rot` → cloned THREE.Texture w/ UV transform
 const urlCache    = new Map()  // uuid → PNG data URL (sync mirror; thumbnails + fast re-reads)
 const alphaCache  = new Map()  // uuid → bool: PNG carries real transparency (drives blend vs opaque)
-const failed      = new Set()  // uuids the sim couldn't serve — don't re-request this session
+// WHY two failure classes: a server ERROR (j2c_decode_incomplete, 404) means the asset can't be
+// produced — retrying wastes a slot, so it's permanent. A TIMEOUT means the server was just slow/
+// overloaded (serialized J2C decoder under a flood) — likely to succeed once load drops, so it's
+// retryable up to MAX_SOFT_RETRY. Conflating them (the old single `failed` set) meant timed-out
+// textures stayed white for the session AND never cached → white every reload.
+const failedHard  = new Set()  // uuids the server errored on — never retry
+const softAttempts = new Map() // uuid → timeout count; retry until MAX_SOFT_RETRY then give up
+const MAX_SOFT_RETRY = 4
 const netQueue    = []         // queued network fetches awaiting a slot (runs: () => void)
 let   active      = 0          // in-flight network fetches (≤ MAX_INFLIGHT)
 
@@ -57,7 +64,7 @@ function _onAssetData(d) {
 	const p = pending.get(d.uuid)
 	if (!p) return            // already timed out (slot already freed) — ignore late arrival
 	pending.delete(d.uuid)
-	if (d.error || !d.dataB64) { stats.failed++; p.resolve(null); return }
+	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); p.resolve(null); return }
 	stats.done++
 	alphaCache.set(d.uuid, !!d.hasAlpha)
 	p.resolve(`data:${d.mime || 'image/png'};base64,${d.dataB64}`)
@@ -86,7 +93,11 @@ function _wsFetch(uuid) {
 			}
 			// WHY timeout: a UUID the sim can't serve never produces S.ASSET_DATA; without this the
 			// resolver, the inflight entry, AND the slot would leak forever (starving the queue).
-			const timer = setTimeout(() => { stats.timeout++; settle(null) }, FETCH_TIMEOUT_MS)
+			const timer = setTimeout(() => {
+				stats.timeout++
+				softAttempts.set(uuid, (softAttempts.get(uuid) || 0) + 1)  // retryable: server was slow
+				settle(null)
+			}, FETCH_TIMEOUT_MS)
 			pending.set(uuid, { resolve: settle, timer })
 			emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
 		}
@@ -98,14 +109,15 @@ function _wsFetch(uuid) {
 
 /** Live fetch counters (textures). For watching steady population / confirming the cap holds. */
 export function getTextureStats() {
-	return { ...stats, inflight: active, queued: netQueue.length, cached: cache.size }
+	return { ...stats, inflight: active, queued: netQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size }
 }
 
 // Resolve a UUID to its PNG data URL through all cache layers. Deduped; populates IDB on a miss.
 function getDataUrl(uuid) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
 	if (urlCache.has(uuid)) return Promise.resolve(urlCache.get(uuid))
-	if (failed.has(uuid))   return Promise.resolve(null)
+	if (failedHard.has(uuid)) return Promise.resolve(null)                       // server errored — never retry
+	if ((softAttempts.get(uuid) || 0) >= MAX_SOFT_RETRY) return Promise.resolve(null)  // timed out too many times
 	if (urlInflight.has(uuid)) return urlInflight.get(uuid)
 
 	const p = (async () => {
@@ -113,7 +125,8 @@ function getDataUrl(uuid) {
 		if (cached) { urlCache.set(uuid, cached.url); alphaCache.set(uuid, cached.hasAlpha); return cached.url }
 		const net = await _wsFetch(uuid)               // server fetch + transcode (sets alphaCache)
 		if (net) { urlCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time
-		failed.add(uuid)
+		// null here = hard error (failedHard set in _onAssetData) or timeout (softAttempts bumped in
+		// _wsFetch). Either way classified already — a later getDataUrl call retries soft ones.
 		return null
 	})().then(url => { urlInflight.delete(uuid); return url })
 
@@ -208,7 +221,8 @@ export function clearTextureCache() {
 	xformCache.clear()
 	urlCache.clear()
 	alphaCache.clear()
-	failed.clear()
+	failedHard.clear()
+	softAttempts.clear()
 }
 
 export function useTextureFetch() {

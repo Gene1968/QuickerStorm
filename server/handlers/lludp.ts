@@ -1423,6 +1423,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			geoNaN?: number; withTex?: number; mapped?: number; tex?: DiagStats; mesh?: DiagStats
 			orphan?: { children?: number; orphanByMissingRoot?: number; distinctMissingRoots?: number; orphanMeshAtScene?: number }
 			texApply?: { calls?: number; null?: number; applied?: number; dropNoParent?: number; dropMatSwap?: number }
+			faceTex?: { realDefault?: number; blankDefault?: number; blankButRealFaceTex?: number; anyRealFaceTex?: number }
 		}
 		const stat = (s?: DiagStats) => s
 			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
@@ -1436,6 +1437,8 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			`[Orphan] children=${d.orphan.children ?? '?'} orphanByMissingRoot=${d.orphan.orphanByMissingRoot ?? '?'} distinctMissingRoots=${d.orphan.distinctMissingRoots ?? '?'} orphanMeshAtScene=${d.orphan.orphanMeshAtScene ?? '?'}`)
 		if (d.texApply) slog.info(session.ws,
 			`[TexApply] calls=${d.texApply.calls ?? '?'} null=${d.texApply.null ?? '?'} applied=${d.texApply.applied ?? '?'} dropNoParent=${d.texApply.dropNoParent ?? '?'} dropMatSwap=${d.texApply.dropMatSwap ?? '?'}`)
+		if (d.faceTex) slog.info(session.ws,
+			`[FaceTex] realDefault=${d.faceTex.realDefault ?? '?'} blankDefault=${d.faceTex.blankDefault ?? '?'} blankButRealFaceTex=${d.faceTex.blankButRealFaceTex ?? '?'} anyRealFaceTex=${d.faceTex.anyRealFaceTex ?? '?'}`)
 		return
 	}
 

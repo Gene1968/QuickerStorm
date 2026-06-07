@@ -519,7 +519,6 @@ onUnmounted(() => {
 
 						<!-- Mesh Cache -->
 						<div class="pf-cache-card">
-							<span class="pf-cache-title">Asset/object Caches</span>
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Mesh Cache</span>
 								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
@@ -566,13 +565,13 @@ onUnmounted(() => {
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
-										<span class="pf-cache-label">Regions</span>
-										<span class="pf-cache-val">{{ cache.objStats.value.regions.toLocaleString() }}</span>
+										<span class="pf-cache-label">Objects</span>
+										<span class="pf-cache-val">{{ cache.objStats.value.objects.toLocaleString() }}</span>
 									</span>
 									<span class="pf-cache-sep">·</span>
 									<span class="pf-cache-stat">
-										<span class="pf-cache-label">Objects</span>
-										<span class="pf-cache-val">{{ cache.objStats.value.objects.toLocaleString() }}</span>
+										<span class="pf-cache-label">Regions</span>
+										<span class="pf-cache-val">{{ cache.objStats.value.regions.toLocaleString() }}</span>
 									</span>
 								</template>
 							</div>

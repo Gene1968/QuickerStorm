@@ -31,6 +31,23 @@ function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 // bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
 // (true CSG needed); Twist + Taper applied as per-vertex deformation below.
 const ZERO_TEX_UUID = '00000000-0000-0000-0000-000000000000'
+const BLANK_TEX_UUID = '5748decc-f629-461c-9a36-a35a221fe21f'  // SL built-in "Blank" (pure white)
+const isRealTex = (t) => !!t && t !== ZERO_TEX_UUID && t !== BLANK_TEX_UUID
+// WHY: We render one diffuse map per prim (no multi-material yet), but SL prims often leave the TE
+// DEFAULT texture = Blank and texture each FACE individually. Applying only the default → white
+// building. Until per-face multi-material lands, pick the best single texture: the real default if
+// it has one, else the most common real per-face override. Kills the white-building case.
+function pickPrimTexture(obj) {
+	if (isRealTex(obj.defaultTexture)) return obj.defaultTexture
+	if (Array.isArray(obj.faceTextures)) {
+		const counts = new Map()
+		for (const f of obj.faceTextures) if (isRealTex(f)) counts.set(f, (counts.get(f) || 0) + 1)
+		let best = null, bc = 0
+		for (const [id, c] of counts) if (c > bc) { bc = c; best = id }
+		if (best) return best
+	}
+	return null
+}
 
 // Concatenate decoded submeshes (SL-space verts) into one THREE.BufferGeometry, converting SL→Three
 // (slToThree(x,y,z)=(x,z,-y), a pure 90° X rotation so winding is preserved) and baking prim scale.
@@ -293,6 +310,7 @@ export function useWorldEngine(canvasRef) {
 	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
 	let _assetStatsTimer = null  // setInterval handle for asset-loading telemetry
 	let _meshDrainTimer = null   // mesh build/reparent driver — focus-independent (see onMounted)
+	let _texBackfillTimer = null // re-applies textures to still-white meshes + drives fetch retries
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -1524,13 +1542,14 @@ export function useWorldEngine(canvasRef) {
 			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
-			if (!isAvatar && !obj._placeholder && obj.defaultTexture) {
+			const primTexId = (!isAvatar && !obj._placeholder) ? pickPrimTexture(obj) : null
+			if (primTexId) {
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
 				const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
 					? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
 					: null
 				texCalls++
-				getTexture(obj.defaultTexture, xform).then(tex => {
+				getTexture(primTexId, xform).then(tex => {
 					// DIAG (P2): classify apply outcome to pin the white-scene cause.
 					if (!tex) texNull++
 					else if (!mesh.parent) texDropNoParent++
@@ -1809,6 +1828,18 @@ export function useWorldEngine(canvasRef) {
 			let withTex = 0, mapped = 0
 			for (const o of worldStore.prims) if (o.defaultTexture && o.defaultTexture !== ZERO_TEX_UUID) withTex++
 			for (const m of meshMap.values()) if (m.material && m.material.map) mapped++
+			// FaceTex probe: how much white is "default=Blank but real per-face textures exist" (we only
+			// apply the default face) vs "genuinely blank". Decides whether per-face apply is worth it.
+			const BLANK_TEX = '5748decc-f629-461c-9a36-a35a221fe21f'
+			const isReal = (t) => t && t !== ZERO_TEX_UUID && t !== BLANK_TEX
+			let blankDef = 0, blankDefRealFaces = 0, realDef = 0, anyRealFaces = 0
+			for (const o of worldStore.prims) {
+				const realFaces = Array.isArray(o.faceTextures) && o.faceTextures.some(isReal)
+				if (realFaces) anyRealFaces++
+				if (isReal(o.defaultTexture)) realDef++
+				else { blankDef++; if (realFaces) blankDefRealFaces++ }
+			}
+			debugStore.push('info', `[FaceTex] realDefault=${realDef} blankDefault=${blankDef} blankButRealFaceTex=${blankDefRealFaces} anyRealFaceTex=${anyRealFaces}`)
 			// P1 probe: children whose root prim is missing → orphaned (mispositioned + label hidden +
 			// whole linkset can be invisible). missingRoots = distinct root ids never delivered.
 			let children = 0, orphanLive = 0
@@ -1854,6 +1885,7 @@ export function useWorldEngine(canvasRef) {
 				mesh:         getMeshStats(),
 				orphan:       { children, orphanByMissingRoot: orphanLive, distinctMissingRoots: missingRoots.size, orphanMeshAtScene: orphanMesh },
 				texApply:     { calls: texCalls, null: texNull, applied: texApplied, dropNoParent: texDropNoParent, dropMatSwap: texDropMatSwap },
+				faceTex:      { realDefault: realDef, blankDefault: blankDef, blankButRealFaceTex: blankDefRealFaces, anyRealFaceTex: anyRealFaces },
 			})
 		}
 		for (const obj of objs) {
@@ -2500,6 +2532,39 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// Re-apply a prim's diffuse texture to an already-built mesh that still lacks a map. Used by the
+	// backfill pass: applies textures that arrived AFTER the mesh built, and drives retries of timed-
+	// out fetches (getTexture re-queues soft-failed UUIDs until the fetcher's retry budget). Success
+	// also persists to IDB, so each reload starts fuller — the "textures don't stick" fix.
+	function reapplyDiffuse(mesh, obj) {
+		const mat = mesh.material
+		if (!mat || mat.map || obj._placeholder || obj.pcode === PCODE_AVATAR) return
+		const texId = pickPrimTexture(obj)
+		if (!texId) return
+		const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
+			? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
+			: null
+		getTexture(texId, xform).then(tex => {
+			if (!tex || !mesh.parent || mesh.material !== mat || mat.map) return
+			mat.map = tex
+			if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+			else mat.color.set(0xffffff)
+			if (tex.userData?.hasAlpha) mat.alphaTest = 0.5
+			mat.needsUpdate = true
+		})
+	}
+
+	// Periodic sweep: every still-white prim mesh re-requests its texture. getTexture short-circuits
+	// to cache hits (instant apply) and the fetcher caps/dedupes/retry-budgets network fetches, so the
+	// pass converges and tapers as the scene fills. Cheap relative to the removed O(n²) build scan.
+	function backfillTextures() {
+		for (const [localId, mesh] of meshMap) {
+			if (mesh.material?.map) continue
+			const obj = worldStore.objects.get(localId)
+			if (obj) reapplyDiffuse(mesh, obj)
+		}
+	}
+
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
 		// WHY (perf): when the page is unfocused (mouse on taskbar, another window, or devtools)
@@ -2767,6 +2832,9 @@ export function useWorldEngine(canvasRef) {
 			drainMeshQueue()
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
 		}, 30)
+		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
+		// scene keeps filling and the IDB cache completes (persists across reloads). 3s cadence.
+		_texBackfillTimer = setInterval(backfillTextures, 3000)
 		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
 		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
 		_assetStatsTimer = setInterval(() => {
@@ -2819,6 +2887,7 @@ export function useWorldEngine(canvasRef) {
 		uninstallConsoleForwarder()
 		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
 		if (_meshDrainTimer) { clearInterval(_meshDrainTimer); _meshDrainTimer = null }
+		if (_texBackfillTimer) { clearInterval(_texBackfillTimer); _texBackfillTimer = null }
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
 		window.removeEventListener('blur',    onBlur)
