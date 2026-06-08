@@ -205,7 +205,8 @@
       "Bash(node tmp-fstest.mjs)",
       "Bash(node tmp-methods.mjs)",
       "Bash(node tmp-recon.mjs)",
-      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('count',len\\(d\\)\\); [print\\(i, x.get\\('kind'\\), 'keys=',list\\(x.keys\\(\\)\\), 'len\\(hex\\)=',len\\(x['hex']\\)\\) for i,x in enumerate\\(d\\)]\")"
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('count',len\\(d\\)\\); [print\\(i, x.get\\('kind'\\), 'keys=',list\\(x.keys\\(\\)\\), 'len\\(hex\\)=',len\\(x['hex']\\)\\) for i,x in enumerate\\(d\\)]\")",
+      "Read(//c/Users/gene1/**)"
     ]
   }
 }

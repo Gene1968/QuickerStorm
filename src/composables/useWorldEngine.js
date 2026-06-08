@@ -18,7 +18,8 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats } from './useTextureFetch.js'
-import { objCacheLoad, objCacheSave } from '@/lib/objectCache.js'
+import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush } from '@/lib/objectCache.js'
+import { partitionProbes } from '@/lib/probePartition.js'
 import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
@@ -224,8 +225,6 @@ export function useWorldEngine(canvasRef) {
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
 		// clobbers an already-arrived localId). See lib/objectCache.js.
 		let _objCacheLoadedKey = null
-		let _lastObjSaveAt = 0
-		let _lastObjSaveCount = 0
 		const regionCacheKey = () => {
 			// Global region coords only — set at login, so identical at save AND load. (regionName
 			// arrives via RegionHandshake which can land AFTER the first ObjectUpdate, so including it
@@ -233,11 +232,11 @@ export function useWorldEngine(canvasRef) {
 			const rx = sessionStore.regionX, ry = sessionStore.regionY
 			return (!rx && !ry) ? null : `${rx}_${ry}`
 		}
-		async function loadRegionCache() {
+		async function preseedRegionCache() {
 			const key = regionCacheKey()
 			if (!key || key === _objCacheLoadedKey) return
 			_objCacheLoadedKey = key
-			const cached = await objCacheLoad(key)
+			const cached = await objCacheGetAll(key)
 			if (!cached || !cached.length) return
 			let n = 0
 			for (const o of cached) {
@@ -247,22 +246,32 @@ export function useWorldEngine(canvasRef) {
 				pendingMeshIds.add(o.localId)
 				n++
 			}
-			if (n) debugStore.push('info', `[ObjCache] replayed ${n} cached objects for ${key}`)
+			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key}`)
+			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
 		}
-		function saveRegionCache(force = false) {
+		// WHY: persist each non-avatar object as it arrives/updates. Per-object upsert (no
+		// whole-region overwrite) so a session that re-sees fewer objects cannot shrink the
+		// cache. Avatars are transient (not cached).
+		function persistObjects(objs) {
 			const key = regionCacheKey()
 			if (!key) return
-			const count = worldStore.objects.size
-			const now = Date.now()
-			if (!force) {
-				if (count < 50) return
-				if (now - _lastObjSaveAt < 20000) return
-				if (count === _lastObjSaveCount) return
+			for (const o of objs) {
+				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
+				objCachePut(key, o)
 			}
-			_lastObjSaveAt = now; _lastObjSaveCount = count
-			const objs = [...worldStore.objects.values()].filter(o => o.pcode !== PCODE_AVATAR)
-			objCacheSave(key, objs)
-			debugStore.push('info', `[ObjCache] saved ${objs.length} objects for ${key}${force ? ' (force)' : ''}`)
+		}
+		// WHY: sim's ObjectUpdateCached, forwarded by the server. CRC-match against our
+		// persistent cache → hit (already pre-seeded/rendered, no request). Miss → ask the
+		// server to request a full update (C.OBJ_CACHE_MISS → cacheMissPending drain).
+		async function onObjCacheProbe(payload) {
+			const probes = payload?.probes ?? []
+			if (!probes.length) return
+			const key = regionCacheKey()
+			if (!key) { wsEmit(C.OBJ_CACHE_MISS, { ids: probes.map(p => p.localId) }); return }
+			const crcMap = await objCacheCrcMap(key)
+			const { hits, misses } = partitionProbes(probes, crcMap)
+			if (misses.length) wsEmit(C.OBJ_CACHE_MISS, { ids: misses })
+			if (hits.length) debugStore.push('info', `[ObjCache] ${hits.length} probe hits (cached), ${misses.length} misses requested`)
 		}
 	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
@@ -1781,9 +1790,10 @@ export function useWorldEngine(canvasRef) {
 		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers, not the full {t,d} envelope.
 		// So payload = { objects: [...] } — access as payload.objects, not payload.d.objects.
 		const objs = payload?.objects ?? []
+		persistObjects(objs)
 		objUpdateCount++
 		objsReceivedTotal += objs.length
-		loadRegionCache()   // once per region (guarded): instant repaint from IndexedDB before live fills
+		preseedRegionCache()   // once per region (guarded): instant repaint from IndexedDB before live fills
 		if (objUpdateCount === 1 || objUpdateCount % 20 === 0) {
 			const avCount = objs.filter(o => o.pcode === PCODE_AVATAR).length
 			debugStore.push('info', `[3D] ObjectUpdate #${objUpdateCount}: ${objs.length} objects (${avCount} av) agentId=${sessionStore.agentId?.slice(0,8)}`)
@@ -1791,7 +1801,6 @@ export function useWorldEngine(canvasRef) {
 		const now = Date.now()
 		if (now - lastPrimDiagAt >= 5000) {
 			lastPrimDiagAt = now
-			saveRegionCache()   // throttled persist of the settled scene for instant next-load
 			const primCount = worldStore.prims.length
 			const avCount = worldStore.avatars.length
 			// DIAG: distinguish "prim has a texture but it wasn't fetched" (fetch gap) from "prim has
@@ -2095,7 +2104,6 @@ export function useWorldEngine(canvasRef) {
 	function onTeleportFinish(d) {
 		uiStore.teleportStatus = 'arriving'
 		_tpSceneCleared = true
-		saveRegionCache(true)      // persist the region we're leaving before wiping the scene
 		_objCacheLoadedKey = null  // let the destination region's cache load fresh
 		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
 		meshMap.forEach((mesh) => {
@@ -2173,10 +2181,16 @@ export function useWorldEngine(canvasRef) {
 		for (const id of ids) {
 			worldStore.objects.forEach((o, lid) => { if (o.parentId === id) all.add(lid) })
 		}
+		const key = regionCacheKey()
+		const keepOnKill = import.meta.env.VITE_KEEP_CACHE_ON_KILL === 'true'
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
 			removeMesh(id)
 			worldStore.removeObject(id)
+			// WHY: stock OpenSim has ObjectsCullingByDistance=false, so KillObject = genuine
+			// delete → evict the cached entry. Grids that enable culling can set
+			// VITE_KEEP_CACHE_ON_KILL=true so a cull-kill does not drop the cached object.
+			if (key && !keepOnKill) objCacheEvict(key, id)
 		}
 		if (ids.length > 0) {
 			// If own avatar was killed (region cross / sim kick), clear tracking
@@ -2889,6 +2903,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.TERSE_UPDATE,     onTerseUpdate)
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
 		on(S.KILL_OBJECT,      onKillObject)
+		on(S.OBJ_CACHE_PROBE,  onObjCacheProbe)
 		on(S.TERRAIN_PATCH,    onTerrainPatch)
 		on(S.TELEPORT_STARTED,  onTeleportStarted)
 		on(S.TELEPORT_PROGRESS, onTeleportProgress)
@@ -2929,13 +2944,13 @@ export function useWorldEngine(canvasRef) {
 		off(S.TERSE_UPDATE,    onTerseUpdate)
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
 		off(S.KILL_OBJECT,     onKillObject)
+		off(S.OBJ_CACHE_PROBE, onObjCacheProbe)
 		off(S.TERRAIN_PATCH,   onTerrainPatch)
 		off(S.TELEPORT_STARTED,  onTeleportStarted)
 		off(S.TELEPORT_PROGRESS, onTeleportProgress)
 		off(S.TELEPORT_FINISH,   onTeleportFinish)
 		off(S.TELEPORT_FAILED,   onTeleportFailed)
 		off(S.OBJECT_PROPS,      onObjectProps)
-		saveRegionCache(true)   // persist the scene on unmount so the next load is instant
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()
@@ -2945,6 +2960,7 @@ export function useWorldEngine(canvasRef) {
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
 		orphansByParent.clear()
 		meshBaker.dispose()     // terminate the off-thread geometry-bake worker
+		objCacheFlush()         // persist any buffered object writes before teardown
 		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()
 		worldStore.clearAll()

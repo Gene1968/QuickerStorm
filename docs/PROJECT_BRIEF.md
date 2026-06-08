@@ -20,7 +20,7 @@ OpenSim or SL users who want a lighter way into their grid: a browser bookmark i
 | Voice | WebRTC (browser native) + Bun WS server for signaling (Phase 3 wire-up) |
 | Data | No backend database. State lives client-side (Pinia + localStorage); sim is authoritative for world state. (Phase 3 may add asset-cache IndexedDB for textures/meshes.) |
 | Styling | Tailwind utilities + Bootstrap helpers + scoped CSS; light/dark via `useTheme()` |
-| Hosting | Vite SPA (static); Bun server runs on Railway (staging) or locally |
+| Hosting | Vite SPA (static); Bun server runs on the VPS/NAS or locally |
 
 ## Key Constraints
 

@@ -478,7 +478,10 @@ onUnmounted(() => {
 
 					<!-- ── NETWORK & FILES ── -->
 					<template v-else-if="activeTab === 'network'">
-						<h2 class="pf-section-heading">Network &amp; Files</h2>
+						<div class="flex items-center justify-between">
+							<h2 class="pf-section-heading">Network &amp; Files</h2>
+							<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh all caches</button>
+						</div>
 
 						<!-- Texture Cache -->
 						<div class="pf-cache-card">
@@ -493,9 +496,8 @@ onUnmounted(() => {
 								<template v-if="cache.texStats.value.loading">
 									<span class="pf-cache-stat text-tm">Loading…</span>
 								</template>
-								<template v-else-if="cache.timedOut.value">
+								<template v-else-if="cache.texStats.value.unavailable">
 									<span class="pf-cache-stat text-tm">Unavailable</span>
-									<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh</button>
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
@@ -509,7 +511,7 @@ onUnmounted(() => {
 									</span>
 								</template>
 							</div>
-							<div v-if="!cache.texStats.value.loading && !cache.timedOut.value" class="pf-cache-bar-track">
+							<div v-if="!cache.texStats.value.loading && !cache.texStats.value.unavailable" class="pf-cache-bar-track">
 								<div
 									class="pf-cache-bar-fill"
 									:style="{ width: Math.min(100, cache.texStats.value.bytes / cache.texStats.value.capBytes * 100).toFixed(1) + '%' }"
@@ -530,7 +532,7 @@ onUnmounted(() => {
 								<template v-if="cache.meshStats.value.loading">
 									<span class="pf-cache-stat text-tm">Loading…</span>
 								</template>
-								<template v-else-if="cache.timedOut.value">
+								<template v-else-if="cache.meshStats.value.unavailable">
 									<span class="pf-cache-stat text-tm">Unavailable</span>
 								</template>
 								<template v-else>
@@ -560,7 +562,7 @@ onUnmounted(() => {
 								<template v-if="cache.objStats.value.loading">
 									<span class="pf-cache-stat text-tm">Loading…</span>
 								</template>
-								<template v-else-if="cache.timedOut.value">
+								<template v-else-if="cache.objStats.value.unavailable">
 									<span class="pf-cache-stat text-tm">Unavailable</span>
 								</template>
 								<template v-else>

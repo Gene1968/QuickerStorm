@@ -575,29 +575,21 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `high:${HIGH_OBJECT_UPDATE_CACHED}`) {
-		// WHY: Sim sends ObjectUpdateCached when it believes we have objects cached from a
-		// previous session. Since we maintain no object cache, we request full updates for
-		// all IDs. Without this, our own avatar's ObjectUpdate (pcode=47) is never received:
-		// ownAvatarLocalId stays null → TerseUpdates not attributed → location bar frozen.
+		// WHY: Sim sends ObjectUpdateCached with (localId, PseudoCRC) when it believes we have
+		// objects cached. We forward the probes to the client, which owns the persistent IDB
+		// cache and decides hit (CRC match → render from cache, no request) vs miss (→ request
+		// full update via C.OBJ_CACHE_MISS, which feeds the existing cacheMissPending drain).
+		// Objects already fulfilled this session (server objCache) are dropped — the client
+		// already has them. Own avatar (pcode 47) is never client-cached, so its probe always
+		// misses and is requested → ownAvatarLocalId still gets set (location bar stays live).
 		try {
-			const ids = decodeObjectUpdateCached(buf, dataOffset)
-			if (ids.length > 0) {
-				// WHY: Sim's EntityUpdateQueue aged out RequestMultipleObjects entries when we
-				// bursted 348 batches in <5s — only 113/4792 returned. Enqueue here, drain at
-				// paced rate via heartbeat timer (drainCacheMissQueue). Skip IDs already
-				// fulfilled (in objCache) and any already queued (cheap O(n) check; pending
-				// list typically stays small after drain).
-				let enqueued = 0
-				for (const id of ids) {
-					if (session.objCache.has(id)) continue
-					if (session.cacheMissPending.includes(id)) continue
-					session.cacheMissPending.push(id)
-					enqueued++
-				}
-				if (enqueued > 0) session.lastCacheEnumAt = Date.now()
+			const probes = decodeObjectUpdateCached(buf, dataOffset)
+				.filter(p => !session.objCache.has(p.localId))
+			if (probes.length > 0) {
+				session.ws.send(JSON.stringify({ t: S.OBJ_CACHE_PROBE, d: { probes } }))
 				if (!session.loggedTypes.has('objcache')) {
 					session.loggedTypes.add('objcache')
-					slog.info(session.ws, `[ObjCached] +${ids.length} ids enqueued (pending=${session.cacheMissPending.length})`)
+					slog.info(session.ws, `[ObjCached] forwarded ${probes.length} probes to client for CRC check`)
 				}
 			}
 		} catch (e) { slog.warn(session.ws, `ObjectUpdateCached decode error: ${(e as Error).message}`) }
@@ -1220,6 +1212,23 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		return
+	}
+
+	if (msg.t === C.OBJ_CACHE_MISS) {
+		// WHY: client checked the forwarded probes against its persistent cache and these
+		// localIds are misses (absent or CRC mismatch). Feed the existing paced drain, skipping
+		// ids already fulfilled or already queued (same guard the old auto-enqueue used).
+		const d = msg.d as { ids: number[] }
+		if (!d.ids?.length) return
+		let enqueued = 0
+		for (const id of d.ids) {
+			if (session.objCache.has(id)) continue
+			if (session.cacheMissPending.includes(id)) continue
+			session.cacheMissPending.push(id)
+			enqueued++
+		}
+		if (enqueued > 0) session.lastCacheEnumAt = Date.now()
 		return
 	}
 

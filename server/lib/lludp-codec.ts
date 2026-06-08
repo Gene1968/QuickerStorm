@@ -408,18 +408,21 @@ export function encodeRequestMultipleObjects(p: {
 /** Decode ObjectUpdateCached (High #11) — sim sends this for objects viewer supposedly has.
  *  Returns array of localIds we should request via RequestMultipleObjects.
  */
-export function decodeObjectUpdateCached(buf: Buffer, dataOffset: number): number[] {
-  const ids: number[] = []
+export function decodeObjectUpdateCached(buf: Buffer, dataOffset: number): Array<{ localId: number; crc: number }> {
+  const out: Array<{ localId: number; crc: number }> = []
   let off = dataOffset
   off += 8   // RegionHandle U64
   off += 2   // TimeDilation U16
   const count = buf[off++]
-  for (let i = 0; i < count && off + 7 < buf.length; i++) {
+  // WHY: ObjectUpdateCached per-entry layout: LocalID(4) + CRC(4) + UpdateFlags(4) = 12 bytes.
+  // The CRC (PseudoCRC) increments on every change and is the cache key for downstream validation.
+  for (let i = 0; i < count && off + 11 < buf.length; i++) {
     const localId = buf.readUInt32LE(off); off += 4
-    off += 4   // CRC U32
-    if (localId !== 0) ids.push(localId)
+    const crc = buf.readUInt32LE(off); off += 4
+    off += 4   // UpdateFlags U32
+    if (localId !== 0) out.push({ localId, crc })
   }
-  return ids
+  return out
 }
 
 export function encodeLogoutRequest(p: { agentId: string; sessionId: string; seq: number }): Buffer {
@@ -998,6 +1001,7 @@ export interface ObjectData {
   rot:           [number, number, number, number]   // quaternion xyzw (w derived from xyz, w≥0)
   nameValue:     string   // raw NameValue string (contains avatar display name)
   parentId?:     number   // U32 — 0=root, else localId of parent prim (linked sets)
+  crc?:          number   // U32 PseudoCRC from ObjectUpdate/Compressed — increments on change; used for cache validation
   shape?:        PrimShape
   defaultColor?: [number, number, number, number]   // RGBA 0..1 from TextureEntry default
   faceColors?:   Array<[number, number, number, number] | null>  // length up to 32; null where face uses defaultColor
@@ -1055,7 +1059,7 @@ export function decodeObjectUpdateCompressed(
       const localId  = buf.readUInt32LE(off); off += 4
       const pcode    = buf[off++]
       off += 1   // state
-      off += 4   // crc
+      const crc = buf.readUInt32LE(off); off += 4   // PseudoCRC (was skipped)
       off += 1   // material
       off += 1   // clickAction
       const sx = buf.readFloatLE(off);     off += 4
@@ -1173,7 +1177,7 @@ export function decodeObjectUpdateCompressed(
         pos:   [px, py, pz],
         rot:   [rx, ry, rz, rw],
         nameValue: '',
-        parentId,
+        parentId, crc,
         ...(shape ? { shape } : {}),
         ...(te.defaultColor   ? { defaultColor:   te.defaultColor }   : {}),
         ...(te.faceColors     ? { faceColors:     te.faceColors }     : {}),
@@ -1242,7 +1246,7 @@ export function decodeObjectUpdate(
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const _state   = buf[off++]
       const fullId   = bytesToUuid(buf, off); off += 16
-      off += 4   // CRC
+      const crc      = buf.readUInt32LE(off); off += 4   // PseudoCRC
       pcode = buf[off++]
       // WHY: pcode=3 (legacy tree/particle), pcode=95 (grass), pcode=255 (tree) use
       // non-standard ObjectData layouts in OpenSim. Their TE field reads as garbage
@@ -1480,7 +1484,7 @@ export function decodeObjectUpdate(
       objects.push({
         localId, fullId, pcode,
         scale: [sx, sy, sz], pos, rot, nameValue,
-        parentId,
+        parentId, crc,
         shape,
         ...(defaultColor ? { defaultColor } : {}),
         ...(faceColors ? { faceColors } : {}),
