@@ -20,6 +20,7 @@ import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats } from './useTextureFetch.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush } from '@/lib/objectCache.js'
 import { partitionProbes } from '@/lib/probePartition.js'
+import { correctionBlend } from '@/lib/movementCorrection.js'
 import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
@@ -2022,8 +2023,13 @@ export function useWorldEngine(canvasRef) {
 					// only hard-snap for genuine teleport-level distances (> 15m).
 					// landingGraceTimer extends the suppression for ~0.4s after touchdown so stale
 					// in-flight TerseUpdates from the jump arc can't trigger the single post-landing bounce.
+					// WHY: flight is the same situation as a jump arc — local DR owns the path while
+					// the sim's pos lags by ~RTT and climbs/coasts on a different accel profile, so
+					// transient gaps of 5-30m are normal. Lumping flight into the grounded regime made
+					// the >5m hard-snap fire mid-flight and yank the avatar back to the lagging sim Z
+					// ("spring to startpoint"). correctionBlend() gives flight its own regime.
 					const airborne = !isFlying && (vertVel !== 0 || landingGraceTimer > 0)
-					const blend = airborne ? (d > 15 ? 1.0 : 0) : (d > 5 ? 1.0 : (movingNow ? 0 : 0.15))
+					const blend = correctionBlend({ d, isFlying, airborne, movingNow })
 					avatarSLPos[0] += (p[0] - avatarSLPos[0]) * blend
 					avatarSLPos[1] += (p[1] - avatarSLPos[1]) * blend
 					// WHY: on the ground, gravity owns Z — it clamps to terrain every frame. Blending
@@ -2707,8 +2713,11 @@ export function useWorldEngine(canvasRef) {
 		// avoid 60fps store writes while idle.
 		if (avatarSLPos && ownAvatarLocalId && (cf || drVelX !== 0 || drVelY !== 0)) {
 			const runSticky = uiStore.alwaysRun
-			const spd  = ((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
-			const lspd = ((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
+			// WHY: while flying, horizontal motion is at fly speed, not walk/run. The old code
+			// dead-reckoned forward/strafe fly at SL_WALK_SPEED (3.2) while the sim flies far
+			// faster, so the gap blew past the snap threshold → mid-flight yank. Match the sim.
+			const spd  = isFlying ? SL_FLY_SPEED : (((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED)
+			const lspd = isFlying ? SL_FLY_SPEED : (((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED)
 			// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
 			const fX = -Math.sin(yaw), fY = Math.cos(yaw)
 			const rX =  Math.cos(yaw), rY = Math.sin(yaw)
