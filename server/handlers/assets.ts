@@ -5,7 +5,7 @@
 // on the server; the browser gets clean base64. Shapes from caps-feature-map cluster A.
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
-import { j2cToPngWithAlpha } from '../lib/j2c'
+import { decodeInPool } from '../lib/j2cPool'
 import { S } from '../../shared/protocol.js'
 
 export interface AssetRequestSpec {
@@ -60,7 +60,7 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 
 		let out: Buffer, hasAlpha = false, dims = ''
 		if (spec.transcodeToPng) {
-			const r = await j2cToPngWithAlpha(raw); out = r.png; hasAlpha = r.hasAlpha
+			const r = await decodeInPool(raw); out = r.png; hasAlpha = r.hasAlpha
 			dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
 		}
 		else out = raw

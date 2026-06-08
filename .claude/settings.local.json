@@ -198,7 +198,14 @@
       "Bash(timeout 180 bunx vite build --mode development)",
       "PowerShell(npx vitest run 2>&1 | Select-Object -Last 60)",
       "PowerShell(npx vitest run src/__tests__/lib/primGeometry.test.js src/__tests__/composables/useMeshBaker.test.js 2>&1 | Select-Object -Last 25)",
-      "PowerShell(npx vitest run primGeometry useMeshBaker 2>&1 | Select-Object -Last 20)"
+      "PowerShell(npx vitest run primGeometry useMeshBaker 2>&1 | Select-Object -Last 20)",
+      "Read(//c/Users/gene1/AppData/Local/Temp/qs-j2c-capture/**)",
+      "Read(//c/Users/gene1/AppData/Local/FirestormOS_x64/**)",
+      "Bash(cp /tmp/fail8.txt \"C:/Users/gene1/AppData/Local/Temp/fail8.txt\")",
+      "Bash(node tmp-fstest.mjs)",
+      "Bash(node tmp-methods.mjs)",
+      "Bash(node tmp-recon.mjs)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('count',len\\(d\\)\\); [print\\(i, x.get\\('kind'\\), 'keys=',list\\(x.keys\\(\\)\\), 'len\\(hex\\)=',len\\(x['hex']\\)\\) for i,x in enumerate\\(d\\)]\")"
     ]
   }
 }

@@ -5,9 +5,10 @@
 // URL by UUID, survive reloads, evict least-recently-fetched once a configurable size cap is hit.
 // (A second, server-side tier can come later once self-hosted on VPS/NAS.)
 const DB_NAME    = 'qs-tex'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE      = 'tex'      // { uuid, url, bytes, lastUsed }
 const META       = 'meta'     // { k:'stats', totalBytes }
+const FAILED     = 'failed'   // { uuid, ts } — permanent decode/404 failures with TTL
 
 // Default cap for cached PNG data URLs. 512 MB was an arbitrary early guess; with server-side
 // downscaling to ≤512px each texture is far smaller, so we can hold a whole region (and more) for
@@ -24,9 +25,12 @@ function openDb() {
 		const req = indexedDB.open(DB_NAME, DB_VERSION)
 		req.onupgradeneeded = (e) => {
 			const db = e.target.result
-			const s = db.createObjectStore(STORE, { keyPath: 'uuid' })
-			s.createIndex('lastUsed', 'lastUsed')
-			db.createObjectStore(META, { keyPath: 'k' })
+			if (!db.objectStoreNames.contains(STORE)) {
+				const s = db.createObjectStore(STORE, { keyPath: 'uuid' })
+				s.createIndex('lastUsed', 'lastUsed')
+			}
+			if (!db.objectStoreNames.contains(META))   db.createObjectStore(META,   { keyPath: 'k' })
+			if (!db.objectStoreNames.contains(FAILED)) db.createObjectStore(FAILED, { keyPath: 'uuid' })
 		}
 		req.onsuccess = (e) => { _db = e.target.result; resolve(_db) }
 		req.onerror   = () => reject(req.error)
@@ -156,6 +160,52 @@ export async function getTextureCacheStats() {
 			tx.onerror = () => reject(tx.error)
 		})
 	} catch { return { count: 0, bytes: 0, capBytes: TEX_CACHE_CAP_BYTES } }
+}
+
+/**
+ * Pure helper: given raw {uuid, ts} rows from the FAILED store, return the UUIDs whose ts falls
+ * within ttlMs of now. Rows older than ttlMs are treated as expired (asset may have been fixed on
+ * the grid). Exported for unit tests — no IDB dependency.
+ */
+export function selectLiveFailed(rows, now, ttlMs) {
+	return rows.filter(r => r && typeof r.ts === 'number' && (now - r.ts) < ttlMs).map(r => r.uuid)
+}
+
+/** TTL for persisted hard-fail records: 7 days. After this the UUID will be retried in case the
+ *  grid asset was re-uploaded or corrected. */
+export const TEX_FAILED_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * Load the set of UUIDs the server permanently failed on within the TTL window.
+ * Returns an array of UUID strings; empty on IDB error.
+ */
+export async function texFailedLoad(now = Date.now()) {
+	try {
+		const db = await openDb()
+		const rows = await new Promise((resolve, reject) => {
+			const req = db.transaction(FAILED, 'readonly').objectStore(FAILED).getAll()
+			req.onsuccess = () => resolve(req.result || [])
+			req.onerror   = () => reject(req.error)
+		})
+		return selectLiveFailed(rows, now, TEX_FAILED_TTL_MS)
+	} catch (e) { console.warn('[TexCache] failed-load failed:', e); return [] }
+}
+
+/**
+ * Persist a permanent decode/404 failure for a UUID (best-effort).
+ * Does not throw — failures here are non-fatal; the in-memory Set is always the source of truth
+ * for the current session.
+ */
+export async function texFailedMark(uuid, now = Date.now()) {
+	try {
+		const db = await openDb()
+		await new Promise((resolve) => {
+			const tx = db.transaction(FAILED, 'readwrite')
+			tx.objectStore(FAILED).put({ uuid, ts: now })
+			tx.oncomplete = resolve
+			tx.onerror    = resolve  // best-effort — swallow
+		})
+	} catch { /* best-effort */ }
 }
 
 /** Clears all texture cache entries and resets the totalBytes counter. */

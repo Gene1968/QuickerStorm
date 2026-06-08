@@ -846,6 +846,9 @@ interface TEFields {
   defaultRepeats?:  [number, number]   // scale_s / scale_t (UV tiling); SL default 1,1
   defaultOffset?:   [number, number]   // offset_s / offset_t; SL default 0,0
   defaultRotation?: number             // radians; SL default 0
+  faceRepeats?:     Array<[number, number] | null>  // per-face scale_s/scale_t override; null = use default
+  faceOffset?:      Array<[number, number] | null>  // per-face offset_s/offset_t override; null = use default
+  faceRotation?:    Array<number | null>            // per-face rotation (radians) override; null = use default
   defaultGlow?:      number            // 0..1 (TE field 10)
   defaultShiny?:     number            // 0..3 (bump byte bits 7:6)
   defaultFullbright?: boolean          // bump byte bit 5
@@ -871,6 +874,29 @@ function readTEField<T>(
     for (let f = 0; f < 32; f++) if (bits & (1 << f)) faces[f] = v
   }
   return { def, faces, next: p }
+}
+
+// Combine two per-axis face-override arrays (e.g. scaleS.faces + scaleT.faces) into a single
+// per-face pair array. Element i is present iff EITHER axis overrides face i; the missing axis
+// falls back to its default. Returns null if no face overrides either axis (so callers can omit
+// the field entirely). WHY pure helper: unit-testable without constructing a full TE blob.
+export function combineFacePairs(
+  aFaces: Array<number | null> | null,
+  bFaces: Array<number | null> | null,
+  aDef: number,
+  bDef: number,
+): Array<[number, number] | null> | null {
+  if (!aFaces && !bFaces) return null
+  const out: Array<[number, number] | null> = new Array(32).fill(null)
+  let any = false
+  for (let f = 0; f < 32; f++) {
+    const a = aFaces ? aFaces[f] : null
+    const b = bFaces ? bFaces[f] : null
+    if (a == null && b == null) continue
+    out[f] = [a ?? aDef, b ?? bDef]
+    any = true
+  }
+  return any ? out : null
 }
 
 function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFields {
@@ -905,6 +931,12 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     res.defaultRepeats  = [scaleS.def, scaleT.def]
     res.defaultOffset   = [offS.def, offT.def]
     res.defaultRotation = rot.def
+    // Per-face UV overrides: present only where the wire carried a face bitfield for the axis.
+    const faceRepeats = combineFacePairs(scaleS.faces, scaleT.faces, scaleS.def, scaleT.def)
+    const faceOffset  = combineFacePairs(offS.faces,   offT.faces,   offS.def,   offT.def)
+    if (faceRepeats) res.faceRepeats = faceRepeats
+    if (faceOffset)  res.faceOffset  = faceOffset
+    if (rot.faces && rot.faces.some(v => v != null)) res.faceRotation = rot.faces
     res.defaultGlow       = glow.def
     res.defaultShiny      = (bump.def >> 6) & 0x03
     res.defaultFullbright = ((bump.def >> 5) & 0x01) === 1
@@ -974,6 +1006,9 @@ export interface ObjectData {
   defaultRepeats?:  [number, number]    // TE scale_s/scale_t (UV tiling); SL default 1,1
   defaultOffset?:   [number, number]    // TE offset_s/offset_t; SL default 0,0
   defaultRotation?: number              // TE rotation in radians; SL default 0
+  faceRepeats?:     Array<[number, number] | null>  // per-face scale_s/scale_t override; null = use default
+  faceOffset?:      Array<[number, number] | null>  // per-face offset_s/offset_t override; null = use default
+  faceRotation?:    Array<number | null>            // per-face TE rotation (radians) override; null = use default
   defaultGlow?:      number             // TE glow 0..1
   defaultShiny?:     number             // TE shiny 0..3
   defaultFullbright?: boolean           // TE fullbright
@@ -1147,6 +1182,9 @@ export function decodeObjectUpdateCompressed(
         ...(te.defaultRepeats  ? { defaultRepeats:  te.defaultRepeats }  : {}),
         ...(te.defaultOffset   ? { defaultOffset:   te.defaultOffset }   : {}),
         ...(te.defaultRotation != null ? { defaultRotation: te.defaultRotation } : {}),
+        ...(te.faceRepeats  ? { faceRepeats:  te.faceRepeats }  : {}),
+        ...(te.faceOffset   ? { faceOffset:   te.faceOffset }   : {}),
+        ...(te.faceRotation ? { faceRotation: te.faceRotation } : {}),
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
@@ -1340,7 +1378,6 @@ export function decodeObjectUpdate(
       const _teLen = buf.readUInt16LE(off); off += 2
       _diag += ` TE=${_teLen}`
       const _teEnd = off + _teLen
-      const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
       let defaultColor: [number, number, number, number] | undefined
       let faceColors: Array<[number, number, number, number] | null> | undefined
       let defaultTexture: string | undefined
@@ -1349,49 +1386,15 @@ export function decodeObjectUpdate(
       let meshId: string | undefined
       let sculptId: string | undefined
       let sculptType: number | undefined
-      try {
-        const dtex = bytesToUuid(buf, off)
-        if (dtex !== ZERO_UUID) defaultTexture = dtex
-        let p = off + 16  // past default texture UUID
-        while (p < _teEnd) {
-          const { bits, next } = readFaceBitfield(buf, p, _teEnd)
-          p = next
-          if (bits === 0) break
-          if (p + 16 > _teEnd) break
-          const tex = bytesToUuid(buf, p)
-          p += 16  // face texture UUID
-          if (!faceTextures) faceTextures = new Array(32).fill(null)
-          for (let f = 0; f < 32; f++) {
-            if (bits & (1 << f)) faceTextures[f] = (tex === ZERO_UUID ? null : tex)
-          }
-        }
-        if (p + 4 <= _teEnd) {
-          defaultColor = [
-            (255 - buf[p])     / 255,
-            (255 - buf[p + 1]) / 255,
-            (255 - buf[p + 2]) / 255,
-            (255 - buf[p + 3]) / 255,
-          ]
-          p += 4
-          while (p < _teEnd) {
-            const { bits, next } = readFaceBitfield(buf, p, _teEnd)
-            p = next
-            if (bits === 0) break
-            if (p + 4 > _teEnd) break
-            const c: [number, number, number, number] = [
-              (255 - buf[p])     / 255,
-              (255 - buf[p + 1]) / 255,
-              (255 - buf[p + 2]) / 255,
-              (255 - buf[p + 3]) / 255,
-            ]
-            p += 4
-            if (!faceColors) faceColors = new Array(32).fill(null)
-            for (let f = 0; f < 32; f++) {
-              if (bits & (1 << f)) faceColors[f] = c
-            }
-          }
-        }
-      } catch { /* best-effort: missing color OK, mesh falls back to hashed tint */ }
+      // WHY: unified onto the generic parser shared with the compressed path so the full
+      // update gets full UV transform (repeats/offset/rotation, default + per-face), glow,
+      // shiny, fullbright, material_id — not just textures + colors. Bounded to [off, _teEnd]
+      // so it can't read past the TE blob. meshId/sculptId are still set later by ExtraParams.
+      const te = parseTextureEntryFields(buf, off, _teEnd)
+      defaultTexture = te.defaultTexture
+      faceTextures   = te.faceTextures
+      defaultColor   = te.defaultColor
+      faceColors     = te.faceColors
       off = _teEnd
       // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
       // LLUDP message_template: TextureAnim { Variable 1 }
@@ -1483,6 +1486,16 @@ export function decodeObjectUpdate(
         ...(faceColors ? { faceColors } : {}),
         ...(defaultTexture ? { defaultTexture } : {}),
         ...(faceTextures ? { faceTextures } : {}),
+        ...(te.defaultRepeats  ? { defaultRepeats:  te.defaultRepeats }  : {}),
+        ...(te.defaultOffset   ? { defaultOffset:   te.defaultOffset }   : {}),
+        ...(te.defaultRotation != null ? { defaultRotation: te.defaultRotation } : {}),
+        ...(te.faceRepeats  ? { faceRepeats:  te.faceRepeats }  : {}),
+        ...(te.faceOffset   ? { faceOffset:   te.faceOffset }   : {}),
+        ...(te.faceRotation ? { faceRotation: te.faceRotation } : {}),
+        ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
+        ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
+        ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
         ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
         ...(meshId ? { meshId } : {}),
         ...(sculptType != null ? { sculptType } : {}),

@@ -49,6 +49,34 @@ function pickPrimTexture(obj) {
 	return null
 }
 
+// WHY: a MESH asset's submeshes ARE its SL faces (each material face = one submesh → one geometry
+// group, materialIndex = face index). When such a mesh carries ≥2 distinct real textures across its
+// default + per-face entries, the single dominant-texture pick (pickPrimTexture) flattens a multi-
+// textured surface (wall/window/trim) to one texture. Multi-material rendering needs the per-face
+// data; gate on meshId only (prim box/cyl face→group mapping is unreliable — see design note).
+function hasMultiFaceMesh(obj) {
+	if (!obj.meshId || !Array.isArray(obj.faceTextures)) return false
+	const set = new Set()
+	if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
+	for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
+	return set.size >= 2
+}
+
+// Build a UV transform from TE repeat/offset/rotation, or null for identity. Clamps repeats to the
+// SL editor max (±100/face): the decoder occasionally yields a garbage scale (e.g. 8215) that would
+// over-tile a face into a solid color — clamp neutralizes it; a clamped-to-0 repeat falls back to 1.
+const MAX_REPEAT = 100
+function uvXform(rep, ofs, rot) {
+	if (!rep && !ofs && rot == null) return null
+	const clamp = (v) => (Number.isFinite(v) ? Math.max(-MAX_REPEAT, Math.min(MAX_REPEAT, v)) : 1)
+	const r = rep ?? [1, 1]
+	return {
+		repeat:   [clamp(r[0]) || 1, clamp(r[1]) || 1],
+		offset:   ofs ?? [0, 0],
+		rotation: Number.isFinite(rot) ? rot : 0,
+	}
+}
+
 // Dev diagnostic: client-only render warnings (e.g. Three.js "Computed radius is NaN") never reach
 // the server log. Patch console.warn/error to forward any message mentioning NaN/radius (deduped, with
 // a short stack) to the server via C.CLIENT_LOG so we can locate the source. Safe no-op if already on.
@@ -1405,6 +1433,10 @@ export function useWorldEngine(canvasRef) {
 			// may rescale the placeholder + advance mesh.userData.primScale while a bake is in flight;
 			// applySwap reconciles the worker geometry (baked at bakeScale) to the current primScale.
 			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			// Mesh per-face multi-material: a mesh carrying ≥2 distinct textures gets one material per
+			// submesh/face (built in applySwap once the grouped geometry exists), instead of the single
+			// dominant-texture pick below.
+			const meshMulti = hasMultiFaceMesh(obj)
 			const applySwap = (out) => {
 				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
 					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
@@ -1427,6 +1459,9 @@ export function useWorldEngine(canvasRef) {
 				const old = mesh.geometry
 				mesh.geometry = baked
 				old.dispose()
+				// Mesh per-face: now the grouped geometry exists, replace the single material with a
+				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
+				if (meshMulti) buildFaceMaterials(mesh, obj)
 			}
 
 			// WHY: the worker's postMessage structured-clones its payload, and Vue/Pinia reactive
@@ -1473,12 +1508,10 @@ export function useWorldEngine(canvasRef) {
 			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
-			const primTexId = (!isAvatar && !obj._placeholder) ? pickPrimTexture(obj) : null
+			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti) ? pickPrimTexture(obj) : null
 			if (primTexId) {
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
-				const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
-					? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
-					: null
+				const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
 				texCalls++
 				getTexture(primTexId, xform).then(tex => {
 					// DIAG (P2): classify apply outcome to pin the white-scene cause.
@@ -1507,7 +1540,10 @@ export function useWorldEngine(canvasRef) {
 			}
 
 			// ── Slice 2: PBR (GLTF) — overrides the diffuse map above when present ───
-			if (obj.defaultPbrMaterial) {
+			// Skip for multi-face meshes: those swap to a per-face material array in applySwap, which
+			// would discard (and leak) any PBR-mutated single material. Per-face + PBR is a rare combo;
+			// see docs/tech-debt.md (perface-pbr-skip). Per-face textures win for these meshes.
+			if (obj.defaultPbrMaterial && !meshMulti) {
 				getPbrMaterial(obj.defaultPbrMaterial).then(gltf => {
 					if (!gltf || !mesh.parent || mesh.material !== mat) return
 					const d = gltfToDescriptor(gltf)
@@ -1711,7 +1747,12 @@ export function useWorldEngine(canvasRef) {
 		if (mesh) {
 			// WHY: Traverse to dispose child geometry/materials (arm indicator etc.) not just root
 			mesh.traverse(child => {
-				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
+				if (child.isMesh) {
+					child.geometry.dispose()
+					// material may be a per-face array (mesh multi-material) — dispose each
+					if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.())
+					else child.material.dispose()
+				}
 			})
 			// WHY: Linked-set children sit under parent mesh, not scene. Detach from actual parent.
 			mesh.parent?.remove(mesh)
@@ -1758,7 +1799,9 @@ export function useWorldEngine(canvasRef) {
 			// mapped = meshes that actually have material.map applied.
 			let withTex = 0, mapped = 0
 			for (const o of worldStore.prims) if (o.defaultTexture && o.defaultTexture !== ZERO_TEX_UUID) withTex++
-			for (const m of meshMap.values()) if (m.material && m.material.map) mapped++
+			// WHY !Array.isArray: a per-face mesh's material is an array, whose `.map` is Array.prototype.map
+			// (truthy) — without this guard every multi-face mesh counts as mapped, skewing the probe.
+			for (const m of meshMap.values()) if (!Array.isArray(m.material) && m.material?.map) mapped++
 			// FaceTex probe: how much white is "default=Blank but real per-face textures exist" (we only
 			// apply the default face) vs "genuinely blank". Decides whether per-face apply is worth it.
 			const BLANK_TEX = '5748decc-f629-461c-9a36-a35a221fe21f'
@@ -2057,7 +2100,12 @@ export function useWorldEngine(canvasRef) {
 		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
 		meshMap.forEach((mesh) => {
 			mesh.traverse(child => {
-				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
+				if (child.isMesh) {
+					child.geometry.dispose()
+					// material may be a per-face array (mesh multi-material) — dispose each
+					if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.())
+					else child.material.dispose()
+				}
 			})
 			mesh.parent?.remove(mesh)
 		})
@@ -2474,14 +2522,53 @@ export function useWorldEngine(canvasRef) {
 	// backfill pass: applies textures that arrived AFTER the mesh built, and drives retries of timed-
 	// out fetches (getTexture re-queues soft-failed UUIDs until the fetcher's retry budget). Success
 	// also persists to IDB, so each reload starts fuller — the "textures don't stick" fix.
+	// Mesh per-face multi-material: replace the mesh's single material with one MeshBasicMaterial per
+	// submesh/geometry-group (group.materialIndex = SL face index). Each face gets its faceTextures[i]
+	// (else defaultTexture) + faceColors[i] tint (else defaultColor) + its per-face UV (faceRepeats/
+	// faceOffset/faceRotation, falling back to the default UV). Textures fill in async; the array is
+	// assigned immediately so the mesh renders (tinted) while they load.
+	function buildFaceMaterials(mesh, obj) {
+		const groups = mesh.geometry?.groups
+		if (!groups || !groups.length) return   // no groups → can't split; leave the single material
+		const maxIdx = groups.reduce((m, g) => Math.max(m, g.materialIndex ?? 0), 0)
+		// Per-face UV transform: face override if present, else the prim default; identity → null.
+		const faceXform = (i) => uvXform(
+			obj.faceRepeats?.[i] ?? obj.defaultRepeats,
+			obj.faceOffset?.[i] ?? obj.defaultOffset,
+			obj.faceRotation?.[i] ?? obj.defaultRotation,
+		)
+		const mats = []
+		for (let i = 0; i <= maxIdx; i++) {
+			const fc = obj.faceColors?.[i] ?? obj.defaultColor
+			const m = new THREE.MeshBasicMaterial({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
+			if (fc && fc[3] < 0.99) { m.transparent = true; m.opacity = fc[3] }
+			mats.push(m)
+		}
+		const oldMat = mesh.material
+		mesh.material = mats
+		if (!Array.isArray(oldMat)) oldMat.dispose?.()   // single placeholder material no longer used
+		for (let i = 0; i < mats.length; i++) {
+			const faceTex = isRealTex(obj.faceTextures?.[i]) ? obj.faceTextures[i]
+				: (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
+			if (!faceTex) continue
+			const m = mats[i]
+			getTexture(faceTex, faceXform(i)).then(tex => {
+				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
+				m.map = tex
+				if (!(obj.faceColors?.[i] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
+				if (tex.userData?.hasAlpha) m.alphaTest = 0.5
+				m.needsUpdate = true
+			})
+		}
+	}
+
 	function reapplyDiffuse(mesh, obj) {
 		const mat = mesh.material
+		if (Array.isArray(mat)) return   // per-face multi-material mesh — backfill not applicable
 		if (!mat || mat.map || obj._placeholder || obj.pcode === PCODE_AVATAR) return
 		const texId = pickPrimTexture(obj)
 		if (!texId) return
-		const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
-			? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
-			: null
+		const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
 		getTexture(texId, xform).then(tex => {
 			if (!tex || !mesh.parent || mesh.material !== mat || mat.map) return
 			mat.map = tex
@@ -2497,7 +2584,7 @@ export function useWorldEngine(canvasRef) {
 	// pass converges and tapers as the scene fills. Cheap relative to the removed O(n²) build scan.
 	function backfillTextures() {
 		for (const [localId, mesh] of meshMap) {
-			if (mesh.material?.map) continue
+			if (Array.isArray(mesh.material) || mesh.material?.map) continue
 			const obj = worldStore.objects.get(localId)
 			if (obj) reapplyDiffuse(mesh, obj)
 		}

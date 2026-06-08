@@ -5,7 +5,7 @@
 // repeated calls and thrash on the same (or dead) UUIDs.
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
-import { texCacheGet, texCachePut } from '@/lib/textureCache.js'
+import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
 import { C, S } from '@shared/protocol.js'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
@@ -51,6 +51,9 @@ function _wire() {
 	if (_wired) return
 	_wired = true
 	useRealtimeSocket().on(S.ASSET_DATA, _onAssetData)
+	// WHY: populate failedHard from IDB on first use so reloads skip ~63 dead textures immediately,
+	// avoiding wasted grid fetches + event-loop-blocking J2C decodes for known-bad UUIDs.
+	texFailedLoad().then(uuids => { for (const u of uuids) failedHard.add(u) })
 }
 
 // Free an in-flight slot and start the next queued fetch (if any).
@@ -64,7 +67,7 @@ function _onAssetData(d) {
 	const p = pending.get(d.uuid)
 	if (!p) return            // already timed out (slot already freed) — ignore late arrival
 	pending.delete(d.uuid)
-	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); p.resolve(null); return }
+	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p.resolve(null); return }
 	stats.done++
 	alphaCache.set(d.uuid, !!d.hasAlpha)
 	p.resolve(`data:${d.mime || 'image/png'};base64,${d.dataB64}`)

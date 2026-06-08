@@ -96,7 +96,7 @@ function onWsOpen() {
 			grid.setLoginState('connected')
 		} else if (!d?.alive) {
 			debug.push('warn', `[DISCONNECT] probe alive=${d?.alive} loginState=${grid.loginState}`)
-			grid.setDisconnected('Server lost your session while disconnected')
+			grid.setDisconnected('Also lost server-grid session while disconnected')
 		}
 	}
 	on(S.CIRCUIT_STATUS, onStatus)
