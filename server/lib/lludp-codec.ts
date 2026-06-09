@@ -1840,12 +1840,16 @@ export interface MapBlock {
   waterHeight: number
   agents:      number
   mapImageId:  string
+  sizeX:       number   // region width in metres — 256 standard, 512/1024 var-region
+  sizeY:       number
 }
 
-// MapBlockReply body per libomv:
+// MapBlockReply body per libomv + OpenSim LLClientView.SendMapBlock:
 //   AgentData { AgentID, Flags U32 }
 //   Data Variable count of { X U16, Y U16, Name V1, Access U8, RegionFlags U32,
 //                            WaterHeight U8, Agents U8, MapImageID UUID }
+//   Size Variable count of { SizeX U16, SizeY U16 } — var-region metres; OpenSim writes
+//   count=0 when every block is standard 256m, else one pair per Data entry (same order).
 export function decodeMapBlockReply(buf: Buffer, dataOffset: number): MapBlock[] {
   const out: MapBlock[] = []
   let off = dataOffset
@@ -1866,8 +1870,21 @@ export function decodeMapBlockReply(buf: Buffer, dataOffset: number): MapBlock[]
       const waterHeight = buf[off++]
       const agents      = buf[off++]
       const mapImageId  = bytesToUuid(buf, off); off += 16
-      out.push({ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId })
+      out.push({ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId, sizeX: 256, sizeY: 256 })
     } catch { break }
+  }
+  // Size block. WHY the count===out.length guard: appended-ack bytes can trail the body,
+  // so only trust the block when its count matches the Data count and the pairs fit.
+  if (off < buf.length) {
+    const szCount = buf[off++]
+    if (szCount === out.length && off + szCount * 4 <= buf.length) {
+      for (let i = 0; i < szCount; i++) {
+        const sx = buf.readUInt16LE(off); off += 2
+        const sy = buf.readUInt16LE(off); off += 2
+        if (sx > 0) out[i].sizeX = sx
+        if (sy > 0) out[i].sizeY = sy
+      }
+    }
   }
   return out
 }

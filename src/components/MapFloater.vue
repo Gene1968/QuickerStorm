@@ -41,6 +41,37 @@ let _autoSelectDone  = false
 const curRegionX = computed(() => Math.floor((session.regionX ?? 0) / 256))
 const curRegionY = computed(() => Math.floor((session.regionY ?? 0) / 256))
 
+// One grid cell is ALWAYS 256m; var regions span size/256 cells from their SW-corner
+// block (the only cell OpenSim registers them at in MapBlockReply).
+const cellsX = (b) => (b.sizeX || 256) / 256
+const cellsY = (b) => (b.sizeY || 256) / 256
+
+// Resolve the region owning grid cell (rx, ry) — direct hit, else scan SW for a
+// var-region block whose span covers the cell (max var region 1024m = 4 cells).
+function findRegionAt(rx, ry) {
+	const fx = Math.floor(rx)
+	const fy = Math.floor(ry)
+	const direct = map.getRegion(fx, fy)
+	if (direct) return direct
+	for (let dx = 0; dx <= 3; dx++) {
+		for (let dy = 0; dy <= 3; dy++) {
+			if (dx === 0 && dy === 0) continue
+			const b = map.getRegion(fx - dx, fy - dy)
+			if (b && fx < b.regionX + cellsX(b) && fy < b.regionY + cellsY(b)) return b
+		}
+	}
+	return null
+}
+
+// Owning block + cell-relative local metres for a fractional grid coord. Local coords
+// run 0..size (not 0..256) when the cell belongs to a var region.
+function localizeGrid(rx, ry) {
+	const block = findRegionAt(rx, ry)
+	const bx = block ? block.regionX : Math.floor(rx)
+	const by = block ? block.regionY : Math.floor(ry)
+	return { block, regionX: bx, regionY: by, lx: (rx - bx) * 256, ly: (ry - by) * 256 }
+}
+
 // Continuous zoom: regionsAcross = 2^viewZoom. Zoom 1 = 2 regions, 5 = 32. Float values
 // yield intermediate scales for smooth wheel scrolling.
 const regionsAcross = computed(() => Math.pow(2, map.viewZoom))
@@ -93,14 +124,18 @@ const tiles = computed(() => {
 	const maxY = Math.ceil(map.viewCenterY + half)
 	const out = []
 	for (const b of map.regions.values()) {
-		if (b.regionX < minX || b.regionX > maxX) continue
-		if (b.regionY < minY || b.regionY > maxY) continue
-		const { px, py } = gridToPx(b.regionX + 0.5, b.regionY + 0.5)
+		const cw = cellsX(b)
+		const ch = cellsY(b)
+		// include var regions whose SW corner sits left/below the viewport but whose span overlaps
+		if (b.regionX + cw < minX || b.regionX > maxX) continue
+		if (b.regionY + ch < minY || b.regionY > maxY) continue
+		const { px, py } = gridToPx(b.regionX + cw / 2, b.regionY + ch / 2)
 		out.push({
 			...b,
-			px: px - pxPerRegion.value / 2,
-			py: py - pxPerRegion.value / 2,
-			size: pxPerRegion.value,
+			px: px - cw * pxPerRegion.value / 2,
+			py: py - ch * pxPerRegion.value / 2,
+			w: cw * pxPerRegion.value,
+			h: ch * pxPerRegion.value,
 		})
 	}
 	return out
@@ -109,11 +144,11 @@ const tiles = computed(() => {
 const avatarDot = computed(() => {
 	const ap = world.avatarPos
 	if (!ap) return null
-	// avatar SL pos (x,y) within current region (0..regionSize). Convert to grid units.
-	const sizeX = session.regionSizeX || 256
-	const sizeY = session.regionSizeY || 256
-	const rx = curRegionX.value + ap.x / sizeX
-	const ry = curRegionY.value + ap.y / sizeY
+	// avatar SL pos (x,y) is region-local metres. A grid cell is 256m regardless of
+	// region size — dividing by regionSize compressed var-region positions into the
+	// SW cell (avatar at x=400 in a 512 region showed at 0.78 cells, not 1.56).
+	const rx = curRegionX.value + ap.x / 256
+	const ry = curRegionY.value + ap.y / 256
 	return gridToPx(rx, ry)
 })
 
@@ -123,13 +158,11 @@ const avatarDot = computed(() => {
 const peopleDots = computed(() => {
 	if (!showPeople.value) return []
 	const myId = session.agentId?.toLowerCase()
-	const sx = session.regionSizeX || 256
-	const sy = session.regionSizeY || 256
 	return world.avatars
 		.filter(av => av.pos && av.fullId?.toLowerCase() !== myId)
 		.map(av => {
-			const rx = curRegionX.value + av.pos[0] / sx
-			const ry = curRegionY.value + av.pos[1] / sy
+			const rx = curRegionX.value + av.pos[0] / 256
+			const ry = curRegionY.value + av.pos[1] / 256
 			const { px, py } = gridToPx(rx, ry)
 			return { id: av.localId, px, py, name: av.name || 'Avatar' }
 		})
@@ -151,16 +184,25 @@ const headingCone = computed(() => {
 })
 
 const currentRegionRect = computed(() => {
-	const { px, py } = gridToPx(curRegionX.value + 0.5, curRegionY.value + 0.5)
+	// Outline spans the region's real footprint — 2×2 cells for a 512 var region.
+	const cw = (session.regionSizeX || 256) / 256
+	const ch = (session.regionSizeY || 256) / 256
+	const { px, py } = gridToPx(curRegionX.value + cw / 2, curRegionY.value + ch / 2)
 	return {
-		px: px - pxPerRegion.value / 2,
-		py: py - pxPerRegion.value / 2,
-		size: pxPerRegion.value,
+		px: px - cw * pxPerRegion.value / 2,
+		py: py - ch * pxPerRegion.value / 2,
+		w: cw * pxPerRegion.value,
+		h: ch * pxPerRegion.value,
 	}
 })
 
 // Selected point: precise sub-region spot — { rx, ry, block, lx, ly }. Null = none.
 const selectedSpot = ref(null)
+
+// Coord input bounds — the teleport target region's size (selected result if any, else
+// the current region), so var-region coords up to 511/1023 are enterable.
+const coordMaxX = computed(() => (selectedResult.value?.sizeX || session.regionSizeX || 256) - 1)
+const coordMaxY = computed(() => (selectedResult.value?.sizeY || session.regionSizeY || 256) - 1)
 
 const selectedDot = computed(() => {
 	if (!selectedSpot.value) return null
@@ -206,16 +248,15 @@ function onMouseMove(e) {
 		const px = e.clientX - rect.left
 		const py = e.clientY - rect.top
 		const { rx, ry } = pxToGrid(px, py)
-		const regionX = Math.floor(rx)
-		const regionY = Math.floor(ry)
+		const loc = localizeGrid(rx, ry)
 		hoverPx.value = { x: px, y: py }
 		hoverPos.value = {
-			rx: regionX,
-			ry: regionY,
-			lx: Math.floor((rx - regionX) * 256),
-			ly: Math.floor((ry - regionY) * 256),
+			rx: loc.regionX,
+			ry: loc.regionY,
+			lx: Math.floor(loc.lx),
+			ly: Math.floor(loc.ly),
 		}
-		hoverBlock.value = map.getRegion(regionX, regionY)
+		hoverBlock.value = loc.block
 	}
 	if (!isPanning) return
 	const dx = e.clientX - panStartX
@@ -250,11 +291,9 @@ function onMapClick(e) {
 	const px = e.clientX - rect.left
 	const py = e.clientY - rect.top
 	const { rx, ry } = pxToGrid(px, py)
-	const regionX = Math.floor(rx)
-	const regionY = Math.floor(ry)
-	const block = map.getRegion(regionX, regionY)
-	const lx = Math.floor((rx - regionX) * 256)
-	const ly = Math.floor((ry - regionY) * 256)
+	const { block, regionX, regionY, lx: lxF, ly: lyF } = localizeGrid(rx, ry)
+	const lx = Math.floor(lxF)
+	const ly = Math.floor(lyF)
 	coordX.value = lx
 	coordY.value = ly
 	selectedSpot.value = { rx, ry, block, lx, ly }
@@ -321,11 +360,7 @@ function onDblClick(e) {
 	const px = e.clientX - rect.left
 	const py = e.clientY - rect.top
 	const { rx, ry } = pxToGrid(px, py)
-	const regionX = Math.floor(rx)
-	const regionY = Math.floor(ry)
-	const localX = (rx - regionX) * 256
-	const localY = (ry - regionY) * 256
-	const block = map.getRegion(regionX, regionY)
+	const { block, regionX, regionY, lx: localX, ly: localY } = localizeGrid(rx, ry)
 	if (block && (block.access === 254 || block.access === 255)) {
 		flashStatus(`"${block.name}" is offline.`)
 		return
@@ -420,13 +455,15 @@ function teleportToResult(r) {
 	if (!r) return
 	if (r.access === 254 || r.access === 255) { flashStatus(`"${r.name}" is offline.`); return }
 	selectResult(r)
-	const z = resolveTeleportZ(r.regionX, r.regionY, 128, 128, r, false)
+	const cx = (r.sizeX || 256) / 2
+	const cy = (r.sizeY || 256) / 2
+	const z = resolveTeleportZ(r.regionX, r.regionY, cx, cy, r, false)
 	coordZ.value = z
 	if (r.regionX !== curRegionX.value || r.regionY !== curRegionY.value) {
 		playSound('woosh.mp3')
-		sendMapTeleport(r.regionX, r.regionY, 128, 128, z)
+		sendMapTeleport(r.regionX, r.regionY, cx, cy, z)
 	} else {
-		requestTeleport({ x: 128, y: 128, z })
+		requestTeleport({ x: cx, y: cy, z })
 	}
 	flashStatus(`Teleporting to ${r.name}…`)
 	ui.toggleMap()
@@ -533,13 +570,18 @@ function accessBadge(access) {
 
 let _panRaf = null
 function selectResult(r) {
+	const cw = cellsX(r)
+	const ch = cellsY(r)
 	selectedResult.value = r
-	selectedSpot.value = { rx: r.regionX + 0.5, ry: r.regionY + 0.5, block: r, lx: 128, ly: 128 }
-	coordX.value = 128
-	coordY.value = 128
+	selectedSpot.value = {
+		rx: r.regionX + cw / 2, ry: r.regionY + ch / 2, block: r,
+		lx: (r.sizeX || 256) / 2, ly: (r.sizeY || 256) / 2,
+	}
+	coordX.value = (r.sizeX || 256) / 2
+	coordY.value = (r.sizeY || 256) / 2
 
-	const targetX = r.regionX + 0.5
-	const targetY = r.regionY + 0.5
+	const targetX = r.regionX + cw / 2
+	const targetY = r.regionY + ch / 2
 	const startX  = map.viewCenterX
 	const startY  = map.viewCenterY
 	const dur = 900 // ms
@@ -637,7 +679,7 @@ onUnmounted(() => {
 							<rect
 								v-for="t in tiles"
 								:key="`${t.regionX},${t.regionY}`"
-								:x="t.px" :y="t.py" :width="t.size" :height="t.size"
+								:x="t.px" :y="t.py" :width="t.w" :height="t.h"
 								:fill="regionColor(t)" fill-opacity="0.92"
 								stroke="#000000" stroke-opacity="0.35" stroke-width="0.5"
 							/>
@@ -648,7 +690,7 @@ onUnmounted(() => {
 							<text
 								v-for="t in tiles"
 								:key="`label-${t.regionX},${t.regionY}`"
-								:x="t.px + 4" :y="t.py + t.size - 4"
+								:x="t.px + 4" :y="t.py + t.h - 4"
 								fill="#e2e8f0" font-size="11" font-family="sans-serif"
 								pointer-events="none"
 								style="paint-order: stroke; stroke: #000; stroke-width: 2; stroke-opacity: 0.7;"
@@ -660,7 +702,7 @@ onUnmounted(() => {
 							<text
 								v-for="t in tiles.filter(x => x.agents > 0)"
 								:key="`agents-${t.regionX},${t.regionY}`"
-								:x="t.px + t.size - 4" :y="t.py + 12"
+								:x="t.px + t.w - 4" :y="t.py + 12"
 								fill="#10b981" font-size="9" font-family="monospace"
 								text-anchor="end" pointer-events="none"
 							>👤{{ t.agents }}</text>
@@ -675,7 +717,7 @@ onUnmounted(() => {
 						<!-- Current region outline (purple) -->
 						<rect
 							:x="currentRegionRect.px" :y="currentRegionRect.py"
-							:width="currentRegionRect.size" :height="currentRegionRect.size"
+							:width="currentRegionRect.w" :height="currentRegionRect.h"
 							fill="none" stroke="#7c3aed" stroke-width="2"
 							pointer-events="none"
 						/>
@@ -899,12 +941,12 @@ onUnmounted(() => {
 						<span class="text-tm font-mono text-2xs text-right">X/Y/Z:</span>
 						<input
 							v-model.number="coordX"
-							type="number" id="coordX" min="1" max="255" step="1"
+							type="number" id="coordX" min="1" :max="coordMaxX" step="1"
 							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordY"
-							type="number" id="coordY" min="1" max="255" step="1"
+							type="number" id="coordY" min="1" :max="coordMaxY" step="1"
 							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
 						/>
 						<input

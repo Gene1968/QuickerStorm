@@ -5,6 +5,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import gsap from 'gsap'
 import { useWorldStore, PCODE_AVATAR } from '@/stores/worldStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useMapStore } from '@/stores/mapStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
 import { useNotificationStore } from '@/stores/notificationStore'
@@ -167,11 +168,12 @@ const LOOKAT_Y      = 1.85  // meters above avatar feet for camera lookAt (lower
 export function useWorldEngine(canvasRef) {
 	const worldStore        = useWorldStore()
 	const sessionStore      = useSessionStore()
+	const mapStore          = useMapStore()
 	const uiStore           = useUiStore()
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
-	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun } = useLLUDP()
+	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery } = useLLUDP()
 	const meshBaker = useMeshBaker()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
@@ -2237,6 +2239,25 @@ export function useWorldEngine(canvasRef) {
 	// Browser side: wipe meshes/terrain/objects so the new sim's RegionHandshake +
 	// LayerData + ObjectUpdates rebuild from scratch. ownAvatarLocalId is nulled so
 	// re-attribution happens on the new sim's first ObjectUpdate for the agent.
+	// Set when a cross-region TP lands in a cell missing from the map cache — the
+	// MapBlockReply for the lookup query then applies the destination's true size.
+	let _pendingRegionSizeLookup = false
+	function onEngineMapBlocks(d) {
+		const blocks = d?.blocks ?? []
+		if (!blocks.length) return
+		mapStore.setRegions(blocks)
+		if (!_pendingRegionSizeLookup) return
+		const blk = mapStore.getRegion(
+			Math.floor((sessionStore.regionX ?? 0) / 256),
+			Math.floor((sessionStore.regionY ?? 0) / 256),
+		)
+		if (!blk) return
+		_pendingRegionSizeLookup = false
+		sessionStore.regionSizeX = blk.sizeX || 256
+		sessionStore.regionSizeY = blk.sizeY || 256
+		debugStore.push('info', `[3D] Region size backfilled from map block: ${sessionStore.regionSizeX}×${sessionStore.regionSizeY}`)
+	}
+
 	function onTeleportFinish(d) {
 		uiStore.teleportStatus = 'arriving'
 		_tpSceneCleared = true
@@ -2276,6 +2297,21 @@ export function useWorldEngine(canvasRef) {
 				const h = BigInt(d.regionHandle)
 				sessionStore.regionX = Number(h >> 32n)
 				sessionStore.regionY = Number(h & 0xFFFFFFFFn)
+				// WHY: UDP TeleportFinish carries no region size (only the EventQueue variant
+				// does, which we don't have). Backfill from the map-block cache so var-region
+				// destinations don't inherit the previous region's dimensions — wrong size
+				// breaks movement clamping, terrain build, and the map's region outline.
+				// Cache miss → query the destination cell; onMapBlocks applies the size.
+				const cellX = Math.floor(sessionStore.regionX / 256)
+				const cellY = Math.floor(sessionStore.regionY / 256)
+				const blk = mapStore.getRegion(cellX, cellY)
+				if (blk) {
+					sessionStore.regionSizeX = blk.sizeX || 256
+					sessionStore.regionSizeY = blk.sizeY || 256
+				} else {
+					_pendingRegionSizeLookup = true
+					sendMapQuery(cellX, cellX, cellY, cellY)
+				}
 			} catch { /* ignore parse error — non-blocking */ }
 		}
 		sessionStore.regionName = ''  // new RegionHandshake will set it
@@ -3251,6 +3287,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.TELEPORT_FINISH,   onTeleportFinish)
 		on(S.TELEPORT_FAILED,   onTeleportFailed)
 		on(S.OBJECT_PROPS,      onObjectProps)
+		on(S.MAP_BLOCKS,        onEngineMapBlocks)
 	})
 
 	onUnmounted(() => {
@@ -3295,6 +3332,7 @@ export function useWorldEngine(canvasRef) {
 		off(S.TELEPORT_FINISH,   onTeleportFinish)
 		off(S.TELEPORT_FAILED,   onTeleportFailed)
 		off(S.OBJECT_PROPS,      onObjectProps)
+		off(S.MAP_BLOCKS,        onEngineMapBlocks)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()

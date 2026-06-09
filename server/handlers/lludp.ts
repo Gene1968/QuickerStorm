@@ -1112,8 +1112,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 
 	if (msg.t === C.TELEPORT) {
 		const d = msg.d as { x: number; y: number; z: number }
-		const x = Math.max(1, Math.min(255, d.x))
-		const y = Math.max(1, Math.min(255, d.y))
+		// WHY 8191 not 255: server doesn't know the region's dimensions (var regions are
+		// 512-8192m); the client clamps to the real size, this is only a sanity bound.
+		const x = Math.max(1, Math.min(8191, d.x))
+		const y = Math.max(1, Math.min(8191, d.y))
 		const z = Math.max(0.5, d.z)
 		const seq = nextSeq(session)
 		const pkt = encodeTeleportLocationRequest({
