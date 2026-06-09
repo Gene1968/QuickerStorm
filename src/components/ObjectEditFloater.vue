@@ -325,9 +325,10 @@ watch(
 // Reset transient UI when the selected object changes.
 watch(() => ui.editObjectId, () => { previewUuid.value = null; texSubTab.value = 'bp' })
 
-// TEMP DIAGNOSTIC (per-face decode audit) — dump the decoded TextureEntry for the selected object.
+// DIAGNOSTIC (per-face / planar decode audit) — dump the decoded TextureEntry for the selected object.
 // Re-fires when the TE content changes too (opening Edit emits ObjectSelect → the sim re-sends a
 // fresh ObjectUpdate ~RTT later; this catches that post-refetch state). Read console ([TEDUMP]).
+// KEEP: still needed for the original per-face/planar object-fix goal.
 watch(
 	() => [ui.editObjectId, obj.value?.defaultTexGen, JSON.stringify(obj.value?.faceTexGen),
 		JSON.stringify(obj.value?.faceRepeats), JSON.stringify(obj.value?.faceTextures)],

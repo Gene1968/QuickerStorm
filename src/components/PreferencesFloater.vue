@@ -20,6 +20,7 @@ import { Search as SearchIcon } from '@lucide/vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { useAccountsStore } from '@/stores/accountsStore.js'
 import { useGridStore }     from '@/stores/gridStore.js'
+import { useWorldStore }    from '@/stores/worldStore.js'
 import { useCacheStats } from '@/composables/useCacheStats.js'
 import { formatBytes } from '@/utils/formatBytes.js'
 
@@ -28,6 +29,7 @@ const theme         = useTheme()
 const avatarStore   = useAvatarStore()
 const accountsStore = useAccountsStore()
 const gridStore     = useGridStore()
+const world         = useWorldStore()
 
 function formatLastUsed(ts) {
 	if (!ts) return 'Never'
@@ -546,6 +548,29 @@ onUnmounted(() => {
 										<span class="pf-cache-val">{{ formatBytes(cache.meshStats.value.bytes) }}</span>
 									</span>
 								</template>
+							</div>
+						</div>
+
+						<!-- Scene (resident vs known objects — memory-budget culling) -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Scene</span>
+							</div>
+							<div class="pf-cache-stats">
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Loaded</span>
+									<span class="pf-cache-val">{{ world.cullStats.pct }}%</span>
+								</span>
+								<span class="pf-cache-sep">·</span>
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Resident</span>
+									<span class="pf-cache-val">{{ world.cullStats.resident.toLocaleString() }} / {{ world.cullStats.known.toLocaleString() }}</span>
+								</span>
+								<span class="pf-cache-sep">·</span>
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Evicted (memory)</span>
+									<span class="pf-cache-val">{{ world.cullStats.evicted.toLocaleString() }}</span>
+								</span>
 							</div>
 						</div>
 

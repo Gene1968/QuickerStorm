@@ -17,8 +17,9 @@ import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
-import { getTextureStats, pumpTextures } from './useTextureFetch.js'
-import { memStats, memUnderPressure } from '@/lib/memGovernor.js'
+import { getTextureStats, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
+import { memStats, memUnderPressure, memRatio } from '@/lib/memGovernor.js'
+import { selectEvictions, selectReloads } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush } from '@/lib/objectCache.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
@@ -239,6 +240,25 @@ export function useWorldEngine(canvasRef) {
 	let _assetStatsTimer = null  // setInterval handle for asset-loading telemetry
 	let _meshDrainTimer = null   // mesh build/reparent driver — focus-independent (see onMounted)
 	let _texBackfillTimer = null // re-applies textures to still-white meshes + drives fetch retries
+	let _cullTimer = null        // memory-budget distance-culling tick (~1s)
+	const evicted = new Set()    // localIds dropped for memory (kept in worldStore + IDB; rebuilt on approach)
+	// WHY a budget below the 0.85 governor: park heap ~60% so the governor is a rare backstop, not the
+	// steady state. R_NEAR < (implicit evict radius): far objects evict first under pressure; only
+	// objects within R_NEAR rebuild — hysteresis prevents thrash at the boundary. Per-tick caps spread
+	// the dispose/build work so the frame doesn't hitch.
+	// Park heap near (but below) the 0.85 governor so we hold as many objects as safely fit, while the
+	// evict/reload swap keeps the RESIDENT set proximity-ordered. (0.60 was too aggressive — it evicted
+	// ~30% more than the governor-only path held.)
+	const CULL_TARGET = 0.78
+	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
+	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
+	// WHY small caps: evicting/freeing hundreds of meshes in one tick caused a GC + main-thread stall
+	// that delayed the 10Hz AgentUpdate + PacketAcks → the sim's view of the agent lagged → position
+	// snap-backs and stalled ObjectSelect→ObjectProperties. Small per-tick work keeps the churn smooth
+	// so movement + the circuit stay healthy; the scene still converges over a few seconds.
+	const MAX_EVICT_PER_TICK = 32
+	const MAX_RELOAD_PER_TICK = 48
+	let _cullStatTick = 0        // throttle the O(n) stats scan (every Nth cull tick)
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -1898,6 +1918,7 @@ export function useWorldEngine(canvasRef) {
 			// ObjectUpdate batch doesn't block the WS message handler. Avatars are few and the
 			// own-avatar logic below drives the camera, so build those inline immediately.
 			if (obj.pcode !== PCODE_AVATAR) {
+				evicted.delete(obj.localId)
 				pendingMeshIds.add(obj.localId)
 				continue
 			}
@@ -2146,6 +2167,7 @@ export function useWorldEngine(canvasRef) {
 		meshMap.clear()
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
+		evicted.clear()
 		orphansByParent.clear()
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
@@ -2211,6 +2233,7 @@ export function useWorldEngine(canvasRef) {
 		const keepOnKill = import.meta.env.VITE_KEEP_CACHE_ON_KILL === 'true'
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
+			evicted.delete(id)
 			removeMesh(id)
 			worldStore.removeObject(id)
 			// WHY: stock OpenSim has ObjectsCullingByDistance=false, so KillObject = genuine
@@ -2515,6 +2538,73 @@ export function useWorldEngine(canvasRef) {
 	// up unbounded → OOM. Stop pulling new prims once the baker is saturated; the leftover ids stay in
 	// pendingMeshIds and the next interval tick resumes after the worker has drained below the cap.
 	const BAKE_INFLIGHT_CAP = 300
+	// Distance from the camera (THREE space) to an object's SL position. Infinity if unknown so a
+	// position-less object sorts as "farthest" (evicted first / never reloaded).
+	function camDistToObj(obj) {
+		if (!obj?.pos || !camera) return Infinity
+		const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+		return camera.position.distanceTo(t)
+	}
+
+	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY in-range: with culling the
+	// whole region is NEVER fully resident (it's memory-bounded), so "resident / all-known" sinks toward
+	// 0 as data streams and never recovers — meaningless. Measure instead "of the non-avatar objects
+	// within render range (R_RANGE), how many are built" — this sits near 100% when streaming keeps up
+	// and dips→recovers as you move into fresh area. `evicted` is the total culled-for-memory count.
+	function updateCullStats() {
+		let known = 0, resident = 0
+		for (const [id, o] of worldStore.objects) {
+			if (o.pcode === PCODE_AVATAR) continue
+			if (camDistToObj(o) > R_RANGE) continue
+			known++
+			if (meshMap.has(id)) resident++
+		}
+		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
+		worldStore.setCullStats({ resident, known, evicted: evicted.size, pct })
+	}
+
+	// Memory-budget distance culling. WHY both passes EVERY tick (not evict-XOR-reload): on a dense
+	// region heap stays above target, so an "else if reload" never runs → objects ahead never rebuild
+	// as you walk (you walk into emptiness). Instead, ALWAYS reload the nearest evicted within R_NEAR
+	// (stream-in), and SEPARATELY evict the farthest when over budget (fund it). Net: the resident set
+	// tracks proximity, bounded by the budget. selectEvictions takes farthest-first so a just-reloaded
+	// near object is never the one evicted. Chrome-gated (memRatio null elsewhere → no-op).
+	function cullTick() {
+		const r = memRatio()
+		if (r == null || !camera) { return }
+		// 1) Stream-in: rebuild nearest evicted objects within R_NEAR, regardless of current pressure.
+		if (evicted.size) {
+			const cands = []
+			for (const id of evicted) {
+				const obj = worldStore.objects.get(id)
+				if (!obj) { evicted.delete(id); continue }   // object gone (KillObject) → forget it
+				cands.push({ id, dist: camDistToObj(obj) })
+			}
+			const ids = selectReloads(cands, R_NEAR, MAX_RELOAD_PER_TICK)
+			for (const id of ids) { evicted.delete(id); pendingMeshIds.add(id) }
+		}
+		// 2) Stream-out: if over budget, evict the farthest resident meshes to stay within it.
+		if (r > CULL_TARGET) {
+			const editId = uiStore.editObjectId
+			const cands = []
+			for (const [id] of meshMap) {
+				const obj = worldStore.objects.get(id)
+				if (!obj) continue
+				if (obj.pcode === PCODE_AVATAR) continue   // never evict avatars
+				if (id === ownAvatarLocalId || id === editId) continue
+				cands.push({ id, dist: camDistToObj(obj) })
+			}
+			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK)
+			for (const id of ids) { removeMesh(id); pendingMeshIds.delete(id); evicted.add(id) }
+			// Also bound the in-memory texture cache (the larger, mesh-independent hog). Prunes only
+			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
+			// backfillTextures. Only runs here (over budget), so the steady state never churns.
+			pruneTexturesLRU(96)
+		}
+		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
+		if ((_cullStatTick++ % 3) === 0) updateCullStats()
+	}
+
 	function drainMeshQueue() {
 		if (!pendingMeshIds.size) return
 		// Memory governor: stop baking new geometry while the JS heap is near its limit (each bake adds
@@ -2906,6 +2996,7 @@ export function useWorldEngine(canvasRef) {
 			pumpTextures()   // resume governor-paused texture fetches once heap pressure clears
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
 		}, 30)
+		_cullTimer = setInterval(cullTick, 1000)
 		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
 		// scene keeps filling and the IDB cache completes (persists across reloads). 3s cadence.
 		_texBackfillTimer = setInterval(backfillTextures, 3000)
@@ -2972,6 +3063,8 @@ export function useWorldEngine(canvasRef) {
 		uninstallConsoleForwarder()
 		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
 		if (_meshDrainTimer) { clearInterval(_meshDrainTimer); _meshDrainTimer = null }
+		if (_cullTimer) { clearInterval(_cullTimer); _cullTimer = null }
+		evicted.clear()
 		if (_texBackfillTimer) { clearInterval(_texBackfillTimer); _texBackfillTimer = null }
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
@@ -3003,6 +3096,7 @@ export function useWorldEngine(canvasRef) {
 		meshMap.clear()
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
+		evicted.clear()
 		orphansByParent.clear()
 		meshBaker.dispose()     // terminate the off-thread geometry-bake worker
 		objCacheFlush()         // persist any buffered object writes before teardown

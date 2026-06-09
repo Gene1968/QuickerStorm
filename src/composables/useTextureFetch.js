@@ -38,6 +38,12 @@ const softAttempts = new Map() // uuid → timeout count; retry until MAX_SOFT_R
 const MAX_SOFT_RETRY = 4
 const netQueue    = []         // queued network fetches awaiting a slot (runs: () => void)
 let   active      = 0          // in-flight network fetches (≤ MAX_INFLIGHT)
+// LRU bookkeeping for in-memory eviction. WHY: the `cache`/`xformCache` Maps grow UNBOUNDED — every
+// texture ever seen stays resident (~0.25 MB each at 256²), so exploring a dense region accumulates
+// gigabytes the mesh culler can't free (it disposes geometry, not these Maps). lastUsed lets the cull
+// tick prune the least-recently-applied textures when over the memory budget.
+const lastUsed    = new Map()  // uuid → last-access timestamp (ms)
+const TEX_PRUNE_AGE_MS = 20000 // never prune a texture applied within the last 20s (avoid blanking near faces)
 
 // Live counters so we can watch steady population (vs flooding) — see getTextureStats().
 const stats = { requested: 0, done: 0, failed: 0, timeout: 0 }
@@ -183,7 +189,7 @@ function buildTexture(url) {
 // Base texture for a UUID (no UV transform). Cached + deduped at the GPU-texture layer.
 function getBaseTexture(uuid) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
-	if (cache.has(uuid))       return Promise.resolve(cache.get(uuid))
+	if (cache.has(uuid))       { lastUsed.set(uuid, Date.now()); return Promise.resolve(cache.get(uuid)) }
 	if (texInflight.has(uuid)) return texInflight.get(uuid)
 
 	const p = getDataUrl(uuid)
@@ -193,6 +199,7 @@ function getBaseTexture(uuid) {
 			if (tex) {
 				tex.userData.hasAlpha = alphaCache.get(uuid) || false
 				cache.set(uuid, tex)
+				lastUsed.set(uuid, Date.now())
 				// Free the in-memory PNG data URL now the GPU texture exists — these strings are big
 				// (100s of KB–MB each × ~1500 textures = the tab-crashing heap hog). Thumbnails re-read
 				// IndexedDB on demand via getTextureUrl; the GPU texture is what rendering needs.
@@ -214,6 +221,7 @@ function getBaseTexture(uuid) {
  * GPU texture instead of mutating the shared base (which would corrupt every other prim using it).
  */
 export function getTexture(uuid, xform = null) {
+	if (uuid) lastUsed.set(uuid, Date.now())   // applied now → protect from LRU prune
 	const baseP = getBaseTexture(uuid)
 	if (isIdentityXform(xform)) return baseP
 	const key = `${uuid}|${xform.repeat[0]}|${xform.repeat[1]}|${xform.offset[0]}|${xform.offset[1]}|${xform.rotation}`
@@ -238,6 +246,34 @@ export function getTexture(uuid, xform = null) {
 /** Resolve a texture UUID to its PNG data URL (for an <img> preview). Null on missing/failed. */
 export function getTextureUrl(uuid) {
 	return getDataUrl(uuid)
+}
+
+// Drop up to `maxPerCall` least-recently-applied textures (base + their UV clones) from the in-memory
+// Maps — WITHOUT calling dispose(). WHY no dispose: a texture may still be the .map of a VISIBLE mesh's
+// material (textures are shared across prims); disposing would render that face broken and backfill
+// would not heal it (the .map isn't null). Instead we just release our Map references: textures used
+// only by already-evicted meshes then have zero references and the GC frees their decoded image (the
+// ~0.25 MB JS-heap hog); textures still on a resident mesh stay alive via that material's reference, so
+// nothing blanks. Re-fetched from IDB if needed again. Skips anything applied within TEX_PRUNE_AGE_MS.
+// Called by the cull tick ONLY while over the memory budget, so the steady state never churns.
+// (GPU-side disposal of evicted-mesh textures needs ref-counting — tracked as follow-up; the immediate
+// crash is JS-heap, which GC reclaims here.) Returns count dropped.
+export function pruneTexturesLRU(maxPerCall = 64, now = Date.now()) {
+	if (!cache.size) return 0
+	const eligible = []
+	for (const uuid of cache.keys()) {
+		if (now - (lastUsed.get(uuid) || 0) > TEX_PRUNE_AGE_MS) eligible.push(uuid)
+	}
+	eligible.sort((a, b) => (lastUsed.get(a) || 0) - (lastUsed.get(b) || 0))   // oldest first
+	let n = 0
+	for (const uuid of eligible) {
+		if (n >= maxPerCall) break
+		cache.delete(uuid); lastUsed.delete(uuid); urlCache.delete(uuid); alphaCache.delete(uuid)
+		const prefix = uuid + '|'
+		for (const k of [...xformCache.keys()]) if (k.startsWith(prefix)) xformCache.delete(k)
+		n++
+	}
+	return n
 }
 
 /**

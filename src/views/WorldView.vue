@@ -10,6 +10,7 @@ import { useGridStore }		from '@/stores/gridStore'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { usePresenceStore }	from '@/stores/presenceStore.js'
 import WorldCanvas			from '@/components/WorldCanvas.vue'
+import SceneLoadBadge		from '@/components/SceneLoadBadge.vue'
 import SimpleWorldView		from '@/components/SimpleWorldView.vue'
 import LocationBar			from '@/components/LocationBar.vue'
 import MenuBar				from '@/components/MenuBar.vue'
@@ -121,6 +122,7 @@ watch(
 			<!-- Middle: canvas area with overlays -->
 			<div class="flex-1 relative overflow-hidden">
 				<WorldCanvas class="absolute inset-0" />
+				<SceneLoadBadge />
 
 				<!-- Teleport progress overlay — FS-style, shows while TP is in flight -->
 				<Transition name="fade">
