@@ -220,13 +220,28 @@ function selectLink(delta) {
 }
 
 // ── Texture-tab derived data (Blinn-Phong + PBR) ──────────────────────────
-// Distinct diffuse textures across all faces (per-face override OR default). >1 → "Multiple".
+// SL "Blank" (5748decc) and the zero UUID are not real textures — the renderer ignores them, so the
+// floater must too (else blank-default faces show as phantom per-face overrides).
+const SL_BLANK = '5748decc-f629-461c-9a36-a35a221fe21f'
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
+function isRealTexUuid(u) { return !!u && u !== SL_BLANK && u !== ZERO_UUID }
+
+// TexGen (texture mapping mode). 0=Default (per-face UV), 1=Planar (projected). FS shows planar
+// repeats per-meter = packed ×2 (planar packs per-half-meter); Default shows packed as-is.
+const TEXGEN_LABELS = ['Default', 'Planar', 'Spherical', 'Cylindrical']
+function texGenLabel(v) { return TEXGEN_LABELS[v ?? 0] ?? 'Default' }
+function dispRepeats(rep, texGen) {
+	const f = texGen === 1 ? 2 : 1
+	return [(rep?.[0] ?? 1) * f, (rep?.[1] ?? 1) * f]
+}
+
+// Distinct REAL diffuse textures across all faces (per-face override OR default). >1 → "Multiple".
 const distinctTextures = computed(() => {
 	const o = obj.value
 	if (!o) return []
 	const set = new Set()
-	if (o.defaultTexture) set.add(o.defaultTexture)
-	for (const t of o.faceTextures ?? []) if (t) set.add(t)
+	if (isRealTexUuid(o.defaultTexture)) set.add(o.defaultTexture)
+	for (const t of o.faceTextures ?? []) if (isRealTexUuid(t)) set.add(t)
 	return [...set]
 })
 const isMultiTexture = computed(() => distinctTextures.value.length > 1)
@@ -242,7 +257,41 @@ const isMultiColor = computed(() => {
 const faceTexChips = computed(() => {
 	const f = obj.value?.faceTextures
 	if (!f) return []
-	return f.map((t, i) => ({ face: i, uuid: t })).filter((x) => x.uuid)
+	return f.map((t, i) => ({ face: i, uuid: t })).filter((x) => isRealTexUuid(x.uuid))
+})
+// Per-face UV/mapping overrides: a face appears if it overrides repeats, offset, rotation, OR TexGen.
+// Resolved values fall back to the prim default for anything the face does not override. Planar
+// repeats are shown ×2 (per-meter) to match FS.
+const faceUvRows = computed(() => {
+	const o = obj.value
+	if (!o) return []
+	const rep = o.faceRepeats ?? [], off = o.faceOffset ?? [], rot = o.faceRotation ?? [], tg = o.faceTexGen ?? []
+	const n = Math.max(rep.length, off.length, rot.length, tg.length)
+	const rows = []
+	for (let i = 0; i < n; i++) {
+		const hasOverride = rep[i] != null || off[i] != null || rot[i] != null || tg[i] != null
+		if (!hasOverride) continue
+		const texGen = tg[i] ?? o.defaultTexGen ?? 0
+		rows.push({
+			face: i,
+			repeats: dispRepeats(rep[i] ?? o.defaultRepeats ?? [1, 1], texGen),
+			offset:  off[i] ?? o.defaultOffset ?? [0, 0],
+			rotation: rot[i] ?? o.defaultRotation ?? 0,
+			mapping: texGenLabel(texGen),
+		})
+	}
+	return rows
+})
+// Default-face mapping (FS "Mapping" + Scale/Offset/Rotation), planar-aware.
+const defaultMapping = computed(() => {
+	const o = obj.value
+	const tg = o?.defaultTexGen ?? 0
+	return {
+		mapping: texGenLabel(tg),
+		repeats: dispRepeats(o?.defaultRepeats ?? [1, 1], tg),
+		offset:  o?.defaultOffset ?? [0, 0],
+		rotation: o?.defaultRotation ?? 0,
+	}
 })
 const shinyLabel = computed(() => ['None', 'Low', 'Medium', 'High'][obj.value?.defaultShiny ?? 0] ?? 'None')
 
@@ -275,6 +324,36 @@ watch(
 )
 // Reset transient UI when the selected object changes.
 watch(() => ui.editObjectId, () => { previewUuid.value = null; texSubTab.value = 'bp' })
+
+// TEMP DIAGNOSTIC (per-face decode audit) — dump the decoded TextureEntry for the selected object.
+// Re-fires when the TE content changes too (opening Edit emits ObjectSelect → the sim re-sends a
+// fresh ObjectUpdate ~RTT later; this catches that post-refetch state). Read console ([TEDUMP]).
+watch(
+	() => [ui.editObjectId, obj.value?.defaultTexGen, JSON.stringify(obj.value?.faceTexGen),
+		JSON.stringify(obj.value?.faceRepeats), JSON.stringify(obj.value?.faceTextures)],
+	() => {
+	const o = obj.value
+	if (!o) return
+	const sparse = (arr) => Array.isArray(arr)
+		? arr.map((v, i) => (v == null ? null : { i, v })).filter(Boolean)
+		: arr
+	// eslint-disable-next-line no-console
+	console.log('[TEDUMP] ' + JSON.stringify({
+		localId: o.localId, name: o.name, type: typeInfo.value.label, meshId: o.meshId,
+		shape: o.shape && { pathCurve: o.shape.pathCurve, profileCurve: o.shape.profileCurve,
+			profileHollow: o.shape.profileHollow, pathBegin: o.shape.pathBegin, pathEnd: o.shape.pathEnd,
+			profileBegin: o.shape.profileBegin, profileEnd: o.shape.profileEnd },
+		defaultTexture: o.defaultTexture,
+		faceTextures: sparse(o.faceTextures),
+		defaultColor: o.defaultColor, faceColors: sparse(o.faceColors),
+		defaultRepeats: o.defaultRepeats, faceRepeats: sparse(o.faceRepeats),
+		defaultOffset: o.defaultOffset, faceOffset: sparse(o.faceOffset),
+		defaultRotation: o.defaultRotation, faceRotation: sparse(o.faceRotation),
+		defaultTexGen: o.defaultTexGen, faceTexGen: sparse(o.faceTexGen),
+		defaultShiny: o.defaultShiny, defaultFullbright: o.defaultFullbright,
+		defaultPbrMaterial: o.defaultPbrMaterial, pbrMaterials: sparse(o.pbrMaterials),
+	}))
+})
 
 function close() {
 	ui.editObjectId = null
@@ -643,22 +722,39 @@ function close() {
 							</div>
 						</div>
 
-						<!-- Mapping (default face) -->
-						<div class="border-t border-brd pt-2">
-							<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Mapping</div>
-							<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-								<div class="text-white/50 self-center">Repeats / m</div>
-								<div class="grid grid-cols-2 gap-1">
-									<input :value="(obj.defaultRepeats?.[0] ?? 1).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
-									<input :value="(obj.defaultRepeats?.[1] ?? 1).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+						<!-- Per-face mapping overrides (Scale / Offset / Rotation / Mapping, planar-aware) -->
+						<div v-if="faceUvRows.length" class="border-t border-brd pt-2">
+							<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Per-face mapping</div>
+							<div class="space-y-1">
+								<div v-for="r in faceUvRows" :key="r.face" class="grid grid-cols-[2rem,1fr] gap-x-2 items-baseline text-2xs">
+									<span class="text-white/50">F{{ r.face }}</span>
+									<div class="font-mono text-t1">
+										<span v-if="r.mapping !== 'Default'" class="text-accent">{{ r.mapping }}</span>
+										Scale {{ r.repeats[0].toFixed(5) }}×{{ r.repeats[1].toFixed(5) }}
+										· Off {{ r.offset[0].toFixed(5) }},{{ r.offset[1].toFixed(5) }}
+										· Rot {{ (r.rotation * 180 / Math.PI).toFixed(5) }}°
+									</div>
 								</div>
-								<div class="text-white/50 self-center">Offset</div>
+							</div>
+						</div>
+
+						<!-- Mapping (default face) — FS-style: Mapping mode + Scale H/V + Offset H/V + Rotation -->
+						<div class="border-t border-brd pt-2">
+							<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+								<div class="text-white/50 self-center">Mapping</div>
+								<div class="text-t1">{{ defaultMapping.mapping }}</div>
+								<div class="text-white/50 self-center">Scale H / V</div>
 								<div class="grid grid-cols-2 gap-1">
-									<input :value="(obj.defaultOffset?.[0] ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
-									<input :value="(obj.defaultOffset?.[1] ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								</div>
+								<div class="text-white/50 self-center">Offset H / V</div>
+								<div class="grid grid-cols-2 gap-1">
+									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+									<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 								</div>
 								<div class="text-white/50 self-center">Rotation°</div>
-								<input :value="(((obj.defaultRotation ?? 0) * 180 / Math.PI)).toFixed(1)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 							</div>
 						</div>
 						<div v-if="obj.defaultMaterialId" class="border-t border-brd pt-2">

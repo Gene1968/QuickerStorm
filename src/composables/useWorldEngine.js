@@ -17,10 +17,12 @@ import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
-import { getTextureStats } from './useTextureFetch.js'
+import { getTextureStats, pumpTextures } from './useTextureFetch.js'
+import { memStats, memUnderPressure } from '@/lib/memGovernor.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush } from '@/lib/objectCache.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
+import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
@@ -62,6 +64,22 @@ function hasMultiFaceMesh(obj) {
 	if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
 	for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
 	return set.size >= 2
+}
+
+// WHY: a square box / cylinder whose faces genuinely differ → render per-face (one material per
+// geometry group, remapped to SL face order via primFaceMap). Excludes meshes, placeholders, and
+// any prim whose face layout we can't map exactly (primFaceMap === null). The ≥2-distinct gate
+// (primFacesDiffer) keeps uniform prims on the cheap single-material path.
+// TEMP: per-face PRIM materials disabled while investigating cold-load OOM. Multi-face prims fetch
+// up to 6 textures + build 6 materials each; on a heavy-region cold-load that multiplied memory and
+// crashed the tab. Flip PERFACE_PRIMS back on once the cold-load memory budget is fixed. (The MESH
+// per-face path is unaffected — it was already live before this work.)
+const PERFACE_PRIMS = false
+function hasMultiFacePrim(obj) {
+	if (!PERFACE_PRIMS) return false
+	if (obj.meshId || obj._placeholder) return false
+	if (!primFaceMap(obj.shape)) return false
+	return primFacesDiffer(obj)
 }
 
 // Build a UV transform from TE repeat/offset/rotation, or null for identity. Clamps repeats to the
@@ -1447,6 +1465,7 @@ export function useWorldEngine(canvasRef) {
 			// submesh/face (built in applySwap once the grouped geometry exists), instead of the single
 			// dominant-texture pick below.
 			const meshMulti = hasMultiFaceMesh(obj)
+			const primMulti = hasMultiFacePrim(obj)
 			const applySwap = (out) => {
 				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
 					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
@@ -1472,6 +1491,7 @@ export function useWorldEngine(canvasRef) {
 				// Mesh per-face: now the grouped geometry exists, replace the single material with a
 				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
 				if (meshMulti) buildFaceMaterials(mesh, obj)
+				else if (primMulti) buildFaceMaterials(mesh, obj, primFaceMap(obj.shape))
 			}
 
 			// WHY: the worker's postMessage structured-clones its payload, and Vue/Pinia reactive
@@ -1518,7 +1538,7 @@ export function useWorldEngine(canvasRef) {
 			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
-			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti) ? pickPrimTexture(obj) : null
+			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti && !primMulti) ? pickPrimTexture(obj) : null
 			if (primTexId) {
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
 				const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
@@ -1553,7 +1573,7 @@ export function useWorldEngine(canvasRef) {
 			// Skip for multi-face meshes: those swap to a per-face material array in applySwap, which
 			// would discard (and leak) any PBR-mutated single material. Per-face + PBR is a rare combo;
 			// see docs/tech-debt.md (perface-pbr-skip). Per-face textures win for these meshes.
-			if (obj.defaultPbrMaterial && !meshMulti) {
+			if (obj.defaultPbrMaterial && !meshMulti && !primMulti) {
 				getPbrMaterial(obj.defaultPbrMaterial).then(gltf => {
 					if (!gltf || !mesh.parent || mesh.material !== mat) return
 					const d = gltfToDescriptor(gltf)
@@ -1574,7 +1594,7 @@ export function useWorldEngine(canvasRef) {
 					setMap(d.emissiveTex, 'emissiveMap', true)
 					mat.needsUpdate = true
 				})
-			} else if (obj.defaultMaterialId) {
+			} else if (obj.defaultMaterialId && !primMulti) {
 				// ── Slice 2: legacy RenderMaterials — normal + (specular→roughness approx) ──
 				getLegacyMaterial(obj.defaultMaterialId).then(m => {
 					if (!m || !mesh.parent || mesh.material !== mat) return
@@ -2497,6 +2517,9 @@ export function useWorldEngine(canvasRef) {
 	const BAKE_INFLIGHT_CAP = 300
 	function drainMeshQueue() {
 		if (!pendingMeshIds.size) return
+		// Memory governor: stop baking new geometry while the JS heap is near its limit (each bake adds
+		// a BufferGeometry + material). Queued ids stay; the next tick resumes once pressure clears.
+		if (memUnderPressure()) return
 		const start = performance.now()
 		for (const localId of pendingMeshIds) {
 			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) break   // backpressure: let the worker catch up
@@ -2547,19 +2570,21 @@ export function useWorldEngine(canvasRef) {
 	// (else defaultTexture) + faceColors[i] tint (else defaultColor) + its per-face UV (faceRepeats/
 	// faceOffset/faceRotation, falling back to the default UV). Textures fill in async; the array is
 	// assigned immediately so the mesh renders (tinted) while they load.
-	function buildFaceMaterials(mesh, obj) {
+	function buildFaceMaterials(mesh, obj, faceMap = null) {
 		const groups = mesh.geometry?.groups
 		if (!groups || !groups.length) return   // no groups → can't split; leave the single material
 		const maxIdx = groups.reduce((m, g) => Math.max(m, g.materialIndex ?? 0), 0)
+		// Group materialIndex → SL TextureEntry face index. Identity for meshes (no map).
+		const sf = (i) => slFaceForGroup(faceMap, i)
 		// Per-face UV transform: face override if present, else the prim default; identity → null.
 		const faceXform = (i) => uvXform(
-			obj.faceRepeats?.[i] ?? obj.defaultRepeats,
-			obj.faceOffset?.[i] ?? obj.defaultOffset,
-			obj.faceRotation?.[i] ?? obj.defaultRotation,
+			obj.faceRepeats?.[sf(i)] ?? obj.defaultRepeats,
+			obj.faceOffset?.[sf(i)] ?? obj.defaultOffset,
+			obj.faceRotation?.[sf(i)] ?? obj.defaultRotation,
 		)
 		const mats = []
 		for (let i = 0; i <= maxIdx; i++) {
-			const fc = obj.faceColors?.[i] ?? obj.defaultColor
+			const fc = obj.faceColors?.[sf(i)] ?? obj.defaultColor
 			const m = new THREE.MeshBasicMaterial({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
 			if (fc && fc[3] < 0.99) { m.transparent = true; m.opacity = fc[3] }
 			mats.push(m)
@@ -2568,14 +2593,14 @@ export function useWorldEngine(canvasRef) {
 		mesh.material = mats
 		if (!Array.isArray(oldMat)) oldMat.dispose?.()   // single placeholder material no longer used
 		for (let i = 0; i < mats.length; i++) {
-			const faceTex = isRealTex(obj.faceTextures?.[i]) ? obj.faceTextures[i]
+			const faceTex = isRealTex(obj.faceTextures?.[sf(i)]) ? obj.faceTextures[sf(i)]
 				: (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
 			if (!faceTex) continue
 			const m = mats[i]
 			getTexture(faceTex, faceXform(i)).then(tex => {
 				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
 				m.map = tex
-				if (!(obj.faceColors?.[i] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
+				if (!(obj.faceColors?.[sf(i)] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
 				if (tex.userData?.hasAlpha) m.alphaTest = 0.5
 				m.needsUpdate = true
 			})
@@ -2878,6 +2903,7 @@ export function useWorldEngine(canvasRef) {
 		let _drainTick = 0
 		_meshDrainTimer = setInterval(() => {
 			drainMeshQueue()
+			pumpTextures()   // resume governor-paused texture fetches once heap pressure clears
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
 		}, 30)
 		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
@@ -2887,6 +2913,16 @@ export function useWorldEngine(canvasRef) {
 		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
 		_assetStatsTimer = setInterval(() => {
 			const t = getTextureStats(), m = getMeshStats()
+			// Memory telemetry: always report heap pressure to the server log (C.CLIENT_LOG → [ClientLog])
+			// so it can be watched live while tuning the governor. Quiet on non-Chrome (memStats null).
+			const mg = memStats()
+			if (mg) {
+				const pressure = memUnderPressure()
+				const line = `[Mem] heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size}`
+				debugStore.push(pressure ? 'warn' : 'info', line)
+				try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+			}
 			const busy = t.inflight || t.queued || m.inflight || m.queued
 			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
 			_lastTexReq = t.requested; _lastMeshReq = m.requested

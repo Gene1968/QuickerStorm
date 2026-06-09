@@ -856,6 +856,15 @@ interface TEFields {
   defaultShiny?:     number            // 0..3 (bump byte bits 7:6)
   defaultFullbright?: boolean          // bump byte bit 5
   defaultMaterialId?: string           // TE field 11 — legacy LLMaterial UUID (omitted if null)
+  defaultTexGen?:    number            // TexGen mapping mode: 0=default, 1=planar (MediaFlags bits 1:2)
+  faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
+}
+
+// TexGen (texture mapping mode) is packed into the TE MediaFlags byte (field 9), bits 1-2
+// (TEM_TEX_GEN_MASK 0x06, shift 1). 0=DEFAULT (per-face UV), 1=PLANAR (projected; repeats are
+// expressed per-half-meter, i.e. FS displays them ×2). Bit 0 is the media-present flag (ignored here).
+export function texGenFromMediaByte(b: number): number {
+  return (b >> 1) & 0x03
 }
 
 // Read one TextureEntry field: a default value, then [faceBitfield + value]* overrides, then the
@@ -943,6 +952,11 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     res.defaultGlow       = glow.def
     res.defaultShiny      = (bump.def >> 6) & 0x03
     res.defaultFullbright = ((bump.def >> 5) & 0x01) === 1
+    res.defaultTexGen     = texGenFromMediaByte(media.def)
+    if (media.faces) {
+      const ft = media.faces.map(m => (m == null ? null : texGenFromMediaByte(m)))
+      if (ft.some(v => v != null)) res.faceTexGen = ft
+    }
     if (matId !== ZERO_UUID) res.defaultMaterialId = matId
   } catch { /* best-effort: partial TE still yields texture/color */ }
   return res
@@ -1016,6 +1030,8 @@ export interface ObjectData {
   defaultGlow?:      number             // TE glow 0..1
   defaultShiny?:     number             // TE shiny 0..3
   defaultFullbright?: boolean           // TE fullbright
+  defaultTexGen?:    number             // TE TexGen mapping mode: 0=default, 1=planar
+  faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
   defaultMaterialId?: string            // TE legacy LLMaterial UUID (RenderMaterials cap)
   defaultPbrMaterial?: string           // GLTF PBR material asset UUID (ExtraParam 0x80, default face)
   pbrMaterials?:     Array<string | null>  // per-face GLTF PBR material asset UUIDs
@@ -1192,6 +1208,8 @@ export function decodeObjectUpdateCompressed(
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
+        ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
         ...(defaultPbr ? { defaultPbrMaterial: defaultPbr } : {}),
         ...(pbrKeys.length ? { pbrMaterials: Object.assign(new Array(32).fill(null), Object.fromEntries(Object.entries(pbrFaces))) } : {}),
@@ -1499,6 +1517,8 @@ export function decodeObjectUpdate(
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
+        ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
         ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
         ...(meshId ? { meshId } : {}),

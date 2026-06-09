@@ -111,7 +111,7 @@ const stubChannels = [
 	<div
 		class="relative flex items-center gap-1 pe-3"
 	>
-		<div class="flex items-center gap-2 me-6">
+		<div class="flex items-center gap-2 me-2">
 			<div class="mx-1.5"></div>
 			<div
 				title="Click to refresh your X$ balance (TO-DO)"
@@ -272,6 +272,11 @@ const stubChannels = [
 				</div>
 			</div>
 		</Transition>
+		<div class="flex items-center gap-1">
+			<div title="Frames per second (click to adjust limit) (TO-DO)" class="me-3 ms-1 text-xs text-yellow-500">##.#</div>
+			<div title="#Kbps (TO-DO)" class="flex items-end border h-full min-h-4"><div class="w-1 h-[0.75rem] bg-green-500"></div></div>
+			<div title="#.#% (TO-DO)" class="flex items-end border h-full min-h-4"><div class="w-1 h-[0.40rem] bg-green-500"></div></div>
+		</div>
 	</div>
 </template>
 

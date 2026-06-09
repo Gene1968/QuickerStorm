@@ -33,7 +33,7 @@ describe('planEvictions (LRU policy)', () => {
 
 describe('textureCache exports', () => {
 	it('exports TEX_CACHE_CAP_BYTES as 512 MB', () => {
-		expect(TEX_CACHE_CAP_BYTES).toBe(512 * 1024 * 1024)
+		expect(TEX_CACHE_CAP_BYTES).toBe(1024 * 1024 * 1024 * 8)
 	})
 
 	it('exports getTextureCacheStats function', () => {

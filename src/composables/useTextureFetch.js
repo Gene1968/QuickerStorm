@@ -6,6 +6,7 @@
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
+import { memUnderPressure } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
@@ -57,9 +58,17 @@ function _wire() {
 }
 
 // Free an in-flight slot and start the next queued fetch (if any).
+// Memory governor: while the JS heap is near its limit, do NOT start new network fetches — each
+// completed fetch builds a THREE.Texture that retains its decoded image (the cold-load OOM hog).
+// Leaving them queued (not dropped) lets them resume once pressure clears (re-pumped by the engine's
+// drain interval). memUnderPressure() is false when performance.memory is unavailable → no change.
 function _pump() {
-	while (active < MAX_INFLIGHT && netQueue.length) { active++; netQueue.shift()() }
+	while (active < MAX_INFLIGHT && netQueue.length && !memUnderPressure()) { active++; netQueue.shift()() }
 }
+
+// Re-pump from a periodic caller (the world-engine drain tick) so queued fetches resume after the
+// governor pauses them — _pump is otherwise only re-triggered when a slot frees.
+export function pumpTextures() { _pump() }
 
 // S.ASSET_DATA → resolve the pending WS request with a data URL (or null on error/missing).
 function _onAssetData(d) {
@@ -137,12 +146,30 @@ function getDataUrl(uuid) {
 	return p
 }
 
-// Build a THREE.Texture from a PNG data URL.
+// Client-side resident-texture dimension cap. WHY: a dense region holds thousands of THREE.Textures;
+// each retains its decoded image in memory at the source PNG size. At 512² that's ~1 MB each — 3.4k
+// textures ≈ 3.4 GB, which alone fills Chrome's ~4 GB tab heap and stalls/crashes the load. Downscaling
+// the resident image to ≤256² quarters that (~0.9 GB) regardless of the cached PNG size, trading some
+// sharpness for the ability to load the whole region. The source img is dropped (GC'd) after the draw.
+const MAX_TEX_DIM = 256
+
+// Build a THREE.Texture from a PNG data URL, downscaling the resident image to MAX_TEX_DIM.
 function buildTexture(url) {
 	return new Promise(resolve => {
 		const img = new Image()
 		img.onload = () => {
-			const tex = new THREE.Texture(img)
+			let source = img
+			const longest = Math.max(img.width, img.height)
+			if (longest > MAX_TEX_DIM) {
+				const s = MAX_TEX_DIM / longest
+				const cw = Math.max(1, Math.round(img.width * s))
+				const ch = Math.max(1, Math.round(img.height * s))
+				const canvas = document.createElement('canvas')
+				canvas.width = cw; canvas.height = ch
+				const ctx = canvas.getContext('2d')
+				if (ctx) { ctx.drawImage(img, 0, 0, cw, ch); source = canvas }
+			}
+			const tex = new THREE.Texture(source)
 			tex.colorSpace = THREE.SRGBColorSpace
 			tex.wrapS = tex.wrapT = THREE.RepeatWrapping
 			tex.needsUpdate = true
