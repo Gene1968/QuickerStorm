@@ -8,19 +8,19 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
 import { useNotificationStore } from '@/stores/notificationStore'
-import { useRealtimeSocket } from './useRealtimeSocket'
+import { useRealtimeSocket, takeWsStats } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
 import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
-import { getMesh, getMeshStats } from './useMeshFetch.js'
+import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
-import { getTextureStats, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
+import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads } from '@/lib/cullPolicy.js'
-import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush } from '@/lib/objectCache.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
+import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
@@ -241,6 +241,7 @@ export function useWorldEngine(canvasRef) {
 	let _meshDrainTimer = null   // mesh build/reparent driver — focus-independent (see onMounted)
 	let _texBackfillTimer = null // re-applies textures to still-white meshes + drives fetch retries
 	let _cullTimer = null        // memory-budget distance-culling tick (~1s)
+	let _longTaskObs = null      // PerformanceObserver for main-thread long tasks (telemetry)
 	const evicted = new Set()    // localIds dropped for memory (kept in worldStore + IDB; rebuilt on approach)
 	// WHY a budget below the 0.85 governor: park heap ~60% so the governor is a rare backstop, not the
 	// steady state. R_NEAR < (implicit evict radius): far objects evict first under pressure; only
@@ -250,6 +251,11 @@ export function useWorldEngine(canvasRef) {
 	// evict/reload swap keeps the RESIDENT set proximity-ordered. (0.60 was too aggressive — it evicted
 	// ~30% more than the governor-only path held.)
 	const CULL_TARGET = 0.78
+	const CULL_RESUME = 0.70     // below this, stream evicted objects back at ANY distance (nearest first).
+	// WHY: a TRANSIENT heap spike (GC sawtooth, worker garbage between recycles) can trip CULL_TARGET
+	// for a few ticks and evict thousands of roots; with reload capped to R_NEAR the scene then stays
+	// gutted forever once pressure clears (observed: 31.9k stored / 606 rendered, heap idling at 25%).
+	// With real headroom, distance is no reason to keep anything evicted.
 	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
 	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
 	// WHY small caps: evicting/freeing hundreds of meshes in one tick caused a GC + main-thread stall
@@ -258,7 +264,16 @@ export function useWorldEngine(canvasRef) {
 	// so movement + the circuit stay healthy; the scene still converges over a few seconds.
 	const MAX_EVICT_PER_TICK = 32
 	const MAX_RELOAD_PER_TICK = 48
+	const EVICT_AFTER_TICKS = 3  // require N consecutive over-target ticks before evicting (spike debounce)
+	let _overTicks = 0
 	let _cullStatTick = 0        // throttle the O(n) stats scan (every Nth cull tick)
+	let _drainBuilt = 0, _drainMs = 0, _drainMaxMs = 0  // upsertMesh throughput probe (reset each 5s report)
+	let _applyN = 0, _applyMs = 0, _applyMaxMs = 0      // applySwap (bake-result → THREE geometry) probe
+	// Drain-loop exit accounting: why does each tick stop? (ticks that ran / skipped-empty /
+	// governor-paused / broke on bake-cap / broke on time budget). Reset each 5s report.
+	let _dtTicks = 0, _dtEmpty = 0, _dtGov = 0, _dtBrkCap = 0, _dtBrkBudget = 0
+	let _frN = 0, _frMs = 0, _frMaxMs = 0               // rAF frame-work gauge (reset each 5s report)
+	let _ltN = 0, _ltMs = 0, _ltMaxMs = 0               // PerformanceObserver longtask totals
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -274,19 +289,49 @@ export function useWorldEngine(canvasRef) {
 		async function preseedRegionCache() {
 			const key = regionCacheKey()
 			if (!key || key === _objCacheLoadedKey) return
+			// Region-run gate: localIds die with the region run. WHY wait for the CacheID: replaying
+			// before validation paints objects whose localIds the sim may no longer know — ghost
+			// duplicates that render but silently brick ObjectSelect/edit ("Loading properties…"
+			// forever) and double the scene's memory. RegionHandshake lands within ~1s of the circuit,
+			// so deferring the instant-paint until then is imperceptible. (preseed is re-invoked on
+			// every ObjectUpdate, so this retries until the CacheID is known.)
+			const runId = sessionStore.regionCacheId
+			if (!runId) return
 			_objCacheLoadedKey = key
+			const runKey = `qs-objrun:${key}`
+			let storedRun = null
+			try { storedRun = localStorage.getItem(runKey) } catch { /* private mode etc. */ }
+			if (storedRun !== runId) {
+				// Run changed — or unknown (records cached before run-tracking existed): either way the
+				// records can't be trusted, so drop them and let this session rebuild the cache fresh.
+				const n = await objCacheClearRegion(key)
+				if (n) debugStore.push('warn', `[ObjCache] region run ${storedRun ? 'changed' : 'unknown'} (CacheID ${(storedRun ?? '????????').slice(0, 8)}→${runId.slice(0, 8)}) — dropped ${n} stale cached objects, skipping replay`)
+				try { localStorage.setItem(runKey, runId) } catch { /* ignore */ }
+				requestProbeResync()
+				return
+			}
 			const cached = await objCacheGetAll(key)
-			if (!cached || !cached.length) return
 			let n = 0
-			for (const o of cached) {
+			for (const o of (cached ?? [])) {
 				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
 				if (worldStore.objects.has(o.localId)) continue
 				worldStore.upsertObject(o)
 				pendingMeshIds.add(o.localId)
 				n++
 			}
-			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key}`)
+			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)})`)
 			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
+			requestProbeResync()
+		}
+		// WHY: the sim floods ObjectUpdateCached probes in the first seconds after login — before this
+		// engine registered its WS handlers — so the initial forwards dispatched into the void (seen
+		// live: sim probed 23.8k ids, client requested 2.2k, scene stuck at ~3k objects). The server
+		// buffers every probe; this asks for a full replay. Called from preseedRegionCache AFTER the
+		// cache-run validation/purge so replayed probes are never CRC-matched against records the
+		// purge is about to delete (that race silently marked everything "hit" and requested nothing).
+		function requestProbeResync() {
+			try { wsEmit(C.OBJ_PROBE_RESYNC, {}) } catch { /* not connected yet — live probes still flow */ }
+			debugStore.push('info', '[ObjCache] requested probe-backlog resync (engine ready)')
 		}
 		// WHY: persist each non-avatar object as it arrives/updates. Per-object upsert (no
 		// whole-region overwrite) so a session that re-sees fewer objects cannot shrink the
@@ -302,15 +347,52 @@ export function useWorldEngine(canvasRef) {
 		// WHY: sim's ObjectUpdateCached, forwarded by the server. CRC-match against our
 		// persistent cache → hit (already pre-seeded/rendered, no request). Miss → ask the
 		// server to request a full update (C.OBJ_CACHE_MISS → cacheMissPending drain).
+		let _probeStats = { batches: 0, hits: 0, misses: 0 }
+		let _probeRx = 0
+		// Memoized per-region crcMap. WHY: the probe-backlog replay delivers ~120 chunks in seconds;
+		// reading the crcMap PER CHUNK is ~120 full-region IDB cursor walks racing the object-cache
+		// WRITE stream (readwrite txns lock out readers) — observed live as every read timing out and
+		// the whole region load silently dying. One walk per region, shared by all chunks. Slightly
+		// stale entries (objects re-cached this session) just mark extra misses → harmless re-requests.
+		let _crcMapKey = null, _crcMapP = null
+		function getRegionCrcMap(key) {
+			if (key !== _crcMapKey) {
+				_crcMapKey = key
+				_crcMapP = Promise.race([
+					objCacheCrcMap(key),
+					new Promise((_, rej) => setTimeout(() => rej(new Error('crcMap timeout (3s)')), 3000)),
+				]).catch(e => {
+					try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Probe] crcMap failed (${e.message}) — degrading to request-all`, stack: '' }) } catch { /* ignore */ }
+					return new Map()   // empty map → every probe partitions as a miss (request-all)
+				})
+			}
+			return _crcMapP
+		}
 		async function onObjCacheProbe(payload) {
-			const probes = payload?.probes ?? []
+			let probes = payload?.probes ?? []
+			if (!probes.length) return
+			// SYNC entry log (before any await): distinguishes "frames never arrived" from "handler
+			// died awaiting IDB" — an async handler that hangs on objCacheCrcMap fails silently.
+			_probeRx++
+			if (_probeRx % 25 === 1) {
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: `[Probe] rx batch #${_probeRx} (${probes.length} ids)`, stack: '' }) } catch { /* ignore */ }
+			}
+			// Already live in worldStore (received this session) → nothing to request or paint.
+			probes = probes.filter(p => !worldStore.objects.has(p.localId))
 			if (!probes.length) return
 			const key = regionCacheKey()
 			if (!key) { wsEmit(C.OBJ_CACHE_MISS, { ids: probes.map(p => p.localId) }); return }
-			const crcMap = await objCacheCrcMap(key)
+			const crcMap = await getRegionCrcMap(key)
 			const { hits, misses } = partitionProbes(probes, crcMap)
 			if (misses.length) wsEmit(C.OBJ_CACHE_MISS, { ids: misses })
 			if (hits.length) debugStore.push('info', `[ObjCache] ${hits.length} probe hits (cached), ${misses.length} misses requested`)
+			// Probe-flow diagnostic → server log: asked=0 all day in PrimDiag while distinct≈24k says
+			// the miss path is silently dead somewhere between this partition and the server drain.
+			_probeStats.batches++; _probeStats.hits += hits.length; _probeStats.misses += misses.length
+			if (_probeStats.batches % 50 === 1) {
+				const line = `[ObjCache] probe flow: ${_probeStats.batches} batches, hits=${_probeStats.hits} misses=${_probeStats.misses} (crcMap=${crcMap.size})`
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+			}
 		}
 	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
@@ -1487,6 +1569,7 @@ export function useWorldEngine(canvasRef) {
 			const meshMulti = hasMultiFaceMesh(obj)
 			const primMulti = hasMultiFacePrim(obj)
 			const applySwap = (out) => {
+				const _t0 = performance.now()
 				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
 					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
 					return
@@ -1512,6 +1595,8 @@ export function useWorldEngine(canvasRef) {
 				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
 				if (meshMulti) buildFaceMaterials(mesh, obj)
 				else if (primMulti) buildFaceMaterials(mesh, obj, primFaceMap(obj.shape))
+				const _dt = performance.now() - _t0
+				_applyN++; _applyMs += _dt; if (_dt > _applyMaxMs) _applyMaxMs = _dt
 			}
 
 			// WHY: the worker's postMessage structured-clones its payload, and Vue/Pinia reactive
@@ -1918,7 +2003,11 @@ export function useWorldEngine(canvasRef) {
 			// ObjectUpdate batch doesn't block the WS message handler. Avatars are few and the
 			// own-avatar logic below drives the camera, so build those inline immediately.
 			if (obj.pcode !== PCODE_AVATAR) {
-				evicted.delete(obj.localId)
+				// Memory-evicted linksets stay evicted on inbound updates: the data is persisted above
+				// (worldStore + IDB) but the mesh is NOT queued — otherwise a moving far object rebuilds
+				// every update and the culler re-evicts it next tick (churn), and a root resurrected here
+				// would come back WITHOUT its children. cullTick reloads the whole linkset when near.
+				if (evicted.has(obj.localId) || evicted.has(obj.parentId ?? 0)) continue
 				pendingMeshIds.add(obj.localId)
 				continue
 			}
@@ -2213,8 +2302,23 @@ export function useWorldEngine(canvasRef) {
 	// see real name/description/creator/owner instead of placeholder fields.
 	function onObjectProps(payload) {
 		const items = payload?.items ?? []
-		for (const p of items) worldStore.applyObjectProperties(p)
-		if (items.length > 0) debugStore.push('info', `[3D] ObjectProperties: ${items.length} updated`)
+		let ok = 0
+		const miss = []
+		for (const p of items) {
+			if (worldStore.applyObjectProperties(p)) ok++
+			else miss.push(p.fullId)
+		}
+		if (items.length > 0) {
+			// Diagnostic for the "Loading properties from sim…" stall: props ARRIVE (server relays
+			// them) but the floater stays empty → the fullId match in applyObjectProperties must be
+			// failing. Report match rate + how many store objects even carry a fullId.
+			let withFullId = 0
+			worldStore.objects.forEach(o => { if (o.fullId) withFullId++ })
+			const line = `[3D] ObjectProperties: ${ok}/${items.length} matched | store withFullId=${withFullId}/${worldStore.objects.size}` +
+				(miss.length ? ` | missed: ${miss.slice(0, 3).join(', ')}` : '')
+			debugStore.push(ok === items.length ? 'info' : 'warn', line)
+			try { wsEmit(C.CLIENT_LOG, { level: ok === items.length ? 'info' : 'warn', msg: line, stack: '' }) } catch { /* ignore */ }
+		}
 	}
 
 	function onKillObject(payload) {
@@ -2555,6 +2659,9 @@ export function useWorldEngine(canvasRef) {
 		let known = 0, resident = 0
 		for (const [id, o] of worldStore.objects) {
 			if (o.pcode === PCODE_AVATAR) continue
+			// Roots only: child pos is PARENT-RELATIVE, so camDistToObj on a child is garbage — and
+			// children evict/reload with their root anyway, so root counts represent the linkset.
+			if ((o.parentId ?? 0) !== 0) continue
 			if (camDistToObj(o) > R_RANGE) continue
 			known++
 			if (meshMap.has(id)) resident++
@@ -2572,6 +2679,10 @@ export function useWorldEngine(canvasRef) {
 	function cullTick() {
 		const r = memRatio()
 		if (r == null || !camera) { return }
+		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
+		// distance is meaningless) and moves each root's children with it via this per-tick index.
+		// Built once per tick, only when there is cull work to do.
+		const kids = (evicted.size || r > CULL_TARGET) ? groupChildrenByRoot(worldStore.objects) : null
 		// 1) Stream-in: rebuild nearest evicted objects within R_NEAR, regardless of current pressure.
 		if (evicted.size) {
 			const cands = []
@@ -2580,22 +2691,49 @@ export function useWorldEngine(canvasRef) {
 				if (!obj) { evicted.delete(id); continue }   // object gone (KillObject) → forget it
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			const ids = selectReloads(cands, R_NEAR, MAX_RELOAD_PER_TICK)
-			for (const id of ids) { evicted.delete(id); pendingMeshIds.add(id) }
+			// Plenty of headroom → recover everything nearest-first; otherwise only within R_NEAR.
+			const ids = selectReloads(cands, r < CULL_RESUME ? Infinity : R_NEAR, MAX_RELOAD_PER_TICK)
+			for (const id of ids) {
+				evicted.delete(id)
+				pendingMeshIds.add(id)
+				// Re-queue the root's children too — they were swept out of meshMap at eviction and
+				// nothing else rebuilds them (the sim won't resend; culling is client-side only).
+				// Build order doesn't matter: a child built before its root parks in orphansByParent.
+				for (const cid of kids.get(id) ?? []) {
+					if (!meshMap.has(cid) && worldStore.objects.has(cid)) pendingMeshIds.add(cid)
+				}
+			}
 		}
-		// 2) Stream-out: if over budget, evict the farthest resident meshes to stay within it.
-		if (r > CULL_TARGET) {
+		// 2) Stream-out: if over budget, evict the farthest resident ROOT meshes (whole linksets).
+		// Debounced: a single spiky memRatio sample (GC sawtooth) must not trigger eviction — only
+		// sustained pressure (EVICT_AFTER_TICKS consecutive over-target ticks) does.
+		_overTicks = r > CULL_TARGET ? _overTicks + 1 : 0
+		if (_overTicks >= EVICT_AFTER_TICKS) {
 			const editId = uiStore.editObjectId
 			const cands = []
 			for (const [id] of meshMap) {
 				const obj = worldStore.objects.get(id)
 				if (!obj) continue
 				if (obj.pcode === PCODE_AVATAR) continue   // never evict avatars
+				if ((obj.parentId ?? 0) !== 0) continue    // children ride with their root
 				if (id === ownAvatarLocalId || id === editId) continue
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
 			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK)
-			for (const id of ids) { removeMesh(id); pendingMeshIds.delete(id); evicted.add(id) }
+			for (const id of ids) {
+				const childIds = kids.get(id) ?? []
+				// Never evict a linkset somebody is sitting on — a seated avatar parents to a prim, and
+				// removeMesh would dispose the avatar with the subtree. Same if a CHILD is being edited
+				// (the root-level editId check above can't see that).
+				if (childIds.some(cid => cid === editId || worldStore.objects.get(cid)?.pcode === PCODE_AVATAR)) continue
+				// Children FIRST via removeMesh so each gets full cleanup (meshMap/labels/hoverText) —
+				// the old subtree-dispose left children in meshMap as disposed zombies that upsertMesh
+				// treated as alive, permanently breaking linksets (the "lost objects" bug).
+				for (const cid of childIds) { removeMesh(cid); pendingMeshIds.delete(cid) }
+				removeMesh(id)
+				pendingMeshIds.delete(id)
+				evicted.add(id)   // root only — reload re-queues children from the index
+			}
 			// Also bound the in-memory texture cache (the larger, mesh-independent hog). Prunes only
 			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
 			// backfillTextures. Only runs here (over budget), so the steady state never churns.
@@ -2606,16 +2744,22 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function drainMeshQueue() {
-		if (!pendingMeshIds.size) return
+		if (!pendingMeshIds.size) { _dtEmpty++; return }
 		// Memory governor: stop baking new geometry while the JS heap is near its limit (each bake adds
 		// a BufferGeometry + material). Queued ids stay; the next tick resumes once pressure clears.
-		if (memUnderPressure()) return
+		if (memUnderPressure()) { _dtGov++; return }
+		_dtTicks++
 		const start = performance.now()
+		// Hidden tab: Chrome clamps setInterval to ~1Hz, so the 8ms/30ms pacing collapses to 8ms/s and
+		// the load crawls exactly while the user is away. No frames to protect when hidden → spend a
+		// big budget per (rare) tick instead. Visible tab keeps the small per-frame budget.
+		const budget = (typeof document !== 'undefined' && document.hidden) ? 250 : MESH_DRAIN_BUDGET_MS
 		for (const localId of pendingMeshIds) {
-			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) break   // backpressure: let the worker catch up
+			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
 			pendingMeshIds.delete(localId)
 			const obj = worldStore.objects.get(localId)
 			if (!obj) continue  // killed before its mesh was built
+			const t0 = performance.now()
 			try {
 				upsertMesh(obj)
 			} catch (e) {
@@ -2624,7 +2768,11 @@ export function useWorldEngine(canvasRef) {
 					debugStore.push('warn', `[3D] upsertMesh(drain) fail #${upsertMeshFailures} localId=${localId} pcode=${obj.pcode}: ${e.message}`)
 				}
 			}
-			if (performance.now() - start > MESH_DRAIN_BUDGET_MS) break
+			// Throughput probe: per-call upsertMesh cost is the cold-load bottleneck (~30 builds/s on a
+			// 31k-prim region). Accumulated here, reported+reset by the 5s asset-stats tick as [Drain].
+			const dt = performance.now() - t0
+			_drainBuilt++; _drainMs += dt; if (dt > _drainMaxMs) _drainMaxMs = dt
+			if (performance.now() - start > budget) { _dtBrkBudget++; break }
 		}
 		// C1 (perf): once the initial flood has fully drained, precompile shaders off the render
 		// path (async, non-blocking where the GPU supports KHR_parallel_shader_compile) so the
@@ -2734,6 +2882,11 @@ export function useWorldEngine(canvasRef) {
 		// the frame's work while unfocused — the rAF loop stays alive so we resume instantly on focus.
 		// Advance lastTime so dt doesn't spike on the first frame back.
 		if (!document.hasFocus()) { lastTime = time; return }
+		const _frT0 = performance.now()
+		// Starvation-proof drain: ~125ms long tasks (see [Main] telemetry) starve the 30ms interval to
+		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. Budgeted (8ms), so
+		// the frame cost is bounded; the interval still covers the unfocused case.
+		drainMeshQueue()
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
@@ -2947,6 +3100,11 @@ export function useWorldEngine(canvasRef) {
 
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
+		// Frame-work gauge: total main-thread ms this frame consumed (camera + scene walk + render).
+		// At 31k objects frames can run 100s of ms — a continuous rAF loop then starves every
+		// setInterval (drain ticks observed at ~0.5Hz in a visible tab). Reported via [Main] each 5s.
+		const _frDt = performance.now() - _frT0
+		_frN++; _frMs += _frDt; if (_frDt > _frMaxMs) _frMaxMs = _frDt
 	}
 
 	// ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -2985,6 +3143,15 @@ export function useWorldEngine(canvasRef) {
 
 		installConsoleForwarder(wsEmit)   // dev: forward NaN/radius console warnings to server-log
 		initScene()
+		// Long-task observer: counts main-thread blocks >50ms (render frames, WS handler floods, GC)
+		// so the 5s [Main] line shows how starved timers actually are. Chrome-only entryType; no-op
+		// elsewhere.
+		try {
+			_longTaskObs = new PerformanceObserver((list) => {
+				for (const e of list.getEntries()) { _ltN++; _ltMs += e.duration; if (e.duration > _ltMaxMs) _ltMaxMs = e.duration }
+			})
+			_longTaskObs.observe({ entryTypes: ['longtask'] })
+		} catch { _longTaskObs = null }
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
 		// WHY: Mesh building runs here (not in the rAF loop) so it keeps progressing while the window
 		// is unfocused — building is CPU/geometry work, not rendering, so it has no reason to be
@@ -3009,10 +3176,48 @@ export function useWorldEngine(canvasRef) {
 			const mg = memStats()
 			if (mg) {
 				const pressure = memUnderPressure()
+				// Heap-hog breakdown: where the resident bytes actually live. geomMB sums each meshMap
+				// entry's own BufferGeometry attributes (children are their own entries — no double count).
+				let geomB = 0
+				for (const mm of meshMap.values()) {
+					const g = mm.geometry
+					if (!g) continue
+					for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
+					geomB += g.index?.array?.byteLength || 0
+				}
+				const mb = (b) => (b / 1048576).toFixed(0)
 				const line = `[Mem] heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size}`
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(getTextureBytes())} meshCacheMB=${mb(getMeshBytes())} geomMB=${mb(geomB)}` +
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size}`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+			}
+			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
+			if (_drainBuilt) {
+				const dline = `[Drain] built=${_drainBuilt} (${(_drainBuilt / 5).toFixed(0)}/s) avg=${(_drainMs / _drainBuilt).toFixed(1)}ms max=${_drainMaxMs.toFixed(1)}ms queued=${pendingMeshIds.size} hidden=${typeof document !== 'undefined' && document.hidden ? 1 : 0}` +
+					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget}`
+				debugStore.push('info', dline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: dline, stack: '' }) } catch { /* ignore */ }
+				_drainBuilt = 0; _drainMs = 0; _drainMaxMs = 0
+				_dtTicks = 0; _dtEmpty = 0; _dtGov = 0; _dtBrkCap = 0; _dtBrkBudget = 0
+			}
+			// Main-thread health: frame work (rAF) + long tasks. This is what starves the drain timer.
+			if (_frN || _ltN) {
+				const ws = takeWsStats()
+				const mline = `[Main] frames=${_frN} avg=${(_frN ? _frMs / _frN : 0).toFixed(0)}ms max=${_frMaxMs.toFixed(0)}ms` +
+					` | longtasks=${_ltN} total=${_ltMs.toFixed(0)}ms max=${_ltMaxMs.toFixed(0)}ms` +
+					` | ws parse=${ws.parseMs.toFixed(0)}ms top: ${ws.top || '-'}`
+				debugStore.push('info', mline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
+				_frN = 0; _frMs = 0; _frMaxMs = 0; _ltN = 0; _ltMs = 0; _ltMaxMs = 0
+			}
+			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms.
+			const bs = meshBaker.takeStats()
+			if (bs.jobs || _applyN) {
+				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}`
+				debugStore.push('info', bline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
+				_applyN = 0; _applyMs = 0; _applyMaxMs = 0
 			}
 			const busy = t.inflight || t.queued || m.inflight || m.queued
 			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
@@ -3064,6 +3269,7 @@ export function useWorldEngine(canvasRef) {
 		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
 		if (_meshDrainTimer) { clearInterval(_meshDrainTimer); _meshDrainTimer = null }
 		if (_cullTimer) { clearInterval(_cullTimer); _cullTimer = null }
+		if (_longTaskObs) { try { _longTaskObs.disconnect() } catch { /* ignore */ } _longTaskObs = null }
 		evicted.clear()
 		if (_texBackfillTimer) { clearInterval(_texBackfillTimer); _texBackfillTimer = null }
 		window.removeEventListener('keydown', onKeyDown)

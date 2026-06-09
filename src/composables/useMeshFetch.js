@@ -61,6 +61,19 @@ export function getMeshStats() {
 	return { ...stats, inflight: active, queued: queue.length, cached: mem.size }
 }
 
+// Estimated JS-heap bytes held by the decoded-submesh cache (typed arrays per cached mesh asset).
+export function getMeshBytes() {
+	let b = 0
+	for (const subs of mem.values()) {
+		if (!Array.isArray(subs)) continue
+		for (const s of subs) {
+			b += (s.positions?.byteLength || 0) + (s.normals?.byteLength || 0) +
+				(s.uvs?.byteLength || 0) + (s.indices?.byteLength || 0)
+		}
+	}
+	return b
+}
+
 export function getMesh(uuid) {
 	if (!uuid) return Promise.resolve(null)
 	if (mem.has(uuid)) return Promise.resolve(mem.get(uuid))

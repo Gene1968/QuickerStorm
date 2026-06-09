@@ -30,6 +30,8 @@ function onRegionInfo(d) {
 	// The real name arrives via RegionHandshake UDP → S.REGION_INFO from server.
 	if (d.name) session.regionName = d.name
 	if (typeof d.access === 'number') session.regionAccess = d.access
+	// Region-run marker: gates the object-cache replay (see preseedRegionCache in useWorldEngine).
+	if (d.cacheId) session.regionCacheId = d.cacheId
 	// WHY: water level + terrain textures drive the water plane Y and the terrain colour
 	// palette. useWorldEngine watches sessionStore.waterHeight to reposition/recolour.
 	if (typeof d.waterHeight === 'number') session.waterHeight = d.waterHeight

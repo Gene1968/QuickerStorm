@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { selectEvictions, selectReloads } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
 
 describe('selectEvictions', () => {
 	it('evicts farthest first, capped at maxN', () => {
@@ -16,6 +16,26 @@ describe('selectEvictions', () => {
 		const cands = [{ id: 1, dist: 1 }, { id: 2, dist: 2 }]
 		selectEvictions(cands, 1)
 		expect(cands.map(c => c.id)).toEqual([1, 2])
+	})
+})
+
+describe('groupChildrenByRoot', () => {
+	it('groups child ids under their parentId; roots (parentId 0/absent) are not grouped', () => {
+		const objects = new Map([
+			[1, { localId: 1, parentId: 0 }],          // root
+			[2, { localId: 2, parentId: 1 }],          // child of 1
+			[3, { localId: 3, parentId: 1 }],          // child of 1
+			[4, { localId: 4 }],                       // root (no parentId field)
+			[5, { localId: 5, parentId: 4 }],          // child of 4
+		])
+		const g = groupChildrenByRoot(objects)
+		expect(g.get(1)).toEqual([2, 3])
+		expect(g.get(4)).toEqual([5])
+		expect(g.has(2)).toBe(false)
+		expect(g.size).toBe(2)
+	})
+	it('empty map → empty grouping', () => {
+		expect(groupChildrenByRoot(new Map()).size).toBe(0)
 	})
 })
 

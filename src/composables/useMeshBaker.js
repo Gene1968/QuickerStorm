@@ -13,18 +13,37 @@ export function useMeshBaker() {
 	const pending = new Map()       // jobId → { resolve }
 	let queue = []                  // jobs awaiting the next flush
 	let flushScheduled = false
+	// Throughput probe (read+reset by the engine's 5s telemetry): worker-side bake time vs jobs done.
+	const stats = { batches: 0, jobs: 0, bakeMs: 0 }
+	// WHY recycle: every batch structured-clones job payloads INTO the worker and allocates THREE
+	// geometry intermediates there. That garbage lives in the WORKER's V8 isolate — but Chrome's
+	// performance.memory (the governor's signal) sums all isolates in the process, and an idle worker
+	// never triggers its own GC. Observed: heap pinned at 93% with the whole scene evicted, because
+	// gigabytes of dead worker garbage counted against the budget. Terminating the worker frees its
+	// entire isolate instantly; it's stateless, so respawn cost is just module re-init on next flush.
+	const RECYCLE_AFTER_JOBS = 1500
+	let jobsSinceSpawn = 0
 
 	function initWorker() {
 		if (worker || dead) return
 		try {
 			worker = new Worker(new URL('../workers/meshBake.worker.js', import.meta.url), { type: 'module' })
 			worker.onmessage = (e) => {
+				stats.batches++; stats.jobs += e.data.results.length; stats.bakeMs += e.data.bakeMs || 0
+				jobsSinceSpawn += e.data.results.length
 				for (const r of e.data.results) {
 					const p = pending.get(r.id)
 					if (!p) continue
 					pending.delete(r.id)
 					const { id, ...out } = r
 					p.resolve(out)
+				}
+				// Recycle at a quiet moment (nothing pending/queued): frees the worker isolate's
+				// accumulated garbage so it stops inflating the process heap the governor reads.
+				if (jobsSinceSpawn >= RECYCLE_AFTER_JOBS && pending.size === 0 && queue.length === 0) {
+					jobsSinceSpawn = 0
+					try { worker.terminate() } catch { /* ignore */ }
+					worker = null   // initWorker() respawns on the next flush; `dead` stays false
 				}
 			}
 			worker.onerror = (e) => { console.warn('[meshBaker] worker error → sync fallback', e?.message || e); killWorker() }
@@ -103,5 +122,12 @@ export function useMeshBaker() {
 	// (esp. copied submesh arrays) faster than the single worker drains them → OOM.
 	function outstanding() { return pending.size }
 
-	return { bake, dispose, outstanding }
+	// Snapshot + reset the worker throughput counters (5s telemetry cadence).
+	function takeStats() {
+		const s = { ...stats }
+		stats.batches = 0; stats.jobs = 0; stats.bakeMs = 0
+		return s
+	}
+
+	return { bake, dispose, outstanding, takeStats }
 }

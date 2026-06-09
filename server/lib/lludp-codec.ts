@@ -1670,6 +1670,9 @@ export interface RegionHandshakeData {
   terrainStartHeight: number[]  // 4 corner start heights for texture blending (SW,NW,SE,NE order on wire)
   terrainHeightRange: number[]  // 4 corner height ranges
   regionId:           string    // RegionInfo2.RegionID UUID; '' if absent
+  cacheId:            string    // RegionInfo.CacheID UUID; changes on region restart — localIds from
+                                // a previous run are then dead, so the client must drop its object
+                                // cache for this region (the sim silently ignores stale-id requests)
 }
 
 /**
@@ -1702,6 +1705,7 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
   const terrainStartHeight: number[] = [0, 0, 0, 0]
   const terrainHeightRange: number[] = [0, 0, 0, 0]
   let regionId           = ''
+  let cacheId            = ''
 
   // WHY: each step guards against a short buffer. `need(n)` returns true only if n more
   // bytes are available from the current offset.
@@ -1711,7 +1715,7 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
     if (need(1))  off += 1                               // IsEstateManager U8
     if (need(4)) { waterHeight = buf.readFloatLE(off); off += 4 }
     if (need(4)) off += 4                                // BillableFactor F32
-    if (need(16)) off += 16                              // CacheID UUID
+    if (need(16)) { cacheId = bytesToUuid(buf, off); off += 16 }  // CacheID UUID (region-run marker)
     if (need(64)) off += 64                              // TerrainBase0..3 (legacy, skip)
     for (let i = 0; i < 4; i++) {
       if (need(16)) { terrainDetail[i] = bytesToUuid(buf, off); off += 16 }
@@ -1727,7 +1731,7 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
     // Any unexpected read error → keep whatever was parsed plus defaults.
   }
 
-  return { simName, simAccess, waterHeight, terrainDetail, terrainStartHeight, terrainHeightRange, regionId }
+  return { simName, simAccess, waterHeight, terrainDetail, terrainStartHeight, terrainHeightRange, regionId, cacheId }
 }
 
 /** Decode KillObject (High #16) — sim removes objects from the viewer's scene.

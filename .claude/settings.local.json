@@ -208,7 +208,13 @@
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('count',len\\(d\\)\\); [print\\(i, x.get\\('kind'\\), 'keys=',list\\(x.keys\\(\\)\\), 'len\\(hex\\)=',len\\(x['hex']\\)\\) for i,x in enumerate\\(d\\)]\")",
       "Read(//c/Users/gene1/**)",
       "Bash(xxd)",
-      "PowerShell($p=\"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\\\\components\\\\ObjectEditFloater.vue\"; $b=[IO.File]::ReadAllBytes\\($p\\); if\\($b.Length-ge3 -and $b[0]-eq0xEF -and $b[1]-eq0xBB -and $b[2]-eq0xBF\\){[IO.File]::WriteAllBytes\\($p,$b[3..\\($b.Length-1\\)]\\); \"BOM stripped\"}else{\"no BOM\"}; $c=[IO.File]::ReadAllBytes\\($p\\); \"first bytes: {0:X2} {1:X2} {2:X2}\" -f $c[0],$c[1],$c[2])"
+      "PowerShell($p=\"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\\\\components\\\\ObjectEditFloater.vue\"; $b=[IO.File]::ReadAllBytes\\($p\\); if\\($b.Length-ge3 -and $b[0]-eq0xEF -and $b[1]-eq0xBB -and $b[2]-eq0xBF\\){[IO.File]::WriteAllBytes\\($p,$b[3..\\($b.Length-1\\)]\\); \"BOM stripped\"}else{\"no BOM\"}; $c=[IO.File]::ReadAllBytes\\($p\\); \"first bytes: {0:X2} {1:X2} {2:X2}\" -f $c[0],$c[1],$c[2])",
+      "PowerShell(git status --short && git log --oneline -3 && \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Get-Process -Id $_.OwningProcess | Select-Object Id, ProcessName, StartTime }\\))",
+      "PowerShell(Get-Process *)",
+      "PowerShell(\\(Get-Content src\\\\lib\\\\primGeometry.js | Measure-Object -Line\\).Lines)",
+      "PowerShell($lines = Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bzrr77ay3.output\" | Select-String -Pattern 'PrimDiag' | Select-String -Pattern '19:4[4-9]|19:5[0-9]|20:[0-2][0-9]'; $lines | Select-Object -Last 2; \\($lines | Select-String -Pattern 'med:9' | Measure-Object\\).Count)",
+      "PowerShell($f = \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bzrr77ay3.output\"; foreach \\($t in @\\('19:4[56]','19:5[05]','20:0[05]','20:2[05]','20:4[0-6]'\\)\\) { $l = \\(Get-Content $f | Select-String -Pattern 'PrimDiag' | Select-String -Pattern $t | Select-Object -First 1\\); if \\($l\\) { $m = [regex]::Match\\($l.Line, 'med:9=\\(\\\\d+\\)'\\); $ts = [regex]::Match\\($l.Line, '\\\\d\\\\d:\\\\d\\\\d:\\\\d\\\\d'\\); \"$\\($ts.Value\\)  med:9=$\\(if \\($m.Success\\) { $m.Groups[1].Value } else { 'absent' }\\)\" } })",
+      "PowerShell(bun test *)"
     ]
   }
 }

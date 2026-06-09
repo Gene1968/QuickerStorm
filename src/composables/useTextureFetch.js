@@ -130,6 +130,17 @@ export function getTextureStats() {
 	return { ...stats, inflight: active, queued: netQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size }
 }
 
+// Estimated JS-heap bytes held by resident texture bitmaps (decoded RGBA: w*h*4 per base texture).
+// UV-transform clones share the base's image source, so only base textures are counted.
+export function getTextureBytes() {
+	let b = 0
+	for (const tex of cache.values()) {
+		const img = tex?.image
+		if (img?.width) b += img.width * img.height * 4
+	}
+	return b
+}
+
 // Resolve a UUID to its PNG data URL through all cache layers. Deduped; populates IDB on a miss.
 function getDataUrl(uuid) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)

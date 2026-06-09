@@ -648,9 +648,10 @@ function close() {
 					texture chip opens a larger preview ("texture picker"). Read-only (Phase 3 edit). -->
 				<template v-else-if="activeTab === 'texture'">
 					<!-- Sub-tab strip -->
-					<nav class="tabs -mt-1">
+					<nav class="tabs -mt-1 whitespace-nowrap">
 						<button :class="texSubTab === 'pbr' ? 'active' : ''" @click="texSubTab = 'pbr'">PBR</button>
 						<button :class="texSubTab === 'bp' ? 'active' : ''" @click="texSubTab = 'bp'">Blinn-Phong</button>
+						<button :class="texSubTab === 'mdia' ? 'active' : ''" @click="texSubTab = 'mdia'">Media</button>
 					</nav>
 
 					<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
@@ -765,7 +766,7 @@ function close() {
 					</template>
 
 					<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
-					<template v-else>
+					<template v-if="texSubTab === 'pbr'">
 						<div v-if="!hasPbr" class="text-white/40 italic px-1 py-3 text-center">
 							No PBR material on this object — it uses Blinn-Phong (legacy) textures.
 						</div>
@@ -799,6 +800,13 @@ function close() {
 							</div>
 						</template>
 					</template>
+
+					<template v-else>
+						<div class="text-white/40 italic px-1 py-3 text-center">
+							Media to-do
+						</div>
+					</template>
+
 				</template>
 
 				<!-- Content ─────────────────────────────────────────────── -->

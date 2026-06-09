@@ -404,7 +404,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const rh = decodeRegionHandshake(buf, dataOffset)
 			const { simName, simAccess, waterHeight } = rh
-			slog.info(session.ws, `✓ RegionHandshake: SimName="${simName}" access=${simAccess} water=${waterHeight}m detail=[${rh.terrainDetail.map(u => u.slice(0, 8)).join(' ')}]`)
+			slog.info(session.ws, `✓ RegionHandshake: SimName="${simName}" access=${simAccess} water=${waterHeight}m cacheId=${rh.cacheId.slice(0, 8)}… detail=[${rh.terrainDetail.map(u => u.slice(0, 8)).join(' ')}]`)
 			// Reply is required
 			const seq = nextSeq(session)
 			const reply = encodeRegionHandshakeReply({ agentId: session.agentId, sessionId: session.sessionId, seq })
@@ -419,6 +419,9 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				terrainStartHeight: rh.terrainStartHeight,
 				terrainHeightRange: rh.terrainHeightRange,
 				regionId:           rh.regionId,
+				// Region-run marker: client compares against its stored value and drops the region's
+				// object cache on mismatch (localIds die with the run — stale ones brick ObjectSelect).
+				cacheId:            rh.cacheId,
 			}
 			// Forward region name + render-critical environment to browser
 			session.ws.send(JSON.stringify({
@@ -584,12 +587,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		// misses and is requested → ownAvatarLocalId still gets set (location bar stays live).
 		try {
 			const probes = decodeObjectUpdateCached(buf, dataOffset)
-				.filter(p => !session.objCache.has(p.localId))
-			if (probes.length > 0) {
-				session.ws.send(JSON.stringify({ t: S.OBJ_CACHE_PROBE, d: { probes } }))
+			// Liveness ledger: a cache probe proves the sim knows this localId THIS session — needed by
+			// the ObjectSelect stale-id check below (cache-painted objects never get a full update).
+			// probeBacklog additionally keeps the (localId → crc) pairs so the client can request a
+			// replay after its engine mounts (the sim's initial probe flood predates the handlers).
+			if (!session.probeBacklog) session.probeBacklog = new Map()
+			session.lastProbeRxAt = Date.now()
+			for (const p of probes) { session.distinctLocalIds.add(p.localId); session.probeBacklog.set(p.localId, p.crc) }
+			const fwd = probes.filter(p => !session.objCache.has(p.localId))
+			if (fwd.length > 0) {
+				session.ws.send(JSON.stringify({ t: S.OBJ_CACHE_PROBE, d: { probes: fwd } }))
 				if (!session.loggedTypes.has('objcache')) {
 					session.loggedTypes.add('objcache')
-					slog.info(session.ws, `[ObjCached] forwarded ${probes.length} probes to client for CRC check`)
+					slog.info(session.ws, `[ObjCached] forwarded ${fwd.length} probes to client for CRC check`)
 				}
 			}
 		} catch (e) { slog.warn(session.ws, `ObjectUpdateCached decode error: ${(e as Error).message}`) }
@@ -759,6 +769,9 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (type === `med:${MEDIUM_OBJECT_PROPERTIES}`) {
 		try {
 			const items = decodeObjectProperties(buf, dataOffset)
+			// Always log arrival (even decoded=0) — a silent empty decode is indistinguishable from
+			// "sim never replied" otherwise, and that ambiguity cost us a debugging session.
+			slog.info(session.ws, `[ObjProps] rx size=${rawBuf.length}b zc=${hdr.zeroCoded} count=${buf[dataOffset] ?? '?'} decoded=${items.length}`)
 			if (items.length > 0) {
 				slog.info(session.ws, `[ObjProps] ${items.length} object(s) — first: "${items[0].name || '(unnamed)'}" owner=${items[0].ownerId.slice(0,8)}…`)
 				// Serialize bigints (creationDate) for JSON wire safety
@@ -1201,7 +1214,12 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const pkt = encodeObjectSelect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectSelect ${d.localIds.length} id(s) — awaiting ObjectProperties reply`)
+		// Stale-id check: ids never seen in live sim traffic this session (full/compressed updates or
+		// cache probes) are almost certainly stale IDB-cache paint from a previous region run — the sim
+		// silently ignores ObjectSelect for localIds it doesn't know, which presents as the edit
+		// floater stuck on "Loading properties from sim…".
+		const stale = d.localIds.filter(id => !session.distinctLocalIds.has(id))
+		slog.info(session.ws, `→ ObjectSelect seq=${seq} ids=[${d.localIds.join(',')}] live=${d.localIds.length - stale.length}/${d.localIds.length}${stale.length ? ` STALE=[${stale.join(',')}]` : ''}`)
 		return
 	}
 
@@ -1212,6 +1230,17 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectDeselect seq=${seq} ids=[${d.localIds.join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJ_PROBE_RESYNC) {
+		// Engine mounted its WS handlers and wants the buffered probe flood replayed. Just arm the
+		// flag — the heartbeat (drainProbeResync) waits for the sim's enumeration to go quiet first,
+		// because this request usually arrives BEFORE the flood (preseed fires on the first
+		// ObjectUpdate); replying immediately would replay an empty/partial backlog.
+		session.probeResyncWanted = true
+		slog.info(session.ws, `[ObjCached] probe-resync armed (backlog=${session.probeBacklog?.size ?? 0} so far)`)
 		return
 	}
 
@@ -1229,6 +1258,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			enqueued++
 		}
 		if (enqueued > 0) session.lastCacheEnumAt = Date.now()
+		if (!session.loggedTypes.has('cachemiss')) {
+			session.loggedTypes.add('cachemiss')
+			slog.info(session.ws, `[CacheMiss] first batch: rx=${d.ids.length} enqueued=${enqueued} pending=${session.cacheMissPending.length}`)
+		}
 		return
 	}
 
@@ -1664,6 +1697,39 @@ function drainCacheMissQueue(s: CircuitState): void {
 	slog.info(s.ws, `[CacheMissRetry] pass ${s.retryPassCount}/${MAX_RETRY_PASSES}: re-requesting ${unfulfilled.length} unfulfilled (prev=${prev ?? '—'}, plateau=${s.retryPlateauCount})`)
 }
 
+/**
+ * Replay the buffered ObjectUpdateCached probes once the client asked (OBJ_PROBE_RESYNC) AND the
+ * sim's enumeration has gone quiet for 2s. WHY: the initial probe flood predates the engine's WS
+ * handlers (probes dispatched into the void client-side), and the client's resync request predates
+ * the flood — so neither side can time this alone. Dripped with a bufferedAmount gate because Bun's
+ * ws.send silently DROPS frames past the backpressure cap (observed: 117 burst chunks, 0 received).
+ */
+function drainProbeResync(s: CircuitState): void {
+	if (!s.probeResyncWanted) return
+	const backlog = s.probeBacklog
+	if (!backlog || backlog.size === 0) return
+	if (Date.now() - (s.lastProbeRxAt ?? 0) < 2000) return   // enum still streaming — wait
+	s.probeResyncWanted = false
+	const all = [...backlog.entries()].filter(([id]) => !s.objCache.has(id))
+	if (all.length === 0) return
+	const CHUNK = 200, PER_TICK = 4, TICK_MS = 100, MAX_BUFFERED = 256 * 1024
+	let i = 0
+	const drip = setInterval(() => {
+		try {
+			for (let k = 0; k < PER_TICK && i < all.length; k++) {
+				if ((s.ws.getBufferedAmount?.() ?? 0) > MAX_BUFFERED) return  // socket busy — retry next tick
+				const probes = all.slice(i, i + CHUNK).map(([localId, crc]) => ({ localId, crc }))
+				s.ws.send(JSON.stringify({ t: S.OBJ_CACHE_PROBE, d: { probes } }))
+				i += CHUNK
+			}
+			if (i >= all.length) {
+				clearInterval(drip)
+				slog.info(s.ws, `[ObjCached] probe-resync: replayed ${all.length} buffered probes (dripped ${Math.ceil(all.length / CHUNK)} chunks)`)
+			}
+		} catch { clearInterval(drip) }  // ws gone (reload/close) — client re-arms on next mount
+	}, TICK_MS)
+}
+
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */
 function sendHeartbeat(s: CircuitState): void {
 	const now = Date.now()
@@ -1722,6 +1788,7 @@ export function startCircuitTimers(sessionId: string): () => void {
 		sendPendingAcks(s)
 		sendHeartbeat(s)
 		drainCacheMissQueue(s)
+		drainProbeResync(s)
 	}, 500)
 	return () => clearInterval(timer)
 }

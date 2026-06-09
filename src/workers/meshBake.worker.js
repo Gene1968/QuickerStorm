@@ -7,6 +7,7 @@ import { bakeJob } from '@/lib/primGeometry.js'
 
 self.onmessage = (e) => {
 	const { batchId, jobs } = e.data
+	const t0 = performance.now()
 	const results = []
 	const transfer = []
 	for (const job of jobs) {
@@ -25,5 +26,6 @@ self.onmessage = (e) => {
 			if (out.index)    transfer.push(out.index.buffer)
 		}
 	}
-	self.postMessage({ batchId, results }, transfer)
+	// bakeMs: pure worker-side geometry time for this batch — read by useMeshBaker's throughput stats.
+	self.postMessage({ batchId, results, bakeMs: performance.now() - t0 }, transfer)
 }

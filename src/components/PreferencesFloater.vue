@@ -485,6 +485,29 @@ onUnmounted(() => {
 							<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh all caches</button>
 						</div>
 
+						<!-- Scene (resident vs known objects — memory-budget culling) -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Scene</span>
+							</div>
+							<div class="pf-cache-stats">
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Loaded</span>
+									<span class="pf-cache-val">{{ world.cullStats.pct }}%</span>
+								</span>
+								<span class="pf-cache-sep">·</span>
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Resident</span>
+									<span class="pf-cache-val">{{ world.cullStats.resident.toLocaleString() }} / {{ world.cullStats.known.toLocaleString() }}</span>
+								</span>
+								<span class="pf-cache-sep">·</span>
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Evicted (memory)</span>
+									<span class="pf-cache-val">{{ world.cullStats.evicted.toLocaleString() }}</span>
+								</span>
+							</div>
+						</div>
+
 						<!-- Texture Cache -->
 						<div class="pf-cache-card">
 							<div class="pf-cache-header">
@@ -548,29 +571,6 @@ onUnmounted(() => {
 										<span class="pf-cache-val">{{ formatBytes(cache.meshStats.value.bytes) }}</span>
 									</span>
 								</template>
-							</div>
-						</div>
-
-						<!-- Scene (resident vs known objects — memory-budget culling) -->
-						<div class="pf-cache-card">
-							<div class="pf-cache-header">
-								<span class="pf-cache-title">Scene</span>
-							</div>
-							<div class="pf-cache-stats">
-								<span class="pf-cache-stat">
-									<span class="pf-cache-label">Loaded</span>
-									<span class="pf-cache-val">{{ world.cullStats.pct }}%</span>
-								</span>
-								<span class="pf-cache-sep">·</span>
-								<span class="pf-cache-stat">
-									<span class="pf-cache-label">Resident</span>
-									<span class="pf-cache-val">{{ world.cullStats.resident.toLocaleString() }} / {{ world.cullStats.known.toLocaleString() }}</span>
-								</span>
-								<span class="pf-cache-sep">·</span>
-								<span class="pf-cache-stat">
-									<span class="pf-cache-label">Evicted (memory)</span>
-									<span class="pf-cache-val">{{ world.cullStats.evicted.toLocaleString() }}</span>
-								</span>
 							</div>
 						</div>
 
