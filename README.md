@@ -9,7 +9,7 @@ Testing with OSGrid, NeverWorld & DigiWorldz so far — the rest of the usual gr
 
 **Phase 2 ship status:** done. Prim rendering resolved (1500–1800 prims/region), Map 2D + cross-region TP shipped, terrain + ocean horizon stable. Avatar/object right-click menus + IM + child-prim linksets + hovertext all in. Only deferred must-have is neighbor-sim terrain (accepting seamless 8 km ocean horizon as substitute) + voice (Phase 2.5).
 
-**Phase 3 in progress:** HTTP-capability foundation live (LLSD-XML parser, full cap dictionary, server-side cap proxy). Inventory browse-complete (folder tree + items via `FetchInventoryDescendents2`). Social layer shipped: friends/contacts store + live status + friend-request toasts + Notifications floater. Saved-accounts system shipped. Appearance/Outfits floater shell shipped. Textures (`GetTexture` → J2C) is the next major lever.
+**Phase 3 in progress:** HTTP-capability foundation live (LLSD-XML parser, full cap dictionary, server-side cap proxy). Inventory browse-complete (folder tree + items via `FetchInventoryDescendents2`). Social layer shipped: friends/contacts store + live status + friend-request toasts + Notifications floater. Saved-accounts system shipped. Appearance/Outfits floater shell shipped. **Asset pipeline live:** textures (`ViewerAsset` → server J2C→PNG transcode → IndexedDB cache), mesh geometry (`GetMesh` → LLVolumeFaces, worker-thread bake), legacy sculpts, per-face materials (mesh + box/cyl prims), planar texture projection, and a Firestorm-style persistent CRC object cache (scene repaints from disk across reloads/restarts). June 2026 decoder milestone: a long-masked full-ObjectUpdate tail misread (`Data` Variable1 vs Variable2) that silently dropped mesh ids is fixed with a live-captured packet regression test. Next levers: RenderMaterials (normal/specular), Select Face + Inspect Textures build tools.
 
 **Phase 3 roadmap — caps slice plan (2026-06-03):** Rather than guess server shapes, we traced
 phoenix-firestorm → opensim for every remaining feature into a full-depth reference map
@@ -30,6 +30,7 @@ Build order (each slice = server→frontend→verify-live-once):
 - Often can truly resume your grid session after a brief network drop or page reload with no re-login needed. Useful 'Resync World' feature if view bugs out
 - Clean avatar logout — it actually works. Takes some 2-way comm but not sure why others never had this for switching to your alts
 - Somewhat more sensible multi-floaters for inventory (can view now, working on asset management and usage)
+- Firestorm-style persistent object cache — full scene restored from disk on reload with zero grid re-fetch (CRC-validated per region run)
 
 ---
 
@@ -78,11 +79,11 @@ Build order (each slice = server→frontend→verify-live-once):
 - [~] **Friends / Contacts** — 70%.  ConversationsFloater contacts tab: search, online/offline list, per-friend rights toggles (Online/Map/Modify), add-by-name picker, remove with confirm, IM from contact. Buddy list from login, live status via FRIEND_STATUS. Not yet live-tested
 - [~] **Appearance / Outfits** — 35%.  AppearanceFloater: edit avatar colors/skin/hair, Wearing tab (inventory wearables), Outfits tab shell. No baked textures / real SL clothing layers yet
 - [~] Terrain scene — 55%.  Terrain & ocean to horizon are good. No neighboring sims yet. Need to Render the 4 terrain detail textures (J2C) using the corner blend bands — we now have the UUIDs.  Need sun/moon light source, gradient sky, reflections on water etc, shadows
-- [~] Objects: prims — 55%.  Cache-miss + ObjectUpdateCompressed decode now surface ~1500-1800 prims per region (14× pre-fix). Compressed prims default to cube until full shape decode lands. ~200-400 sim-silent prims still missing per region — sim's interest-list cap, "not our bug" - but it works in other clients!?  Tiny color?  Linksets are not honored for selection, name...
+- [~] Objects: prims — 75%.  Full TextureEntry decode (per-face textures/tints + UV repeats/offset/rotation + TexGen), real textures via the asset pipeline, per-face materials on square boxes & cylinders (source-verified face maps), planar-mapped faces projected FS-style. Persistent per-object CRC cache: scene repaints from IndexedDB on reload, CRC probes re-request only what changed. Remaining: prism/cut/hollow per-face, some delivery variance on heavy regions, linkset selection/name polish
 - [~] Avatars — 30%.  Capsule + face indicator + arm tubes. Clothing/attachments make you a blocky robot at best. No appearance/baked textures yet
 - [~] **Right-click avatar menu** —  30%.  IM, View Profile, Face Toward.  No zoomto, call, invite, inspect, save.  Self - no appearance, community, sit/stand, fly/land
 - [~] **Right-click object menu (subset)** — 30%.  Edit (basic), Inspect (mock), Touch, Sit?? Needs: Take/Delete(those need Phase 3 caps)
-- [~] **Object Build & Edit floater** - 35%.   Object Properties + TransformControls + `MultipleObjectUpdate`. Needs many features: editing name, desc, perms, size, pos, rot, contents, textures drag&drop, textures pos, sculpt textures, Edit linked, Select Face, create prims, link/unlink
+- [~] **Object Build & Edit floater** - 40%.   Object Properties + TransformControls + `MultipleObjectUpdate`. Texture tab shows per-face mapping (Scale/Offset/Rotation/Mapping mode, planar-aware ×2 display) + FS-style Repeats-per-meter; link numbering follows the LSL convention (unlinked = 0). Needs: editing name, desc, perms, size, pos, rot, contents, textures drag&drop, sculpt textures, Select Face radio, Normal/Specular channels (RenderMaterials cap), create prims, link/unlink
 
 **🔜 Phase 3 ("real assets + social", HTTP caps)**
 - [x] **HTTP-capability client foundation** — LLSD-XML parser, full cap dictionary from seed cap, server-side cap proxy (cap URLs never leave the server)
@@ -91,7 +92,7 @@ Build order (each slice = server→frontend→verify-live-once):
 - [~] Right-click object **Edit / Take / Copy / Delete / Export** (perms + caps)
 - [~] **Friends / Contacts** — contacts tab in ConversationsFloater; needs live-test (see Partially working above)
 - [ ] **Hollow / PathScale / Shear / Skew / RadiusOffset** prim params decoded but not yet applied to geometry (Sculpt prims still bounding-box; full sculpt is Phase 3).  This is just for rendering objects?
-- [ ] Objects: mesh — 5%.  Not yet decoding vertices and so forth, then on to texturing.
+- [~] Objects: mesh — 70%.  `GetMesh` → LLVolumeFaces decode → real geometry (baked off the main thread in a Web Worker), legacy sculpts (types 1-4), per-submesh/face materials with per-face UV + planar projection. Remaining: LOD selection, rigged/skinned mesh, decoded-mesh cache LRU
 - [ ] Objects: trees, plants, system plants — 0%.  Do these need some sort of special treatment?
 - [ ] Build and Edit inworld - many features - editing size, pos, rot, textures drag&drop, open/unpack boxes
 - [ ] Transfer inventory, drop, folder of 42, CMT?
@@ -103,7 +104,7 @@ Build order (each slice = server→frontend→verify-live-once):
 - [ ] **Media** sound assets first, object/script sounds, parcel media, stream audio, object texture video media
 - [ ] Object script basics - touch, hovertext, rotate, general LSL functions
 - [ ] Scripting textures behavior and advanced
-- [ ] **Texture asset pipeline** — `GetTexture` cap → J2C (JPEG2000) decode in browser → real prim textures + inventory thumbnails (next up; cap already in the dictionary).  Cache??
+- [x] **Texture asset pipeline** — `ViewerAsset` cap → server-side J2C→PNG transcode (openjpeg-wasm worker pool, ≤512px) → real prim textures, IndexedDB LRU cache (verified 2374→49 fetches on relogin), alpha/blend support, client memory governor + downscale for heavy regions
 - [ ] **Texture Inspect floater** — per-face UUID, dimensions, repeat/offset
 - [ ] **Mesh export/import** via `GetMesh2` cap; Both Dae and GLTF/OBJ on the export side
 - [ ] **Groups** + **Group IM** (group chat is `ChatSessionRequest` cap + IM hybrid)
@@ -112,7 +113,7 @@ Build order (each slice = server→frontend→verify-live-once):
 
 **⚠️ May be tricky / late Phase 3**
 - Avatar appearance — `AgentSetAppearance` with empty bake data destroys appearance globally; very risky to wire without thorough test grid validation
-- J2C (JPEG2000) decode in the browser — needs WASM port of OpenJPEG or similar; blocks real prim textures + inventory thumbnails
+- ~~J2C (JPEG2000) decode~~ — solved server-side (openjpeg-wasm in Bun worker pool); a small tail of grid assets are truncated at the source and undecodable without a commercial-grade decoder (accepted)
 - Mesh upload — mesh validator + physics LOD + L$ costs; export is much easier than import
 - WebRTC proximity voice — peer signaling works; spatial falloff, VAD tuning, and gateway wire-up still ahead
 - Inventory at scale — folder tree sync across login sessions; localStorage cache

@@ -1,5 +1,11 @@
 # Per-Face Prim Materials Implementation Plan
 
+> **STATUS (2026-06-10): COMPLETE.** All tasks implemented 2026-06-08; `PERFACE_PRIMS` re-enabled and
+> the deferred planar UV projection shipped 2026-06-10 (`src/lib/planarUV.js` + `applyPlanarUVs`; see
+> the spec's status note for the decoder bug that delayed live verification). Remaining follow-ups
+> tracked in the spec's Out-of-scope list (prism custom geometry, per-face PBR/glow) and in memory:
+> Select Face radio + Inspect Textures floater, RenderMaterials cap (#16) for Normal/Specular display.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Render square-box and cylinder prims with true per-face textures, tints, and per-face UV (replacing the single dominant-face MVP), and surface per-face UV in the Build Tools floater.

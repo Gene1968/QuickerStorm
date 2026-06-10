@@ -1,7 +1,16 @@
 # Per-Face Prim Materials — Design
 
 **Date:** 2026-06-08
-**Status:** Approved (design); not yet implemented
+**Status:** Implemented 2026-06-08 (16 unit tests). **Update 2026-06-10:** `PERFACE_PRIMS` gate re-enabled
+(stash-test proved per-face was not the cold-load OOM cause), and the **planar texgen UV projection**
+this spec deferred is now shipped — `src/lib/planarUV.js` (1:1 port of FS `llface.cpp planarProjection`,
+8 tests) + `applyPlanarUVs` in `useWorldEngine` `applySwap` regenerates the uv attribute for every face
+group whose effective TexGen is planar (meshes and mapped prims alike), after the final geometry
+scale. Live-verified on a planar-mapped mesh roof. Note: live verification of this whole feature was
+masked for two days by an unrelated decoder bug (full-ObjectUpdate `Data` field read as Variable1
+instead of Variable2 → ExtraParams desync → meshId silently dropped → test mesh rendered as a torus
+from poisoned cache replays); fixed with a live-captured packet fixture
+(`server/__tests__/objupdate-data-var2.test.ts`).
 **Scope:** Square box and cylinder prims only (source-verified face maps). Prism, triangle/half profiles, sphere, torus, and any cut/hollow prim keep the existing dominant-face MVP.
 
 **Prism note (scope correction during planning):** Prism was originally in scope, but Three's `CylinderGeometry(…, radialSegments=3, …)` puts all three lateral faces in a **single** geometry group, while SL numbers them as three separate faces (1, 2, 3). Splitting them would require a custom geometry builder (rejected approach C) — forcing one texture across all three sides reproduces exactly the wrong-side failure this design exists to avoid. Prism therefore falls back to dominant-face. True prism per-side is deferred to a future custom-geometry pass.
