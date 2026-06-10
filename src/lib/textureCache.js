@@ -18,6 +18,11 @@ const FAILED     = 'failed'   // { uuid, ts } — permanent decode/404 failures 
 export const TEX_CACHE_CAP_BYTES = 8 * 1024 * 1024 * 1024
 
 let _db = null
+let _lastStats = null  // last known { count, bytes } — served to Prefs from memory. WHY: the
+                       // stats readonly txn starves >4s behind put/touch write txns during a
+                       // load (measured live >9s), which is exactly when the panel is watched.
+                       // Every put refreshes this; IDB is only read when no put has run yet
+                       // this session (quiet DB — the case the read can't starve).
 
 function openDb() {
 	if (_db) return Promise.resolve(_db)
@@ -119,11 +124,21 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 			const st = tx.objectStore(STORE)
 			const mt = tx.objectStore(META)
 			st.put({ uuid, url, bytes, hasAlpha, lastUsed: now })
+			// After all mutations are queued: count (ordered after any deletes, so it reflects
+			// them), write META {totalBytes, count}, and stage the in-memory snapshot for commit.
+			let pending = null
+			const finishStats = (total) => {
+				const cReq = st.count()
+				cReq.onsuccess = () => {
+					mt.put({ k: 'stats', totalBytes: total, count: cReq.result })
+					pending = { count: cReq.result, bytes: total }
+				}
+			}
 			const mreq = mt.get('stats')
 			mreq.onsuccess = () => {
 				let total = (mreq.result?.totalBytes ?? 0) + bytes
 				if (total <= TEX_CACHE_CAP_BYTES) {
-					mt.put({ k: 'stats', totalBytes: total })
+					finishStats(total)
 					return
 				}
 				// Over cap → walk the lastUsed index oldest-first, deleting until under cap. Skip the
@@ -131,12 +146,12 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 				const cur = st.index('lastUsed').openCursor()
 				cur.onsuccess = () => {
 					const c = cur.result
-					if (!c || total <= TEX_CACHE_CAP_BYTES) { mt.put({ k: 'stats', totalBytes: total }); return }
+					if (!c || total <= TEX_CACHE_CAP_BYTES) { finishStats(total); return }
 					if (c.value.uuid !== uuid) { total -= c.value.bytes; c.delete() }
 					c.continue()
 				}
 			}
-			tx.oncomplete = resolve
+			tx.oncomplete = () => { if (pending) _lastStats = pending; resolve() }
 			tx.onerror    = () => reject(tx.error)
 		})
 	} catch (e) {
@@ -144,8 +159,10 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 	}
 }
 
-/** Returns { count, bytes, capBytes } for the texture cache. */
+/** Returns { count, bytes, capBytes } for the texture cache. Served from memory once any put
+ * (or one successful read) has run this session — see `_lastStats`. */
 export async function getTextureCacheStats() {
+	if (_lastStats) return { ..._lastStats, capBytes: TEX_CACHE_CAP_BYTES }
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
@@ -156,7 +173,7 @@ export async function getTextureCacheStats() {
 			let bytes = 0
 			countReq.onsuccess = () => { count = countReq.result }
 			metaReq.onsuccess  = () => { bytes = metaReq.result?.totalBytes ?? 0 }
-			tx.oncomplete = () => resolve({ count, bytes, capBytes: TEX_CACHE_CAP_BYTES })
+			tx.oncomplete = () => { _lastStats = { count, bytes }; resolve({ count, bytes, capBytes: TEX_CACHE_CAP_BYTES }) }
 			tx.onerror = () => reject(tx.error)
 		})
 	} catch { return { count: 0, bytes: 0, capBytes: TEX_CACHE_CAP_BYTES } }
@@ -215,8 +232,8 @@ export async function clearTextureCache() {
 		await new Promise((resolve, reject) => {
 			const tx = db.transaction([STORE, META], 'readwrite')
 			tx.objectStore(STORE).clear()
-			tx.objectStore(META).put({ k: 'stats', totalBytes: 0 })
-			tx.oncomplete = resolve
+			tx.objectStore(META).put({ k: 'stats', totalBytes: 0, count: 0 })
+			tx.oncomplete = () => { _lastStats = { count: 0, bytes: 0 }; resolve() }
 			tx.onerror = () => reject(tx.error)
 		})
 	} catch { /* ignore */ }
