@@ -3,11 +3,14 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { getTextureUrl } from '@/composables/useTextureFetch.js'
+import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
+import { C } from '@shared/protocol.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, XIcon, CopyIcon } from '@lucide/vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
+const { emit } = useRealtimeSocket()
 
 const activeTab = ref('general')
 // Texture-tab sub-tab: 'bp' = Blinn-Phong (legacy diffuse/normal/specular), 'pbr' = GLTF PBR.
@@ -199,9 +202,12 @@ const linksetMembers = computed(() => {
 })
 
 const canCycle      = computed(() => linksetMembers.value.length > 1)
+// LSL/FS convention: an UNLINKED object is link 0; in a linkset the root is 1, children 2+.
 const linkNumber    = computed(() => {
-	const i = linksetMembers.value.indexOf(ui.editObjectId)
-	return i >= 0 ? i + 1 : (obj.value ? 1 : '—')
+	const m = linksetMembers.value
+	if (m.length <= 1) return obj.value ? 0 : '—'
+	const i = m.indexOf(ui.editObjectId)
+	return i >= 0 ? i + 1 : '—'
 })
 // WHY: no real resource-cost (land impact) or parcel-capacity feed yet (Phase 3 caps). Use the
 // prim count as the legacy land-impact proxy; capacity stays a placeholder until parcel data lands.
@@ -233,6 +239,15 @@ function texGenLabel(v) { return TEXGEN_LABELS[v ?? 0] ?? 'Default' }
 function dispRepeats(rep, texGen) {
 	const f = texGen === 1 ? 2 : 1
 	return [(rep?.[0] ?? 1) * f, (rep?.[1] ?? 1) * f]
+}
+// FS "rptctrl" Repeats Per Meter (llpanelface.cpp getMaxDiffuseRepeats): RAW TE scale (no planar ×2)
+// divided by the object's span on the face's S/T axes, max of the two. FS resolves the axes per face
+// via getTESTAxes; we use its defaults (S→object X, T→object Y) — exact for the common flat faces,
+// approximate for side faces of tall prims.
+function rpmFor(rep) {
+	const s = obj.value?.scale
+	if (!s?.[0] || !s?.[1]) return null
+	return Math.max(((rep?.[0] ?? 1) / s[0]), ((rep?.[1] ?? 1) / s[1]))
 }
 
 // Distinct REAL diffuse textures across all faces (per-face override OR default). >1 → "Multiple".
@@ -275,6 +290,7 @@ const faceUvRows = computed(() => {
 		rows.push({
 			face: i,
 			repeats: dispRepeats(rep[i] ?? o.defaultRepeats ?? [1, 1], texGen),
+			rpm:     rpmFor(rep[i] ?? o.defaultRepeats),
 			offset:  off[i] ?? o.defaultOffset ?? [0, 0],
 			rotation: rot[i] ?? o.defaultRotation ?? 0,
 			mapping: texGenLabel(texGen),
@@ -289,6 +305,7 @@ const defaultMapping = computed(() => {
 	return {
 		mapping: texGenLabel(tg),
 		repeats: dispRepeats(o?.defaultRepeats ?? [1, 1], tg),
+		rpm:     rpmFor(o?.defaultRepeats),
 		offset:  o?.defaultOffset ?? [0, 0],
 		rotation: o?.defaultRotation ?? 0,
 	}
@@ -338,8 +355,7 @@ watch(
 	const sparse = (arr) => Array.isArray(arr)
 		? arr.map((v, i) => (v == null ? null : { i, v })).filter(Boolean)
 		: arr
-	// eslint-disable-next-line no-console
-	console.log('[TEDUMP] ' + JSON.stringify({
+	const dump = '[TEDUMP] ' + JSON.stringify({
 		localId: o.localId, name: o.name, type: typeInfo.value.label, meshId: o.meshId,
 		shape: o.shape && { pathCurve: o.shape.pathCurve, profileCurve: o.shape.profileCurve,
 			profileHollow: o.shape.profileHollow, pathBegin: o.shape.pathBegin, pathEnd: o.shape.pathEnd,
@@ -353,7 +369,11 @@ watch(
 		defaultTexGen: o.defaultTexGen, faceTexGen: sparse(o.faceTexGen),
 		defaultShiny: o.defaultShiny, defaultFullbright: o.defaultFullbright,
 		defaultPbrMaterial: o.defaultPbrMaterial, pbrMaterials: sparse(o.pbrMaterials),
-	}))
+	})
+	// eslint-disable-next-line no-console
+	console.log(dump)
+	// Forward to the server log too ([ClientLog]) so the dump is readable without the browser console.
+	try { emit(C.CLIENT_LOG, { level: 'info', msg: dump.slice(0, 4000), stack: '' }) } catch { /* ignore */ }
 })
 
 function close() {
@@ -367,7 +387,7 @@ function close() {
 		id="object-edit"
 		title="Build Tools"
 		:wrap-style="{ width: '22rem', height: '38rem', resize: 'both' }"
-		:default-pos="{ right: '13.375vw', bottom: '2.65rem' }"
+		:default-pos="{ right: '0.0625vw', bottom: '2.65rem' }"
 		@close="close"
 	>
 		<div class="relative flex flex-col h-full text-xs">
@@ -733,6 +753,7 @@ function close() {
 									<div class="font-mono text-t1">
 										<span v-if="r.mapping !== 'Default'" class="text-accent">{{ r.mapping }}</span>
 										Scale {{ r.repeats[0].toFixed(5) }}×{{ r.repeats[1].toFixed(5) }}
+										<template v-if="r.rpm != null">· RPM {{ r.rpm.toFixed(5) }}</template>
 										· Off {{ r.offset[0].toFixed(5) }},{{ r.offset[1].toFixed(5) }}
 										· Rot {{ (r.rotation * 180 / Math.PI).toFixed(5) }}°
 									</div>
@@ -750,6 +771,10 @@ function close() {
 									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 								</div>
+								<template v-if="defaultMapping.rpm != null">
+									<div class="text-white/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
+									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								</template>
 								<div class="text-white/50 self-center">Offset H / V</div>
 								<div class="grid grid-cols-2 gap-1">
 									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />

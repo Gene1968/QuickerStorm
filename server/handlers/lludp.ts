@@ -272,6 +272,24 @@ export function applyTeleportFinish(
 }
 
 /** Called when a UDP packet arrives from the grid sim */
+// Targeted decode forensics: QS_WATCH_LOCALIDS="123,456" hex-dumps the raw packet + decoded field
+// summary whenever a watched localId appears in an ObjectUpdate / Compressed decode. The hex is a
+// ready offline fixture for codec tests (capture → TDD offline, no login-cycle thrash).
+const WATCH_LOCALIDS = new Set(
+	(process.env.QS_WATCH_LOCALIDS ?? '').split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0),
+)
+// Startup proof the watch is armed — absence of this line in the log = env var never reached us.
+if (WATCH_LOCALIDS.size) console.log(`[Watch] armed for localIds: ${[...WATCH_LOCALIDS].join(',')}`)
+function watchDump(session: CircuitState, path: string, objects: Array<{ localId?: number; pcode?: number }>, buf: Buffer, dataOffset: number): void {
+	if (!WATCH_LOCALIDS.size) return
+	for (const o of objects) {
+		if (typeof o.localId !== 'number' || !WATCH_LOCALIDS.has(o.localId)) continue
+		const x = o as Record<string, unknown>
+		slog.warn(session.ws, `[Watch] ${path} localId=${o.localId} pcode=${o.pcode} meshId=${x.meshId ?? 'NONE'} sculptType=${x.sculptType ?? '-'} sculptId=${x.sculptId ?? '-'} keys=${Object.keys(x).join(',')}`)
+		slog.warn(session.ws, `[Watch] ${path} raw dataOffset=${dataOffset} len=${buf.length} hex=${buf.toString('hex')}`)
+	}
+}
+
 export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	const session = getSession(sessionId)
 	if (!session) return
@@ -556,6 +574,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const objects = decodeObjectUpdateCompressed(buf, dataOffset,
 				(errMsg) => slog.warn(session.ws, `[ObjCompressed] partial: ${errMsg}`))
+			watchDump(session, 'Compressed', objects, buf, dataOffset)
 			if (objects.length > 0) {
 				session.objDecodedCount += objects.length
 				for (const o of objects) {
@@ -638,6 +657,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				}
 			},
 		)
+		watchDump(session, 'Full', objects, buf, dataOffset)
 		if (objects.length > 0) {
 			session.objDecodedCount += objects.length
 			// Cache by localId for resync replay (page reload / "Resync World").

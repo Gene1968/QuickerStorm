@@ -1444,7 +1444,16 @@ export function decodeObjectUpdate(
         if (nvLen > 2048) { _silentTail = true; throw new Error(`NV: length ${nvLen} misaligned`) }
         if (off + nvLen > buf.length) throw new Error(`NV: length ${nvLen} exceeds remaining buf`)
         nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
-        skipVar1('Data')
+        // Data: Variable2 per message_template.msg — NOT Variable1. The old skipVar1 here read one
+        // length byte of the U16; for empty Data (00 00) the stray second zero was swallowed by the
+        // empty Text length (accidental realignment), masking the bug on most objects — but any
+        // non-trivial tail desynced the walk at ExtraParams and silently dropped meshId/sculptId
+        // (live-captured roof-fixture regression: objupdate-data-var2.test.ts).
+        if (off + 1 >= buf.length) throw new Error(`Data prefix OOB at off=${off}`)
+        const dataLen = buf.readUInt16LE(off); off += 2
+        _diag += ` Data=${dataLen}`
+        if (off + dataLen > buf.length) throw new Error(`Data: length ${dataLen} exceeds remaining buf`)
+        off += dataLen
         // Text Variable1 + TextColor Fixed4 inverted RGBA
         if (off + 1 <= buf.length) {
           const tlen = buf[off++]

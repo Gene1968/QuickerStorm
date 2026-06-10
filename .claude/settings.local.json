@@ -219,7 +219,14 @@
       "PowerShell($f = 'src\\\\lib\\\\textureCache.js'; $b = [System.IO.File]::ReadAllBytes\\($f\\); $nuls = @\\(\\); for \\($i=0; $i -lt $b.Length; $i++\\) { if \\($b[$i] -eq 0\\) { $nuls += $i } }; \"textureCache.js length=$\\($b.Length\\) NULs at: $\\($nuls -join ','\\)\"; $text = [System.IO.File]::ReadAllText\\($f\\); $lines = $text -split \"`n\"; \"line 174: [$\\($lines[173]\\)]\"; $bytes174 = [System.Text.Encoding]::UTF8.GetBytes\\($lines[173]\\); \"first 6 bytes of line 174: $\\(\\($bytes174 | Select-Object -First 6 | ForEach-Object { '0x{0:X2}' -f $_ }\\) -join ' '\\)\")",
       "PowerShell($b = [System.IO.File]::ReadAllBytes\\('src\\\\lib\\\\objectCache.js'\\); $i = 5866; $s = $b[\\($i-80\\)..\\($i+80\\)]; \\($s | ForEach-Object { if \\($_ -eq 0\\) { '<NUL>' } else { [char]$_ } }\\) -join ''; '---'; git diff --stat; git status --short)",
       "PowerShell(git diff *)",
-      "PowerShell($lines = [System.IO.File]::ReadAllLines\\('src\\\\lib\\\\objectCache.js'\\); 88..93 | ForEach-Object { $l = $lines[$_]; $tabs = \\($l.Length - $l.TrimStart\\(\"`t\"\\).Length\\); \"line $\\($_+1\\): tabs=$tabs : $\\($l.Trim\\(\\)\\)\" })"
+      "PowerShell($lines = [System.IO.File]::ReadAllLines\\('src\\\\lib\\\\objectCache.js'\\); 88..93 | ForEach-Object { $l = $lines[$_]; $tabs = \\($l.Length - $l.TrimStart\\(\"`t\"\\).Length\\); \"line $\\($_+1\\): tabs=$tabs : $\\($l.Trim\\(\\)\\)\" })",
+      "PowerShell($line = \\(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bx17ncg1l.output\"\\)[788]; $line)",
+      "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bx17ncg1l.output\" -Pattern \"f9d94824|26d0526f|85ee4e09\" | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(220, $_.Line.Length\\)\\) })",
+      "PowerShell(Select-String *)",
+      "PowerShell($f = \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bx17ncg1l.output\"; \\(Select-String -Path $f -Pattern \"667281752\" | Select-Object -First 8 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(260, $_.Line.Length\\)\\) }\\); \"--- tail errors:\"; \\(Select-String -Path $f -Pattern \"tail decode OOB|pushing partial\" | Measure-Object\\).Count)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Out-File *)",
+      "PowerShell($t = \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\phoenix-firestorm\\\\scripts\\\\messages\\\\message_template.msg\"; $lines = Get-Content $t; $i = \\($lines | Select-String -Pattern \"^\\\\s+ObjectUpdate High\" | Select-Object -First 1\\).LineNumber; $lines[\\($i-2\\)..\\($i+58\\)])"
     ]
   }
 }

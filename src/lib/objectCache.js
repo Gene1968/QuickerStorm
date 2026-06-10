@@ -6,7 +6,13 @@
 // valid (hit → keep) or stale/missing (miss → re-fetch). Per-object writes mean a session
 // that re-sees fewer objects can no longer shrink the persisted set. See probePartition.js.
 const DB_NAME    = 'qs-objects'
-const DB_VERSION = 3                 // v1 snapshot→v2 per-object; v3 adds the META stats store.
+const DB_VERSION = 6                 // v1 snapshot→v2 per-object; v3 META stats; v4/v5 purged records
+                                     // poisoned by raw-update persistence; v6 purges once more after
+                                     // the REAL root cause was fixed (full-ObjectUpdate tail read
+                                     // `Data` as Variable1 instead of Variable2 → ExtraParams desync
+                                     // → meshId/sculptId silently dropped, then cached; CRC probe-hits
+                                     // replay poisoned records forever without a purge). See
+                                     // server/__tests__/objupdate-data-var2.test.ts.
 const STORE      = 'objects'         // { regionKey, localId, fullId, crc, data, savedAt }
 const META       = 'meta'            // { key:'stats', regions, objects } — read for Prefs WITHOUT
                                      // touching the hot STORE (so stats never starve behind writes)
@@ -21,8 +27,13 @@ function openDb() {
 		const req = indexedDB.open(DB_NAME, DB_VERSION)
 		req.onupgradeneeded = (e) => {
 			const db = e.target.result
-			// Drop the legacy v1 'regions' snapshot store; PRESERVE 'objects' (holds the cache).
+			// Drop the legacy v1 'regions' snapshot store; v4 also drops 'objects' + 'meta' once to
+			// purge records poisoned by the raw-update persistence bug (see DB_VERSION note).
 			if (db.objectStoreNames.contains('regions')) db.deleteObjectStore('regions')
+			if (e.oldVersion > 0 && e.oldVersion < 6) {
+				if (db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE)
+				if (db.objectStoreNames.contains(META))  db.deleteObjectStore(META)
+			}
 			if (!db.objectStoreNames.contains(STORE)) {
 				const s = db.createObjectStore(STORE, { keyPath: ['regionKey', 'localId'] })
 				s.createIndex('regionKey', 'regionKey')

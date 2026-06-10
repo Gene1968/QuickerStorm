@@ -25,6 +25,7 @@ import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePru
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
+import { planarUVFromThree } from '@/lib/planarUV.js'
 import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
@@ -72,11 +73,11 @@ function hasMultiFaceMesh(obj) {
 // geometry group, remapped to SL face order via primFaceMap). Excludes meshes, placeholders, and
 // any prim whose face layout we can't map exactly (primFaceMap === null). The ≥2-distinct gate
 // (primFacesDiffer) keeps uniform prims on the cheap single-material path.
-// TEMP: per-face PRIM materials disabled while investigating cold-load OOM. Multi-face prims fetch
-// up to 6 textures + build 6 materials each; on a heavy-region cold-load that multiplied memory and
-// crashed the tab. Flip PERFACE_PRIMS back on once the cold-load memory budget is fixed. (The MESH
-// per-face path is unaffected — it was already live before this work.)
-const PERFACE_PRIMS = false
+// Per-face PRIM materials: re-enabled 2026-06-09 — the stash-test proved per-face was NOT the
+// cold-load OOM cause (memory budget now governed by memGovernor + cull/prune). If heap regresses
+// on heavy regions, suspect texture fan-out here first and flip back off to confirm. (The MESH
+// per-face path is independent — it was already live before this work.)
+const PERFACE_PRIMS = true
 function hasMultiFacePrim(obj) {
 	if (!PERFACE_PRIMS) return false
 	if (obj.meshId || obj._placeholder) return false
@@ -343,7 +344,12 @@ export function useWorldEngine(canvasRef) {
 			if (!key) return
 			for (const o of objs) {
 				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
-				objCachePut(key, o)
+				// Persist the MERGED record, never the raw update. A partial update (e.g. compressed
+				// without ExtraParams) carries no meshId/sculptId; putting it raw overwrites a complete
+				// cached record with a gutted one, and the CRC probe-hit then replays the gutted version
+				// forever (the sim thinks we have it — a mesh roof came back as a torus). Mirrors the
+				// {...existing, ...incoming} merge worldStore.upsertObject does right after.
+				objCachePut(key, { ...(worldStore.objects.get(o.localId) ?? {}), ...o })
 			}
 		}
 		// WHY: sim's ObjectUpdateCached, forwarded by the server. CRC-match against our
@@ -1593,10 +1599,14 @@ export function useWorldEngine(canvasRef) {
 				const old = mesh.geometry
 				mesh.geometry = baked
 				old.dispose()
+				// Planar texgen: regenerate UVs for planar faces now the final scaled geometry exists
+				// (applies to single- and multi-material objects alike — UVs live on the geometry).
+				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
+				applyPlanarUVs(mesh, obj, faceMap)
 				// Mesh per-face: now the grouped geometry exists, replace the single material with a
 				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
 				if (meshMulti) buildFaceMaterials(mesh, obj)
-				else if (primMulti) buildFaceMaterials(mesh, obj, primFaceMap(obj.shape))
+				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
 				const _dt = performance.now() - _t0
 				_applyN++; _applyMs += _dt; if (_dt > _applyMaxMs) _applyMaxMs = _dt
 			}
@@ -2844,6 +2854,47 @@ export function useWorldEngine(canvasRef) {
 	// (else defaultTexture) + faceColors[i] tint (else defaultColor) + its per-face UV (faceRepeats/
 	// faceOffset/faceRotation, falling back to the default UV). Textures fill in async; the array is
 	// assigned immediately so the mesh renders (tinted) while they load.
+	// Planar texgen (TE TexGen = 1): SL ignores the authored UVs and projects the texture from each
+	// vertex's scaled volume position along its normal's dominant axis (lib/planarUV.js, ported from
+	// FS planarProjection). Without this, planar faces sample a degenerate authored atlas → stripes/
+	// moire. Recomputes the uv attribute in place for every face group whose effective TexGen is
+	// planar — safe because each bake produces per-object buffers (nothing shared). Must run AFTER
+	// the final geometry swap/rescale (positions carry the baked scale, which planar mapping needs:
+	// repeats are per-meter). The TE repeat/offset/rotation transform still applies on top via the
+	// texture matrix, same as non-planar. NOTE: a later pure-rescale update desyncs these UVs
+	// slightly until the next full rebuild — accepted (rescale of planar-mapped objects is rare).
+	function applyPlanarUVs(mesh, obj, faceMap = null) {
+		const tg = (slFace) => obj.faceTexGen?.[slFace] ?? obj.defaultTexGen
+		const geo = mesh.geometry
+		const pos = geo?.attributes?.position
+		if (!pos) return
+		const groups = (geo.groups && geo.groups.length)
+			? geo.groups
+			: [{ start: 0, count: geo.index ? geo.index.count : pos.count, materialIndex: 0 }]
+		if (!groups.some((g) => tg(slFaceForGroup(faceMap, g.materialIndex ?? 0)) === 1)) return
+		if (!geo.attributes.normal) geo.computeVertexNormals()
+		const nrm = geo.attributes.normal
+		let uv = geo.attributes.uv
+		if (!uv || uv.count !== pos.count) {
+			uv = new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2)
+			geo.setAttribute('uv', uv)
+		}
+		const idx = geo.index
+		for (const g of groups) {
+			if (tg(slFaceForGroup(faceMap, g.materialIndex ?? 0)) !== 1) continue
+			const end = g.start + g.count
+			for (let i = g.start; i < end; i++) {
+				const v = idx ? idx.getX(i) : i
+				const [u, w] = planarUVFromThree(
+					pos.getX(v), pos.getY(v), pos.getZ(v),
+					nrm.getX(v), nrm.getY(v), nrm.getZ(v),
+				)
+				uv.setXY(v, u, w)
+			}
+		}
+		uv.needsUpdate = true
+	}
+
 	function buildFaceMaterials(mesh, obj, faceMap = null) {
 		const groups = mesh.geometry?.groups
 		if (!groups || !groups.length) return   // no groups → can't split; leave the single material

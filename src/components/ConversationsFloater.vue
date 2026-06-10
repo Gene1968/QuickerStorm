@@ -231,7 +231,7 @@ async function submitChat() {
 		id="conversations"
 		:title="floaterTitle"
 		:wrap-style="{ width: '33.75vw', height: '40vh', resize: 'both' }"
-		:default-pos="{ left: '0.125%', top: '7%' }"
+		:default-pos="{ left: '0.0625vw', top: '7%' }"
 		@close="ui.toggleChat()"
 	>
 		<!-- ── Body: vertical tabs + content ─────────────────────── -->

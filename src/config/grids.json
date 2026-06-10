@@ -73,7 +73,7 @@
 		"platform": "OpenSim",
 		"system": false,
 		"helperURI": "http://gbg-world.com/helpers",
-		"loginPage": "http://gbg-world.com",
+		"loginPage": "http://gbg-world.com/web/index.php",
 		"about": "http://gbg-world.com/web/team.php",
 		"help": "http://gbg-world.com/web/how2connect.php",
 		"register": "http://gbg-world.com/web/register.php",
