@@ -138,6 +138,11 @@ const TYPE_CLASS = {
 	2: 'text-yellow-400 font-semibold',  // shout
 }
 
+function formatTime(ts) {
+	const d = new Date(ts)
+	return `[${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}]`
+}
+
 function onInput() {
 	if (chatInput.value.length === 1) playSound('typing.mp3', 0.3)
 }
@@ -226,7 +231,7 @@ async function submitChat() {
 		id="conversations"
 		:title="floaterTitle"
 		:wrap-style="{ width: '33.75vw', height: '40vh', resize: 'both' }"
-		:default-pos="{ left: '0.125%', top: '7%' }"
+		:default-pos="{ left: '0.0625vw', top: '7%' }"
 		@close="ui.toggleChat()"
 	>
 		<!-- ── Body: vertical tabs + content ─────────────────────── -->
@@ -354,7 +359,9 @@ async function submitChat() {
 							:key="m.id"
 							:class="['text-xs leading-snug', TYPE_CLASS[m.chatType] ?? 'text-t1']"
 						>
-							<span class="text-accent font-medium">{{ m.fromName }}:</span>
+							<span class="text-tm text-2xs me-1 select-none">{{ formatTime(m.timestamp) }}</span>
+							<button v-if="m.sourceId" class="inline text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.sourceId)">{{ m.fromName }}</button>
+							<span v-else class="text-accent font-medium">{{ m.fromName }}</span>:
 							{{ m.message }}
 						</div>
 						<div v-if="!messages.length" class="py-4 text-gray-200 text-xs italic">
@@ -376,6 +383,7 @@ async function submitChat() {
 						/>
 						<div class="relative shrink-0">
 							<button
+								type="button"
 								title="Show emoji panel"
 								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
 								@click="toggleEmoji"
@@ -429,7 +437,9 @@ async function submitChat() {
 							:key="i"
 							class="text-xs leading-snug text-t1"
 						>
-							<span class="text-accent font-medium">{{ m.from }}:</span>
+							<span class="text-t1 text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
+							<button v-if="m.fromId" class="inline text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
+							<span v-else class="text-accent font-medium">{{ m.from }}</span>:
 							{{ m.text }}
 						</div>
 						<div v-if="!activeConv.messages.length" class="py-4 text-gray-200 text-xs italic">
@@ -451,6 +461,7 @@ async function submitChat() {
 						/>
 						<div class="relative shrink-0">
 							<button
+								type="button"
 								title="Show emoji panel"
 								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
 								@click="toggleEmoji"

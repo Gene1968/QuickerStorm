@@ -5,14 +5,24 @@
 // URL by UUID, survive reloads, evict least-recently-fetched once a configurable size cap is hit.
 // (A second, server-side tier can come later once self-hosted on VPS/NAS.)
 const DB_NAME    = 'qs-tex'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE      = 'tex'      // { uuid, url, bytes, lastUsed }
 const META       = 'meta'     // { k:'stats', totalBytes }
+const FAILED     = 'failed'   // { uuid, ts } — permanent decode/404 failures with TTL
 
-// Default cap (~512 MB of PNG data URLs). Tunable; a real preference can drive this later.
-export const TEX_CACHE_CAP_BYTES = 512 * 1024 * 1024
+// Default cap for cached PNG data URLs. 512 MB was an arbitrary early guess; with server-side
+// downscaling to ≤512px each texture is far smaller, so we can hold a whole region (and more) for
+// fast re-logins. 4 GB here (FS desktop caches use ~15 GB, but IndexedDB is bounded by the browser's
+// per-origin quota — typically a fraction of free disk — so the browser may evict below this anyway).
+// A real preference can drive this later.
+export const TEX_CACHE_CAP_BYTES = 8 * 1024 * 1024 * 1024
 
 let _db = null
+let _lastStats = null  // last known { count, bytes } — served to Prefs from memory. WHY: the
+                       // stats readonly txn starves >4s behind put/touch write txns during a
+                       // load (measured live >9s), which is exactly when the panel is watched.
+                       // Every put refreshes this; IDB is only read when no put has run yet
+                       // this session (quiet DB — the case the read can't starve).
 
 function openDb() {
 	if (_db) return Promise.resolve(_db)
@@ -20,9 +30,12 @@ function openDb() {
 		const req = indexedDB.open(DB_NAME, DB_VERSION)
 		req.onupgradeneeded = (e) => {
 			const db = e.target.result
-			const s = db.createObjectStore(STORE, { keyPath: 'uuid' })
-			s.createIndex('lastUsed', 'lastUsed')
-			db.createObjectStore(META, { keyPath: 'k' })
+			if (!db.objectStoreNames.contains(STORE)) {
+				const s = db.createObjectStore(STORE, { keyPath: 'uuid' })
+				s.createIndex('lastUsed', 'lastUsed')
+			}
+			if (!db.objectStoreNames.contains(META))   db.createObjectStore(META,   { keyPath: 'k' })
+			if (!db.objectStoreNames.contains(FAILED)) db.createObjectStore(FAILED, { keyPath: 'uuid' })
 		}
 		req.onsuccess = (e) => { _db = e.target.result; resolve(_db) }
 		req.onerror   = () => reject(req.error)
@@ -45,18 +58,25 @@ export function planEvictions(entries, capBytes) {
 	return evict
 }
 
-/** Look up a cached texture data URL by UUID. Touches lastUsed (LRU). Returns null on miss. */
+/**
+ * Look up a cached texture by UUID. Touches lastUsed (LRU). Returns `{ url, hasAlpha }` or null on
+ * miss. `hasAlpha` (whether the PNG carries real transparency) rides along so the client can pick
+ * blend-vs-opaque without re-fetching; old records pre-dating the field read as `false`.
+ */
 export async function texCacheGet(uuid, now = Date.now()) {
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
-			const tx  = db.transaction(STORE, 'readwrite')
-			const st  = tx.objectStore(STORE)
-			const req = st.get(uuid)
+			// WHY readonly: a region replay fires 1000s of texCacheGet at once. A readwrite tx (to
+			// touch lastUsed) takes a store write-lock, so IndexedDB SERIALIZES them all one-at-a-time
+			// → textures trickle in (white scene). readonly tx run concurrently. LRU instead tracks
+			// lastUsed at put-time (age-since-cached); a cache hit defers a batched touch (see below).
+			const tx  = db.transaction(STORE, 'readonly')
+			const req = tx.objectStore(STORE).get(uuid)
 			req.onsuccess = () => {
 				const rec = req.result
-				if (rec) { rec.lastUsed = now; st.put(rec) }
-				resolve(rec ? rec.url : null)
+				if (rec) _touchLater(uuid, now)
+				resolve(rec ? { url: rec.url, hasAlpha: !!rec.hasAlpha } : null)
 			}
 			req.onerror = () => reject(req.error)
 		})
@@ -66,8 +86,36 @@ export async function texCacheGet(uuid, now = Date.now()) {
 	}
 }
 
+// Batched LRU touch: accumulate hit uuids and flush lastUsed in ONE readwrite tx every few seconds,
+// so the hot read path never takes a write-lock. Best-effort — drops on error.
+const _touchQueue = new Map()
+let _touchTimer = null
+function _touchLater(uuid, now) {
+	_touchQueue.set(uuid, now)
+	if (_touchTimer) return
+	_touchTimer = setTimeout(flushTouches, 4000)
+}
+async function flushTouches() {
+	_touchTimer = null
+	if (!_touchQueue.size) return
+	const batch = [..._touchQueue]; _touchQueue.clear()
+	try {
+		const db = await openDb()
+		await new Promise((resolve) => {
+			const tx = db.transaction(STORE, 'readwrite')
+			const st = tx.objectStore(STORE)
+			for (const [uuid, now] of batch) {
+				const g = st.get(uuid)
+				g.onsuccess = () => { const r = g.result; if (r) { r.lastUsed = now; st.put(r) } }
+			}
+			tx.oncomplete = resolve
+			tx.onerror = resolve
+		})
+	} catch { /* best-effort LRU */ }
+}
+
 /** Persist a texture data URL by UUID, then evict LRU entries if over the size cap. */
-export async function texCachePut(uuid, url, now = Date.now()) {
+export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now()) {
 	try {
 		const db = await openDb()
 		const bytes = url.length
@@ -75,12 +123,22 @@ export async function texCachePut(uuid, url, now = Date.now()) {
 			const tx = db.transaction([STORE, META], 'readwrite')
 			const st = tx.objectStore(STORE)
 			const mt = tx.objectStore(META)
-			st.put({ uuid, url, bytes, lastUsed: now })
+			st.put({ uuid, url, bytes, hasAlpha, lastUsed: now })
+			// After all mutations are queued: count (ordered after any deletes, so it reflects
+			// them), write META {totalBytes, count}, and stage the in-memory snapshot for commit.
+			let pending = null
+			const finishStats = (total) => {
+				const cReq = st.count()
+				cReq.onsuccess = () => {
+					mt.put({ k: 'stats', totalBytes: total, count: cReq.result })
+					pending = { count: cReq.result, bytes: total }
+				}
+			}
 			const mreq = mt.get('stats')
 			mreq.onsuccess = () => {
 				let total = (mreq.result?.totalBytes ?? 0) + bytes
 				if (total <= TEX_CACHE_CAP_BYTES) {
-					mt.put({ k: 'stats', totalBytes: total })
+					finishStats(total)
 					return
 				}
 				// Over cap → walk the lastUsed index oldest-first, deleting until under cap. Skip the
@@ -88,15 +146,95 @@ export async function texCachePut(uuid, url, now = Date.now()) {
 				const cur = st.index('lastUsed').openCursor()
 				cur.onsuccess = () => {
 					const c = cur.result
-					if (!c || total <= TEX_CACHE_CAP_BYTES) { mt.put({ k: 'stats', totalBytes: total }); return }
+					if (!c || total <= TEX_CACHE_CAP_BYTES) { finishStats(total); return }
 					if (c.value.uuid !== uuid) { total -= c.value.bytes; c.delete() }
 					c.continue()
 				}
 			}
-			tx.oncomplete = resolve
+			tx.oncomplete = () => { if (pending) _lastStats = pending; resolve() }
 			tx.onerror    = () => reject(tx.error)
 		})
 	} catch (e) {
 		console.warn('[TexCache] put failed:', e)
 	}
+}
+
+/** Returns { count, bytes, capBytes } for the texture cache. Served from memory once any put
+ * (or one successful read) has run this session — see `_lastStats`. */
+export async function getTextureCacheStats() {
+	if (_lastStats) return { ..._lastStats, capBytes: TEX_CACHE_CAP_BYTES }
+	try {
+		const db = await openDb()
+		return await new Promise((resolve, reject) => {
+			const tx = db.transaction([STORE, META], 'readonly')
+			const countReq = tx.objectStore(STORE).count()
+			const metaReq  = tx.objectStore(META).get('stats')
+			let count = 0
+			let bytes = 0
+			countReq.onsuccess = () => { count = countReq.result }
+			metaReq.onsuccess  = () => { bytes = metaReq.result?.totalBytes ?? 0 }
+			tx.oncomplete = () => { _lastStats = { count, bytes }; resolve({ count, bytes, capBytes: TEX_CACHE_CAP_BYTES }) }
+			tx.onerror = () => reject(tx.error)
+		})
+	} catch { return { count: 0, bytes: 0, capBytes: TEX_CACHE_CAP_BYTES } }
+}
+
+/**
+ * Pure helper: given raw {uuid, ts} rows from the FAILED store, return the UUIDs whose ts falls
+ * within ttlMs of now. Rows older than ttlMs are treated as expired (asset may have been fixed on
+ * the grid). Exported for unit tests — no IDB dependency.
+ */
+export function selectLiveFailed(rows, now, ttlMs) {
+	return rows.filter(r => r && typeof r.ts === 'number' && (now - r.ts) < ttlMs).map(r => r.uuid)
+}
+
+/** TTL for persisted hard-fail records: 7 days. After this the UUID will be retried in case the
+ *  grid asset was re-uploaded or corrected. */
+export const TEX_FAILED_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * Load the set of UUIDs the server permanently failed on within the TTL window.
+ * Returns an array of UUID strings; empty on IDB error.
+ */
+export async function texFailedLoad(now = Date.now()) {
+	try {
+		const db = await openDb()
+		const rows = await new Promise((resolve, reject) => {
+			const req = db.transaction(FAILED, 'readonly').objectStore(FAILED).getAll()
+			req.onsuccess = () => resolve(req.result || [])
+			req.onerror   = () => reject(req.error)
+		})
+		return selectLiveFailed(rows, now, TEX_FAILED_TTL_MS)
+	} catch (e) { console.warn('[TexCache] failed-load failed:', e); return [] }
+}
+
+/**
+ * Persist a permanent decode/404 failure for a UUID (best-effort).
+ * Does not throw — failures here are non-fatal; the in-memory Set is always the source of truth
+ * for the current session.
+ */
+export async function texFailedMark(uuid, now = Date.now()) {
+	try {
+		const db = await openDb()
+		await new Promise((resolve) => {
+			const tx = db.transaction(FAILED, 'readwrite')
+			tx.objectStore(FAILED).put({ uuid, ts: now })
+			tx.oncomplete = resolve
+			tx.onerror    = resolve  // best-effort — swallow
+		})
+	} catch { /* best-effort */ }
+}
+
+/** Clears all texture cache entries and resets the totalBytes counter. */
+export async function clearTextureCache() {
+	try {
+		const db = await openDb()
+		await new Promise((resolve, reject) => {
+			const tx = db.transaction([STORE, META], 'readwrite')
+			tx.objectStore(STORE).clear()
+			tx.objectStore(META).put({ k: 'stats', totalBytes: 0, count: 0 })
+			tx.oncomplete = () => { _lastStats = { count: 0, bytes: 0 }; resolve() }
+			tx.onerror = () => reject(tx.error)
+		})
+	} catch { /* ignore */ }
 }

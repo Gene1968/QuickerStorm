@@ -408,18 +408,21 @@ export function encodeRequestMultipleObjects(p: {
 /** Decode ObjectUpdateCached (High #11) — sim sends this for objects viewer supposedly has.
  *  Returns array of localIds we should request via RequestMultipleObjects.
  */
-export function decodeObjectUpdateCached(buf: Buffer, dataOffset: number): number[] {
-  const ids: number[] = []
+export function decodeObjectUpdateCached(buf: Buffer, dataOffset: number): Array<{ localId: number; crc: number }> {
+  const out: Array<{ localId: number; crc: number }> = []
   let off = dataOffset
   off += 8   // RegionHandle U64
   off += 2   // TimeDilation U16
   const count = buf[off++]
-  for (let i = 0; i < count && off + 7 < buf.length; i++) {
+  // WHY: ObjectUpdateCached per-entry layout: LocalID(4) + CRC(4) + UpdateFlags(4) = 12 bytes.
+  // The CRC (PseudoCRC) increments on every change and is the cache key for downstream validation.
+  for (let i = 0; i < count && off + 11 < buf.length; i++) {
     const localId = buf.readUInt32LE(off); off += 4
-    off += 4   // CRC U32
-    if (localId !== 0) ids.push(localId)
+    const crc = buf.readUInt32LE(off); off += 4
+    off += 4   // UpdateFlags U32
+    if (localId !== 0) out.push({ localId, crc })
   }
-  return ids
+  return out
 }
 
 export function encodeLogoutRequest(p: { agentId: string; sessionId: string; seq: number }): Buffer {
@@ -846,6 +849,22 @@ interface TEFields {
   defaultRepeats?:  [number, number]   // scale_s / scale_t (UV tiling); SL default 1,1
   defaultOffset?:   [number, number]   // offset_s / offset_t; SL default 0,0
   defaultRotation?: number             // radians; SL default 0
+  faceRepeats?:     Array<[number, number] | null>  // per-face scale_s/scale_t override; null = use default
+  faceOffset?:      Array<[number, number] | null>  // per-face offset_s/offset_t override; null = use default
+  faceRotation?:    Array<number | null>            // per-face rotation (radians) override; null = use default
+  defaultGlow?:      number            // 0..1 (TE field 10)
+  defaultShiny?:     number            // 0..3 (bump byte bits 7:6)
+  defaultFullbright?: boolean          // bump byte bit 5
+  defaultMaterialId?: string           // TE field 11 — legacy LLMaterial UUID (omitted if null)
+  defaultTexGen?:    number            // TexGen mapping mode: 0=default, 1=planar (MediaFlags bits 1:2)
+  faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
+}
+
+// TexGen (texture mapping mode) is packed into the TE MediaFlags byte (field 9), bits 1-2
+// (TEM_TEX_GEN_MASK 0x06, shift 1). 0=DEFAULT (per-face UV), 1=PLANAR (projected; repeats are
+// expressed per-half-meter, i.e. FS displays them ×2). Bit 0 is the media-present flag (ignored here).
+export function texGenFromMediaByte(b: number): number {
+  return (b >> 1) & 0x03
 }
 
 // Read one TextureEntry field: a default value, then [faceBitfield + value]* overrides, then the
@@ -869,6 +888,29 @@ function readTEField<T>(
   return { def, faces, next: p }
 }
 
+// Combine two per-axis face-override arrays (e.g. scaleS.faces + scaleT.faces) into a single
+// per-face pair array. Element i is present iff EITHER axis overrides face i; the missing axis
+// falls back to its default. Returns null if no face overrides either axis (so callers can omit
+// the field entirely). WHY pure helper: unit-testable without constructing a full TE blob.
+export function combineFacePairs(
+  aFaces: Array<number | null> | null,
+  bFaces: Array<number | null> | null,
+  aDef: number,
+  bDef: number,
+): Array<[number, number] | null> | null {
+  if (!aFaces && !bFaces) return null
+  const out: Array<[number, number] | null> = new Array(32).fill(null)
+  let any = false
+  for (let f = 0; f < 32; f++) {
+    const a = aFaces ? aFaces[f] : null
+    const b = bFaces ? bFaces[f] : null
+    if (a == null && b == null) continue
+    out[f] = [a ?? aDef, b ?? bDef]
+    any = true
+  }
+  return any ? out : null
+}
+
 function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFields {
   const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
   const res: TEFields = {}
@@ -887,6 +929,12 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     const offS   = readTEField(buf, p, end, 2,  rOff);   p = offS.next
     const offT   = readTEField(buf, p, end, 2,  rOff);   p = offT.next
     const rot    = readTEField(buf, p, end, 2,  rRot);   p = rot.next
+    const bump   = readTEField(buf, p, end, 1,  (b, o) => b[o]); p = bump.next        // field 8
+    const media  = readTEField(buf, p, end, 1,  (b, o) => b[o]); p = media.next       // field 9 (unused)
+    const glow   = readTEField(buf, p, end, 1,  (b, o) => b[o] / 255); p = glow.next  // field 10
+    // field 11 material_id (optional — older blobs end before it)
+    let matId = ZERO_UUID
+    if (p < end) { const m = readTEField(buf, p, end, 16, rUuid); matId = m.def; p = m.next }
 
     if (tex.def !== ZERO_UUID) res.defaultTexture = tex.def
     if (tex.faces) res.faceTextures = tex.faces.map(t => (t && t !== ZERO_UUID ? t : null))
@@ -895,8 +943,46 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     res.defaultRepeats  = [scaleS.def, scaleT.def]
     res.defaultOffset   = [offS.def, offT.def]
     res.defaultRotation = rot.def
+    // Per-face UV overrides: present only where the wire carried a face bitfield for the axis.
+    const faceRepeats = combineFacePairs(scaleS.faces, scaleT.faces, scaleS.def, scaleT.def)
+    const faceOffset  = combineFacePairs(offS.faces,   offT.faces,   offS.def,   offT.def)
+    if (faceRepeats) res.faceRepeats = faceRepeats
+    if (faceOffset)  res.faceOffset  = faceOffset
+    if (rot.faces && rot.faces.some(v => v != null)) res.faceRotation = rot.faces
+    res.defaultGlow       = glow.def
+    res.defaultShiny      = (bump.def >> 6) & 0x03
+    res.defaultFullbright = ((bump.def >> 5) & 0x01) === 1
+    res.defaultTexGen     = texGenFromMediaByte(media.def)
+    if (media.faces) {
+      const ft = media.faces.map(m => (m == null ? null : texGenFromMediaByte(m)))
+      if (ft.some(v => v != null)) res.faceTexGen = ft
+    }
+    if (matId !== ZERO_UUID) res.defaultMaterialId = matId
   } catch { /* best-effort: partial TE still yields texture/color */ }
   return res
+}
+
+// ExtraParam type 0x80 (MaterialsEP): [count U8] then [te_index U8][asset_UUID 16B]×count → per-face
+// GLTF PBR material asset UUIDs. Returns a face→uuid map (zero UUIDs dropped).
+export function parseMaterialsExtraParam(buf: Buffer, start: number, len: number): Record<number, string> {
+  const faces: Record<number, string> = {}
+  let p = start
+  const end = start + len
+  if (p >= end) return faces
+  const count = buf[p++]
+  for (let i = 0; i < count && p + 17 <= end; i++) {
+    const te = buf[p++]
+    const uuid = bytesToUuid(buf, p); p += 16
+    if (uuid !== '00000000-0000-0000-0000-000000000000') faces[te] = uuid
+  }
+  return faces
+}
+
+// ExtraParam type 0x30 (Sculpt/Mesh): [sculptTexture UUID 16B][sculptType U8]. sculptType & 0x07:
+// 1 sphere, 2 torus, 3 plane, 4 cylinder, 5 MESH. For mesh, the UUID is the mesh asset id.
+export function parseSculptExtraParam(buf: Buffer, start: number, len: number): { uuid: string; sculptType: number } | null {
+  if (len < 17) return null
+  return { uuid: bytesToUuid(buf, start), sculptType: buf[start + 16] }
 }
 
 export interface PrimShape {
@@ -929,6 +1015,7 @@ export interface ObjectData {
   rot:           [number, number, number, number]   // quaternion xyzw (w derived from xyz, w≥0)
   nameValue:     string   // raw NameValue string (contains avatar display name)
   parentId?:     number   // U32 — 0=root, else localId of parent prim (linked sets)
+  crc?:          number   // U32 PseudoCRC from ObjectUpdate/Compressed — increments on change; used for cache validation
   shape?:        PrimShape
   defaultColor?: [number, number, number, number]   // RGBA 0..1 from TextureEntry default
   faceColors?:   Array<[number, number, number, number] | null>  // length up to 32; null where face uses defaultColor
@@ -937,6 +1024,20 @@ export interface ObjectData {
   defaultRepeats?:  [number, number]    // TE scale_s/scale_t (UV tiling); SL default 1,1
   defaultOffset?:   [number, number]    // TE offset_s/offset_t; SL default 0,0
   defaultRotation?: number              // TE rotation in radians; SL default 0
+  faceRepeats?:     Array<[number, number] | null>  // per-face scale_s/scale_t override; null = use default
+  faceOffset?:      Array<[number, number] | null>  // per-face offset_s/offset_t override; null = use default
+  faceRotation?:    Array<number | null>            // per-face TE rotation (radians) override; null = use default
+  defaultGlow?:      number             // TE glow 0..1
+  defaultShiny?:     number             // TE shiny 0..3
+  defaultFullbright?: boolean           // TE fullbright
+  defaultTexGen?:    number             // TE TexGen mapping mode: 0=default, 1=planar
+  faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
+  defaultMaterialId?: string            // TE legacy LLMaterial UUID (RenderMaterials cap)
+  defaultPbrMaterial?: string           // GLTF PBR material asset UUID (ExtraParam 0x80, default face)
+  pbrMaterials?:     Array<string | null>  // per-face GLTF PBR material asset UUIDs
+  meshId?:          string              // mesh asset UUID (Sculpt ExtraParam 0x30, sculptType&7==5)
+  sculptId?:        string              // legacy sculpt-map texture UUID (sculptType&7 == 1..4)
+  sculptType?:      number              // raw sculpt type byte (1 sphere..4 cylinder, 5 mesh)
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
 }
@@ -974,7 +1075,7 @@ export function decodeObjectUpdateCompressed(
       const localId  = buf.readUInt32LE(off); off += 4
       const pcode    = buf[off++]
       off += 1   // state
-      off += 4   // crc
+      const crc = buf.readUInt32LE(off); off += 4   // PseudoCRC (was skipped)
       off += 1   // material
       off += 1   // clickAction
       const sx = buf.readFloatLE(off);     off += 4
@@ -1003,6 +1104,10 @@ export function decodeObjectUpdateCompressed(
       let parentId = 0
       let shape: PrimShape | undefined
       let te: TEFields = {}
+      let pbrFaces: Record<number, string> = {}
+      let meshId: string | undefined
+      let sculptId: string | undefined
+      let sculptType: number | undefined
       let text = ''
       let textColor: [number, number, number, number] | undefined
       try {
@@ -1025,12 +1130,18 @@ export function decodeObjectUpdateCompressed(
             }
           }
           if (cflags & 0x200) { while (off < dataEnd && buf[off] !== 0) off++; off++ }  // MediaURL
-          // ExtraParams — always present: count U8, then [type U16, size U32, data]×count
+          // ExtraParams — always present: count U8, then [type U16, size U32, data]×count.
+          // Capture type 0x80 (MaterialsEP → per-face GLTF PBR material UUIDs); skip the rest.
           if (off < dataEnd) {
             const epCount = buf[off++]
             for (let e = 0; e < epCount && off + 6 <= dataEnd; e++) {
-              off += 2                                // param type U16
+              const epType = buf.readUInt16LE(off); off += 2
               const epSize = buf.readUInt32LE(off); off += 4
+              if (epType === 0x80 && off + epSize <= dataEnd) pbrFaces = parseMaterialsExtraParam(buf, off, epSize)
+              else if (epType === 0x30 && off + epSize <= dataEnd) {
+                const sc = parseSculptExtraParam(buf, off, epSize)
+                if (sc) { sculptType = sc.sculptType; const t = sc.sculptType & 0x07; if (t === 5) meshId = sc.uuid; else if (t >= 1 && t <= 4) sculptId = sc.uuid }
+              }
               off += epSize
             }
           }
@@ -1074,13 +1185,15 @@ export function decodeObjectUpdateCompressed(
       off = dataEnd
       // Trees/grass/particles render-skipped (same convention as full ObjectUpdate decoder).
       if (pcode === 0 || pcode === 3 || pcode === 95 || pcode === 255) continue
+      const pbrKeys = Object.keys(pbrFaces)
+      const defaultPbr = pbrFaces[0] ?? (pbrKeys.length ? pbrFaces[+pbrKeys[0]] : undefined)
       objects.push({
         localId, fullId, pcode,
         scale: [sx, sy, sz],
         pos:   [px, py, pz],
         rot:   [rx, ry, rz, rw],
         nameValue: '',
-        parentId,
+        parentId, crc,
         ...(shape ? { shape } : {}),
         ...(te.defaultColor   ? { defaultColor:   te.defaultColor }   : {}),
         ...(te.faceColors     ? { faceColors:     te.faceColors }     : {}),
@@ -1089,6 +1202,20 @@ export function decodeObjectUpdateCompressed(
         ...(te.defaultRepeats  ? { defaultRepeats:  te.defaultRepeats }  : {}),
         ...(te.defaultOffset   ? { defaultOffset:   te.defaultOffset }   : {}),
         ...(te.defaultRotation != null ? { defaultRotation: te.defaultRotation } : {}),
+        ...(te.faceRepeats  ? { faceRepeats:  te.faceRepeats }  : {}),
+        ...(te.faceOffset   ? { faceOffset:   te.faceOffset }   : {}),
+        ...(te.faceRotation ? { faceRotation: te.faceRotation } : {}),
+        ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
+        ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
+        ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
+        ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
+        ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
+        ...(defaultPbr ? { defaultPbrMaterial: defaultPbr } : {}),
+        ...(pbrKeys.length ? { pbrMaterials: Object.assign(new Array(32).fill(null), Object.fromEntries(Object.entries(pbrFaces))) } : {}),
+        ...(meshId ? { meshId } : {}),
+        ...(sculptType != null ? { sculptType } : {}),
+        ...(sculptId ? { sculptId } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
@@ -1137,7 +1264,7 @@ export function decodeObjectUpdate(
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const _state   = buf[off++]
       const fullId   = bytesToUuid(buf, off); off += 16
-      off += 4   // CRC
+      const crc      = buf.readUInt32LE(off); off += 4   // PseudoCRC
       pcode = buf[off++]
       // WHY: pcode=3 (legacy tree/particle), pcode=95 (grass), pcode=255 (tree) use
       // non-standard ObjectData layouts in OpenSim. Their TE field reads as garbage
@@ -1273,54 +1400,23 @@ export function decodeObjectUpdate(
       const _teLen = buf.readUInt16LE(off); off += 2
       _diag += ` TE=${_teLen}`
       const _teEnd = off + _teLen
-      const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
       let defaultColor: [number, number, number, number] | undefined
       let faceColors: Array<[number, number, number, number] | null> | undefined
       let defaultTexture: string | undefined
       let faceTextures: Array<string | null> | undefined
-      try {
-        const dtex = bytesToUuid(buf, off)
-        if (dtex !== ZERO_UUID) defaultTexture = dtex
-        let p = off + 16  // past default texture UUID
-        while (p < _teEnd) {
-          const { bits, next } = readFaceBitfield(buf, p, _teEnd)
-          p = next
-          if (bits === 0) break
-          if (p + 16 > _teEnd) break
-          const tex = bytesToUuid(buf, p)
-          p += 16  // face texture UUID
-          if (!faceTextures) faceTextures = new Array(32).fill(null)
-          for (let f = 0; f < 32; f++) {
-            if (bits & (1 << f)) faceTextures[f] = (tex === ZERO_UUID ? null : tex)
-          }
-        }
-        if (p + 4 <= _teEnd) {
-          defaultColor = [
-            (255 - buf[p])     / 255,
-            (255 - buf[p + 1]) / 255,
-            (255 - buf[p + 2]) / 255,
-            (255 - buf[p + 3]) / 255,
-          ]
-          p += 4
-          while (p < _teEnd) {
-            const { bits, next } = readFaceBitfield(buf, p, _teEnd)
-            p = next
-            if (bits === 0) break
-            if (p + 4 > _teEnd) break
-            const c: [number, number, number, number] = [
-              (255 - buf[p])     / 255,
-              (255 - buf[p + 1]) / 255,
-              (255 - buf[p + 2]) / 255,
-              (255 - buf[p + 3]) / 255,
-            ]
-            p += 4
-            if (!faceColors) faceColors = new Array(32).fill(null)
-            for (let f = 0; f < 32; f++) {
-              if (bits & (1 << f)) faceColors[f] = c
-            }
-          }
-        }
-      } catch { /* best-effort: missing color OK, mesh falls back to hashed tint */ }
+      let pbrFaces: Record<number, string> = {}
+      let meshId: string | undefined
+      let sculptId: string | undefined
+      let sculptType: number | undefined
+      // WHY: unified onto the generic parser shared with the compressed path so the full
+      // update gets full UV transform (repeats/offset/rotation, default + per-face), glow,
+      // shiny, fullbright, material_id — not just textures + colors. Bounded to [off, _teEnd]
+      // so it can't read past the TE blob. meshId/sculptId are still set later by ExtraParams.
+      const te = parseTextureEntryFields(buf, off, _teEnd)
+      defaultTexture = te.defaultTexture
+      faceTextures   = te.faceTextures
+      defaultColor   = te.defaultColor
+      faceColors     = te.faceColors
       off = _teEnd
       // WHY: TextureAnim is Variable1 (1-byte prefix), NOT Variable2.
       // LLUDP message_template: TextureAnim { Variable 1 }
@@ -1348,7 +1444,16 @@ export function decodeObjectUpdate(
         if (nvLen > 2048) { _silentTail = true; throw new Error(`NV: length ${nvLen} misaligned`) }
         if (off + nvLen > buf.length) throw new Error(`NV: length ${nvLen} exceeds remaining buf`)
         nameValue = buf.slice(off, off + nvLen).toString('utf8'); off += nvLen
-        skipVar1('Data')
+        // Data: Variable2 per message_template.msg — NOT Variable1. The old skipVar1 here read one
+        // length byte of the U16; for empty Data (00 00) the stray second zero was swallowed by the
+        // empty Text length (accidental realignment), masking the bug on most objects — but any
+        // non-trivial tail desynced the walk at ExtraParams and silently dropped meshId/sculptId
+        // (live-captured roof-fixture regression: objupdate-data-var2.test.ts).
+        if (off + 1 >= buf.length) throw new Error(`Data prefix OOB at off=${off}`)
+        const dataLen = buf.readUInt16LE(off); off += 2
+        _diag += ` Data=${dataLen}`
+        if (off + dataLen > buf.length) throw new Error(`Data: length ${dataLen} exceeds remaining buf`)
+        off += dataLen
         // Text Variable1 + TextColor Fixed4 inverted RGBA
         if (off + 1 <= buf.length) {
           const tlen = buf[off++]
@@ -1368,7 +1473,29 @@ export function decodeObjectUpdate(
         }
         skipVar1('MediaURL')
         skipVar1('PSBlock')      // particle system data, Variable1 (OpenSim extended can reach 192+)
-        skipVar1('ExtraParams')
+        // ExtraParams (Variable1) — parse for type 0x80 (PBR material UUIDs); advance like skipVar1.
+        {
+          if (off >= buf.length) throw new Error(`ExtraParams prefix OOB at off=${off}`)
+          const epLen = buf[off++]
+          _diag += ` ExtraParams=${epLen}`
+          if (off + epLen > buf.length) { off = buf.length; throw new Error(`ExtraParams length ${epLen} exceeds buffer`) }
+          const epEnd = off + epLen
+          let q = off
+          if (q < epEnd) {
+            const c = buf[q++]
+            for (let e = 0; e < c && q + 6 <= epEnd; e++) {
+              const t = buf.readUInt16LE(q); q += 2
+              const sz = buf.readUInt32LE(q); q += 4
+              if (t === 0x80 && q + sz <= epEnd) pbrFaces = parseMaterialsExtraParam(buf, q, sz)
+              else if (t === 0x30 && q + sz <= epEnd) {
+                const sc = parseSculptExtraParam(buf, q, sz)
+                if (sc) { sculptType = sc.sculptType; const t = sc.sculptType & 0x07; if (t === 5) meshId = sc.uuid; else if (t >= 1 && t <= 4) sculptId = sc.uuid }
+              }
+              q += sz
+            }
+          }
+          off += epLen
+        }
         off += 16   // Sound UUID
         off += 16   // OwnerID UUID
         off += 4    // SoundGain F32
@@ -1384,12 +1511,28 @@ export function decodeObjectUpdate(
       objects.push({
         localId, fullId, pcode,
         scale: [sx, sy, sz], pos, rot, nameValue,
-        parentId,
+        parentId, crc,
         shape,
         ...(defaultColor ? { defaultColor } : {}),
         ...(faceColors ? { faceColors } : {}),
         ...(defaultTexture ? { defaultTexture } : {}),
         ...(faceTextures ? { faceTextures } : {}),
+        ...(te.defaultRepeats  ? { defaultRepeats:  te.defaultRepeats }  : {}),
+        ...(te.defaultOffset   ? { defaultOffset:   te.defaultOffset }   : {}),
+        ...(te.defaultRotation != null ? { defaultRotation: te.defaultRotation } : {}),
+        ...(te.faceRepeats  ? { faceRepeats:  te.faceRepeats }  : {}),
+        ...(te.faceOffset   ? { faceOffset:   te.faceOffset }   : {}),
+        ...(te.faceRotation ? { faceRotation: te.faceRotation } : {}),
+        ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
+        ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
+        ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
+        ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
+        ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
+        ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
+        ...(meshId ? { meshId } : {}),
+        ...(sculptType != null ? { sculptType } : {}),
+        ...(sculptId ? { sculptId } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
       })
@@ -1536,6 +1679,9 @@ export interface RegionHandshakeData {
   terrainStartHeight: number[]  // 4 corner start heights for texture blending (SW,NW,SE,NE order on wire)
   terrainHeightRange: number[]  // 4 corner height ranges
   regionId:           string    // RegionInfo2.RegionID UUID; '' if absent
+  cacheId:            string    // RegionInfo.CacheID UUID; changes on region restart — localIds from
+                                // a previous run are then dead, so the client must drop its object
+                                // cache for this region (the sim silently ignores stale-id requests)
 }
 
 /**
@@ -1568,6 +1714,7 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
   const terrainStartHeight: number[] = [0, 0, 0, 0]
   const terrainHeightRange: number[] = [0, 0, 0, 0]
   let regionId           = ''
+  let cacheId            = ''
 
   // WHY: each step guards against a short buffer. `need(n)` returns true only if n more
   // bytes are available from the current offset.
@@ -1577,7 +1724,7 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
     if (need(1))  off += 1                               // IsEstateManager U8
     if (need(4)) { waterHeight = buf.readFloatLE(off); off += 4 }
     if (need(4)) off += 4                                // BillableFactor F32
-    if (need(16)) off += 16                              // CacheID UUID
+    if (need(16)) { cacheId = bytesToUuid(buf, off); off += 16 }  // CacheID UUID (region-run marker)
     if (need(64)) off += 64                              // TerrainBase0..3 (legacy, skip)
     for (let i = 0; i < 4; i++) {
       if (need(16)) { terrainDetail[i] = bytesToUuid(buf, off); off += 16 }
@@ -1593,7 +1740,7 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
     // Any unexpected read error → keep whatever was parsed plus defaults.
   }
 
-  return { simName, simAccess, waterHeight, terrainDetail, terrainStartHeight, terrainHeightRange, regionId }
+  return { simName, simAccess, waterHeight, terrainDetail, terrainStartHeight, terrainHeightRange, regionId, cacheId }
 }
 
 /** Decode KillObject (High #16) — sim removes objects from the viewer's scene.
@@ -1702,12 +1849,16 @@ export interface MapBlock {
   waterHeight: number
   agents:      number
   mapImageId:  string
+  sizeX:       number   // region width in metres — 256 standard, 512/1024 var-region
+  sizeY:       number
 }
 
-// MapBlockReply body per libomv:
+// MapBlockReply body per libomv + OpenSim LLClientView.SendMapBlock:
 //   AgentData { AgentID, Flags U32 }
 //   Data Variable count of { X U16, Y U16, Name V1, Access U8, RegionFlags U32,
 //                            WaterHeight U8, Agents U8, MapImageID UUID }
+//   Size Variable count of { SizeX U16, SizeY U16 } — var-region metres; OpenSim writes
+//   count=0 when every block is standard 256m, else one pair per Data entry (same order).
 export function decodeMapBlockReply(buf: Buffer, dataOffset: number): MapBlock[] {
   const out: MapBlock[] = []
   let off = dataOffset
@@ -1728,8 +1879,21 @@ export function decodeMapBlockReply(buf: Buffer, dataOffset: number): MapBlock[]
       const waterHeight = buf[off++]
       const agents      = buf[off++]
       const mapImageId  = bytesToUuid(buf, off); off += 16
-      out.push({ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId })
+      out.push({ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId, sizeX: 256, sizeY: 256 })
     } catch { break }
+  }
+  // Size block. WHY the count===out.length guard: appended-ack bytes can trail the body,
+  // so only trust the block when its count matches the Data count and the pairs fit.
+  if (off < buf.length) {
+    const szCount = buf[off++]
+    if (szCount === out.length && off + szCount * 4 <= buf.length) {
+      for (let i = 0; i < szCount; i++) {
+        const sx = buf.readUInt16LE(off); off += 2
+        const sy = buf.readUInt16LE(off); off += 2
+        if (sx > 0) out[i].sizeX = sx
+        if (sy > 0) out[i].sizeY = sy
+      }
+    }
   }
   return out
 }

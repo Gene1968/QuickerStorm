@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { planEvictions } from '@/lib/textureCache.js'
+import { planEvictions, TEX_CACHE_CAP_BYTES, getTextureCacheStats, clearTextureCache } from '@/lib/textureCache.js'
 
 describe('planEvictions (LRU policy)', () => {
 	it('evicts nothing when under cap', () => {
@@ -28,5 +28,19 @@ describe('planEvictions (LRU policy)', () => {
 		]
 		// total 150, cap 60 → drop a then b (→ 50)
 		expect(planEvictions(entries, 60)).toEqual(['a', 'b'])
+	})
+})
+
+describe('textureCache exports', () => {
+	it('exports TEX_CACHE_CAP_BYTES as 512 MB', () => {
+		expect(TEX_CACHE_CAP_BYTES).toBe(1024 * 1024 * 1024 * 8)
+	})
+
+	it('exports getTextureCacheStats function', () => {
+		expect(typeof getTextureCacheStats).toBe('function')
+	})
+
+	it('exports clearTextureCache function', () => {
+		expect(typeof clearTextureCache).toBe('function')
 	})
 })

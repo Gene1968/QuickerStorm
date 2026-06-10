@@ -154,7 +154,9 @@ function _createConnection() {
 		}
 
 		let msg
+		const _p0 = performance.now()
 		try { msg = JSON.parse(data) } catch { return }
+		_parseMs += performance.now() - _p0
 
 		// Route by format:
 		// Envelope messages { t, d } — dispatch by `t`, pass `d` as payload
@@ -193,12 +195,33 @@ function _createConnection() {
 	}
 }
 
+// Per-message-type handler cost + JSON.parse cost on the main thread. WHY: ~125ms long tasks starve
+// every timer ([Main] telemetry); the WS pipeline is the prime suspect. Read+reset via takeWsStats()
+// by the engine's 5s telemetry so the top offenders are visible in the server log.
+const _msgStats = new Map()  // type → { n, ms, max }
+let _parseMs = 0
+
+export function takeWsStats() {
+	const top = [..._msgStats.entries()]
+		.sort((a, b) => b[1].ms - a[1].ms).slice(0, 4)
+		.map(([t, s]) => `${t}:n=${s.n},${s.ms.toFixed(0)}ms(max ${s.max.toFixed(0)})`)
+		.join(' ')
+	const out = { top, parseMs: _parseMs }
+	_msgStats.clear(); _parseMs = 0
+	return out
+}
+
 function _dispatch(type, data) {
 	const set = handlers.get(type)
 	if (!set) return
+	const t0 = performance.now()
 	for (const cb of set) {
 		try { cb(data) } catch (e) { console.error(`[ws] handler error for "${type}":`, e) }
 	}
+	const dt = performance.now() - t0
+	let s = _msgStats.get(type)
+	if (!s) { s = { n: 0, ms: 0, max: 0 }; _msgStats.set(type, s) }
+	s.n++; s.ms += dt; if (dt > s.max) s.max = dt
 }
 
 // ── Export composable ───────────────────────────────────────────────────

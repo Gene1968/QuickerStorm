@@ -5,98 +5,127 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import gsap from 'gsap'
 import { useWorldStore, PCODE_AVATAR } from '@/stores/worldStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useMapStore } from '@/stores/mapStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
 import { useNotificationStore } from '@/stores/notificationStore'
-import { useRealtimeSocket } from './useRealtimeSocket'
+import { useRealtimeSocket, takeWsStats } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
 import { getTexture, clearTextureCache } from './useTextureFetch.js'
+import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
+import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
+import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
+import { getSculpt } from './useSculptFetch.js'
+import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
+import { memStats, memUnderPressure, memRatio } from '@/lib/memGovernor.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
+import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
+import { partitionProbes } from '@/lib/probePartition.js'
+import { correctionBlend } from '@/lib/movementCorrection.js'
+import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
+import { planarUVFromThree } from '@/lib/planarUV.js'
 import { C, S } from '@shared/protocol.js'
+import {
+	bakePrimScale,            // bakes prim scale into the placeholder cube
+	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
+	geometryFromArrays,       // consumes worker-baked arrays in applySwap
+} from '@/lib/primGeometry.js'
+import { useMeshBaker } from '@/composables/useMeshBaker.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
 
-// WHY: Map SL prim PathCurve+ProfileCurve to a Three.js geometry. Reference table
-// (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
-// sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,
-// 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
-// bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
-// (true CSG needed); Twist + Taper applied as per-vertex deformation below.
-function buildPrimGeometry(shape) {
-	const pc = shape?.pathCurve ?? 16
-	const pf = (shape?.profileCurve ?? 1) & 0x0F
-	let geom
-	if (pc === 16) {
-		// HeightSegments=8 so Twist/Taper deformation has enough vertices to look smooth.
-		if (pf === 0)      geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 8)
-		else if (pf === 3) geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 3, 8)   // prism
-		else               geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
-	} else if (pc === 32 || pc === 33) {
-		if (pf === 5) geom = new THREE.SphereGeometry(0.5, 16, 12)
-		// torus / tube / ring — Three TorusGeometry stand-in; full profile sweep is Phase 3
-		else          geom = new THREE.TorusGeometry(0.35, 0.15, 12, 24)
-	} else {
-		geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
+const ZERO_TEX_UUID = '00000000-0000-0000-0000-000000000000'
+const BLANK_TEX_UUID = '5748decc-f629-461c-9a36-a35a221fe21f'  // SL built-in "Blank" (pure white)
+const isRealTex = (t) => !!t && t !== ZERO_TEX_UUID && t !== BLANK_TEX_UUID
+// WHY: We render one diffuse map per prim (no multi-material yet), but SL prims often leave the TE
+// DEFAULT texture = Blank and texture each FACE individually. Applying only the default → white
+// building. Until per-face multi-material lands, pick the best single texture: the real default if
+// it has one, else the most common real per-face override. Kills the white-building case.
+function pickPrimTexture(obj) {
+	if (isRealTex(obj.defaultTexture)) return obj.defaultTexture
+	if (Array.isArray(obj.faceTextures)) {
+		const counts = new Map()
+		for (const f of obj.faceTextures) if (isRealTex(f)) counts.set(f, (counts.get(f) || 0) + 1)
+		let best = null, bc = 0
+		for (const [id, c] of counts) if (c > bc) { bc = c; best = id }
+		if (best) return best
 	}
-	return applyShapeDeformation(geom, shape)
+	return null
 }
 
-// WHY: SL Twist + Taper applied per-vertex. Twist rotates around the path axis (Three.js
-// local Y for our PathCurve=16/32 geometries) by an angle that lerps from PathTwistBegin
-// at the bottom to PathTwist at the top. Taper shrinks XZ scale linearly from bottom to
-// top. Both encoded as S8 with 0.01 quantization (libomv Primitive.cs TWIST_QUANTA).
-// Skip torus (PathCurve=32 + non-half-circle profile) — deformation doesn't follow the
-// same axis convention and would mangle the geometry.
-function applyShapeDeformation(geom, shape) {
-	if (!shape) return geom
-	const pc = shape.pathCurve ?? 16
-	const isTorusLike = (pc === 32 || pc === 33) && (shape.profileCurve & 0x0F) !== 5
-	if (isTorusLike) return geom
-	const twist      = (shape.pathTwist      || 0) * 0.01   // turns: -1..1
-	const twistBegin = (shape.pathTwistBegin || 0) * 0.01
-	const taperX     = (shape.pathTaperX     || 0) * 0.01
-	const taperY     = (shape.pathTaperY     || 0) * 0.01
-	if (twist === 0 && twistBegin === 0 && taperX === 0 && taperY === 0) return geom
-	const pos = geom.attributes.position
-	const TWO_PI = Math.PI * 2
-	for (let i = 0; i < pos.count; i++) {
-		let x = pos.getX(i)
-		const y = pos.getY(i)
-		let z = pos.getZ(i)
-		// t in [0, 1] from bottom (y=-0.5) to top (y=+0.5)
-		const t = y + 0.5
-		// Taper: pinches/expands at top (positive value = narrow at top, SL convention)
-		const sX = 1 - t * taperX
-		const sZ = 1 - t * taperY
-		x *= sX
-		z *= sZ
-		// Twist: rotation around Y axis, lerps begin → end across height
-		const angle = ((1 - t) * twistBegin + t * twist) * TWO_PI
-		if (angle !== 0) {
-			const ca = Math.cos(angle)
-			const sa = Math.sin(angle)
-			const xr = x * ca - z * sa
-			const zr = x * sa + z * ca
-			pos.setXYZ(i, xr, y, zr)
-		} else {
-			pos.setXYZ(i, x, y, z)
-		}
-	}
-	pos.needsUpdate = true
-	geom.computeVertexNormals()
-	return geom
+// WHY: a MESH asset's submeshes ARE its SL faces (each material face = one submesh → one geometry
+// group, materialIndex = face index). When such a mesh carries ≥2 distinct real textures across its
+// default + per-face entries, the single dominant-texture pick (pickPrimTexture) flattens a multi-
+// textured surface (wall/window/trim) to one texture. Multi-material rendering needs the per-face
+// data; gate on meshId only (prim box/cyl face→group mapping is unreliable — see design note).
+function hasMultiFaceMesh(obj) {
+	if (!obj.meshId || !Array.isArray(obj.faceTextures)) return false
+	const set = new Set()
+	if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
+	for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
+	return set.size >= 2
 }
 
-// WHY: Bake the prim's SL scale into its GEOMETRY so the mesh node scale stays (1,1,1). Linked
-// children attach to the parent mesh in the Three.js graph and would otherwise inherit the parent's
-// scale — and a non-uniform parent scale does not commute with a rotated child, shearing the child
-// into a region-spanning slab. SL never inherits scale across a link, so the parent's scale must
-// not enter the transform chain at all. Axis map matches slToThree magnitude: Three (x=sx,y=sz,z=sy).
-function bakePrimScale(geom, scale) {
-	if (scale) geom.scale(scale[0], scale[2], scale[1])
-	return geom
+// WHY: a square box / cylinder whose faces genuinely differ → render per-face (one material per
+// geometry group, remapped to SL face order via primFaceMap). Excludes meshes, placeholders, and
+// any prim whose face layout we can't map exactly (primFaceMap === null). The ≥2-distinct gate
+// (primFacesDiffer) keeps uniform prims on the cheap single-material path.
+// Per-face PRIM materials: re-enabled 2026-06-09 — the stash-test proved per-face was NOT the
+// cold-load OOM cause (memory budget now governed by memGovernor + cull/prune). If heap regresses
+// on heavy regions, suspect texture fan-out here first and flip back off to confirm. (The MESH
+// per-face path is independent — it was already live before this work.)
+const PERFACE_PRIMS = true
+function hasMultiFacePrim(obj) {
+	if (!PERFACE_PRIMS) return false
+	if (obj.meshId || obj._placeholder) return false
+	if (!primFaceMap(obj.shape)) return false
+	return primFacesDiffer(obj)
+}
+
+// Build a UV transform from TE repeat/offset/rotation, or null for identity. Clamps repeats to the
+// SL editor max (±100/face): the decoder occasionally yields a garbage scale (e.g. 8215) that would
+// over-tile a face into a solid color — clamp neutralizes it; a clamped-to-0 repeat falls back to 1.
+const MAX_REPEAT = 100
+function uvXform(rep, ofs, rot) {
+	if (!rep && !ofs && rot == null) return null
+	const clamp = (v) => (Number.isFinite(v) ? Math.max(-MAX_REPEAT, Math.min(MAX_REPEAT, v)) : 1)
+	const r = rep ?? [1, 1]
+	return {
+		repeat:   [clamp(r[0]) || 1, clamp(r[1]) || 1],
+		offset:   ofs ?? [0, 0],
+		rotation: Number.isFinite(rot) ? rot : 0,
+	}
+}
+
+// Dev diagnostic: client-only render warnings (e.g. Three.js "Computed radius is NaN") never reach
+// the server log. Patch console.warn/error to forward any message mentioning NaN/radius (deduped, with
+// a short stack) to the server via C.CLIENT_LOG so we can locate the source. Safe no-op if already on.
+const _fwdSeen = new Set()
+let _origWarn = null, _origError = null
+function installConsoleForwarder(emit) {
+	if (_origWarn) return
+	_origWarn = console.warn; _origError = console.error
+	const wrap = (orig, level) => (...args) => {
+		try {
+			const msg = args.map(a => (typeof a === 'string' ? a : (a && a.message) || '')).join(' ')
+			if (/NaN|Computed radius/i.test(msg) && !_fwdSeen.has(msg)) {
+				_fwdSeen.add(msg)
+				const stack = (new Error().stack || '').split('\n').slice(2, 7).join(' | ')
+				emit(C.CLIENT_LOG, { level, msg: msg.slice(0, 400), stack })
+			}
+		} catch { /* never let logging break logging */ }
+		orig.apply(console, args)
+	}
+	console.warn = wrap(_origWarn, 'warn')
+	console.error = wrap(_origError, 'error')
+}
+function uninstallConsoleForwarder() {
+	if (_origWarn) console.warn = _origWarn
+	if (_origError) console.error = _origError
+	_origWarn = _origError = null
 }
 
 // Quaternion: same axis remap as position (SL Z-up → Three Y-up). The imaginary
@@ -140,11 +169,13 @@ const LOOKAT_Y      = 1.85  // meters above avatar feet for camera lookAt (lower
 export function useWorldEngine(canvasRef) {
 	const worldStore        = useWorldStore()
 	const sessionStore      = useSessionStore()
+	const mapStore          = useMapStore()
 	const uiStore           = useUiStore()
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
-	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun } = useLLUDP()
+	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery } = useLLUDP()
+	const meshBaker = useMeshBaker()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
@@ -197,13 +228,180 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
+	const hoverTextMeshes = new Set()  // meshes that currently have hover text
+	const _htVec3 = new THREE.Vector3()  // reused for hover-text distance calc
 	// WHY (perf): prim mesh builds are deferred off the WS message handler into a paced per-frame
 	// drain. Region entry delivers thousands of ObjectUpdates; building all their Three.js geometry
 	// synchronously inside onmessage blocked the main thread (multi-second 'message handler took Nms'
 	// violations). pendingMeshIds holds prim localIds awaiting a mesh; drainMeshQueue() builds them
 	// under a per-frame time budget. Dedupe is automatic (Set + fetch latest obj from worldStore).
 	const pendingMeshIds = new Set()  // localId → awaiting mesh build (prims only; avatars build inline)
+	// Orphan index: parentLocalId → Set(childLocalId) waiting for that root to build. Replaces an
+	// O(n) meshMap scan per build (was O(n²) overall — the dominant mesh-build cost on big regions).
+	const orphansByParent = new Map()
 	let _didPrecompile = false  // C1 perf: one-shot renderer.compileAsync after the initial prim drain
+	let _assetStatsTimer = null  // setInterval handle for asset-loading telemetry
+	let _meshDrainTimer = null   // mesh build/reparent driver — focus-independent (see onMounted)
+	let _texBackfillTimer = null // re-applies textures to still-white meshes + drives fetch retries
+	let _cullTimer = null        // memory-budget distance-culling tick (~1s)
+	let _longTaskObs = null      // PerformanceObserver for main-thread long tasks (telemetry)
+	const evicted = new Set()    // localIds dropped for memory (kept in worldStore + IDB; rebuilt on approach)
+	// WHY a budget below the 0.85 governor: park heap ~60% so the governor is a rare backstop, not the
+	// steady state. R_NEAR < (implicit evict radius): far objects evict first under pressure; only
+	// objects within R_NEAR rebuild — hysteresis prevents thrash at the boundary. Per-tick caps spread
+	// the dispose/build work so the frame doesn't hitch.
+	// Park heap near (but below) the 0.85 governor so we hold as many objects as safely fit, while the
+	// evict/reload swap keeps the RESIDENT set proximity-ordered. (0.60 was too aggressive — it evicted
+	// ~30% more than the governor-only path held.)
+	const CULL_TARGET = 0.78
+	const CULL_RESUME = 0.70     // below this, stream evicted objects back at ANY distance (nearest first).
+	// WHY: a TRANSIENT heap spike (GC sawtooth, worker garbage between recycles) can trip CULL_TARGET
+	// for a few ticks and evict thousands of roots; with reload capped to R_NEAR the scene then stays
+	// gutted forever once pressure clears (observed: 31.9k stored / 606 rendered, heap idling at 25%).
+	// With real headroom, distance is no reason to keep anything evicted.
+	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
+	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
+	// WHY small caps: evicting/freeing hundreds of meshes in one tick caused a GC + main-thread stall
+	// that delayed the 10Hz AgentUpdate + PacketAcks → the sim's view of the agent lagged → position
+	// snap-backs and stalled ObjectSelect→ObjectProperties. Small per-tick work keeps the churn smooth
+	// so movement + the circuit stay healthy; the scene still converges over a few seconds.
+	const MAX_EVICT_PER_TICK = 32
+	const MAX_RELOAD_PER_TICK = 48
+	const EVICT_AFTER_TICKS = 3  // require N consecutive over-target ticks before evicting (spike debounce)
+	let _overTicks = 0
+	let _cullStatTick = 0        // throttle the O(n) stats scan (every Nth cull tick)
+	let _drainBuilt = 0, _drainMs = 0, _drainMaxMs = 0  // upsertMesh throughput probe (reset each 5s report)
+	let _applyN = 0, _applyMs = 0, _applyMaxMs = 0      // applySwap (bake-result → THREE geometry) probe
+	// Drain-loop exit accounting: why does each tick stop? (ticks that ran / skipped-empty /
+	// governor-paused / broke on bake-cap / broke on time budget). Reset each 5s report.
+	let _dtTicks = 0, _dtEmpty = 0, _dtGov = 0, _dtBrkCap = 0, _dtBrkBudget = 0
+	let _frN = 0, _frMs = 0, _frMaxMs = 0               // rAF frame-work gauge (reset each 5s report)
+	let _ltN = 0, _ltMs = 0, _ltMaxMs = 0               // PerformanceObserver longtask totals
+	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
+		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
+		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
+		// clobbers an already-arrived localId). See lib/objectCache.js.
+		let _objCacheLoadedKey = null
+		const regionCacheKey = () => {
+			// Global region coords only — set at login, so identical at save AND load. (regionName
+			// arrives via RegionHandshake which can land AFTER the first ObjectUpdate, so including it
+			// made the load key miss the saved record.)
+			const rx = sessionStore.regionX, ry = sessionStore.regionY
+			return (!rx && !ry) ? null : `${rx}_${ry}`
+		}
+		async function preseedRegionCache() {
+			const key = regionCacheKey()
+			if (!key || key === _objCacheLoadedKey) return
+			// Region-run gate: localIds die with the region run. WHY wait for the CacheID: replaying
+			// before validation paints objects whose localIds the sim may no longer know — ghost
+			// duplicates that render but silently brick ObjectSelect/edit ("Loading properties…"
+			// forever) and double the scene's memory. RegionHandshake lands within ~1s of the circuit,
+			// so deferring the instant-paint until then is imperceptible. (preseed is re-invoked on
+			// every ObjectUpdate, so this retries until the CacheID is known.)
+			const runId = sessionStore.regionCacheId
+			if (!runId) return
+			_objCacheLoadedKey = key
+			const runKey = `qs-objrun:${key}`
+			let storedRun = null
+			try { storedRun = localStorage.getItem(runKey) } catch { /* private mode etc. */ }
+			if (storedRun !== runId) {
+				// Run changed — or unknown (records cached before run-tracking existed): either way the
+				// records can't be trusted, so drop them and let this session rebuild the cache fresh.
+				const n = await objCacheClearRegion(key)
+				if (n) debugStore.push('warn', `[ObjCache] region run ${storedRun ? 'changed' : 'unknown'} (CacheID ${(storedRun ?? '????????').slice(0, 8)}→${runId.slice(0, 8)}) — dropped ${n} stale cached objects, skipping replay`)
+				try { localStorage.setItem(runKey, runId) } catch { /* ignore */ }
+				requestProbeResync()
+				return
+			}
+			const cached = await objCacheGetAll(key)
+			let n = 0
+			for (const o of (cached ?? [])) {
+				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
+				if (worldStore.objects.has(o.localId)) continue
+				worldStore.upsertObject(o)
+				pendingMeshIds.add(o.localId)
+				n++
+			}
+			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)})`)
+			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
+			requestProbeResync()
+		}
+		// WHY: the sim floods ObjectUpdateCached probes in the first seconds after login — before this
+		// engine registered its WS handlers — so the initial forwards dispatched into the void (seen
+		// live: sim probed 23.8k ids, client requested 2.2k, scene stuck at ~3k objects). The server
+		// buffers every probe; this asks for a full replay. Called from preseedRegionCache AFTER the
+		// cache-run validation/purge so replayed probes are never CRC-matched against records the
+		// purge is about to delete (that race silently marked everything "hit" and requested nothing).
+		function requestProbeResync() {
+			try { wsEmit(C.OBJ_PROBE_RESYNC, {}) } catch { /* not connected yet — live probes still flow */ }
+			debugStore.push('info', '[ObjCache] requested probe-backlog resync (engine ready)')
+		}
+		// WHY: persist each non-avatar object as it arrives/updates. Per-object upsert (no
+		// whole-region overwrite) so a session that re-sees fewer objects cannot shrink the
+		// cache. Avatars are transient (not cached).
+		function persistObjects(objs) {
+			const key = regionCacheKey()
+			if (!key) return
+			for (const o of objs) {
+				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
+				// Persist the MERGED record, never the raw update. A partial update (e.g. compressed
+				// without ExtraParams) carries no meshId/sculptId; putting it raw overwrites a complete
+				// cached record with a gutted one, and the CRC probe-hit then replays the gutted version
+				// forever (the sim thinks we have it — a mesh roof came back as a torus). Mirrors the
+				// {...existing, ...incoming} merge worldStore.upsertObject does right after.
+				objCachePut(key, { ...(worldStore.objects.get(o.localId) ?? {}), ...o })
+			}
+		}
+		// WHY: sim's ObjectUpdateCached, forwarded by the server. CRC-match against our
+		// persistent cache → hit (already pre-seeded/rendered, no request). Miss → ask the
+		// server to request a full update (C.OBJ_CACHE_MISS → cacheMissPending drain).
+		let _probeStats = { batches: 0, hits: 0, misses: 0 }
+		let _probeRx = 0
+		// Memoized per-region crcMap. WHY: the probe-backlog replay delivers ~120 chunks in seconds;
+		// reading the crcMap PER CHUNK is ~120 full-region IDB cursor walks racing the object-cache
+		// WRITE stream (readwrite txns lock out readers) — observed live as every read timing out and
+		// the whole region load silently dying. One walk per region, shared by all chunks. Slightly
+		// stale entries (objects re-cached this session) just mark extra misses → harmless re-requests.
+		let _crcMapKey = null, _crcMapP = null
+		function getRegionCrcMap(key) {
+			if (key !== _crcMapKey) {
+				_crcMapKey = key
+				_crcMapP = Promise.race([
+					objCacheCrcMap(key),
+					new Promise((_, rej) => setTimeout(() => rej(new Error('crcMap timeout (3s)')), 3000)),
+				]).catch(e => {
+					try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Probe] crcMap failed (${e.message}) — degrading to request-all`, stack: '' }) } catch { /* ignore */ }
+					return new Map()   // empty map → every probe partitions as a miss (request-all)
+				})
+			}
+			return _crcMapP
+		}
+		async function onObjCacheProbe(payload) {
+			let probes = payload?.probes ?? []
+			if (!probes.length) return
+			// SYNC entry log (before any await): distinguishes "frames never arrived" from "handler
+			// died awaiting IDB" — an async handler that hangs on objCacheCrcMap fails silently.
+			_probeRx++
+			if (_probeRx % 25 === 1) {
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: `[Probe] rx batch #${_probeRx} (${probes.length} ids)`, stack: '' }) } catch { /* ignore */ }
+			}
+			// Already live in worldStore (received this session) → nothing to request or paint.
+			probes = probes.filter(p => !worldStore.objects.has(p.localId))
+			if (!probes.length) return
+			const key = regionCacheKey()
+			if (!key) { wsEmit(C.OBJ_CACHE_MISS, { ids: probes.map(p => p.localId) }); return }
+			const crcMap = await getRegionCrcMap(key)
+			const { hits, misses } = partitionProbes(probes, crcMap)
+			if (misses.length) wsEmit(C.OBJ_CACHE_MISS, { ids: misses })
+			if (hits.length) debugStore.push('info', `[ObjCache] ${hits.length} probe hits (cached), ${misses.length} misses requested`)
+			// Probe-flow diagnostic → server log: asked=0 all day in PrimDiag while distinct≈24k says
+			// the miss path is silently dead somewhere between this partition and the server drain.
+			_probeStats.batches++; _probeStats.hits += hits.length; _probeStats.misses += misses.length
+			if (_probeStats.batches % 50 === 1) {
+				const line = `[ObjCache] probe flow: ${_probeStats.batches} batches, hits=${_probeStats.hits} misses=${_probeStats.misses} (crcMap=${crcMap.size})`
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+			}
+		}
 	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
@@ -802,7 +1000,10 @@ export function useWorldEngine(canvasRef) {
 			// 128m left ~97% of cache-miss requests unsatisfied in a sparse-corner spawn
 			// (4338 cached IDs requested → 44 ObjectUpdates returned over 70s). Firestorm
 			// default is 256m; matches FS behaviour and quadruples interest-list radius.
-			far:       256,
+			// 512m (was 256): on a 512m region ~half stayed out of interest (live unfulfilled=7673/15591).
+				// 512 reaches the whole standard region from any spawn so the sim satisfies region-wide
+				// cache-miss requests. Sim caps draw distance server-side, so over-asking is safe.
+				far:       512,
 		})
 	}
 
@@ -872,7 +1073,10 @@ export function useWorldEngine(canvasRef) {
 			for (let slX = 0; slX <= rx; slX++) {
 				const hIdx = slY * hStride + slX
 				const vi   = iy * vStride + slX
-				const h    = worldStore.terrainHeights[hIdx]
+				// Sanitize: a partial/failed terrain decode (log: "buf-exhausted") can leave NaN
+				// heights → NaN vertex → Three.js "Computed radius is NaN" + the patch goes invisible.
+				const raw  = worldStore.terrainHeights[hIdx]
+				const h    = Number.isFinite(raw) ? raw : 0
 				if (h !== 0) anyNonZero = true
 				pos.setY(vi, h)
 				applyHeightColor(col, vi, h)
@@ -1041,6 +1245,7 @@ export function useWorldEngine(canvasRef) {
 				mesh.remove(mesh.userData.hoverLabel)
 				mesh.userData.hoverDiv = null
 				mesh.userData.hoverLabel = null
+				hoverTextMeshes.delete(mesh)
 			}
 			return
 		}
@@ -1054,11 +1259,17 @@ export function useWorldEngine(canvasRef) {
 			mesh.userData.hoverDiv   = div
 			mesh.userData.hoverLabel = label
 		}
+		hoverTextMeshes.add(mesh)
 		if (div.textContent !== text) div.textContent = text
 		const c = obj.textColor
 		div.style.color = c
 			? `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${c[3].toFixed(2)})`
 			: '#ffffff'
+		// WHY: Orphaned child prims sit at scene root with local-relative pos ≈ origin —
+		// their label would float at SL(0,0,0) until parent arrives. Hide CSS2DObject
+		// (CSS2DRenderer checks its own .visible, not the mesh's) until reparented.
+		const isOrphan = (obj.parentId ?? 0) !== 0 && mesh.parent === scene
+		mesh.userData.hoverLabel.visible = !isOrphan
 	}
 
 	// ── Selection gizmo (Phase 2 visual scaffold) ────────────────────────────
@@ -1211,6 +1422,15 @@ export function useWorldEngine(canvasRef) {
 	const PLACEHOLDER_COLOR = 0xff1493   // hot pink — high-contrast marker, outside hashed-HSL palette
 	let skippedNoPos     = 0    // pos NaN/Inf or out of range — nowhere to draw
 	let placeholderCount = 0    // bad scale → magenta 1m cube at obj.pos
+	let geoNaNCount      = 0    // built geometry had NaN verts → shown as placeholder instead of culled
+	// DIAG probes (P2 texture-apply): why cached textures don't reach materials.
+	let texCalls = 0, texNull = 0, texApplied = 0, texDropNoParent = 0, texDropMatSwap = 0
+	// P1: linkset-root backfill. ~380 missing roots orphan ~4000 children (hidden + mispositioned).
+	// RequestMultipleObjects can't surface them, but ObjectSelect makes the sim send
+	// ObjectProperties+ObjectUpdate even for prims it otherwise withholds. Ask each root once,
+	// paced, then deselect. Reparenting of waiting orphans is automatic (see upsertMesh parent scan).
+	const askedRoots = new Set()
+	const ROOT_BACKFILL_BATCH = 40   // roots per diag tick (~every 20 ObjectUpdates)
 	function classifySafety(obj) {
 		if (obj.pcode === PCODE_AVATAR) return { ok: true }
 		const p = obj.pos
@@ -1253,11 +1473,15 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function upsertMesh(obj) {
+		// Guard: skip prims with non-finite pos/scale — they'd produce NaN geometry (Three.js
+		// "Computed radius is NaN" spam) and can't be placed. Bad decode or bad sim data.
+		const finite3 = (a) => Array.isArray(a) && a.length >= 3 && a.every(Number.isFinite)
+		if (!finite3(obj.pos) || !finite3(obj.scale)) return
 		const safety = classifySafety(obj)
 		if (safety.placeholder) {
 			// Shallow-copy so worldStore's original record stays intact. Clamp scale to 1m,
-			// drop shape so buildPrimGeometry returns a vanilla cube, drop defaultColor so
-			// placeholder color applies. clampPos (if present) parks the marker at region
+			// drop shape so no real geometry is baked (the unit-cube placeholder stays), drop
+			// defaultColor so placeholder color applies. clampPos (if present) parks the marker at region
 			// corner 0,0,0 — FS convention for unrecoverable-pos objects.
 			obj = {
 				...obj,
@@ -1280,9 +1504,23 @@ export function useWorldEngine(canvasRef) {
 			const isAvatar = obj.pcode === PCODE_AVATAR
 			// WHY: Capsule radius 0.33 (+10% vs old 0.30) for wider silhouette.
 			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
-			const geo = isAvatar
+			// Prim shape: show a cheap unit cube immediately (instant, non-blocking); the real geometry
+			// is baked off-thread (useMeshBaker) and hot-swapped in via applySwap below. Box prims swap
+			// cube→box invisibly. Mesh/sculpt prims fetch their asset first, then bake its submeshes.
+			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
-				: bakePrimScale(buildPrimGeometry(obj.shape), obj.scale)
+				: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
+			// NaN-vertex guard (#D): a prim whose built geometry has non-finite verts would be
+			// frustum-culled = invisible. Swap in a 0.5m cube + placeholder color so it's findable.
+			let geoBad = false
+			if (!isAvatar && !geometryHasFiniteVerts(geo)) {
+				geo.dispose?.()
+				geo = new THREE.BoxGeometry(0.5, 0.5, 0.5)
+				geoBad = true
+				geoNaNCount++
+				if (geoNaNCount <= 10 || geoNaNCount % 50 === 0)
+					debugStore.push('warn', `[3D] NaN geometry localId=${obj.localId} pcode=${obj.pcode} → placeholder (#${geoNaNCount})`)
+			}
 			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit). MeshStandardMaterial
 			// caused directional-light flicker as the mesh rotated with yaw.
 			// WHY hashed-HSL fallback: legacy stand-in when TE decode produces no defaultColor.
@@ -1299,21 +1537,135 @@ export function useWorldEngine(canvasRef) {
 			const teColor = obj.defaultColor
 				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 				: null
-			const primColor = obj._placeholder ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
-			const mat = new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+			const primColor = (obj._placeholder || geoBad) ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
+			// ── Slice 2: hybrid lit materials ───────────────────────────────────
+			// Only prims that carry a material (legacy material_id / PBR ExtraParam 0x80) switch to a
+			// lit MeshStandardMaterial; plain prims + avatars keep the fast unlit MeshBasicMaterial
+			// (avoids the historical rotation-flicker on the bulk of the scene).
+			const hasMaterial = !isAvatar && !obj._placeholder && !!(obj.defaultPbrMaterial || obj.defaultMaterialId)
+			const mat = hasMaterial
+				? new THREE.MeshStandardMaterial({ color: primColor, metalness: 0, roughness: 1 })
+				: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+			if (hasMaterial && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+
+			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
+			// WHY: defaultColor is RGBA; we previously used only RGB, so a prim the sim sent as
+			// semi-transparent rendered fully opaque. Keep depthWrite ON: disabling it made overlapping
+			// prims see-through to the white background, washing the whole scene white. With depthWrite
+			// on, a translucent prim still occludes what's behind it (tinted-glass look) — correct enough
+			// without a full back-to-front transparent sort, and no white-out.
+			if (!isAvatar && !obj._placeholder && obj.defaultColor && obj.defaultColor[3] < 0.99) {
+				mat.transparent = true
+				mat.opacity = obj.defaultColor[3]
+			}
+
+			// ── Mesh / sculpt / prim geometry: bake off-thread, replace the placeholder cube ──────
+			// WHY: prim shapes, decoded mesh submeshes, and decoded sculpt submeshes all route through
+			// the worker baker (useMeshBaker), which returns the geometryFromArrays input shape. Mesh
+			// (ExtraParam type 5) and legacy sculpt (types 1-4) fetch their asset first (server decodes
+			// it to SL-space submesh arrays) then bake those submeshes; plain prims bake the shape.
+			// Hot-swap baked geometry (from the worker, or sync fallback) onto the live mesh. `out` is the
+			// geometryFromArrays input shape, or { bad:true } if the bake produced non-finite verts.
+			// Snapshot the scale the bakes are dispatched with. The update path (existing-mesh branch)
+			// may rescale the placeholder + advance mesh.userData.primScale while a bake is in flight;
+			// applySwap reconciles the worker geometry (baked at bakeScale) to the current primScale.
+			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			// Mesh per-face multi-material: a mesh carrying ≥2 distinct textures gets one material per
+			// submesh/face (built in applySwap once the grouped geometry exists), instead of the single
+			// dominant-texture pick below.
+			const meshMulti = hasMultiFaceMesh(obj)
+			const primMulti = hasMultiFacePrim(obj)
+			const applySwap = (out) => {
+				const _t0 = performance.now()
+				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
+					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
+					return
+				}
+				const baked = geometryFromArrays(out)
+				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
+				if (hasMaterial && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
+				// WHY: an in-flight update may have rescaled the placeholder + advanced primScale since
+				// dispatch. Re-apply the bakeScale→primScale ratio so the swapped geometry matches the
+				// current scale (same axis map as bakePrimScale / the update path). Divisor 0/non-finite → 1.
+				const cur = mesh.userData.primScale
+				if (cur) {
+					const ratio = (n, p) => (Number.isFinite(n) && Number.isFinite(p) && p !== 0) ? n / p : 1
+					const rx = ratio(cur[0], bakeScale[0])
+					const ry = ratio(cur[2], bakeScale[2])
+					const rz = ratio(cur[1], bakeScale[1])
+					if (rx !== 1 || ry !== 1 || rz !== 1) baked.scale(rx, ry, rz)
+				}
+				const old = mesh.geometry
+				mesh.geometry = baked
+				old.dispose()
+				// Planar texgen: regenerate UVs for planar faces now the final scaled geometry exists
+				// (applies to single- and multi-material objects alike — UVs live on the geometry).
+				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
+				applyPlanarUVs(mesh, obj, faceMap)
+				// Mesh per-face: now the grouped geometry exists, replace the single material with a
+				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
+				if (meshMulti) buildFaceMaterials(mesh, obj)
+				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
+				const _dt = performance.now() - _t0
+				_applyN++; _applyMs += _dt; if (_dt > _applyMaxMs) _applyMaxMs = _dt
+			}
+
+			// WHY: the worker's postMessage structured-clones its payload, and Vue/Pinia reactive
+			// Proxies (obj.shape from worldStore, decoded subs) are NOT cloneable → DataCloneError.
+			// Send PLAIN snapshots: the 6 scalar shape fields buildPrimGeometry/applyShapeDeformation
+			// read, and a plain {positions,normals,uvs,indices} per submesh (inner arrays are plain
+			// typed arrays from the decode cache, so they clone fine once the proxy wrapper is dropped).
+			const plainSubs = (subs) => subs.map(s => ({
+				positions: s.positions, normals: s.normals, uvs: s.uvs, indices: s.indices,
+			}))
+			const plainShape = obj.shape ? {
+				pathCurve:      obj.shape.pathCurve,
+				profileCurve:   obj.shape.profileCurve,
+				pathTwist:      obj.shape.pathTwist,
+				pathTwistBegin: obj.shape.pathTwistBegin,
+				pathTaperX:     obj.shape.pathTaperX,
+				pathTaperY:     obj.shape.pathTaperY,
+			} : undefined
+
+			if (!isAvatar && !obj._placeholder && obj.meshId) {
+				getMesh(obj.meshId).then(subs => {
+					if (!subs || !subs.length) return
+					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
+				})
+			} else if (!isAvatar && !obj._placeholder && obj.sculptId) {
+				getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs => {
+					if (!subs || !subs.length) return
+					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
+				})
+			} else if (!isAvatar && !obj._placeholder) {
+				// plain prim shape → bake the real geometry off-thread, swap over the placeholder cube
+				meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale }).then(applySwap)
+			}
+
+			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
+			// already full-bright). Glow adds emissive bloom-ish lift; fullbright ignores lighting.
+			if (hasMaterial && (obj.defaultFullbright || (obj.defaultGlow ?? 0) > 0)) {
+				mat.emissive = new THREE.Color(primColor)
+				mat.emissiveIntensity = obj.defaultFullbright ? 1.0 : Math.min(1, (obj.defaultGlow ?? 0) * 2)
+			}
 
 			// ── Slice 1: real prim texture ──────────────────────────────────────
 			// WHY: TE default texture UUID (decoded server-side) → fetch via asset cap (server
 			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
-			if (!isAvatar && !obj._placeholder && obj.defaultTexture) {
+			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti && !primMulti) ? pickPrimTexture(obj) : null
+			if (primTexId) {
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
-				const xform = (obj.defaultRepeats || obj.defaultOffset || obj.defaultRotation != null)
-					? { repeat: obj.defaultRepeats ?? [1, 1], offset: obj.defaultOffset ?? [0, 0], rotation: obj.defaultRotation ?? 0 }
-					: null
-				getTexture(obj.defaultTexture, xform).then(tex => {
+				const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
+				texCalls++
+				getTexture(primTexId, xform).then(tex => {
+					// DIAG (P2): classify apply outcome to pin the white-scene cause.
+					if (!tex) texNull++
+					else if (!mesh.parent) texDropNoParent++
+					else if (mesh.material !== mat) texDropMatSwap++
+					else texApplied++
 					// Guard: region teardown may have disposed this mesh before the texture arrives.
 					if (tex && mesh.parent && mesh.material === mat) {
 						mat.map = tex
@@ -1321,8 +1673,54 @@ export function useWorldEngine(canvasRef) {
 						// tinted prim with a plain texture isn't forced white.
 						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 						else mat.color.set(0xffffff)
+						// Alpha (#17): a texture with real transparency (server-reported hasAlpha). Use
+						// alphaTest (cutout) not blend: it discards fully-transparent fragments — fixing
+						// the black-where-transparent symptom — while KEEPING depthWrite, so alpha prims
+						// don't turn the scene see-through/white (the regression from depthWrite=false).
+						// Hard-edged vs smooth blend, but robust without a back-to-front transparent sort.
+						if (tex.userData?.hasAlpha) {
+							mat.alphaTest = 0.5
+						}
 						mat.needsUpdate = true
 					}
+				})
+			}
+
+			// ── Slice 2: PBR (GLTF) — overrides the diffuse map above when present ───
+			// Skip for multi-face meshes: those swap to a per-face material array in applySwap, which
+			// would discard (and leak) any PBR-mutated single material. Per-face + PBR is a rare combo;
+			// see docs/tech-debt.md (perface-pbr-skip). Per-face textures win for these meshes.
+			if (obj.defaultPbrMaterial && !meshMulti && !primMulti) {
+				getPbrMaterial(obj.defaultPbrMaterial).then(gltf => {
+					if (!gltf || !mesh.parent || mesh.material !== mat) return
+					const d = gltfToDescriptor(gltf)
+					mat.metalness = d.metallic
+					mat.roughness = d.roughness
+					mat.color.setRGB(d.baseColorFactor[0], d.baseColorFactor[1], d.baseColorFactor[2])
+					mat.emissive = new THREE.Color(d.emissiveFactor[0], d.emissiveFactor[1], d.emissiveFactor[2])
+					if (d.doubleSided) mat.side = THREE.DoubleSide
+					if (d.alphaMode === 'BLEND') mat.transparent = true
+					else if (d.alphaMode === 'MASK') mat.alphaTest = d.alphaCutoff
+					const setMap = (uuid, slot, srgb) => uuid && getTexture(uuid).then(t => {
+						if (t && mesh.material === mat) { if (srgb) t.colorSpace = THREE.SRGBColorSpace; mat[slot] = t; mat.needsUpdate = true }
+					})
+					setMap(d.baseColorTex, 'map', true)
+					setMap(d.normalTex, 'normalMap')
+					setMap(d.metallicRoughnessTex, 'metalnessMap')   // ORM-packed: same texture
+					setMap(d.metallicRoughnessTex, 'roughnessMap')
+					setMap(d.emissiveTex, 'emissiveMap', true)
+					mat.needsUpdate = true
+				})
+			} else if (obj.defaultMaterialId && !primMulti) {
+				// ── Slice 2: legacy RenderMaterials — normal + (specular→roughness approx) ──
+				getLegacyMaterial(obj.defaultMaterialId).then(m => {
+					if (!m || !mesh.parent || mesh.material !== mat) return
+					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat) { mat.normalMap = t; mat.needsUpdate = true } })
+					// MeshStandard has no spec map; approximate shininess via roughness (higher exp = smoother).
+					if (m.specExp) mat.roughness = Math.max(0.1, 1 - m.specExp / 255)
+					if (m.alphaMode === 1) mat.transparent = true
+					else if (m.alphaMode === 2) mat.alphaTest = (m.alphaCutoff ?? 128) / 255
+					mat.needsUpdate = true
 				})
 			}
 			mesh.userData.localId  = obj.localId
@@ -1404,22 +1802,33 @@ export function useWorldEngine(canvasRef) {
 			if (parentMesh) {
 				parentMesh.add(mesh)
 			} else {
-				if (parentLocalId) mesh.visible = false  // orphan child — hide until parent arrives
+				if (parentLocalId) {
+					mesh.visible = false  // orphan child — hide until parent arrives
+					let set = orphansByParent.get(parentLocalId)
+					if (!set) { set = new Set(); orphansByParent.set(parentLocalId, set) }
+					set.add(obj.localId)
+				}
 				scene.add(mesh)
 			}
 			normalizeChildTransform(mesh)
 			meshMap.set(obj.localId, mesh)
 
-			// WHY: This mesh may itself be a parent for orphans that arrived earlier. Scan and reparent.
-			meshMap.forEach((other) => {
-				if (other === mesh) return
-				if (other.userData.parentId === obj.localId && other.parent !== mesh) {
+			// WHY: O(1) reparent of orphans that were waiting on THIS mesh's localId. Replaces a
+			// per-build full meshMap scan (O(n²) overall — the dominant big-region build cost).
+			// Stale index entries (child removed/already parented) are skipped safely.
+			const waiting = orphansByParent.get(obj.localId)
+			if (waiting) {
+				for (const childId of waiting) {
+					const other = meshMap.get(childId)
+					if (!other || other.parent === mesh) continue
 					other.parent?.remove(other)
 					mesh.add(other)
 					normalizeChildTransform(other)
-					other.visible = true  // parent arrived — unhide
+					other.visible = true
+					if (other.userData.hoverLabel) other.userData.hoverLabel.visible = true
 				}
-			})
+				orphansByParent.delete(obj.localId)
+			}
 		} else {
 			// Existing mesh: scale update + animated position
 			// WHY: scale lives in the geometry (node scale stays 1,1,1 so children don't inherit it).
@@ -1427,7 +1836,15 @@ export function useWorldEngine(canvasRef) {
 			// without a rebuild, and is a no-op when the scale is unchanged (the common resync case).
 			if (obj.scale && obj.pcode !== PCODE_AVATAR) {
 				const prev = mesh.userData.primScale || [1, 1, 1]
-				mesh.geometry.scale(obj.scale[0] / prev[0], obj.scale[2] / prev[2], obj.scale[1] / prev[1])
+				// Guard: a prim can arrive with a 0 scale component (finite, so it passes classifySafety
+				// and bakes to a 0-width geometry). On the next update prev[i]=0 → new/0 = Inf, or 0/0 =
+				// NaN → NaN verts → Three.js "Computed radius is NaN" red. Fall back to ratio 1 (leave the
+				// axis as-is) when the divisor is 0 or either value is non-finite.
+				const ratio = (n, p) => (Number.isFinite(n) && Number.isFinite(p) && p !== 0) ? n / p : 1
+				const rx = ratio(obj.scale[0], prev[0])
+				const ry = ratio(obj.scale[2], prev[2])
+				const rz = ratio(obj.scale[1], prev[1])
+				if (rx !== 1 || ry !== 1 || rz !== 1) mesh.geometry.scale(rx, ry, rz)
 				mesh.userData.primScale = obj.scale.slice()
 			}
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
@@ -1457,6 +1874,7 @@ export function useWorldEngine(canvasRef) {
 						scene.remove(mesh)
 						pm.add(mesh)
 						mesh.visible = true
+						if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
 					}
 				}
 				normalizeChildTransform(mesh)
@@ -1476,11 +1894,25 @@ export function useWorldEngine(canvasRef) {
 		if (mesh) {
 			// WHY: Traverse to dispose child geometry/materials (arm indicator etc.) not just root
 			mesh.traverse(child => {
-				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
+				if (child.isMesh) {
+					child.geometry.dispose()
+					// material may be a per-face array (mesh multi-material) — dispose each
+					if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.())
+					else child.material.dispose()
+				}
 			})
 			// WHY: Linked-set children sit under parent mesh, not scene. Detach from actual parent.
 			mesh.parent?.remove(mesh)
+			// WHY: CSS2DRenderer does NOT remove a label's DOM node when its object leaves the scene
+			// graph — the <div> leaks, frozen at its last screen position (stale avatar/hover labels
+			// that don't track the scene). Remove the element explicitly. Covers avatar (label2D) and
+			// prim hovertext (hoverLabel) labels.
+			for (const lbl of [mesh.userData?.label2D, mesh.userData?.hoverLabel]) {
+				if (lbl?.element?.parentNode) lbl.element.remove()
+				lbl?.parent?.remove(lbl)
+			}
 			meshMap.delete(localId)
+			hoverTextMeshes.delete(mesh)
 		}
 	}
 
@@ -1488,7 +1920,7 @@ export function useWorldEngine(canvasRef) {
 	let objUpdateCount = 0
 	// Prim-dropout diagnostic: receive-side counters and 5s periodic summary so we can
 	// compare server-relayed prim count vs client-rendered mesh count. Failures in
-	// buildPrimGeometry/upsertMesh that previously crashed the loop are now caught + counted.
+	// upsertMesh that previously crashed the loop are now caught + counted.
 	let objsReceivedTotal = 0
 	let upsertMeshFailures = 0
 	let lastPrimDiagAt = 0
@@ -1496,8 +1928,10 @@ export function useWorldEngine(canvasRef) {
 		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers, not the full {t,d} envelope.
 		// So payload = { objects: [...] } — access as payload.objects, not payload.d.objects.
 		const objs = payload?.objects ?? []
+		persistObjects(objs)
 		objUpdateCount++
 		objsReceivedTotal += objs.length
+		preseedRegionCache()   // once per region (guarded): instant repaint from IndexedDB before live fills
 		if (objUpdateCount === 1 || objUpdateCount % 20 === 0) {
 			const avCount = objs.filter(o => o.pcode === PCODE_AVATAR).length
 			debugStore.push('info', `[3D] ObjectUpdate #${objUpdateCount}: ${objs.length} objects (${avCount} av) agentId=${sessionStore.agentId?.slice(0,8)}`)
@@ -1507,7 +1941,54 @@ export function useWorldEngine(canvasRef) {
 			lastPrimDiagAt = now
 			const primCount = worldStore.prims.length
 			const avCount = worldStore.avatars.length
-			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} upsertFails=${upsertMeshFailures}`)
+			// DIAG: distinguish "prim has a texture but it wasn't fetched" (fetch gap) from "prim has
+			// no texture at all" (decoder gap). withTex = prims carrying a non-zero defaultTexture;
+			// mapped = meshes that actually have material.map applied.
+			let withTex = 0, mapped = 0
+			for (const o of worldStore.prims) if (o.defaultTexture && o.defaultTexture !== ZERO_TEX_UUID) withTex++
+			// WHY !Array.isArray: a per-face mesh's material is an array, whose `.map` is Array.prototype.map
+			// (truthy) — without this guard every multi-face mesh counts as mapped, skewing the probe.
+			for (const m of meshMap.values()) if (!Array.isArray(m.material) && m.material?.map) mapped++
+			// FaceTex probe: how much white is "default=Blank but real per-face textures exist" (we only
+			// apply the default face) vs "genuinely blank". Decides whether per-face apply is worth it.
+			const BLANK_TEX = '5748decc-f629-461c-9a36-a35a221fe21f'
+			const isReal = (t) => t && t !== ZERO_TEX_UUID && t !== BLANK_TEX
+			let blankDef = 0, blankDefRealFaces = 0, realDef = 0, anyRealFaces = 0
+			for (const o of worldStore.prims) {
+				const realFaces = Array.isArray(o.faceTextures) && o.faceTextures.some(isReal)
+				if (realFaces) anyRealFaces++
+				if (isReal(o.defaultTexture)) realDef++
+				else { blankDef++; if (realFaces) blankDefRealFaces++ }
+			}
+			debugStore.push('info', `[FaceTex] realDefault=${realDef} blankDefault=${blankDef} blankButRealFaceTex=${blankDefRealFaces} anyRealFaceTex=${anyRealFaces}`)
+			// P1 probe: children whose root prim is missing → orphaned (mispositioned + label hidden +
+			// whole linkset can be invisible). missingRoots = distinct root ids never delivered.
+			let children = 0, orphanLive = 0
+			const missingRoots = new Set()
+			for (const o of worldStore.prims) {
+				const pid = o.parentId ?? 0
+				if (pid === 0) continue
+				children++
+				if (!worldStore.objects.has(pid)) { orphanLive++; missingRoots.add(pid) }
+			}
+			let orphanMesh = 0
+			for (const m of meshMap.values()) if ((m.userData?.parentId ?? 0) !== 0 && m.parent === scene) orphanMesh++
+			debugStore.push('info', `[PrimDiag] received=${objsReceivedTotal} stored=${worldStore.objects.size} (prims=${primCount} av=${avCount}) meshes=${meshMap.size} withTex=${withTex} mapped=${mapped} upsertFails=${upsertMeshFailures} placeholders=${placeholderCount} geoNaN=${geoNaNCount} skippedNoPos=${skippedNoPos}`)
+			debugStore.push('info', `[Orphan] children=${children} orphanByMissingRoot=${orphanLive} distinctMissingRoots=${missingRoots.size} orphanMeshAtScene=${orphanMesh}`)
+			// P1 backfill: ObjectSelect a batch of not-yet-asked missing roots → sim sends their
+			// ObjectUpdate → orphaned children reparent automatically. Deselect shortly after.
+			const newRoots = []
+			for (const rid of missingRoots) {
+				if (askedRoots.has(rid)) continue
+				askedRoots.add(rid); newRoots.push(rid)
+				if (newRoots.length >= ROOT_BACKFILL_BATCH) break
+			}
+			if (newRoots.length) {
+				wsEmit(C.OBJECT_SELECT, { localIds: newRoots })
+				setTimeout(() => wsEmit(C.OBJECT_DESELECT, { localIds: newRoots }), 1500)
+				debugStore.push('info', `[RootBackfill] ObjectSelect ${newRoots.length} root(s) (asked=${askedRoots.size}/${missingRoots.size})`)
+			}
+			debugStore.push('info', `[TexApply] withTex=${withTex} mapped=${mapped} calls=${texCalls} null=${texNull} applied=${texApplied} dropNoParent=${texDropNoParent} dropMatSwap=${texDropMatSwap}`)
 			// Mirror to server-log via WS so server-log.txt has full client+server picture.
 			wsEmit(C.CLIENT_DIAG, {
 				received:     objsReceivedTotal,
@@ -1515,9 +1996,17 @@ export function useWorldEngine(canvasRef) {
 				prims:        primCount,
 				av:           avCount,
 				meshes:       meshMap.size,
+				withTex,
+				mapped,
 				upsertFails:  upsertMeshFailures,
 				skippedNoPos,
 				placeholders: placeholderCount,
+				geoNaN:       geoNaNCount,
+				tex:          getTextureStats(),
+				mesh:         getMeshStats(),
+				orphan:       { children, orphanByMissingRoot: orphanLive, distinctMissingRoots: missingRoots.size, orphanMeshAtScene: orphanMesh },
+				texApply:     { calls: texCalls, null: texNull, applied: texApplied, dropNoParent: texDropNoParent, dropMatSwap: texDropMatSwap },
+				faceTex:      { realDefault: realDef, blankDefault: blankDef, blankButRealFaceTex: blankDefRealFaces, anyRealFaceTex: anyRealFaces },
 			})
 		}
 		for (const obj of objs) {
@@ -1526,6 +2015,11 @@ export function useWorldEngine(canvasRef) {
 			// ObjectUpdate batch doesn't block the WS message handler. Avatars are few and the
 			// own-avatar logic below drives the camera, so build those inline immediately.
 			if (obj.pcode !== PCODE_AVATAR) {
+				// Memory-evicted linksets stay evicted on inbound updates: the data is persisted above
+				// (worldStore + IDB) but the mesh is NOT queued — otherwise a moving far object rebuilds
+				// every update and the culler re-evicts it next tick (churn), and a root resurrected here
+				// would come back WITHOUT its children. cullTick reloads the whole linkset when near.
+				if (evicted.has(obj.localId) || evicted.has(obj.parentId ?? 0)) continue
 				pendingMeshIds.add(obj.localId)
 				continue
 			}
@@ -1671,8 +2165,13 @@ export function useWorldEngine(canvasRef) {
 					// only hard-snap for genuine teleport-level distances (> 15m).
 					// landingGraceTimer extends the suppression for ~0.4s after touchdown so stale
 					// in-flight TerseUpdates from the jump arc can't trigger the single post-landing bounce.
+					// WHY: flight is the same situation as a jump arc — local DR owns the path while
+					// the sim's pos lags by ~RTT and climbs/coasts on a different accel profile, so
+					// transient gaps of 5-30m are normal. Lumping flight into the grounded regime made
+					// the >5m hard-snap fire mid-flight and yank the avatar back to the lagging sim Z
+					// ("spring to startpoint"). correctionBlend() gives flight its own regime.
 					const airborne = !isFlying && (vertVel !== 0 || landingGraceTimer > 0)
-					const blend = airborne ? (d > 15 ? 1.0 : 0) : (d > 5 ? 1.0 : (movingNow ? 0 : 0.15))
+					const blend = correctionBlend({ d, isFlying, airborne, movingNow })
 					avatarSLPos[0] += (p[0] - avatarSLPos[0]) * blend
 					avatarSLPos[1] += (p[1] - avatarSLPos[1]) * blend
 					// WHY: on the ground, gravity owns Z — it clamps to terrain every frame. Blending
@@ -1750,18 +2249,46 @@ export function useWorldEngine(canvasRef) {
 	// Browser side: wipe meshes/terrain/objects so the new sim's RegionHandshake +
 	// LayerData + ObjectUpdates rebuild from scratch. ownAvatarLocalId is nulled so
 	// re-attribution happens on the new sim's first ObjectUpdate for the agent.
+	// Set when a cross-region TP lands in a cell missing from the map cache — the
+	// MapBlockReply for the lookup query then applies the destination's true size.
+	let _pendingRegionSizeLookup = false
+	function onEngineMapBlocks(d) {
+		const blocks = d?.blocks ?? []
+		if (!blocks.length) return
+		mapStore.setRegions(blocks)
+		if (!_pendingRegionSizeLookup) return
+		const blk = mapStore.getRegion(
+			Math.floor((sessionStore.regionX ?? 0) / 256),
+			Math.floor((sessionStore.regionY ?? 0) / 256),
+		)
+		if (!blk) return
+		_pendingRegionSizeLookup = false
+		sessionStore.regionSizeX = blk.sizeX || 256
+		sessionStore.regionSizeY = blk.sizeY || 256
+		debugStore.push('info', `[3D] Region size backfilled from map block: ${sessionStore.regionSizeX}×${sessionStore.regionSizeY}`)
+	}
+
 	function onTeleportFinish(d) {
 		uiStore.teleportStatus = 'arriving'
 		_tpSceneCleared = true
+		_objCacheLoadedKey = null  // let the destination region's cache load fresh
 		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
 		meshMap.forEach((mesh) => {
 			mesh.traverse(child => {
-				if (child.isMesh) { child.geometry.dispose(); child.material.dispose() }
+				if (child.isMesh) {
+					child.geometry.dispose()
+					// material may be a per-face array (mesh multi-material) — dispose each
+					if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.())
+					else child.material.dispose()
+				}
 			})
 			mesh.parent?.remove(mesh)
 		})
 		meshMap.clear()
+		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
+		evicted.clear()
+		orphansByParent.clear()
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
 		worldStore.clearTerrain()
@@ -1780,6 +2307,21 @@ export function useWorldEngine(canvasRef) {
 				const h = BigInt(d.regionHandle)
 				sessionStore.regionX = Number(h >> 32n)
 				sessionStore.regionY = Number(h & 0xFFFFFFFFn)
+				// WHY: UDP TeleportFinish carries no region size (only the EventQueue variant
+				// does, which we don't have). Backfill from the map-block cache so var-region
+				// destinations don't inherit the previous region's dimensions — wrong size
+				// breaks movement clamping, terrain build, and the map's region outline.
+				// Cache miss → query the destination cell; onMapBlocks applies the size.
+				const cellX = Math.floor(sessionStore.regionX / 256)
+				const cellY = Math.floor(sessionStore.regionY / 256)
+				const blk = mapStore.getRegion(cellX, cellY)
+				if (blk) {
+					sessionStore.regionSizeX = blk.sizeX || 256
+					sessionStore.regionSizeY = blk.sizeY || 256
+				} else {
+					_pendingRegionSizeLookup = true
+					sendMapQuery(cellX, cellX, cellY, cellY)
+				}
 			} catch { /* ignore parse error — non-blocking */ }
 		}
 		sessionStore.regionName = ''  // new RegionHandshake will set it
@@ -1806,8 +2348,23 @@ export function useWorldEngine(canvasRef) {
 	// see real name/description/creator/owner instead of placeholder fields.
 	function onObjectProps(payload) {
 		const items = payload?.items ?? []
-		for (const p of items) worldStore.applyObjectProperties(p)
-		if (items.length > 0) debugStore.push('info', `[3D] ObjectProperties: ${items.length} updated`)
+		let ok = 0
+		const miss = []
+		for (const p of items) {
+			if (worldStore.applyObjectProperties(p)) ok++
+			else miss.push(p.fullId)
+		}
+		if (items.length > 0) {
+			// Diagnostic for the "Loading properties from sim…" stall: props ARRIVE (server relays
+			// them) but the floater stays empty → the fullId match in applyObjectProperties must be
+			// failing. Report match rate + how many store objects even carry a fullId.
+			let withFullId = 0
+			worldStore.objects.forEach(o => { if (o.fullId) withFullId++ })
+			const line = `[3D] ObjectProperties: ${ok}/${items.length} matched | store withFullId=${withFullId}/${worldStore.objects.size}` +
+				(miss.length ? ` | missed: ${miss.slice(0, 3).join(', ')}` : '')
+			debugStore.push(ok === items.length ? 'info' : 'warn', line)
+			try { wsEmit(C.CLIENT_LOG, { level: ok === items.length ? 'info' : 'warn', msg: line, stack: '' }) } catch { /* ignore */ }
+		}
 	}
 
 	function onKillObject(payload) {
@@ -1822,10 +2379,17 @@ export function useWorldEngine(canvasRef) {
 		for (const id of ids) {
 			worldStore.objects.forEach((o, lid) => { if (o.parentId === id) all.add(lid) })
 		}
+		const key = regionCacheKey()
+		const keepOnKill = import.meta.env.VITE_KEEP_CACHE_ON_KILL === 'true'
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
+			evicted.delete(id)
 			removeMesh(id)
 			worldStore.removeObject(id)
+			// WHY: stock OpenSim has ObjectsCullingByDistance=false, so KillObject = genuine
+			// delete → evict the cached entry. Grids that enable culling can set
+			// VITE_KEEP_CACHE_ON_KILL=true so a cull-kill does not drop the cached object.
+			if (key && !keepOnKill) objCacheEvict(key, id)
 		}
 		if (ids.length > 0) {
 			// If own avatar was killed (region cross / sim kick), clear tracking
@@ -1902,7 +2466,8 @@ export function useWorldEngine(canvasRef) {
 					const iy = ry - slY
 					const vi = iy * vStride + slX
 					const hIdx = Math.min(j, patchSize - 1) * patchSize + Math.min(i, patchSize - 1)
-					const h = heights[hIdx]
+					const raw = heights[hIdx]
+					const h = Number.isFinite(raw) ? raw : 0   // NaN-guard: partial decode → flat, not invisible
 					pos.setY(vi, h)
 					applyHeightColor(col, vi, h)
 				}
@@ -2117,13 +2682,130 @@ export function useWorldEngine(canvasRef) {
 	// current entry is safe per spec. Fetch the latest obj from worldStore so coalesced updates
 	// (multiple ObjectUpdates before the mesh existed) build at the newest state.
 	const MESH_DRAIN_BUDGET_MS = 8
+	// WHY: per-prim drain work is now cheap (geometry baking moved to the worker), so the drain can
+	// blow through thousands of pendingMeshIds per tick — each dispatching a bake. The single worker
+	// can't keep up, so in-flight job payloads (queued + posted clones + copied submesh arrays) pile
+	// up unbounded → OOM. Stop pulling new prims once the baker is saturated; the leftover ids stay in
+	// pendingMeshIds and the next interval tick resumes after the worker has drained below the cap.
+	const BAKE_INFLIGHT_CAP = 300
+	// Distance from the camera (THREE space) to an object's SL position. Infinity if unknown so a
+	// position-less object sorts as "farthest" (evicted first / never reloaded).
+	function camDistToObj(obj) {
+		if (!obj?.pos || !camera) return Infinity
+		const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+		return camera.position.distanceTo(t)
+	}
+
+	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY in-range: with culling the
+	// whole region is NEVER fully resident (it's memory-bounded), so "resident / all-known" sinks toward
+	// 0 as data streams and never recovers — meaningless. Measure instead "of the non-avatar objects
+	// within render range (R_RANGE), how many are built" — this sits near 100% when streaming keeps up
+	// and dips→recovers as you move into fresh area. `evicted` is the total culled-for-memory count.
+	function updateCullStats() {
+		let known = 0, resident = 0
+		for (const [id, o] of worldStore.objects) {
+			if (o.pcode === PCODE_AVATAR) continue
+			// Roots only: child pos is PARENT-RELATIVE, so camDistToObj on a child is garbage — and
+			// children evict/reload with their root anyway, so root counts represent the linkset.
+			if ((o.parentId ?? 0) !== 0) continue
+			if (camDistToObj(o) > R_RANGE) continue
+			known++
+			if (meshMap.has(id)) resident++
+		}
+		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
+		worldStore.setCullStats({ resident, known, evicted: evicted.size, pct })
+	}
+
+	// Memory-budget distance culling. WHY both passes EVERY tick (not evict-XOR-reload): on a dense
+	// region heap stays above target, so an "else if reload" never runs → objects ahead never rebuild
+	// as you walk (you walk into emptiness). Instead, ALWAYS reload the nearest evicted within R_NEAR
+	// (stream-in), and SEPARATELY evict the farthest when over budget (fund it). Net: the resident set
+	// tracks proximity, bounded by the budget. selectEvictions takes farthest-first so a just-reloaded
+	// near object is never the one evicted. Chrome-gated (memRatio null elsewhere → no-op).
+	function cullTick() {
+		const r = memRatio()
+		if (r == null || !camera) { return }
+		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
+		// distance is meaningless) and moves each root's children with it via this per-tick index.
+		// Built once per tick, only when there is cull work to do.
+		const kids = (evicted.size || r > CULL_TARGET) ? groupChildrenByRoot(worldStore.objects) : null
+		// 1) Stream-in: rebuild nearest evicted objects within R_NEAR, regardless of current pressure.
+		if (evicted.size) {
+			const cands = []
+			for (const id of evicted) {
+				const obj = worldStore.objects.get(id)
+				if (!obj) { evicted.delete(id); continue }   // object gone (KillObject) → forget it
+				cands.push({ id, dist: camDistToObj(obj) })
+			}
+			// Plenty of headroom → recover everything nearest-first; otherwise only within R_NEAR.
+			const ids = selectReloads(cands, r < CULL_RESUME ? Infinity : R_NEAR, MAX_RELOAD_PER_TICK)
+			for (const id of ids) {
+				evicted.delete(id)
+				pendingMeshIds.add(id)
+				// Re-queue the root's children too — they were swept out of meshMap at eviction and
+				// nothing else rebuilds them (the sim won't resend; culling is client-side only).
+				// Build order doesn't matter: a child built before its root parks in orphansByParent.
+				for (const cid of kids.get(id) ?? []) {
+					if (!meshMap.has(cid) && worldStore.objects.has(cid)) pendingMeshIds.add(cid)
+				}
+			}
+		}
+		// 2) Stream-out: if over budget, evict the farthest resident ROOT meshes (whole linksets).
+		// Debounced: a single spiky memRatio sample (GC sawtooth) must not trigger eviction — only
+		// sustained pressure (EVICT_AFTER_TICKS consecutive over-target ticks) does.
+		_overTicks = r > CULL_TARGET ? _overTicks + 1 : 0
+		if (_overTicks >= EVICT_AFTER_TICKS) {
+			const editId = uiStore.editObjectId
+			const cands = []
+			for (const [id] of meshMap) {
+				const obj = worldStore.objects.get(id)
+				if (!obj) continue
+				if (obj.pcode === PCODE_AVATAR) continue   // never evict avatars
+				if ((obj.parentId ?? 0) !== 0) continue    // children ride with their root
+				if (id === ownAvatarLocalId || id === editId) continue
+				cands.push({ id, dist: camDistToObj(obj) })
+			}
+			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK)
+			for (const id of ids) {
+				const childIds = kids.get(id) ?? []
+				// Never evict a linkset somebody is sitting on — a seated avatar parents to a prim, and
+				// removeMesh would dispose the avatar with the subtree. Same if a CHILD is being edited
+				// (the root-level editId check above can't see that).
+				if (childIds.some(cid => cid === editId || worldStore.objects.get(cid)?.pcode === PCODE_AVATAR)) continue
+				// Children FIRST via removeMesh so each gets full cleanup (meshMap/labels/hoverText) —
+				// the old subtree-dispose left children in meshMap as disposed zombies that upsertMesh
+				// treated as alive, permanently breaking linksets (the "lost objects" bug).
+				for (const cid of childIds) { removeMesh(cid); pendingMeshIds.delete(cid) }
+				removeMesh(id)
+				pendingMeshIds.delete(id)
+				evicted.add(id)   // root only — reload re-queues children from the index
+			}
+			// Also bound the in-memory texture cache (the larger, mesh-independent hog). Prunes only
+			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
+			// backfillTextures. Only runs here (over budget), so the steady state never churns.
+			pruneTexturesLRU(96)
+		}
+		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
+		if ((_cullStatTick++ % 3) === 0) updateCullStats()
+	}
+
 	function drainMeshQueue() {
-		if (!pendingMeshIds.size) return
+		if (!pendingMeshIds.size) { _dtEmpty++; return }
+		// Memory governor: stop baking new geometry while the JS heap is near its limit (each bake adds
+		// a BufferGeometry + material). Queued ids stay; the next tick resumes once pressure clears.
+		if (memUnderPressure()) { _dtGov++; return }
+		_dtTicks++
 		const start = performance.now()
+		// Hidden tab: Chrome clamps setInterval to ~1Hz, so the 8ms/30ms pacing collapses to 8ms/s and
+		// the load crawls exactly while the user is away. No frames to protect when hidden → spend a
+		// big budget per (rare) tick instead. Visible tab keeps the small per-frame budget.
+		const budget = (typeof document !== 'undefined' && document.hidden) ? 250 : MESH_DRAIN_BUDGET_MS
 		for (const localId of pendingMeshIds) {
+			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
 			pendingMeshIds.delete(localId)
 			const obj = worldStore.objects.get(localId)
 			if (!obj) continue  // killed before its mesh was built
+			const t0 = performance.now()
 			try {
 				upsertMesh(obj)
 			} catch (e) {
@@ -2132,7 +2814,11 @@ export function useWorldEngine(canvasRef) {
 					debugStore.push('warn', `[3D] upsertMesh(drain) fail #${upsertMeshFailures} localId=${localId} pcode=${obj.pcode}: ${e.message}`)
 				}
 			}
-			if (performance.now() - start > MESH_DRAIN_BUDGET_MS) break
+			// Throughput probe: per-call upsertMesh cost is the cold-load bottleneck (~30 builds/s on a
+			// 31k-prim region). Accumulated here, reported+reset by the 5s asset-stats tick as [Drain].
+			const dt = performance.now() - t0
+			_drainBuilt++; _drainMs += dt; if (dt > _drainMaxMs) _drainMaxMs = dt
+			if (performance.now() - start > budget) { _dtBrkBudget++; break }
 		}
 		// C1 (perf): once the initial flood has fully drained, precompile shaders off the render
 		// path (async, non-blocking where the GPU supports KHR_parallel_shader_compile) so the
@@ -2140,6 +2826,137 @@ export function useWorldEngine(canvasRef) {
 		if (pendingMeshIds.size === 0 && !_didPrecompile && meshMap.size > 50 && renderer) {
 			_didPrecompile = true
 			renderer.compileAsync?.(scene, camera)
+		}
+	}
+
+	// WHY: A child built before its root's MESH exists is added to scene at parent-LOCAL coords
+	// (mispositioned + label hidden), and the root's one-shot reparent scan already ran — so it's
+	// never reattached. Slow mesh-build makes this common. Periodic sweep: any scene-orphan whose
+	// parent mesh now exists gets moved under it (its local pos/rot then resolve correctly).
+	function reparentOrphans() {
+		for (const mesh of meshMap.values()) {
+			const pid = mesh.userData?.parentId ?? 0
+			if (pid === 0 || mesh.parent !== scene) continue
+			const parentMesh = meshMap.get(pid)
+			if (!parentMesh) continue
+			scene.remove(mesh)
+			parentMesh.add(mesh)
+			if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
+		}
+	}
+
+	// Re-apply a prim's diffuse texture to an already-built mesh that still lacks a map. Used by the
+	// backfill pass: applies textures that arrived AFTER the mesh built, and drives retries of timed-
+	// out fetches (getTexture re-queues soft-failed UUIDs until the fetcher's retry budget). Success
+	// also persists to IDB, so each reload starts fuller — the "textures don't stick" fix.
+	// Mesh per-face multi-material: replace the mesh's single material with one MeshBasicMaterial per
+	// submesh/geometry-group (group.materialIndex = SL face index). Each face gets its faceTextures[i]
+	// (else defaultTexture) + faceColors[i] tint (else defaultColor) + its per-face UV (faceRepeats/
+	// faceOffset/faceRotation, falling back to the default UV). Textures fill in async; the array is
+	// assigned immediately so the mesh renders (tinted) while they load.
+	// Planar texgen (TE TexGen = 1): SL ignores the authored UVs and projects the texture from each
+	// vertex's scaled volume position along its normal's dominant axis (lib/planarUV.js, ported from
+	// FS planarProjection). Without this, planar faces sample a degenerate authored atlas → stripes/
+	// moire. Recomputes the uv attribute in place for every face group whose effective TexGen is
+	// planar — safe because each bake produces per-object buffers (nothing shared). Must run AFTER
+	// the final geometry swap/rescale (positions carry the baked scale, which planar mapping needs:
+	// repeats are per-meter). The TE repeat/offset/rotation transform still applies on top via the
+	// texture matrix, same as non-planar. NOTE: a later pure-rescale update desyncs these UVs
+	// slightly until the next full rebuild — accepted (rescale of planar-mapped objects is rare).
+	function applyPlanarUVs(mesh, obj, faceMap = null) {
+		const tg = (slFace) => obj.faceTexGen?.[slFace] ?? obj.defaultTexGen
+		const geo = mesh.geometry
+		const pos = geo?.attributes?.position
+		if (!pos) return
+		const groups = (geo.groups && geo.groups.length)
+			? geo.groups
+			: [{ start: 0, count: geo.index ? geo.index.count : pos.count, materialIndex: 0 }]
+		if (!groups.some((g) => tg(slFaceForGroup(faceMap, g.materialIndex ?? 0)) === 1)) return
+		if (!geo.attributes.normal) geo.computeVertexNormals()
+		const nrm = geo.attributes.normal
+		let uv = geo.attributes.uv
+		if (!uv || uv.count !== pos.count) {
+			uv = new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2)
+			geo.setAttribute('uv', uv)
+		}
+		const idx = geo.index
+		for (const g of groups) {
+			if (tg(slFaceForGroup(faceMap, g.materialIndex ?? 0)) !== 1) continue
+			const end = g.start + g.count
+			for (let i = g.start; i < end; i++) {
+				const v = idx ? idx.getX(i) : i
+				const [u, w] = planarUVFromThree(
+					pos.getX(v), pos.getY(v), pos.getZ(v),
+					nrm.getX(v), nrm.getY(v), nrm.getZ(v),
+				)
+				uv.setXY(v, u, w)
+			}
+		}
+		uv.needsUpdate = true
+	}
+
+	function buildFaceMaterials(mesh, obj, faceMap = null) {
+		const groups = mesh.geometry?.groups
+		if (!groups || !groups.length) return   // no groups → can't split; leave the single material
+		const maxIdx = groups.reduce((m, g) => Math.max(m, g.materialIndex ?? 0), 0)
+		// Group materialIndex → SL TextureEntry face index. Identity for meshes (no map).
+		const sf = (i) => slFaceForGroup(faceMap, i)
+		// Per-face UV transform: face override if present, else the prim default; identity → null.
+		const faceXform = (i) => uvXform(
+			obj.faceRepeats?.[sf(i)] ?? obj.defaultRepeats,
+			obj.faceOffset?.[sf(i)] ?? obj.defaultOffset,
+			obj.faceRotation?.[sf(i)] ?? obj.defaultRotation,
+		)
+		const mats = []
+		for (let i = 0; i <= maxIdx; i++) {
+			const fc = obj.faceColors?.[sf(i)] ?? obj.defaultColor
+			const m = new THREE.MeshBasicMaterial({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
+			if (fc && fc[3] < 0.99) { m.transparent = true; m.opacity = fc[3] }
+			mats.push(m)
+		}
+		const oldMat = mesh.material
+		mesh.material = mats
+		if (!Array.isArray(oldMat)) oldMat.dispose?.()   // single placeholder material no longer used
+		for (let i = 0; i < mats.length; i++) {
+			const faceTex = isRealTex(obj.faceTextures?.[sf(i)]) ? obj.faceTextures[sf(i)]
+				: (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
+			if (!faceTex) continue
+			const m = mats[i]
+			getTexture(faceTex, faceXform(i)).then(tex => {
+				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
+				m.map = tex
+				if (!(obj.faceColors?.[sf(i)] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
+				if (tex.userData?.hasAlpha) m.alphaTest = 0.5
+				m.needsUpdate = true
+			})
+		}
+	}
+
+	function reapplyDiffuse(mesh, obj) {
+		const mat = mesh.material
+		if (Array.isArray(mat)) return   // per-face multi-material mesh — backfill not applicable
+		if (!mat || mat.map || obj._placeholder || obj.pcode === PCODE_AVATAR) return
+		const texId = pickPrimTexture(obj)
+		if (!texId) return
+		const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
+		getTexture(texId, xform).then(tex => {
+			if (!tex || !mesh.parent || mesh.material !== mat || mat.map) return
+			mat.map = tex
+			if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+			else mat.color.set(0xffffff)
+			if (tex.userData?.hasAlpha) mat.alphaTest = 0.5
+			mat.needsUpdate = true
+		})
+	}
+
+	// Periodic sweep: every still-white prim mesh re-requests its texture. getTexture short-circuits
+	// to cache hits (instant apply) and the fetcher caps/dedupes/retry-budgets network fetches, so the
+	// pass converges and tapers as the scene fills. Cheap relative to the removed O(n²) build scan.
+	function backfillTextures() {
+		for (const [localId, mesh] of meshMap) {
+			if (Array.isArray(mesh.material) || mesh.material?.map) continue
+			const obj = worldStore.objects.get(localId)
+			if (obj) reapplyDiffuse(mesh, obj)
 		}
 	}
 
@@ -2152,6 +2969,11 @@ export function useWorldEngine(canvasRef) {
 		// the frame's work while unfocused — the rAF loop stays alive so we resume instantly on focus.
 		// Advance lastTime so dt doesn't spike on the first frame back.
 		if (!document.hasFocus()) { lastTime = time; return }
+		const _frT0 = performance.now()
+		// Starvation-proof drain: ~125ms long tasks (see [Main] telemetry) starve the 30ms interval to
+		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. Budgeted (8ms), so
+		// the frame cost is bounded; the interval still covers the unfocused case.
+		drainMeshQueue()
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
@@ -2246,8 +3068,11 @@ export function useWorldEngine(canvasRef) {
 		// avoid 60fps store writes while idle.
 		if (avatarSLPos && ownAvatarLocalId && (cf || drVelX !== 0 || drVelY !== 0)) {
 			const runSticky = uiStore.alwaysRun
-			const spd  = ((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
-			const lspd = ((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED
+			// WHY: while flying, horizontal motion is at fly speed, not walk/run. The old code
+			// dead-reckoned forward/strafe fly at SL_WALK_SPEED (3.2) while the sim flies far
+			// faster, so the gap blew past the snap threshold → mid-flight yank. Match the sim.
+			const spd  = isFlying ? SL_FLY_SPEED : (((cf & CTRL_FAST_AT)   || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED)
+			const lspd = isFlying ? SL_FLY_SPEED : (((cf & CTRL_FAST_LEFT) || runSticky) ? SL_RUN_SPEED : SL_WALK_SPEED)
 			// SL space vectors (Z-up): forward = (-sin(yaw), cos(yaw)), right = (cos(yaw), sin(yaw))
 			const fX = -Math.sin(yaw), fY = Math.cos(yaw)
 			const rX =  Math.cos(yaw), rY = Math.sin(yaw)
@@ -2337,10 +3162,36 @@ export function useWorldEngine(canvasRef) {
 		if (waterMaterial) waterMaterial.uniforms.uTime.value += dt
 		if (gizmoGroup) positionGizmo()
 
-		drainMeshQueue()  // perf: paced prim-mesh creation (bounded per frame)
+		// NOTE: mesh building moved off the rAF path to a focus-independent timer (see onMounted).
+		// The rAF loop returns early when unfocused (line above), which previously froze ALL mesh
+		// building whenever the window lost focus — so heavy regions only ever built ~30-50%.
+
+		// WHY: CSS2DRenderer owns element.style.display — do not touch it.
+		// Fade by camera distance: zoom in → labels appear, zoom out → labels hide.
+		// Full at <15m, fade 15–20m, hidden beyond 20m.
+		if (hoverTextMeshes.size) {
+			const camPos = camera.position
+			for (const m of hoverTextMeshes) {
+				const div = m.userData.hoverDiv
+				if (!div) continue
+				m.getWorldPosition(_htVec3)
+				const dist = camPos.distanceTo(_htVec3)
+				if (dist > 20) {
+					div.style.visibility = 'hidden'
+				} else {
+					div.style.visibility = ''
+					div.style.opacity = dist < 15 ? '1' : ((20 - dist) / 5).toFixed(3)
+				}
+			}
+		}
 
 		renderer.render(scene, camera)
 		labelRenderer.render(scene, camera)
+		// Frame-work gauge: total main-thread ms this frame consumed (camera + scene walk + render).
+		// At 31k objects frames can run 100s of ms — a continuous rAF loop then starves every
+		// setInterval (drain ticks observed at ~0.5Hz in a visible tab). Reported via [Main] each 5s.
+		const _frDt = performance.now() - _frT0
+		_frN++; _frMs += _frDt; if (_frDt > _frMaxMs) _frMaxMs = _frDt
 	}
 
 	// ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -2377,8 +3228,91 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
+		installConsoleForwarder(wsEmit)   // dev: forward NaN/radius console warnings to server-log
 		initScene()
+		// Long-task observer: counts main-thread blocks >50ms (render frames, WS handler floods, GC)
+		// so the 5s [Main] line shows how starved timers actually are. Chrome-only entryType; no-op
+		// elsewhere.
+		try {
+			_longTaskObs = new PerformanceObserver((list) => {
+				for (const e of list.getEntries()) { _ltN++; _ltMs += e.duration; if (e.duration > _ltMaxMs) _ltMaxMs = e.duration }
+			})
+			_longTaskObs.observe({ entryTypes: ['longtask'] })
+		} catch { _longTaskObs = null }
 		requestAnimationFrame(t => { lastTime = t; animate(t) })
+		// WHY: Mesh building runs here (not in the rAF loop) so it keeps progressing while the window
+		// is unfocused — building is CPU/geometry work, not rendering, so it has no reason to be
+		// focus-gated. 12ms budget × ~33Hz ≈ 400ms/s of build time vs the old focus-gated rAF path.
+		// Reparent sweep is cheaper; run it every 4th tick.
+		let _drainTick = 0
+		_meshDrainTimer = setInterval(() => {
+			drainMeshQueue()
+			pumpTextures()   // resume governor-paused texture fetches once heap pressure clears
+			if ((_drainTick++ & 3) === 0) reparentOrphans()
+		}, 30)
+		_cullTimer = setInterval(cullTick, 1000)
+		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
+		// scene keeps filling and the IDB cache completes (persists across reloads). 3s cadence.
+		_texBackfillTimer = setInterval(backfillTextures, 3000)
+		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
+		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
+		_assetStatsTimer = setInterval(() => {
+			const t = getTextureStats(), m = getMeshStats()
+			// Memory telemetry: always report heap pressure to the server log (C.CLIENT_LOG → [ClientLog])
+			// so it can be watched live while tuning the governor. Quiet on non-Chrome (memStats null).
+			const mg = memStats()
+			if (mg) {
+				const pressure = memUnderPressure()
+				// Heap-hog breakdown: where the resident bytes actually live. geomMB sums each meshMap
+				// entry's own BufferGeometry attributes (children are their own entries — no double count).
+				let geomB = 0
+				for (const mm of meshMap.values()) {
+					const g = mm.geometry
+					if (!g) continue
+					for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
+					geomB += g.index?.array?.byteLength || 0
+				}
+				const mb = (b) => (b / 1048576).toFixed(0)
+				const line = `[Mem] heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(getTextureBytes())} meshCacheMB=${mb(getMeshBytes())} geomMB=${mb(geomB)}` +
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size}`
+				debugStore.push(pressure ? 'warn' : 'info', line)
+				try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+			}
+			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
+			if (_drainBuilt) {
+				const dline = `[Drain] built=${_drainBuilt} (${(_drainBuilt / 5).toFixed(0)}/s) avg=${(_drainMs / _drainBuilt).toFixed(1)}ms max=${_drainMaxMs.toFixed(1)}ms queued=${pendingMeshIds.size} hidden=${typeof document !== 'undefined' && document.hidden ? 1 : 0}` +
+					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget}`
+				debugStore.push('info', dline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: dline, stack: '' }) } catch { /* ignore */ }
+				_drainBuilt = 0; _drainMs = 0; _drainMaxMs = 0
+				_dtTicks = 0; _dtEmpty = 0; _dtGov = 0; _dtBrkCap = 0; _dtBrkBudget = 0
+			}
+			// Main-thread health: frame work (rAF) + long tasks. This is what starves the drain timer.
+			if (_frN || _ltN) {
+				const ws = takeWsStats()
+				const mline = `[Main] frames=${_frN} avg=${(_frN ? _frMs / _frN : 0).toFixed(0)}ms max=${_frMaxMs.toFixed(0)}ms` +
+					` | longtasks=${_ltN} total=${_ltMs.toFixed(0)}ms max=${_ltMaxMs.toFixed(0)}ms` +
+					` | ws parse=${ws.parseMs.toFixed(0)}ms top: ${ws.top || '-'}`
+				debugStore.push('info', mline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
+				_frN = 0; _frMs = 0; _frMaxMs = 0; _ltN = 0; _ltMs = 0; _ltMaxMs = 0
+			}
+			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms.
+			const bs = meshBaker.takeStats()
+			if (bs.jobs || _applyN) {
+				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}`
+				debugStore.push('info', bline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
+				_applyN = 0; _applyMs = 0; _applyMaxMs = 0
+			}
+			const busy = t.inflight || t.queued || m.inflight || m.queued
+			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
+			_lastTexReq = t.requested; _lastMeshReq = m.requested
+			debugStore.push('info',
+				`[Assets] tex ✓${t.done} ✗${t.failed} ⏱${t.timeout} inflight=${t.inflight} q=${t.queued} cache=${t.cached} | ` +
+				`mesh ✓${m.done} ✗${m.failed} ⏱${m.timeout} inflight=${m.inflight} q=${m.queued} cache=${m.cached}`)
+		}, 3000)
 		window.addEventListener('keydown', onKeyDown, { passive: false })
 		window.addEventListener('keyup',   onKeyUp)
 		window.addEventListener('blur',    onBlur)
@@ -2397,12 +3331,14 @@ export function useWorldEngine(canvasRef) {
 		on(S.TERSE_UPDATE,     onTerseUpdate)
 		on(S.AGENT_SPAWN_POS,  onAgentSpawnPos)
 		on(S.KILL_OBJECT,      onKillObject)
+		on(S.OBJ_CACHE_PROBE,  onObjCacheProbe)
 		on(S.TERRAIN_PATCH,    onTerrainPatch)
 		on(S.TELEPORT_STARTED,  onTeleportStarted)
 		on(S.TELEPORT_PROGRESS, onTeleportProgress)
 		on(S.TELEPORT_FINISH,   onTeleportFinish)
 		on(S.TELEPORT_FAILED,   onTeleportFailed)
 		on(S.OBJECT_PROPS,      onObjectProps)
+		on(S.MAP_BLOCKS,        onEngineMapBlocks)
 	})
 
 	onUnmounted(() => {
@@ -2417,6 +3353,13 @@ export function useWorldEngine(canvasRef) {
 		clearGizmo()
 		endFocusGlide()
 		cancelAnimationFrame(animId)
+		uninstallConsoleForwarder()
+		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
+		if (_meshDrainTimer) { clearInterval(_meshDrainTimer); _meshDrainTimer = null }
+		if (_cullTimer) { clearInterval(_cullTimer); _cullTimer = null }
+		if (_longTaskObs) { try { _longTaskObs.disconnect() } catch { /* ignore */ } _longTaskObs = null }
+		evicted.clear()
+		if (_texBackfillTimer) { clearInterval(_texBackfillTimer); _texBackfillTimer = null }
 		window.removeEventListener('keydown', onKeyDown)
 		window.removeEventListener('keyup',   onKeyUp)
 		window.removeEventListener('blur',    onBlur)
@@ -2433,18 +3376,25 @@ export function useWorldEngine(canvasRef) {
 		off(S.TERSE_UPDATE,    onTerseUpdate)
 		off(S.AGENT_SPAWN_POS, onAgentSpawnPos)
 		off(S.KILL_OBJECT,     onKillObject)
+		off(S.OBJ_CACHE_PROBE, onObjCacheProbe)
 		off(S.TERRAIN_PATCH,   onTerrainPatch)
 		off(S.TELEPORT_STARTED,  onTeleportStarted)
 		off(S.TELEPORT_PROGRESS, onTeleportProgress)
 		off(S.TELEPORT_FINISH,   onTeleportFinish)
 		off(S.TELEPORT_FAILED,   onTeleportFailed)
 		off(S.OBJECT_PROPS,      onObjectProps)
+		off(S.MAP_BLOCKS,        onEngineMapBlocks)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
+		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
+		evicted.clear()
+		orphansByParent.clear()
+		meshBaker.dispose()     // terminate the off-thread geometry-bake worker
+		objCacheFlush()         // persist any buffered object writes before teardown
 		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()
 		worldStore.clearAll()

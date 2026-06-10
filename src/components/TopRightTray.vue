@@ -38,7 +38,7 @@ function initials(name) {
 </script>
 
 <template>
-	<div class="fixed top-12 right-4 z-[150] flex items-start gap-2 select-none">
+	<div class="fixed top-10 right-2 z-[150] flex items-start gap-2 select-none">
 		<!-- Open IM conversations (FS stacks these to the left of the notifications well) -->
 		<button
 			v-for="c in sessions"

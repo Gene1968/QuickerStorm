@@ -5,11 +5,21 @@
 // repeated calls and thrash on the same (or dead) UUIDs.
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
-import { texCacheGet, texCachePut } from '@/lib/textureCache.js'
+import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
+import { memUnderPressure } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 const FETCH_TIMEOUT_MS = 30_000
+// WHY cap: a region delivers ~1-2k textures. The server transcodes J2C→PNG on a single-instance
+// WASM decoder (CPU-bound, serialized on the event loop). Firing every request at once means the
+// late ones sit behind hundreds of decodes and blow FETCH_TIMEOUT_MS → negative-cached → invisible
+// for the session, and which ones win the race varies per load. Cap concurrent network fetches like
+// useMeshFetch does so the queue drains steadily instead of flooding. (texCacheGet/IDB hits and
+// in-memory hits don't go through the cap — only true network fetches do.)
+// 12: live telemetry showed 0 timeouts at 6 and ~1.3 fetches/s (grid round-trip bound, parallelizable)
+// → headroom to roughly double throughput. Raise further only if timeouts stay 0.
+const MAX_INFLIGHT = 12
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
 const texInflight = new Map()  // uuid → Promise<THREE.Texture|null>
@@ -17,7 +27,26 @@ const urlInflight = new Map()  // uuid → Promise<string|null>  (IDB-or-network
 const pending     = new Map()  // uuid → { resolve, timer }     (in-flight WS request)
 const xformCache  = new Map()  // `uuid|repS|repT|offS|offT|rot` → cloned THREE.Texture w/ UV transform
 const urlCache    = new Map()  // uuid → PNG data URL (sync mirror; thumbnails + fast re-reads)
-const failed      = new Set()  // uuids the sim couldn't serve — don't re-request this session
+const alphaCache  = new Map()  // uuid → bool: PNG carries real transparency (drives blend vs opaque)
+// WHY two failure classes: a server ERROR (j2c_decode_incomplete, 404) means the asset can't be
+// produced — retrying wastes a slot, so it's permanent. A TIMEOUT means the server was just slow/
+// overloaded (serialized J2C decoder under a flood) — likely to succeed once load drops, so it's
+// retryable up to MAX_SOFT_RETRY. Conflating them (the old single `failed` set) meant timed-out
+// textures stayed white for the session AND never cached → white every reload.
+const failedHard  = new Set()  // uuids the server errored on — never retry
+const softAttempts = new Map() // uuid → timeout count; retry until MAX_SOFT_RETRY then give up
+const MAX_SOFT_RETRY = 4
+const netQueue    = []         // queued network fetches awaiting a slot (runs: () => void)
+let   active      = 0          // in-flight network fetches (≤ MAX_INFLIGHT)
+// LRU bookkeeping for in-memory eviction. WHY: the `cache`/`xformCache` Maps grow UNBOUNDED — every
+// texture ever seen stays resident (~0.25 MB each at 256²), so exploring a dense region accumulates
+// gigabytes the mesh culler can't free (it disposes geometry, not these Maps). lastUsed lets the cull
+// tick prune the least-recently-applied textures when over the memory budget.
+const lastUsed    = new Map()  // uuid → last-access timestamp (ms)
+const TEX_PRUNE_AGE_MS = 20000 // never prune a texture applied within the last 20s (avoid blanking near faces)
+
+// Live counters so we can watch steady population (vs flooding) — see getTextureStats().
+const stats = { requested: 0, done: 0, failed: 0, timeout: 0 }
 
 const EPS = 1e-4
 const isIdentityXform = (x) =>
@@ -29,46 +58,104 @@ function _wire() {
 	if (_wired) return
 	_wired = true
 	useRealtimeSocket().on(S.ASSET_DATA, _onAssetData)
+	// WHY: populate failedHard from IDB on first use so reloads skip ~63 dead textures immediately,
+	// avoiding wasted grid fetches + event-loop-blocking J2C decodes for known-bad UUIDs.
+	texFailedLoad().then(uuids => { for (const u of uuids) failedHard.add(u) })
 }
+
+// Free an in-flight slot and start the next queued fetch (if any).
+// Memory governor: while the JS heap is near its limit, do NOT start new network fetches — each
+// completed fetch builds a THREE.Texture that retains its decoded image (the cold-load OOM hog).
+// Leaving them queued (not dropped) lets them resume once pressure clears (re-pumped by the engine's
+// drain interval). memUnderPressure() is false when performance.memory is unavailable → no change.
+function _pump() {
+	while (active < MAX_INFLIGHT && netQueue.length && !memUnderPressure()) { active++; netQueue.shift()() }
+}
+
+// Re-pump from a periodic caller (the world-engine drain tick) so queued fetches resume after the
+// governor pauses them — _pump is otherwise only re-triggered when a slot frees.
+export function pumpTextures() { _pump() }
 
 // S.ASSET_DATA → resolve the pending WS request with a data URL (or null on error/missing).
 function _onAssetData(d) {
 	if (!d || d.assetType !== 'texture') return
 	const p = pending.get(d.uuid)
-	if (!p) return
+	if (!p) return            // already timed out (slot already freed) — ignore late arrival
 	pending.delete(d.uuid)
-	clearTimeout(p.timer)
-	if (d.error || !d.dataB64) { p.resolve(null); return }
+	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p.resolve(null); return }
+	stats.done++
+	alphaCache.set(d.uuid, !!d.hasAlpha)
 	p.resolve(`data:${d.mime || 'image/png'};base64,${d.dataB64}`)
 }
 
-// Fetch a texture's PNG bytes from the server over WS. Resolves the data URL or null (timeout/miss).
+// Fetch a texture's PNG bytes from the server over WS, gated by MAX_INFLIGHT. Resolves the data URL
+// or null (timeout/miss). The slot is held from emit() until S.ASSET_DATA or timeout, so the server's
+// serialized J2C decoder is never asked for more than MAX_INFLIGHT textures at once.
 function _wsFetch(uuid) {
 	_wire()
-	const { emit } = useRealtimeSocket()
-	const p = new Promise(resolve => {
-		// WHY timeout: a UUID the sim can't serve never produces S.ASSET_DATA; without this the
-		// resolver (and inflight entry) would leak forever.
-		const timer = setTimeout(() => { pending.delete(uuid); resolve(null) }, FETCH_TIMEOUT_MS)
-		pending.set(uuid, { resolve, timer })
+	stats.requested++
+	return new Promise(resolve => {
+		const run = () => {
+			const { emit } = useRealtimeSocket()
+			// settle() runs exactly once: frees the slot, pumps the queue, resolves. Both the data
+			// path (via pending.resolve) and the timeout path go through it.
+			let settled = false
+			const settle = (url) => {
+				if (settled) return
+				settled = true
+				clearTimeout(timer)
+				pending.delete(uuid)
+				active--
+				_pump()
+				resolve(url)
+			}
+			// WHY timeout: a UUID the sim can't serve never produces S.ASSET_DATA; without this the
+			// resolver, the inflight entry, AND the slot would leak forever (starving the queue).
+			const timer = setTimeout(() => {
+				stats.timeout++
+				softAttempts.set(uuid, (softAttempts.get(uuid) || 0) + 1)  // retryable: server was slow
+				settle(null)
+			}, FETCH_TIMEOUT_MS)
+			pending.set(uuid, { resolve: settle, timer })
+			emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
+		}
+		// active was already incremented by _pump(); queue + pump keeps the bookkeeping in one place.
+		netQueue.push(run)
+		_pump()
 	})
-	emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
-	return p
+}
+
+/** Live fetch counters (textures). For watching steady population / confirming the cap holds. */
+export function getTextureStats() {
+	return { ...stats, inflight: active, queued: netQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size }
+}
+
+// Estimated JS-heap bytes held by resident texture bitmaps (decoded RGBA: w*h*4 per base texture).
+// UV-transform clones share the base's image source, so only base textures are counted.
+export function getTextureBytes() {
+	let b = 0
+	for (const tex of cache.values()) {
+		const img = tex?.image
+		if (img?.width) b += img.width * img.height * 4
+	}
+	return b
 }
 
 // Resolve a UUID to its PNG data URL through all cache layers. Deduped; populates IDB on a miss.
 function getDataUrl(uuid) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
 	if (urlCache.has(uuid)) return Promise.resolve(urlCache.get(uuid))
-	if (failed.has(uuid))   return Promise.resolve(null)
+	if (failedHard.has(uuid)) return Promise.resolve(null)                       // server errored — never retry
+	if ((softAttempts.get(uuid) || 0) >= MAX_SOFT_RETRY) return Promise.resolve(null)  // timed out too many times
 	if (urlInflight.has(uuid)) return urlInflight.get(uuid)
 
 	const p = (async () => {
 		const cached = await texCacheGet(uuid)         // IndexedDB (survives reloads)
-		if (cached) { urlCache.set(uuid, cached); return cached }
-		const net = await _wsFetch(uuid)               // server fetch + transcode
-		if (net) { urlCache.set(uuid, net); texCachePut(uuid, net); return net }   // persist for next time
-		failed.add(uuid)
+		if (cached) { urlCache.set(uuid, cached.url); alphaCache.set(uuid, cached.hasAlpha); return cached.url }
+		const net = await _wsFetch(uuid)               // server fetch + transcode (sets alphaCache)
+		if (net) { urlCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time
+		// null here = hard error (failedHard set in _onAssetData) or timeout (softAttempts bumped in
+		// _wsFetch). Either way classified already — a later getDataUrl call retries soft ones.
 		return null
 	})().then(url => { urlInflight.delete(uuid); return url })
 
@@ -76,12 +163,30 @@ function getDataUrl(uuid) {
 	return p
 }
 
-// Build a THREE.Texture from a PNG data URL.
+// Client-side resident-texture dimension cap. WHY: a dense region holds thousands of THREE.Textures;
+// each retains its decoded image in memory at the source PNG size. At 512² that's ~1 MB each — 3.4k
+// textures ≈ 3.4 GB, which alone fills Chrome's ~4 GB tab heap and stalls/crashes the load. Downscaling
+// the resident image to ≤256² quarters that (~0.9 GB) regardless of the cached PNG size, trading some
+// sharpness for the ability to load the whole region. The source img is dropped (GC'd) after the draw.
+const MAX_TEX_DIM = 256
+
+// Build a THREE.Texture from a PNG data URL, downscaling the resident image to MAX_TEX_DIM.
 function buildTexture(url) {
 	return new Promise(resolve => {
 		const img = new Image()
 		img.onload = () => {
-			const tex = new THREE.Texture(img)
+			let source = img
+			const longest = Math.max(img.width, img.height)
+			if (longest > MAX_TEX_DIM) {
+				const s = MAX_TEX_DIM / longest
+				const cw = Math.max(1, Math.round(img.width * s))
+				const ch = Math.max(1, Math.round(img.height * s))
+				const canvas = document.createElement('canvas')
+				canvas.width = cw; canvas.height = ch
+				const ctx = canvas.getContext('2d')
+				if (ctx) { ctx.drawImage(img, 0, 0, cw, ch); source = canvas }
+			}
+			const tex = new THREE.Texture(source)
 			tex.colorSpace = THREE.SRGBColorSpace
 			tex.wrapS = tex.wrapT = THREE.RepeatWrapping
 			tex.needsUpdate = true
@@ -95,12 +200,24 @@ function buildTexture(url) {
 // Base texture for a UUID (no UV transform). Cached + deduped at the GPU-texture layer.
 function getBaseTexture(uuid) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
-	if (cache.has(uuid))       return Promise.resolve(cache.get(uuid))
+	if (cache.has(uuid))       { lastUsed.set(uuid, Date.now()); return Promise.resolve(cache.get(uuid)) }
 	if (texInflight.has(uuid)) return texInflight.get(uuid)
 
 	const p = getDataUrl(uuid)
 		.then(url => (url ? buildTexture(url) : null))
-		.then(tex => { texInflight.delete(uuid); if (tex) cache.set(uuid, tex); return tex })
+		.then(tex => {
+			texInflight.delete(uuid)
+			if (tex) {
+				tex.userData.hasAlpha = alphaCache.get(uuid) || false
+				cache.set(uuid, tex)
+				lastUsed.set(uuid, Date.now())
+				// Free the in-memory PNG data URL now the GPU texture exists — these strings are big
+				// (100s of KB–MB each × ~1500 textures = the tab-crashing heap hog). Thumbnails re-read
+				// IndexedDB on demand via getTextureUrl; the GPU texture is what rendering needs.
+				urlCache.delete(uuid)
+			}
+			return tex
+		})
 
 	texInflight.set(uuid, p)
 	return p
@@ -115,6 +232,7 @@ function getBaseTexture(uuid) {
  * GPU texture instead of mutating the shared base (which would corrupt every other prim using it).
  */
 export function getTexture(uuid, xform = null) {
+	if (uuid) lastUsed.set(uuid, Date.now())   // applied now → protect from LRU prune
 	const baseP = getBaseTexture(uuid)
 	if (isIdentityXform(xform)) return baseP
 	const key = `${uuid}|${xform.repeat[0]}|${xform.repeat[1]}|${xform.offset[0]}|${xform.offset[1]}|${xform.rotation}`
@@ -123,6 +241,7 @@ export function getTexture(uuid, xform = null) {
 		if (!base) return null
 		if (xformCache.has(key)) return xformCache.get(key)
 		const t = base.clone()
+		t.userData.hasAlpha = base.userData.hasAlpha
 		t.wrapS = t.wrapT = THREE.RepeatWrapping
 		t.repeat.set(xform.repeat[0], xform.repeat[1])
 		t.offset.set(xform.offset[0], xform.offset[1])
@@ -140,6 +259,34 @@ export function getTextureUrl(uuid) {
 	return getDataUrl(uuid)
 }
 
+// Drop up to `maxPerCall` least-recently-applied textures (base + their UV clones) from the in-memory
+// Maps — WITHOUT calling dispose(). WHY no dispose: a texture may still be the .map of a VISIBLE mesh's
+// material (textures are shared across prims); disposing would render that face broken and backfill
+// would not heal it (the .map isn't null). Instead we just release our Map references: textures used
+// only by already-evicted meshes then have zero references and the GC frees their decoded image (the
+// ~0.25 MB JS-heap hog); textures still on a resident mesh stay alive via that material's reference, so
+// nothing blanks. Re-fetched from IDB if needed again. Skips anything applied within TEX_PRUNE_AGE_MS.
+// Called by the cull tick ONLY while over the memory budget, so the steady state never churns.
+// (GPU-side disposal of evicted-mesh textures needs ref-counting — tracked as follow-up; the immediate
+// crash is JS-heap, which GC reclaims here.) Returns count dropped.
+export function pruneTexturesLRU(maxPerCall = 64, now = Date.now()) {
+	if (!cache.size) return 0
+	const eligible = []
+	for (const uuid of cache.keys()) {
+		if (now - (lastUsed.get(uuid) || 0) > TEX_PRUNE_AGE_MS) eligible.push(uuid)
+	}
+	eligible.sort((a, b) => (lastUsed.get(a) || 0) - (lastUsed.get(b) || 0))   // oldest first
+	let n = 0
+	for (const uuid of eligible) {
+		if (n >= maxPerCall) break
+		cache.delete(uuid); lastUsed.delete(uuid); urlCache.delete(uuid); alphaCache.delete(uuid)
+		const prefix = uuid + '|'
+		for (const k of [...xformCache.keys()]) if (k.startsWith(prefix)) xformCache.delete(k)
+		n++
+	}
+	return n
+}
+
 /**
  * Free in-memory/GPU textures (call on engine teardown). Does NOT clear the IndexedDB cache —
  * that persistence is the whole point; next session repopulates the in-memory layer from it fast.
@@ -150,7 +297,9 @@ export function clearTextureCache() {
 	cache.clear()
 	xformCache.clear()
 	urlCache.clear()
-	failed.clear()
+	alphaCache.clear()
+	failedHard.clear()
+	softAttempts.clear()
 }
 
 export function useTextureFetch() {

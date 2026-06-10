@@ -66,4 +66,12 @@ export function replayCachedWorld(session: CircuitState): void {
 	}
 
 	slog.info(ws, `[resync] replayed cached world: region="${session.cachedRegionName ?? ''}" patches=${patches.length} objects=${objs.length} spawnPos=${session.cachedSpawnPos?.join(',') ?? '?'}`)
+	// Decode-forensics companion (lludp.ts WATCH_LOCALIDS): resync is a delivery path the packet
+	// watch can't see — report whether a watched object was part of this replay and what it carried.
+	for (const idStr of (process.env.QS_WATCH_LOCALIDS ?? '').split(',')) {
+		const id = Number(idStr.trim())
+		if (!id) continue
+		const hit = session.objCache.get(id) as Record<string, unknown> | undefined
+		if (hit) slog.warn(ws, `[Watch] Resync replayed localId=${id} meshId=${hit.meshId ?? 'NONE'} sculptType=${hit.sculptType ?? '-'} keys=${Object.keys(hit).join(',')}`)
+	}
 }

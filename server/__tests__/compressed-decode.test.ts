@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { decodeObjectUpdateCompressed } from '../lib/lludp-codec'
+import { decodeObjectUpdateCompressed, combineFacePairs } from '../lib/lludp-codec'
 
 // Real ObjectUpdateCompressed packets captured live from DigiWorldz (server/handlers/lludp.ts
 // one-shot capture). These exercise the decoder against true wire bytes, not hand-rolled input.
@@ -79,5 +79,63 @@ describe('decodeObjectUpdateCompressed — full TE decode', () => {
 				if (o.defaultTexture !== undefined) expect(o.defaultTexture).toMatch(UUID_RE)
 			}
 		}
+	})
+
+	it('per-face UV fields are well-formed when present, never crash when absent', () => {
+		for (let i = 0; i < pkts.length; i++) {
+			for (const o of decode(i)) {
+				// faceRepeats/faceOffset: array of [number,number]|null; present entries positive/finite.
+				if (o.faceRepeats !== undefined) {
+					expect(Array.isArray(o.faceRepeats)).toBe(true)
+					for (const e of o.faceRepeats) {
+						if (e == null) continue
+						expect(e.length).toBe(2)
+						expect(e[0]).toBeGreaterThan(0)
+						expect(Number.isFinite(e[1])).toBe(true)
+					}
+				}
+				if (o.faceOffset !== undefined) {
+					for (const e of o.faceOffset) {
+						if (e == null) continue
+						expect(e.length).toBe(2)
+						expect(Math.abs(e[0])).toBeLessThanOrEqual(1.01)
+						expect(Math.abs(e[1])).toBeLessThanOrEqual(1.01)
+					}
+				}
+				if (o.faceRotation !== undefined) {
+					for (const e of o.faceRotation) {
+						if (e == null) continue
+						expect(Math.abs(e)).toBeLessThanOrEqual(Math.PI * 2 + 0.01)
+					}
+				}
+			}
+		}
+	})
+})
+
+// Per-face UV combine logic — the pure helper backing parseTextureEntryFields' faceRepeats/faceOffset.
+describe('combineFacePairs — per-face UV pairing', () => {
+	it('returns null when neither axis has overrides', () => {
+		expect(combineFacePairs(null, null, 1, 1)).toBeNull()
+	})
+
+	it('fills the missing axis from its default when only one axis overrides a face', () => {
+		const a = new Array(32).fill(null); a[3] = 4   // scaleS override on face 3
+		const out = combineFacePairs(a, null, 1, 1)!
+		expect(out).not.toBeNull()
+		expect(out[3]).toEqual([4, 1])   // S from override, T from default
+		expect(out[0]).toBeNull()        // untouched faces stay null
+	})
+
+	it('pairs both axes when both override the same face, defaults elsewhere', () => {
+		const s = new Array(32).fill(null); s[5] = 2
+		const t = new Array(32).fill(null); t[5] = 3; t[6] = 7
+		const out = combineFacePairs(s, t, 1, 1)!
+		expect(out[5]).toEqual([2, 3])   // both present
+		expect(out[6]).toEqual([1, 7])   // only T present → S from default
+	})
+
+	it('returns null if arrays exist but contain no non-null entries', () => {
+		expect(combineFacePairs(new Array(32).fill(null), new Array(32).fill(null), 1, 1)).toBeNull()
 	})
 })

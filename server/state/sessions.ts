@@ -59,6 +59,13 @@ export interface CircuitState {
 	// True once we've dumped the prim-ids snapshot file after pending drained to 0. Prevents
 	// re-dumping every tick once drain completes.
 	primIdsSnapshotDumped: boolean
+	// Looping cache-miss retry: keep re-requesting still-unfulfilled localIds across multiple passes
+	// (sim's EntityUpdateQueue drops some under backlog; repeated asks eventually fill). Stops at
+	// MAX passes, or on plateau (2 consecutive passes with no progress = sim structurally won't send).
+	retryPassCount?:       number   // how many retry passes started
+	lastUnfulfilledCount?: number   // unfulfilled count at the start of the previous pass (progress check)
+	retryPlateauCount?:    number   // consecutive passes with no progress
+	lastRetryPassAt?:      number   // timestamp the last pass's batch finished queueing (cooldown gate)
 	// True once a MapLayerRequest has been sent on this circuit (one-shot probe).
 	mapLayerSent?: boolean
 	// Set when a cross-region TP is in flight; cleared on TeleportFinish/Failed.
@@ -139,6 +146,18 @@ export interface CircuitState {
 	// established by an ObjectUpdate, so the cache is what makes the scene reconstitutable.
 	// objCache stores the raw decoded obj payload as forwarded to the browser.
 	objCache: Map<number, unknown>   // localId → obj record (shape matches decodeObjectUpdate output)
+	// Every ObjectUpdateCached probe (localId → crc) seen this session. WHY: the sim floods these in
+	// the first seconds after login — often BEFORE the browser's world engine has mounted its WS
+	// handlers — so the forwarded copies dispatch into the void and the client never requests the
+	// objects (scene stuck near-empty after a cache purge). The client asks for a replay of this
+	// backlog (C.OBJ_PROBE_RESYNC) once its engine is actually listening. Lazily initialized.
+	probeBacklog?: Map<number, number>
+	// Client asked for a probe-backlog replay (C.OBJ_PROBE_RESYNC). WHY a flag drained by the
+	// heartbeat, not an immediate reply: the client's request races the START of the sim's probe
+	// flood (preseed fires on the first ObjectUpdate, often before any probe packet) — replying
+	// instantly replays an empty/partial backlog. The heartbeat waits for enum-quiet, then drips.
+	probeResyncWanted?: boolean
+	lastProbeRxAt?:     number   // timestamp of last ObjectUpdateCached packet (enum-quiet gate)
 }
 
 const sessions     = new Map<string, CircuitState>()

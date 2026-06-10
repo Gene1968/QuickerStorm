@@ -20,12 +20,16 @@ import { Search as SearchIcon } from '@lucide/vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { useAccountsStore } from '@/stores/accountsStore.js'
 import { useGridStore }     from '@/stores/gridStore.js'
+import { useWorldStore }    from '@/stores/worldStore.js'
+import { useCacheStats } from '@/composables/useCacheStats.js'
+import { formatBytes } from '@/utils/formatBytes.js'
 
 const ui            = useUiStore()
 const theme         = useTheme()
 const avatarStore   = useAvatarStore()
 const accountsStore = useAccountsStore()
 const gridStore     = useGridStore()
+const world         = useWorldStore()
 
 function formatLastUsed(ts) {
 	if (!ts) return 'Never'
@@ -61,6 +65,8 @@ const soundStubRows = [
 	{ label: 'Voice',   hint: 'Voice chat output.' },
 ]
 
+const cache = useCacheStats()
+
 const voice      = useProximityVoice()
 const micDevices = computed(() => voice.audioDevices.value.filter(d => d.kind === 'audioinput'))
 const spkDevices = computed(() => voice.audioDevices.value.filter(d => d.kind === 'audiooutput'))
@@ -69,10 +75,13 @@ const canSetSink = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTM
 function toSlider(vol)         { return Math.round(vol * 100) }
 function fromSlider(e, volRef) { volRef.value = e.target.valueAsNumber / 100 }
 
-// Load device list when Sound tab opened
+// Load device list when Sound tab opened; refresh cache stats when Network tab opened
 watch(activeTab, async (tab) => {
 	if (tab === 'sound' && voice.loadDevices) {
 		try { await voice.loadDevices() } catch {}
+	}
+	if (tab === 'network') {
+		cache.refresh()
 	}
 })
 
@@ -86,8 +95,9 @@ const ALL_TABS = [
 	{ id: 'appearance',    icon: '🎨',  label: 'Appearance',    disabled: false, soon: false },
 	{ id: 'chat',          icon: '💬',  label: 'Chat',          disabled: false, soon: true  },
 	{ id: 'graphics',      icon: '🖥️',  label: 'Graphics',      disabled: false, soon: true  },
-	{ id: 'sound',         icon: '🔊',  label: 'Sound & Media', disabled: false, soon: false },
-	{ id: 'move',          icon: '🎮',  label: 'Move & View',   disabled: true,  soon: false },
+	{ id: 'sound',         icon: '🔊',  label: 'Sound & Media',   disabled: false, soon: false },
+	{ id: 'network',       icon: '🗄️',  label: 'Network & Files', disabled: false, soon: false },
+	{ id: 'move',          icon: '🎮',  label: 'Move & View',     disabled: true,  soon: false },
 	{ id: 'notifications', icon: '🔔',  label: 'Notifications', disabled: true,  soon: false },
 	{ id: 'privacy',       icon: '🔒',  label: 'Privacy',       disabled: true,  soon: false },
 	{ id: 'opensim',       icon: '🌐',  label: 'OpenSim',       disabled: false, soon: true  },
@@ -128,6 +138,7 @@ function onKey(e) {
 onMounted(() => {
 	originalDark.value = theme.isDark.value
 	window.addEventListener('keydown', onKey)
+	if (activeTab.value === 'network') cache.refresh()
 })
 onUnmounted(() => {
 	window.removeEventListener('keydown', onKey)
@@ -467,6 +478,133 @@ onUnmounted(() => {
 						</div>
 					</template>
 
+					<!-- ── NETWORK & FILES ── -->
+					<template v-else-if="activeTab === 'network'">
+						<div class="flex items-center justify-between">
+							<h2 class="pf-section-heading">Network &amp; Files</h2>
+							<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh all caches</button>
+						</div>
+
+						<!-- Scene (resident vs known objects — memory-budget culling) -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Scene</span>
+							</div>
+							<div class="pf-cache-stats">
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Loaded</span>
+									<span class="pf-cache-val">{{ world.cullStats.pct }}%</span>
+								</span>
+								<span class="pf-cache-sep">·</span>
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Resident</span>
+									<span class="pf-cache-val">{{ world.cullStats.resident.toLocaleString() }} / {{ world.cullStats.known.toLocaleString() }}</span>
+								</span>
+								<span class="pf-cache-sep">·</span>
+								<span class="pf-cache-stat">
+									<span class="pf-cache-label">Evicted (memory)</span>
+									<span class="pf-cache-val">{{ world.cullStats.evicted.toLocaleString() }}</span>
+								</span>
+							</div>
+						</div>
+
+						<!-- Texture Cache -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Texture Cache</span>
+								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
+									Clear Textures
+									<small class="font-normal">(not recommended)</small>
+								</button>
+							</div>
+							<div class="pf-cache-stats">
+								<template v-if="cache.texStats.value.loading">
+									<span class="pf-cache-stat text-tm">Loading…</span>
+								</template>
+								<template v-else-if="cache.texStats.value.unavailable">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
+								</template>
+								<template v-else>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Entries</span>
+										<span class="pf-cache-val">{{ cache.texStats.value.count.toLocaleString() }}</span>
+									</span>
+									<span class="pf-cache-sep">·</span>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Size</span>
+										<span class="pf-cache-val">{{ formatBytes(cache.texStats.value.bytes) }} / {{ formatBytes(cache.texStats.value.capBytes) }}</span>
+									</span>
+								</template>
+							</div>
+							<div v-if="!cache.texStats.value.loading && !cache.texStats.value.unavailable" class="pf-cache-bar-track">
+								<div
+									class="pf-cache-bar-fill"
+									:style="{ width: Math.min(100, cache.texStats.value.bytes / cache.texStats.value.capBytes * 100).toFixed(1) + '%' }"
+								/>
+							</div>
+						</div>
+
+						<!-- Mesh Cache -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Mesh Cache</span>
+								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
+									Clear Meshes
+									<small class="font-normal">(not recommended)</small>
+								</button>
+							</div>
+							<div class="pf-cache-stats">
+								<template v-if="cache.meshStats.value.loading">
+									<span class="pf-cache-stat text-tm">Loading…</span>
+								</template>
+								<template v-else-if="cache.meshStats.value.unavailable">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
+								</template>
+								<template v-else>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Entries</span>
+										<span class="pf-cache-val">{{ cache.meshStats.value.count.toLocaleString() }}</span>
+									</span>
+									<span class="pf-cache-sep">·</span>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Size</span>
+										<span class="pf-cache-val">{{ formatBytes(cache.meshStats.value.bytes) }}</span>
+									</span>
+								</template>
+							</div>
+						</div>
+
+						<!-- Object Cache (persistent scene per region — instant reload paint) -->
+						<div class="pf-cache-card">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Object Cache</span>
+								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
+									Clear Objects
+									<small class="font-normal">(forces full re-stream)</small>
+								</button>
+							</div>
+							<div class="pf-cache-stats">
+								<template v-if="cache.objStats.value.loading">
+									<span class="pf-cache-stat text-tm">Loading…</span>
+								</template>
+								<template v-else-if="cache.objStats.value.unavailable">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
+								</template>
+								<template v-else>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Objects</span>
+										<span class="pf-cache-val">{{ cache.objStats.value.objects.toLocaleString() }}</span>
+									</span>
+									<span class="pf-cache-sep">·</span>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Regions</span>
+										<span class="pf-cache-val">{{ cache.objStats.value.regions.toLocaleString() }}</span>
+									</span>
+								</template>
+							</div>
+						</div>
+					</template>
+
 					<!-- ── SEARCH EMPTY STATE ── -->
 					<template v-else-if="visibleTabs.length === 0">
 						<div class="pf-empty">
@@ -684,6 +822,81 @@ onUnmounted(() => {
 	color: var(--color-tm);
 	font-size: 0.8125rem;
 	text-align: center;
+}
+
+/* ── Cache cards (Network tab) ──────────────────────────────────────────── */
+.pf-cache-card {
+	background: var(--color-card2);
+	border: 1px solid var(--color-brd);
+	border-radius: 0.5rem;
+	padding: 0.75rem 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin-bottom: 0.75rem;
+}
+
+.pf-cache-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.pf-cache-title {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: var(--color-t1);
+}
+
+.pf-cache-stats {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 0.75rem;
+}
+
+.pf-cache-stat {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+}
+
+.pf-cache-label {
+	color: var(--color-tm);
+}
+
+.pf-cache-val {
+	color: var(--color-t2);
+	font-variant-numeric: tabular-nums;
+}
+
+.pf-cache-sep {
+	color: var(--color-brd2);
+}
+
+.pf-cache-bar-track {
+	height: 0.3125rem;
+	background: var(--color-brd);
+	border-radius: 9999px;
+	overflow: hidden;
+}
+
+.pf-cache-bar-fill {
+	height: 100%;
+	background: var(--color-accent);
+	border-radius: 9999px;
+	transition: width 0.3s ease;
+}
+
+.pf-cache-retry {
+	margin-left: 0.5rem;
+	font-size: 0.75rem;
+	color: var(--color-accent);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 0;
+	&:hover { text-decoration: underline; }
 }
 
 /* ── Footer ──────────────────────────────────────────────────────────────── */

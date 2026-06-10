@@ -5,7 +5,7 @@
  * Mic mute button (disabled when voice not enabled).
  * Sound mute button with chevron — hover opens mixer dropdown.
  */
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import {
 	VideoIcon,
 	MonitorIcon,
@@ -67,6 +67,36 @@ function fromSlider(e, volRef) {
 	volRef.value = e.target.valueAsNumber / 100
 }
 
+// ── Grid time (Pacific — SL/OpenSim canonical timezone) ────────────────────
+const gridTime = ref('')
+const gridDate = ref('')
+let clockTimer = null
+
+function updateClock() {
+	const now = new Date()
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone: 'America/Los_Angeles',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+		timeZoneName: 'short',
+	}).formatToParts(now)
+	const h  = parts.find(p => p.type === 'hour').value
+	const m  = parts.find(p => p.type === 'minute').value
+	const tz = parts.find(p => p.type === 'timeZoneName').value
+	gridTime.value = `${h}:${m} ${tz}`
+	gridDate.value = new Intl.DateTimeFormat('en-US', {
+		timeZone: 'America/Los_Angeles',
+		weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+	}).format(now)
+}
+
+onMounted(() => {
+	updateClock()
+	clockTimer = setInterval(updateClock, 10_000)
+})
+onUnmounted(() => clearInterval(clockTimer))
+
 // Stub channels — static display only (no routing yet)
 const stubChannels = [
 	{ label: 'Ambient', vol: ambientVolume },
@@ -81,7 +111,7 @@ const stubChannels = [
 	<div
 		class="relative flex items-center gap-1 pe-3"
 	>
-		<div class="flex items-center gap-2 me-6">
+		<div class="flex items-center gap-2 me-2">
 			<div class="mx-1.5"></div>
 			<div
 				title="Click to refresh your X$ balance (TO-DO)"
@@ -90,10 +120,10 @@ const stubChannels = [
 				X$ 0
 			</div>
 			<div
-				title="Monday, May 25, 2026 (TO-DO)"
+				:title="gridDate"
 				class="me-7 ms-3 text-xs text-white/60"
 			>
-				23:59PDT
+				{{ gridTime }}
 			</div>
 			<VideoIcon
 				title="Camera presets (TO-DO)"
@@ -242,6 +272,11 @@ const stubChannels = [
 				</div>
 			</div>
 		</Transition>
+		<div class="flex items-center gap-1">
+			<div @click="console.log('to-do: prefs - fps limit')" title="Frames per second (click to adjust limit) (TO-DO)" class="me-3 ms-1 text-xs text-yellow-500">##.#</div>
+			<div @click="console.log('to-do: show lag meter')" title="#Kbps (TO-DO)" class="flex items-end border h-full min-h-4"><div class="w-1 h-[0.75rem] bg-green-500"></div></div>
+			<div @click="console.log('to-do: show lag meter')" title="#.#% (TO-DO)" class="flex items-end border h-full min-h-4"><div class="w-1 h-[0.40rem] bg-green-500"></div></div>
+		</div>
 	</div>
 </template>
 

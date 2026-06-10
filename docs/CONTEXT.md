@@ -39,7 +39,7 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
 | Voice (Phase 3) | WebRTC (browser native) + Bun WS server for signaling |
 | LLUDP bridge | Bun WebSocket server (`server/`); typed handlers under `server/handlers/` |
 | Styling | Tailwind utilities + helpers + `<style scoped>`; light/dark via `useTheme()` |
-| Hosting | Vite SPA (static); Bun server runs on Railway (staging) or locally on port 8787 |
+| Hosting | Vite SPA (static); Bun server runs on the VPS/NAS or locally on port 8787 |
 
 ---
 
@@ -53,7 +53,7 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
 | `staging` | `.env.staging` | `build:staging` |
 | `production` | `.env.production` | `build:prod` |
 
-`VITE_SIGNAL_URL` points at the WS server (local: `ws://localhost:8787`, staging: Railway URL).
+`VITE_SIGNAL_URL` points at the WS server (local: `ws://localhost:8787`, prod: VPS/NAS URL).
 
 Always import config as: `import { config } from '@/config/configuration.js'`
 

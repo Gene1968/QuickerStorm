@@ -22,6 +22,7 @@ export const C = {
 	OBJECT_DESELECT:'object_deselect', // { localIds: number[] } — outbound ObjectDeselect
 	SET_ALWAYS_RUN: 'set_always_run', // { alwaysRun: boolean } — outbound SetAlwaysRun (Low #21)
 	CLIENT_DIAG:    'client_diag',    // { received, stored, prims, av, meshes, upsertFails } — periodic mesh-side stats forwarded to server-log
+	CLIENT_LOG:     'client_log',     // { level, msg, stack } — dev: forward matched console errors/warns (e.g. NaN) to server-log
 	MAP_QUERY:      'map_query',      // { minX, maxX, minY, maxY } — MapBlockRequest range
 	MAP_NAME_QUERY: 'map_name_query', // { name } — MapNameRequest by region name
 	MAP_TELEPORT:   'map_teleport',   // { regionX, regionY, x, y, z } — TeleportLocationRequest to (regionX*256+x,...)
@@ -30,6 +31,9 @@ export const C = {
 	SET_HOME:       'set_home',        // { regionName, x, y, z } — SetStartLocationRequest (Low 204) LocationID=1
 	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } or { folderIds:[] } — fetch folder item(s) via FetchInventoryDescendents2 cap (batched)
 	ASSET_FETCH:      'asset_fetch',      // { assetType:'texture'|'mesh'|'sound'|..., uuid } — fetch via ViewerAsset/GetTexture/GetMesh cap (server transcodes J2C→PNG)
+	MATERIAL_FETCH:   'material_fetch',   // { kind:'pbr'|'legacy', ids:string[] } — fetch GLTF (ViewerAsset) or legacy (RenderMaterials cap)
+	MESH_FETCH:       'mesh_fetch',       // { meshId } — fetch + decode a mesh asset (GetMesh/ViewerAsset) → geometry arrays
+	SCULPT_FETCH:     'sculpt_fetch',     // { sculptId, sculptType } — fetch sculpt-map texture (J2C) → sculpt geometry
 	CREATE_LANDMARK:  'create_landmark',  // { name, desc, folderId } — CreateInventoryItem (Low 305) type/invType=3; sim builds LM from current pos
 	CREATE_INV_FOLDER:'create_inv_folder',// { folderId, parentId, name } — CreateInventoryFolder (Low 273); client supplies the new folderId
 	// ── Social (Phase 3) ──
@@ -41,6 +45,8 @@ export const C = {
 	FRIEND_RIGHTS:    'friend_rights',    // { agentId, rights:number } — ChangeUserRights (Low 321)
 	NAME_REQ:         'name_req',         // { ids:string[] } — UUIDNameRequest (Low 235) → resolve avatar UUIDs to names
 	AVATAR_PICKER_REQ: 'avatar_picker_req', // { query, queryId } — AvatarPickerRequest (Low 26) for Add-Friend name search
+	OBJ_CACHE_MISS:   'obj_cache_miss',   // { ids:number[] } — client cache lacks/mismatches these probed localIds; request full updates
+	OBJ_PROBE_RESYNC: 'obj_probe_resync', // {} — engine mounted; replay the session's buffered ObjectUpdateCached probes (initial flood predates handler registration)
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -71,6 +77,9 @@ export const S = {
 	INV_FOLDER:      'inv_folder',    // { folderId, items: [{ itemId, parentId, name, desc, assetType, invType, assetId, flags }], error? } — FetchInventoryDescendents2 reply
 	INV_ITEM_CREATED:'inv_item_created', // { items: [{ itemId, parentId, assetId, name, desc, assetType, invType, flags, ownerMask }] } — UpdateCreateInventoryItem (Low 267)
 	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error? } — fetched asset; textures arrive as PNG (server-transcoded from J2C)
+	MATERIAL_DATA:   'material_data',    // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
+	MESH_DATA:       'mesh_data',        // { meshId, submeshes:[{positions:number[],normals:number[],uvs:number[],indices:number[]}], error? }
+	SCULPT_DATA:     'sculpt_data',      // { sculptId, sculptType, submeshes:[{positions,normals,uvs,indices (base64)}], error? }
 	// ── Social (Phase 3) ──
 	// SOCIAL_INIT data is folded into LOGIN_OK under d.social (resume-safe) — no separate message.
 	FRIEND_STATUS:   'friend_status',  // { online:boolean, ids:string[] } — Online/OfflineNotification
@@ -81,6 +90,7 @@ export const S = {
 	NAME_REPLY:      'name_reply',    // { names: { [uuid]: "First Last" } } — UUIDNameReply
 	AVATAR_PICKER_REPLY:  'avatar_picker_reply',  // { queryId, avatars:[{ id, name }] } — AvatarPickerReply (Low 28)
 	FRIEND_RIGHTS_CHANGED:'friend_rights_changed',// { agentId, relatedId, rights } — inbound ChangeUserRights (Low 321)
+	OBJ_CACHE_PROBE:      'obj_cache_probe',      // { probes:[{localId,crc}] } — sim's ObjectUpdateCached; client decides hit/miss vs its IDB cache
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

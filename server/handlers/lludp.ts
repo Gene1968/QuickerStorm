@@ -62,6 +62,13 @@ const LOW_TELEPORT_FINISH     = 69    // Sim → viewer: cross-sim TP, new circu
 const LOW_MAP_BLOCK_REPLY     = 409   // Sim → viewer: world-map region entries (Low freq)
 const LOW_MAP_LAYER_REPLY     = 406   // Sim → viewer: map layer info — alive-probe response
 const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
+// WHY: OpenSim LLUDPClient.DequeueOutgoing() STOPS sending when NeedAcks.Count() > 50
+// (unacked reliable packets). During the object-update flood (Task throttle ~700 KB/s ≈
+// 300+ reliable packets/500ms) acking only on the 500ms circuit tick pins the sim's unacked
+// window past 50 → object delivery stalls (≈half undelivered) and the resend queue overflows
+// → silent circuit death. Mirror Firestorm: flush acks as soon as enough accumulate so the
+// sim's window stays well under 50. Verified against OpenSim LLUDPClient.cs:608.
+const ACK_FLUSH_THRESHOLD     = 16    // flush pending acks immediately once this many queue up
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
 const MEDIUM_OBJECT_PROPERTIES      = 9  // ObjectProperties — sim's reply to ObjectSelect (Medium freq)
 // ── Social (Phase 3) inbound Low-freq message IDs ──
@@ -265,6 +272,24 @@ export function applyTeleportFinish(
 }
 
 /** Called when a UDP packet arrives from the grid sim */
+// Targeted decode forensics: QS_WATCH_LOCALIDS="123,456" hex-dumps the raw packet + decoded field
+// summary whenever a watched localId appears in an ObjectUpdate / Compressed decode. The hex is a
+// ready offline fixture for codec tests (capture → TDD offline, no login-cycle thrash).
+const WATCH_LOCALIDS = new Set(
+	(process.env.QS_WATCH_LOCALIDS ?? '').split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0),
+)
+// Startup proof the watch is armed — absence of this line in the log = env var never reached us.
+if (WATCH_LOCALIDS.size) console.log(`[Watch] armed for localIds: ${[...WATCH_LOCALIDS].join(',')}`)
+function watchDump(session: CircuitState, path: string, objects: Array<{ localId?: number; pcode?: number }>, buf: Buffer, dataOffset: number): void {
+	if (!WATCH_LOCALIDS.size) return
+	for (const o of objects) {
+		if (typeof o.localId !== 'number' || !WATCH_LOCALIDS.has(o.localId)) continue
+		const x = o as Record<string, unknown>
+		slog.warn(session.ws, `[Watch] ${path} localId=${o.localId} pcode=${o.pcode} meshId=${x.meshId ?? 'NONE'} sculptType=${x.sculptType ?? '-'} sculptId=${x.sculptId ?? '-'} keys=${Object.keys(x).join(',')}`)
+		slog.warn(session.ws, `[Watch] ${path} raw dataOffset=${dataOffset} len=${buf.length} hex=${buf.toString('hex')}`)
+	}
+}
+
 export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	const session = getSession(sessionId)
 	if (!session) return
@@ -299,8 +324,12 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		buf = Buffer.concat([buf.slice(0, hdr.bodyOffset), body])
 	}
 
-	// Queue ack for reliable packets
-	if (hdr.reliable) queueAck(session, hdr.seq)
+	// Queue ack for reliable packets. Flush eagerly under load so the sim's unacked
+	// window never crosses its NeedAcks>50 send-stall threshold (see ACK_FLUSH_THRESHOLD).
+	if (hdr.reliable) {
+		queueAck(session, hdr.seq)
+		if (session.pendingAcks.length >= ACK_FLUSH_THRESHOLD) sendPendingAcks(session)
+	}
 
 	const { type, dataOffset } = parseMsgType(buf, hdr.bodyOffset)
 
@@ -393,7 +422,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const rh = decodeRegionHandshake(buf, dataOffset)
 			const { simName, simAccess, waterHeight } = rh
-			slog.info(session.ws, `✓ RegionHandshake: SimName="${simName}" access=${simAccess} water=${waterHeight}m detail=[${rh.terrainDetail.map(u => u.slice(0, 8)).join(' ')}]`)
+			slog.info(session.ws, `✓ RegionHandshake: SimName="${simName}" access=${simAccess} water=${waterHeight}m cacheId=${rh.cacheId.slice(0, 8)}… detail=[${rh.terrainDetail.map(u => u.slice(0, 8)).join(' ')}]`)
 			// Reply is required
 			const seq = nextSeq(session)
 			const reply = encodeRegionHandshakeReply({ agentId: session.agentId, sessionId: session.sessionId, seq })
@@ -408,6 +437,9 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				terrainStartHeight: rh.terrainStartHeight,
 				terrainHeightRange: rh.terrainHeightRange,
 				regionId:           rh.regionId,
+				// Region-run marker: client compares against its stored value and drops the region's
+				// object cache on mismatch (localIds die with the run — stale ones brick ObjectSelect).
+				cacheId:            rh.cacheId,
 			}
 			// Forward region name + render-critical environment to browser
 			session.ws.send(JSON.stringify({
@@ -494,7 +526,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				camCenter: [128, 128, 25] as [number, number, number],
 				camAt:     [1, 0, 0] as [number, number, number],
 				camLeft:   [0, 1, 0] as [number, number, number],
-				camUp:     [0, 0, 1] as [number, number, number], far: 128,
+				camUp:     [0, 0, 1] as [number, number, number], far: 512,
 			}
 			const seqS = nextSeq(session)
 			const standPkt = encodeAgentUpdate({
@@ -542,6 +574,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		try {
 			const objects = decodeObjectUpdateCompressed(buf, dataOffset,
 				(errMsg) => slog.warn(session.ws, `[ObjCompressed] partial: ${errMsg}`))
+			watchDump(session, 'Compressed', objects, buf, dataOffset)
 			if (objects.length > 0) {
 				session.objDecodedCount += objects.length
 				for (const o of objects) {
@@ -564,29 +597,28 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	}
 
 	if (type === `high:${HIGH_OBJECT_UPDATE_CACHED}`) {
-		// WHY: Sim sends ObjectUpdateCached when it believes we have objects cached from a
-		// previous session. Since we maintain no object cache, we request full updates for
-		// all IDs. Without this, our own avatar's ObjectUpdate (pcode=47) is never received:
-		// ownAvatarLocalId stays null → TerseUpdates not attributed → location bar frozen.
+		// WHY: Sim sends ObjectUpdateCached with (localId, PseudoCRC) when it believes we have
+		// objects cached. We forward the probes to the client, which owns the persistent IDB
+		// cache and decides hit (CRC match → render from cache, no request) vs miss (→ request
+		// full update via C.OBJ_CACHE_MISS, which feeds the existing cacheMissPending drain).
+		// Objects already fulfilled this session (server objCache) are dropped — the client
+		// already has them. Own avatar (pcode 47) is never client-cached, so its probe always
+		// misses and is requested → ownAvatarLocalId still gets set (location bar stays live).
 		try {
-			const ids = decodeObjectUpdateCached(buf, dataOffset)
-			if (ids.length > 0) {
-				// WHY: Sim's EntityUpdateQueue aged out RequestMultipleObjects entries when we
-				// bursted 348 batches in <5s — only 113/4792 returned. Enqueue here, drain at
-				// paced rate via heartbeat timer (drainCacheMissQueue). Skip IDs already
-				// fulfilled (in objCache) and any already queued (cheap O(n) check; pending
-				// list typically stays small after drain).
-				let enqueued = 0
-				for (const id of ids) {
-					if (session.objCache.has(id)) continue
-					if (session.cacheMissPending.includes(id)) continue
-					session.cacheMissPending.push(id)
-					enqueued++
-				}
-				if (enqueued > 0) session.lastCacheEnumAt = Date.now()
+			const probes = decodeObjectUpdateCached(buf, dataOffset)
+			// Liveness ledger: a cache probe proves the sim knows this localId THIS session — needed by
+			// the ObjectSelect stale-id check below (cache-painted objects never get a full update).
+			// probeBacklog additionally keeps the (localId → crc) pairs so the client can request a
+			// replay after its engine mounts (the sim's initial probe flood predates the handlers).
+			if (!session.probeBacklog) session.probeBacklog = new Map()
+			session.lastProbeRxAt = Date.now()
+			for (const p of probes) { session.distinctLocalIds.add(p.localId); session.probeBacklog.set(p.localId, p.crc) }
+			const fwd = probes.filter(p => !session.objCache.has(p.localId))
+			if (fwd.length > 0) {
+				session.ws.send(JSON.stringify({ t: S.OBJ_CACHE_PROBE, d: { probes: fwd } }))
 				if (!session.loggedTypes.has('objcache')) {
 					session.loggedTypes.add('objcache')
-					slog.info(session.ws, `[ObjCached] +${ids.length} ids enqueued (pending=${session.cacheMissPending.length})`)
+					slog.info(session.ws, `[ObjCached] forwarded ${fwd.length} probes to client for CRC check`)
 				}
 			}
 		} catch (e) { slog.warn(session.ws, `ObjectUpdateCached decode error: ${(e as Error).message}`) }
@@ -625,6 +657,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				}
 			},
 		)
+		watchDump(session, 'Full', objects, buf, dataOffset)
 		if (objects.length > 0) {
 			session.objDecodedCount += objects.length
 			// Cache by localId for resync replay (page reload / "Resync World").
@@ -756,6 +789,9 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	if (type === `med:${MEDIUM_OBJECT_PROPERTIES}`) {
 		try {
 			const items = decodeObjectProperties(buf, dataOffset)
+			// Always log arrival (even decoded=0) — a silent empty decode is indistinguishable from
+			// "sim never replied" otherwise, and that ambiguity cost us a debugging session.
+			slog.info(session.ws, `[ObjProps] rx size=${rawBuf.length}b zc=${hdr.zeroCoded} count=${buf[dataOffset] ?? '?'} decoded=${items.length}`)
 			if (items.length > 0) {
 				slog.info(session.ws, `[ObjProps] ${items.length} object(s) — first: "${items[0].name || '(unnamed)'}" owner=${items[0].ownerId.slice(0,8)}…`)
 				// Serialize bigints (creationDate) for JSON wire safety
@@ -1062,7 +1098,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		d.camAt     = safeVec(d.camAt)
 		d.camLeft   = safeVec(d.camLeft)
 		d.camUp     = safeVec(d.camUp)
-		if (typeof d.far !== 'number') d.far = 64
+		if (typeof d.far !== 'number') d.far = 512   // draw distance → sim interest radius (region-wide)
 		// Save for heartbeat retransmit when client is idle
 		session.lastAgentParams    = d
 		session.lastAgentUpdateAt  = Date.now()
@@ -1096,8 +1132,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 
 	if (msg.t === C.TELEPORT) {
 		const d = msg.d as { x: number; y: number; z: number }
-		const x = Math.max(1, Math.min(255, d.x))
-		const y = Math.max(1, Math.min(255, d.y))
+		// WHY 8191 not 255: server doesn't know the region's dimensions (var regions are
+		// 512-8192m); the client clamps to the real size, this is only a sanity bound.
+		const x = Math.max(1, Math.min(8191, d.x))
+		const y = Math.max(1, Math.min(8191, d.y))
 		const z = Math.max(0.5, d.z)
 		const seq = nextSeq(session)
 		const pkt = encodeTeleportLocationRequest({
@@ -1198,7 +1236,12 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const pkt = encodeObjectSelect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectSelect ${d.localIds.length} id(s) — awaiting ObjectProperties reply`)
+		// Stale-id check: ids never seen in live sim traffic this session (full/compressed updates or
+		// cache probes) are almost certainly stale IDB-cache paint from a previous region run — the sim
+		// silently ignores ObjectSelect for localIds it doesn't know, which presents as the edit
+		// floater stuck on "Loading properties from sim…".
+		const stale = d.localIds.filter(id => !session.distinctLocalIds.has(id))
+		slog.info(session.ws, `→ ObjectSelect seq=${seq} ids=[${d.localIds.join(',')}] live=${d.localIds.length - stale.length}/${d.localIds.length}${stale.length ? ` STALE=[${stale.join(',')}]` : ''}`)
 		return
 	}
 
@@ -1209,6 +1252,38 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectDeselect seq=${seq} ids=[${d.localIds.join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJ_PROBE_RESYNC) {
+		// Engine mounted its WS handlers and wants the buffered probe flood replayed. Just arm the
+		// flag — the heartbeat (drainProbeResync) waits for the sim's enumeration to go quiet first,
+		// because this request usually arrives BEFORE the flood (preseed fires on the first
+		// ObjectUpdate); replying immediately would replay an empty/partial backlog.
+		session.probeResyncWanted = true
+		slog.info(session.ws, `[ObjCached] probe-resync armed (backlog=${session.probeBacklog?.size ?? 0} so far)`)
+		return
+	}
+
+	if (msg.t === C.OBJ_CACHE_MISS) {
+		// WHY: client checked the forwarded probes against its persistent cache and these
+		// localIds are misses (absent or CRC mismatch). Feed the existing paced drain, skipping
+		// ids already fulfilled or already queued (same guard the old auto-enqueue used).
+		const d = msg.d as { ids: number[] }
+		if (!d.ids?.length) return
+		let enqueued = 0
+		for (const id of d.ids) {
+			if (session.objCache.has(id)) continue
+			if (session.cacheMissPending.includes(id)) continue
+			session.cacheMissPending.push(id)
+			enqueued++
+		}
+		if (enqueued > 0) session.lastCacheEnumAt = Date.now()
+		if (!session.loggedTypes.has('cachemiss')) {
+			session.loggedTypes.add('cachemiss')
+			slog.info(session.ws, `[CacheMiss] first batch: rx=${d.ids.length} enqueued=${enqueued} pending=${session.cacheMissPending.length}`)
+		}
 		return
 	}
 
@@ -1405,14 +1480,35 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	if (msg.t === C.CLIENT_DIAG) {
 		// Client-side mirror of [PrimDiag] so server-log.txt holds both ends of the pipe.
 		// Without this we have no record of mesh-count or upsert failures after session ends.
+		type DiagStats = { requested?: number; done?: number; failed?: number; timeout?: number; inflight?: number; queued?: number; cached?: number }
 		const d = msg.d as {
 			received?: number; stored?: number; prims?: number; av?: number;
-			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number
+			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number;
+			geoNaN?: number; withTex?: number; mapped?: number; tex?: DiagStats; mesh?: DiagStats
+			orphan?: { children?: number; orphanByMissingRoot?: number; distinctMissingRoots?: number; orphanMeshAtScene?: number }
+			texApply?: { calls?: number; null?: number; applied?: number; dropNoParent?: number; dropMatSwap?: number }
+			faceTex?: { realDefault?: number; blankDefault?: number; blankButRealFaceTex?: number; anyRealFaceTex?: number }
 		}
+		const stat = (s?: DiagStats) => s
+			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
+			: '(n/a — frontend not reloaded?)'
 		slog.info(session.ws,
 			`[ClientDiag] received=${d.received ?? '?'} stored=${d.stored ?? '?'} ` +
 			`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
-			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'}`)
+			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'} geoNaN=${d.geoNaN ?? '?'} withTex=${d.withTex ?? '?'} mapped=${d.mapped ?? '?'} | ` +
+			`tex ${stat(d.tex)} | mesh ${stat(d.mesh)}`)
+		if (d.orphan) slog.info(session.ws,
+			`[Orphan] children=${d.orphan.children ?? '?'} orphanByMissingRoot=${d.orphan.orphanByMissingRoot ?? '?'} distinctMissingRoots=${d.orphan.distinctMissingRoots ?? '?'} orphanMeshAtScene=${d.orphan.orphanMeshAtScene ?? '?'}`)
+		if (d.texApply) slog.info(session.ws,
+			`[TexApply] calls=${d.texApply.calls ?? '?'} null=${d.texApply.null ?? '?'} applied=${d.texApply.applied ?? '?'} dropNoParent=${d.texApply.dropNoParent ?? '?'} dropMatSwap=${d.texApply.dropMatSwap ?? '?'}`)
+		if (d.faceTex) slog.info(session.ws,
+			`[FaceTex] realDefault=${d.faceTex.realDefault ?? '?'} blankDefault=${d.faceTex.blankDefault ?? '?'} blankButRealFaceTex=${d.faceTex.blankButRealFaceTex ?? '?'} anyRealFaceTex=${d.faceTex.anyRealFaceTex ?? '?'}`)
+		return
+	}
+
+	if (msg.t === C.CLIENT_LOG) {
+		const d = msg.d as { level?: string; msg?: string; stack?: string }
+		slog.warn(session.ws, `[ClientLog/${d.level ?? '?'}] ${d.msg ?? ''}${d.stack ? `  @ ${d.stack}` : ''}`)
 		return
 	}
 
@@ -1548,7 +1644,11 @@ function dumpPrimIdsSnapshot(s: CircuitState): void {
 
 function sendCacheMissBatch(s: CircuitState, queue: number[], cacheMissType: 0 | 1): void {
 	const BATCH = 16
-	const PER_TICK = 2
+	// PER_TICK 6 @ 500ms heartbeat = 96 ids/tick = 192 ids/sec. Bursting ~1100/s (348 batches in
+	// <5s) aged the sim's EntityUpdateQueue (only 113/4792 returned); 32/s was the over-correction
+	// (~4min/region drain). 192/s is the middle ground — fast enough to test/fill, paced enough that
+	// the queue keeps up. The looping retry below recovers whatever still gets dropped.
+	const PER_TICK = 6
 	for (let p = 0; p < PER_TICK; p++) {
 		if (queue.length === 0) break
 		const chunk = queue.splice(0, BATCH)
@@ -1574,30 +1674,82 @@ function drainCacheMissQueue(s: CircuitState): void {
 		sendCacheMissBatch(s, s.cacheMissPending, 0)
 		return
 	}
-	// Primary drain done. Initiate retry pass once with CacheMissType=1 for any
-	// asked-but-unfulfilled ids. Hypothesis: sim may treat the two CacheMissTypes differently,
-	// so a second pass with type=1 might coax it into satisfying requests it ignored at type=0.
-	// WHY 5s silence gate: sim sends ObjectUpdateCached enum over time as we settle in. An
-	// early empty-pending window mid-enum used to trigger retry with 0 unfulfilled; new
-	// cached batches then arrived but never triggered retry again. Wait until sim has been
-	// silent on enum for 5s to be confident enumeration is done.
-	if (!s.cacheMissRetryStarted) {
-		if (s.lastCacheEnumAt === 0) return  // sim never sent any cached enum yet
-		if (Date.now() - s.lastCacheEnumAt < 5000) return  // enum may still be in-flight
-		s.cacheMissRetryStarted = true
-		const unfulfilled: number[] = []
-		for (const id of s.cacheMissAskedEver) {
-			if (!s.distinctLocalIds.has(id)) unfulfilled.push(id)
-		}
-		s.cacheMissRetryPending = unfulfilled
-		slog.info(s.ws, `[CacheMissRetry] primary drain done — retrying ${unfulfilled.length} unfulfilled ids with CacheMissType=1`)
-	}
+	// A retry batch is mid-flight → keep draining it. When the last chunk goes out, stamp the
+	// cooldown so the NEXT pass waits for late replies before recomputing the unfulfilled set.
 	if (s.cacheMissRetryPending.length > 0) {
 		sendCacheMissBatch(s, s.cacheMissRetryPending, 1)
+		if (s.cacheMissRetryPending.length === 0) s.lastRetryPassAt = Date.now()
 		return
 	}
-	// Both phases drained — safe to dump snapshot now.
-	dumpPrimIdsSnapshot(s)
+
+	// No active batch. Decide whether to start another retry pass. The sim's EntityUpdateQueue
+	// drops some requested ids under backlog; re-asking the still-missing set across several passes
+	// recovers them. Stop when: nothing left, hit the pass cap, or progress stalls (plateau = sim
+	// structurally won't send those ids — phantom/temp/aged-out-of-region). Each pass uses
+	// CacheMissType=1 (CRC-mismatch) — some OpenSim builds honor it differently than type=0.
+	const MAX_RETRY_PASSES = 10
+	const RETRY_COOLDOWN_MS = 4000   // let late replies land before recomputing unfulfilled
+
+	// Gate the FIRST pass on 5s of enum silence so we don't retry mid-enumeration.
+	if (!s.cacheMissRetryStarted) {
+		if (s.lastCacheEnumAt === 0) return
+		if (Date.now() - s.lastCacheEnumAt < 5000) return
+	}
+	// Cooldown between passes.
+	if (s.lastRetryPassAt && Date.now() - s.lastRetryPassAt < RETRY_COOLDOWN_MS) return
+
+	const passCount = s.retryPassCount ?? 0
+	if (passCount >= MAX_RETRY_PASSES || (s.retryPlateauCount ?? 0) >= 2) {
+		dumpPrimIdsSnapshot(s)
+		return
+	}
+
+	const unfulfilled: number[] = []
+	for (const id of s.cacheMissAskedEver) if (!s.distinctLocalIds.has(id)) unfulfilled.push(id)
+	if (unfulfilled.length === 0) { dumpPrimIdsSnapshot(s); return }
+
+	// Progress / plateau tracking (compare against the count at the previous pass's start).
+	const prev = s.lastUnfulfilledCount
+	if (prev != null && unfulfilled.length >= prev) s.retryPlateauCount = (s.retryPlateauCount ?? 0) + 1
+	else s.retryPlateauCount = 0
+	s.lastUnfulfilledCount = unfulfilled.length
+	s.retryPassCount       = passCount + 1
+	s.cacheMissRetryStarted = true
+	s.cacheMissRetryPending = unfulfilled
+	slog.info(s.ws, `[CacheMissRetry] pass ${s.retryPassCount}/${MAX_RETRY_PASSES}: re-requesting ${unfulfilled.length} unfulfilled (prev=${prev ?? '—'}, plateau=${s.retryPlateauCount})`)
+}
+
+/**
+ * Replay the buffered ObjectUpdateCached probes once the client asked (OBJ_PROBE_RESYNC) AND the
+ * sim's enumeration has gone quiet for 2s. WHY: the initial probe flood predates the engine's WS
+ * handlers (probes dispatched into the void client-side), and the client's resync request predates
+ * the flood — so neither side can time this alone. Dripped with a bufferedAmount gate because Bun's
+ * ws.send silently DROPS frames past the backpressure cap (observed: 117 burst chunks, 0 received).
+ */
+function drainProbeResync(s: CircuitState): void {
+	if (!s.probeResyncWanted) return
+	const backlog = s.probeBacklog
+	if (!backlog || backlog.size === 0) return
+	if (Date.now() - (s.lastProbeRxAt ?? 0) < 2000) return   // enum still streaming — wait
+	s.probeResyncWanted = false
+	const all = [...backlog.entries()].filter(([id]) => !s.objCache.has(id))
+	if (all.length === 0) return
+	const CHUNK = 200, PER_TICK = 4, TICK_MS = 100, MAX_BUFFERED = 256 * 1024
+	let i = 0
+	const drip = setInterval(() => {
+		try {
+			for (let k = 0; k < PER_TICK && i < all.length; k++) {
+				if ((s.ws.getBufferedAmount?.() ?? 0) > MAX_BUFFERED) return  // socket busy — retry next tick
+				const probes = all.slice(i, i + CHUNK).map(([localId, crc]) => ({ localId, crc }))
+				s.ws.send(JSON.stringify({ t: S.OBJ_CACHE_PROBE, d: { probes } }))
+				i += CHUNK
+			}
+			if (i >= all.length) {
+				clearInterval(drip)
+				slog.info(s.ws, `[ObjCached] probe-resync: replayed ${all.length} buffered probes (dripped ${Math.ceil(all.length / CHUNK)} chunks)`)
+			}
+		} catch { clearInterval(drip) }  // ws gone (reload/close) — client re-arms on next mount
+	}, TICK_MS)
 }
 
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */
@@ -1621,7 +1773,7 @@ function sendHeartbeat(s: CircuitState): void {
 		camAt:     [1, 0, 0] as [number, number, number],
 		camLeft:   [0, 1, 0] as [number, number, number],
 		camUp:     [0, 0, 1] as [number, number, number],
-		far: 128,
+		far: 512,   // region-wide interest radius (matches client default)
 	}
 	const seq = nextSeq(s)
 	const pkt = encodeAgentUpdate({ agentId: s.agentId, sessionId: s.sessionId, seq, ...p })
@@ -1658,6 +1810,7 @@ export function startCircuitTimers(sessionId: string): () => void {
 		sendPendingAcks(s)
 		sendHeartbeat(s)
 		drainCacheMissQueue(s)
+		drainProbeResync(s)
 	}, 500)
 	return () => clearInterval(timer)
 }

@@ -26,6 +26,11 @@ export const useSessionStore = defineStore('session', () => {
 	// detail-texture UUIDs + per-corner blend heights for future textured terrain (J2C pipeline).
 	const waterHeight   = ref(20)
 	const terrainTextures = ref({ detail: ['', '', '', ''], startHeight: [0, 0, 0, 0], heightRange: [0, 0, 0, 0] })
+	// WHY: RegionHandshake CacheID — changes when the region (re)starts. localIds are only valid
+	// within one region run, so the object-cache replay gates on this: mismatch with the stored
+	// value → the cached objects carry dead localIds (sim ignores ObjectSelect etc. for them) and
+	// the region's object cache must be dropped instead of replayed.
+	const regionCacheId = ref('')
 	const connected     = ref(false)
 
 	function setSession(data) {
@@ -52,6 +57,7 @@ export const useSessionStore = defineStore('session', () => {
 		simPort.value = regionX.value = regionY.value = 0
 		regionSizeX.value = regionSizeY.value = 256
 		waterHeight.value = 20
+		regionCacheId.value = ''
 		terrainTextures.value = { detail: ['', '', '', ''], startHeight: [0, 0, 0, 0], heightRange: [0, 0, 0, 0] }
 		connected.value = false
 	}
@@ -59,7 +65,7 @@ export const useSessionStore = defineStore('session', () => {
 	return {
 		agentId, sessionId, username, simIp, simPort, seedCap,
 		regionName, regionX, regionY, regionSizeX, regionSizeY,
-		startLocation, agentAccess, regionAccess, waterHeight, terrainTextures,
+		startLocation, agentAccess, regionAccess, waterHeight, terrainTextures, regionCacheId,
 		connected, setSession, clearSession,
 	}
 })

@@ -26,13 +26,13 @@ npm run build:staging    # → dist/staging/
 npm run build:prod       # → dist/prod/
 ```
 
-Copy `.env.development.local-example` → `.env.development.local` before first run. The file selects the WS server (`VITE_SIGNAL_URL`) — point to `ws://localhost:8787` for local or the staging Railway URL to skip running the server locally.
+Copy `.env.development.local-example` → `.env.development.local` before first run. The file selects the WS server (`VITE_SIGNAL_URL`) — point to `ws://localhost:8787` for local (run `npm run dev:server` in a second terminal).
 
 ## Architecture
 
 ### Frontend → Bun WS → OpenSim
 
-- **Vite SPA** served standalone (Railway, static host, or local).
+- **Vite SPA** served standalone (static host or local).
 - **Bun WS server** (`server/index.ts`) handles signaling, presence relay, pose sync, chat, cursors, reactions — all in real time. Modular handlers under `server/handlers/`.
 - **Hash-based routing** (`createWebHashHistory`) — required for standalone embedding. Two routes: `/setup` and `/office`. All unknown paths → `/office`.
 

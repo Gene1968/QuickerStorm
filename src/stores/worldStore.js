@@ -9,6 +9,10 @@ export const useWorldStore = defineStore('world', () => {
 	// Map<localId (number), object>
 	const objects = ref(new Map())
 
+	// Culling telemetry for the % -loaded badge + Prefs. resident/known are non-avatar mesh counts.
+	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100 })
+	function setCullStats(s) { cullStats.value = s }
+
 	// WHY: ObjectUpdate nameValue is the raw SL NameValue string, e.g.:
 	//   "FirstName STRING RW SV John\nLastName STRING RW SV Doe\n"
 	// AvatarList reads .name; parse it here so all consumers get a display name.
@@ -128,7 +132,7 @@ export const useWorldStore = defineStore('world', () => {
 	}
 
 	return {
-		objects, avatars, prims,
+		objects, avatars, prims, cullStats, setCullStats,
 		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,

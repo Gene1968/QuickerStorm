@@ -65,6 +65,22 @@
 		"password": "http://www.neverworldgrid.com/contact.html",
 		"loginIdentifierTypes": ["agent", "account"]
 	},
+	"gbg": {
+		"nick": "gbg",
+		"name": "GBG METAVERSE NEON Grid",
+		"loginURI": "http://hg.gbg-world.com:8002/",
+		"slurlBase": "hop://hg.gbg-world.com:8002/",
+		"platform": "OpenSim",
+		"system": false,
+		"helperURI": "http://gbg-world.com/helpers",
+		"loginPage": "http://gbg-world.com/web/index.php",
+		"about": "http://gbg-world.com/web/team.php",
+		"help": "http://gbg-world.com/web/how2connect.php",
+		"register": "http://gbg-world.com/web/register.php",
+		"password": "http://gbg-world.com/web/resetpassword.php",
+		"search": "http://www.gbg-world.com/helpers/ossearch.php",
+		"loginIdentifierTypes": ["agent", "account"]
+	},
 	"metropolis": {
 		"nick": "metropolis",
 		"name": "Metropolis Metaversum",
