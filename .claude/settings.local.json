@@ -239,7 +239,9 @@
       "PowerShell(bun run *)",
       "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bljxllghi.output\" -Pattern 'Watch|667280850' | Select-Object -Last 10 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(200, $_.Line.Length\\)\\) })",
       "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bljxllghi.output\" -Pattern 'Watch\\\\] Compressed raw' | Select-Object -Last 1 | ForEach-Object { $_.Line })",
-      "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bljxllghi.output\" -Pattern 'TEDUMP|Sculpt\\\\]' | Select-Object -Last 6 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(260, $_.Line.Length\\)\\) })"
+      "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bljxllghi.output\" -Pattern 'TEDUMP|Sculpt\\\\]' | Select-Object -Last 6 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(260, $_.Line.Length\\)\\) })",
+      "PowerShell($dirs = @\\(\"$env:TEMP\", \"$env:USERPROFILE\\\\.claude\\\\projects\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\"\\); foreach \\($d in $dirs\\) { if \\(Test-Path $d\\) { Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt \\(Get-Date\\).AddHours\\(-6\\) -and $_.Length -gt 1000 } | Sort-Object LastWriteTime -Descending | Select-Object -First 15 FullName, Length, LastWriteTime } })",
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 12)"
     ]
   }
 }

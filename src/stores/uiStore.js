@@ -1,6 +1,6 @@
 // src/stores/uiStore.js — UI mode, panel visibility, camera position readout
 import { defineStore } from 'pinia'
-import { ref, computed, shallowRef } from 'vue'
+import { ref, computed, shallowRef, watch } from 'vue'
 import { useChatStore } from './chatStore'
 
 // WHY: Inventory supports up to 6 simultaneous floaters (per-bag, multi-view).
@@ -61,6 +61,21 @@ export const useUiStore = defineStore('ui', () => {
 	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
 	const alwaysRun          = ref(false)    // SL AGENT_CONTROL_ALWAYS_RUN flag — Ctrl+R toggle
 	const flying             = ref(false)    // mirrors engine isFlying for UI button state
+	// WHY: FS-parity lit shading (MeshLambert + scene lights) so untextured/blank-white surfaces show
+	// form through shading instead of rendering as flat cutouts. Default ON; worldEngine watches and
+	// swaps materials live, and auto-disables it (once per session, with a notification) if FPS stays
+	// below its floor — the weak-GPU mitigation. Persisted so the choice survives reload.
+	const litShading         = ref(localStorage.getItem('qs-lit-shading') !== '0')
+	// FPS readout in the top-right tray (FS lag-meter stand-in). Persisted, default ON.
+	const showFps            = ref(localStorage.getItem('qs-show-fps') !== '0')
+	watch(litShading, (v) => localStorage.setItem('qs-lit-shading', v ? '1' : '0'))
+	watch(showFps,    (v) => localStorage.setItem('qs-show-fps',    v ? '1' : '0'))
+	// Live FPS + inbound WS bandwidth (kbps) — written by useWorldEngine's animate loop at ~1 Hz
+	// (not every frame). Displayed in the AudioControlsWidget top-bar stats cluster.
+	const fps                = ref(0)
+	const netKbps            = ref(0)
+	function setFps(v) { fps.value = v }
+	function setNetKbps(v) { netKbps.value = v }
 
 	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
@@ -269,6 +284,7 @@ export const useUiStore = defineStore('ui', () => {
 		toggleMovementHelp, togglePlaces, openPlacesOnTab, placesActiveTab, openPreferencesOnTab,
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
+		litShading, showFps, fps, setFps, netKbps, setNetKbps,
 		openProfile, closeProfile, toggleProfile,
 		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,

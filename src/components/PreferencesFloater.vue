@@ -94,7 +94,7 @@ const ALL_TABS = [
 	{ id: 'accounts',      icon: '👤',  label: 'Accounts',      disabled: false, soon: false },
 	{ id: 'appearance',    icon: '🎨',  label: 'Appearance',    disabled: false, soon: false },
 	{ id: 'chat',          icon: '💬',  label: 'Chat',          disabled: false, soon: true  },
-	{ id: 'graphics',      icon: '🖥️',  label: 'Graphics',      disabled: false, soon: true  },
+	{ id: 'graphics',      icon: '🖥️',  label: 'Graphics',      disabled: false, soon: false },
 	{ id: 'sound',         icon: '🔊',  label: 'Sound & Media',   disabled: false, soon: false },
 	{ id: 'network',       icon: '🗄️',  label: 'Network & Files', disabled: false, soon: false },
 	{ id: 'move',          icon: '🎮',  label: 'Move & View',     disabled: true,  soon: false },
@@ -299,18 +299,64 @@ onUnmounted(() => {
 						</div>
 					</template>
 
-					<!-- ── GRAPHICS (soon) ── -->
+					<!-- ── GRAPHICS ── -->
 					<template v-else-if="activeTab === 'graphics'">
 						<h2 class="pf-section-heading">Graphics</h2>
-						<div class="pf-soon-block">
-							<span class="pf-soon-icon">🖥️</span>
-							<p>Graphics settings coming in a future update.</p>
-							<ul class="pf-soon-list">
-								<li>Draw distance</li>
-								<li>Avatar LOD factor</li>
-								<li>Max visible avatars</li>
-								<li>Particle count limit</li>
-							</ul>
+
+						<div class="pf-row">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Lit Shading</span>
+								<span class="pf-row-hint">Sun and ambient shading on objects (Firestorm-style). Turns off automatically if your frame rate stays low.</span>
+							</div>
+							<button
+								class="theme-toggle"
+								:class="{ dark: ui.litShading }"
+								:title="ui.litShading ? 'Disable lit shading' : 'Enable lit shading'"
+								@click="ui.litShading = !ui.litShading"
+							>
+								<span class="theme-knob" />
+								<span class="theme-label">{{ ui.litShading ? 'On' : 'Off' }}</span>
+							</button>
+						</div>
+
+						<div class="pf-row">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Show FPS Meter</span>
+								<span class="pf-row-hint">FPS + bandwidth meters in the top bar. Green ≥ 40 FPS, amber ≥ 20, red below.</span>
+							</div>
+							<button
+								class="theme-toggle"
+								:class="{ dark: ui.showFps }"
+								:title="ui.showFps ? 'Hide FPS meter' : 'Show FPS meter'"
+								@click="ui.showFps = !ui.showFps"
+							>
+								<span class="theme-knob" />
+								<span class="theme-label">{{ ui.showFps ? 'On' : 'Off' }}</span>
+							</button>
+						</div>
+
+						<div class="pf-row pf-row--disabled">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Draw Distance</span>
+								<span class="pf-row-hint">How far objects stay visible.</span>
+							</div>
+							<span class="pf-chip-soon">Coming soon</span>
+						</div>
+
+						<div class="pf-row pf-row--disabled">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Avatar LOD Factor</span>
+								<span class="pf-row-hint">Avatar mesh detail falloff.</span>
+							</div>
+							<span class="pf-chip-soon">Coming soon</span>
+						</div>
+
+						<div class="pf-row pf-row--disabled">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Max Visible Avatars</span>
+								<span class="pf-row-hint">Cap rendered avatars in crowded regions.</span>
+							</div>
+							<span class="pf-chip-soon">Coming soon</span>
 						</div>
 					</template>
 

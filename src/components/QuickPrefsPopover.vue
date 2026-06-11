@@ -47,9 +47,23 @@ function openPreferences() {
 			</div>
 		</div>
 
-		<!-- ── Graphics (placeholder) ───────────────────────────────── -->
+		<!-- ── Graphics ─────────────────────────────────────────────── -->
 		<div class="qp-section">
 			<div class="qp-section-label">Graphics</div>
+
+			<!-- Lit shading (default ON): FS-parity sun/ambient shading on prims vs flat unlit. -->
+			<div class="qp-row">
+				<span class="qp-row-label">Lit Shading</span>
+				<button
+					class="theme-toggle"
+					:class="{ dark: ui.litShading }"
+					:title="ui.litShading ? 'Disable lit shading (flat unlit colors)' : 'Enable FS-parity lit shading'"
+					@click="ui.litShading = !ui.litShading"
+				>
+					<span class="theme-knob" />
+					<span class="theme-label">{{ ui.litShading ? 'On' : 'Off' }}</span>
+				</button>
+			</div>
 
 			<div class="qp-row qp-row--disabled">
 				<span class="qp-row-label">Draw Distance</span>

@@ -9,7 +9,7 @@ import { useMapStore } from '@/stores/mapStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
 import { useNotificationStore } from '@/stores/notificationStore'
-import { useRealtimeSocket, takeWsStats } from './useRealtimeSocket'
+import { useRealtimeSocket, takeWsStats, takeWsBytes } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
@@ -194,6 +194,7 @@ export function useWorldEngine(canvasRef) {
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
 	const stopAlwaysRunWatch = watch(() => uiStore.alwaysRun, (v) => sendSetAlwaysRun(v))
+	const stopLitShadingWatch = watch(() => uiStore.litShading, (on) => relightScene(on))
 	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
 	// built — water plane starts at the default 20m and terrain is coloured against it. When the
 	// real sea level arrives, reposition the water plane and recolour terrain to match.
@@ -1557,10 +1558,16 @@ export function useWorldEngine(canvasRef) {
 			// lit MeshStandardMaterial; plain prims + avatars keep the fast unlit MeshBasicMaterial
 			// (avoids the historical rotation-flicker on the bulk of the scene).
 			const hasMaterial = !isAvatar && !obj._placeholder && !!(obj.defaultPbrMaterial || obj.defaultMaterialId)
+			// Lit-shading A/B (QuickPrefs ▸ Graphics): material-less prims switch to MeshLambert so
+			// untextured/blank-white surfaces show form through sun/ambient shading like FS, instead of
+			// rendering flat. Fullbright stays unlit — MeshBasic IS fullbright, exactly SL semantics.
+			const wantLit = !isAvatar && !obj._placeholder && uiStore.litShading && !obj.defaultFullbright
 			const mat = hasMaterial
 				? new THREE.MeshStandardMaterial({ color: primColor, metalness: 0, roughness: 1 })
-				: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
-			if (hasMaterial && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
+				: wantLit
+					? new THREE.MeshLambertMaterial({ color: primColor })
+					: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+			if ((hasMaterial || wantLit) && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
 
 			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
@@ -1592,13 +1599,16 @@ export function useWorldEngine(canvasRef) {
 			const primMulti = hasMultiFacePrim(obj)
 			const applySwap = (out) => {
 				const _t0 = performance.now()
-				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
+				// userData.relit: the lit-shading toggle swapped this mesh's material while the bake was
+				// in flight — the mesh is NOT stale, accept the geometry (a real re-material/removal
+				// still bails via mesh.parent / the rebuilt-mesh path).
+				if (!out || out.bad || !mesh.parent || (mesh.material !== mat && !mesh.userData.relit)) {
 					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
 					return
 				}
 				const baked = geometryFromArrays(out)
 				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
-				if (hasMaterial && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
+				if ((hasMaterial || uiStore.litShading) && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
 				// WHY: an in-flight update may have rescaled the placeholder + advanced primScale since
 				// dispatch. Re-apply the bakeScale→primScale ratio so the swapped geometry matches the
 				// current scale (same axis map as bakePrimScale / the update path). Divisor 0/non-finite → 1.
@@ -2918,9 +2928,11 @@ export function useWorldEngine(canvasRef) {
 			obj.faceRotation?.[sf(i)] ?? obj.defaultRotation,
 		)
 		const mats = []
+		// Lit-shading A/B: same class choice as the single-material path (fullbright → stays unlit).
+		const FaceMat = (uiStore.litShading && !obj.defaultFullbright) ? THREE.MeshLambertMaterial : THREE.MeshBasicMaterial
 		for (let i = 0; i <= maxIdx; i++) {
 			const fc = obj.faceColors?.[sf(i)] ?? obj.defaultColor
-			const m = new THREE.MeshBasicMaterial({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
+			const m = new FaceMat({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
 			if (fc && fc[3] < 0.99) { m.transparent = true; m.opacity = fc[3] }
 			mats.push(m)
 		}
@@ -3032,6 +3044,97 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// ── Lit-shading A/B toggle (QuickPrefs ▸ Graphics ▸ Lit Shading) ────────────────────────────
+	// Swap a single prim material between unlit MeshBasic and lit MeshLambert, preserving its
+	// already-applied texture/tint/alpha state. MeshStandard (legacy/PBR material path) is always
+	// lit and left alone; fullbright prims stay MeshBasic (unlit IS fullbright).
+	function relightMaterial(m, lit, obj) {
+		if (!m || m.isMeshStandardMaterial) return m
+		const wantLit = lit && !obj?.defaultFullbright
+		if (wantLit === !!m.isMeshLambertMaterial) return m
+		const next = wantLit
+			? new THREE.MeshLambertMaterial({ color: m.color.clone() })
+			: new THREE.MeshBasicMaterial({ color: m.color.clone() })
+		next.map = m.map
+		next.transparent = m.transparent
+		next.opacity = m.opacity
+		next.alphaTest = m.alphaTest
+		next.depthWrite = m.depthWrite
+		next.side = m.side
+		m.dispose()   // frees the old shader program only — textures are shared/cached, untouched
+		return next
+	}
+
+	// Re-materialize the whole scene when the toggle flips. Single materials swap in place (texture
+	// carries over instantly). Per-face arrays rebuild via buildFaceMaterials, which re-resolves each
+	// face texture through getTexture — cache hits apply instantly, misses fill in async. In-flight
+	// texture fetches guarded by `mesh.material !== mat` drop on swap; the 3s backfill sweep
+	// re-applies those, so the scene converges. Avatars/placeholders keep their current materials.
+	function relightScene(on) {
+		let swapped = 0
+		for (const [localId, mesh] of meshMap) {
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR || obj._placeholder) continue
+			if (on && !mesh.geometry?.attributes?.normal) mesh.geometry?.computeVertexNormals?.()
+			if (Array.isArray(mesh.material)) {
+				const old = mesh.material
+				buildFaceMaterials(mesh, obj, obj.meshId ? null : primFaceMap(obj.shape))
+				old.forEach(m => m.dispose())
+				mesh.userData.relit = true   // in-flight bake applySwap: not stale, accept geometry
+				swapped++
+				continue
+			}
+			const next = relightMaterial(mesh.material, on, obj)
+			if (next !== mesh.material) {
+				mesh.material = next
+				mesh.userData.relit = true   // in-flight bake applySwap: not stale, accept geometry
+				swapped++
+			}
+		}
+		debugStore.push('info', `[Lit] shading ${on ? 'ON (lambert)' : 'OFF (unlit)'} — ${swapped} meshes re-materialized`)
+	}
+
+	// ── FPS meter + weak-GPU mitigation ─────────────────────────────────────────────────────────
+	// Counts rendered frames over ~1s windows and publishes to uiStore.fps (TopRightTray readout).
+	// Windows spanning a focus-gap (rAF parked while unfocused) are discarded, not computed — they
+	// would read as a false FPS collapse. Mitigation: lit shading is the only render feature with a
+	// real per-frame cost knob, so if FPS stays under LIT_MIN_FPS for LIT_LOW_MS while lit shading is
+	// on, drop back to unlit ONCE per session (the one-shot stops a re-enable→re-disable fight if the
+	// user insists) and tell the user via notification toast.
+	const LIT_MIN_FPS = 20
+	const LIT_LOW_MS  = 10000
+	let _fpsFrames = 0, _fpsWindowStart = 0, _lowFpsSince = 0, _litAutoDropped = false
+	function updateFps(time) {
+		_fpsFrames++
+		if (!_fpsWindowStart) { _fpsWindowStart = time; return }
+		const elapsed = time - _fpsWindowStart
+		if (elapsed < 1000) return
+		const gapWindow = elapsed > 2500   // focus gap inside this window → sample invalid
+		const fps = gapWindow ? null : Math.round((_fpsFrames * 1000) / elapsed)
+		_fpsFrames = 0
+		_fpsWindowStart = time
+		// Bandwidth meter: WS bytes accumulated this window → kbps. Always take (resets the counter
+		// so a focus gap doesn't dump its backlog into the next valid window as a false spike).
+		const kbps = Math.round((takeWsBytes() * 8) / elapsed)   // bytes·8 bits / elapsed ms = kbps
+		if (fps == null) { _lowFpsSince = 0; return }
+		uiStore.setFps(fps)
+		uiStore.setNetKbps(kbps)
+		if (!uiStore.litShading || _litAutoDropped) { _lowFpsSince = 0; return }
+		if (fps >= LIT_MIN_FPS) { _lowFpsSince = 0; return }
+		if (!_lowFpsSince) { _lowFpsSince = time; return }
+		if (time - _lowFpsSince >= LIT_LOW_MS) {
+			_litAutoDropped = true
+			uiStore.litShading = false   // persists; user can re-enable in Preferences ▸ Graphics
+			debugStore.push('warn', `[Lit] auto-disabled: FPS < ${LIT_MIN_FPS} for ${LIT_LOW_MS / 1000}s`)
+			notificationStore.notify({
+				title: 'Lit shading disabled',
+				body: `Frame rate stayed under ${LIT_MIN_FPS} FPS, so lit shading was turned off to keep things smooth. Re-enable it any time in Preferences ▸ Graphics.`,
+				icon: '🖥️',
+				toast: true,
+			})
+		}
+	}
+
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
 		// WHY (perf): when the page is unfocused (mouse on taskbar, another window, or devtools)
@@ -3042,6 +3145,7 @@ export function useWorldEngine(canvasRef) {
 		// Advance lastTime so dt doesn't spike on the first frame back.
 		if (!document.hasFocus()) { lastTime = time; return }
 		const _frT0 = performance.now()
+		updateFps(time)
 		// Starvation-proof drain: ~125ms long tasks (see [Main] telemetry) starve the 30ms interval to
 		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. Budgeted (8ms), so
 		// the frame cost is bounded; the interval still covers the unfocused case.
@@ -3416,6 +3520,7 @@ export function useWorldEngine(canvasRef) {
 	onUnmounted(() => {
 		_liveEngine = null
 		stopAlwaysRunWatch()
+		stopLitShadingWatch()
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()

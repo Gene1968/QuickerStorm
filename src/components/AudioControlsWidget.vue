@@ -5,7 +5,7 @@
  * Mic mute button (disabled when voice not enabled).
  * Sound mute button with chevron — hover opens mixer dropdown.
  */
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
 	VideoIcon,
 	MonitorIcon,
@@ -97,6 +97,19 @@ onMounted(() => {
 })
 onUnmounted(() => clearInterval(clockTimer))
 
+// ── FPS + bandwidth meters (FS statusbar parity) ─────────────────────────────
+// Fed by useWorldEngine at ~1 Hz via uiStore (fps from real rendered frames, netKbps from inbound
+// WS bytes — all sim traffic arrives over that socket). Lag-meter colors: green = comfortable,
+// amber = strained, red = struggling (lit shading auto-disables below 20, see useWorldEngine).
+const fpsText  = computed(() => ui.fps > 0 ? String(ui.fps) : '--')
+const fpsColor = computed(() => ui.fps <= 0 ? 'text-white/40'
+	: ui.fps >= 40 ? 'text-green-500' : ui.fps >= 20 ? 'text-yellow-500' : 'text-red-500')
+// Bandwidth bar height: 0 → 1 Mbps maps to 0.1 → 0.75rem (container is 1rem; FS-style mini bar).
+const kbpsBarStyle = computed(() => {
+	const frac = Math.min(1, ui.netKbps / 1000)
+	return { height: `${(0.1 + frac * 0.65).toFixed(2)}rem` }
+})
+
 // Stub channels — static display only (no routing yet)
 const stubChannels = [
 	{ label: 'Ambient', vol: ambientVolume },
@@ -109,19 +122,24 @@ const stubChannels = [
 
 <template>
 	<div
-		class="relative flex items-center gap-1 pe-3"
+		class="relative flex items-center pe-2"
 	>
-		<div class="flex items-center gap-2 me-2">
-			<div class="mx-1.5"></div>
+		<div class="flex items-center gap-2 ms-1.5">
 			<div
 				title="Click to refresh your X$ balance (TO-DO)"
-				class="mx-4 text-xs text-white/60"
+				class="mx-1 text-xs text-white/40"
 			>
-				X$ 0
+				?$ 0
+			</div>
+			<div
+				title="Users want this? (TO-DO)"
+				class="mx-2 text-xs text-white/40"
+			>
+				BUY ?$
 			</div>
 			<div
 				:title="gridDate"
-				class="me-7 ms-3 text-xs text-white/60"
+				class="me-7 ms-2 text-xs text-white/80"
 			>
 				{{ gridTime }}
 			</div>
@@ -166,7 +184,7 @@ const stubChannels = [
 
 		<!-- Sound mute button + chevron -->
 		<button
-			class="h-7 flex items-center gap-0.5 px-1.5 rounded hover:bg-white/15 transition-colors"
+			class="h-7 flex items-center me-2 px-1 rounded hover:bg-white/15 transition-colors"
 			:class="isAllAudioMuted ? 'text-red-400' : 'text-white/80'"
 			:title="
 				isAllAudioMuted ? 'Unmute sound' : 'Mute sound / Sound settings'
@@ -177,7 +195,7 @@ const stubChannels = [
 		>
 			<VolumeX v-if="isAllAudioMuted" :size="15" />
 			<Volume2 v-else :size="15" />
-			<ChevronDown :size="10" class="opacity-60" />
+			<ChevronDown :size="10" class="text-white opacity-60" />
 		</button>
 
 		<!-- Hover dropdown mixer -->
@@ -272,10 +290,15 @@ const stubChannels = [
 				</div>
 			</div>
 		</Transition>
-		<div class="flex items-center gap-1">
-			<div @click="console.log('to-do: prefs - fps limit')" title="Frames per second (click to adjust limit) (TO-DO)" class="me-3 ms-1 text-xs text-yellow-500">##.#</div>
-			<div @click="console.log('to-do: show lag meter')" title="#Kbps (TO-DO)" class="flex items-end border h-full min-h-4"><div class="w-1 h-[0.75rem] bg-green-500"></div></div>
-			<div @click="console.log('to-do: show lag meter')" title="#.#% (TO-DO)" class="flex items-end border h-full min-h-4"><div class="w-1 h-[0.40rem] bg-green-500"></div></div>
+		<div v-if="ui.showFps" class="flex items-center gap-1">
+			<div
+				:title="`Frames per second (click for Graphics preferences)`"
+				class="me-2 text-xs cursor-pointer tabular-nums"
+				:class="fpsColor"
+				@click="ui.openPreferencesOnTab('graphics')"
+			>{{ fpsText }}</div>
+			<div @click="console.log('to-do: show lag meter floater')" :title="`${ui.netKbps} kbps inbound`" class="flex items-end border border-gray-500 h-full min-h-4"><div class="w-1 bg-green-500" :style="kbpsBarStyle"></div></div>
+			<div @click="console.log('to-do: show lag meter floater')" title="Packet loss % (TO-DO — needs SimStats decode)" class="flex items-end border border-gray-500 h-full min-h-4"><div class="w-1 h-[0.40rem] bg-gray-500/60"></div></div>
 		</div>
 	</div>
 </template>
