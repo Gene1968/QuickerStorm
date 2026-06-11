@@ -916,7 +916,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			const hex = buf.slice(dataOffset, Math.min(dataOffset + 40, buf.length)).toString('hex')
 			slog.info(session.ws,
 				`[MapBlocks] rx ${blocks.length} block(s) bufLen=${buf.length} hex[${hex}]` +
-				(blocks.length > 0 ? ` first="${blocks[0].name}"(${blocks[0].regionX},${blocks[0].regionY}) access=${blocks[0].access}` : ''))
+				(blocks.length > 0 ? ` first="${blocks[0].name}"(${blocks[0].regionX},${blocks[0].regionY}) access=${blocks[0].access} size=${blocks[0].sizeX}×${blocks[0].sizeY}` : ''))
 			if (blocks.length > 0) {
 				session.ws.send(JSON.stringify({ t: S.MAP_BLOCKS, d: { blocks } }))
 			}

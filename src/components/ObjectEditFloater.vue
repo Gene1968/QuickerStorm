@@ -739,10 +739,10 @@ function close() {
 							<div class="text-white/50 self-center">Alpha mode</div>
 							<div class="text-t1">
 								<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
-								     texture has alpha. Emissive mask renders as None (unlit materials). -->
+									texture has alpha. Emissive mask renders as None (unlit materials). -->
 								<select
 									v-model="alphaMode"
-									class="w-full bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1"
+									class="ui-select w-full bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1"
 								>
 									<option value="">Auto (blend if alpha)</option>
 									<option value="none">None</option>

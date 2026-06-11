@@ -151,6 +151,12 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 
 
 	/* ── Floaters UI elements ────────────────────────────────────────────────────────── */
+	.ui-select option {
+		background-color: var(--color-bg);
+		padding: 0.35rem;
+		color: var(--color-t1);
+		transition: color 0.15s, border-color 0.15s, background 0.15s;
+	}
 	:where(.floater button:not(.custom)),
 	.ui-btn {
 		display: flex;

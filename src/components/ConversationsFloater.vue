@@ -129,7 +129,7 @@ function imRemove()    { const c = activeConv.value; if (c) confirmRemove({ id: 
 function imCloseConv() { const c = activeConv.value; if (c) closeImTab(c.agentId) }
 
 const floaterTitle = computed(() =>
-	avatar.displayName ? `Conversations — ${avatar.displayName}` : 'Conversations'
+	avatar.displayName ? `Conversations – ${ tabs.value.find(t => t.id === activeTab.value)?.label ?? 'Unknown' }` : 'Conversations'
 )
 
 const TYPE_CLASS = {

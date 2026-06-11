@@ -26,6 +26,8 @@ import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
+import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
+import { resolveTerrainSlot } from '@/lib/terrainTextures.js'
 import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
@@ -202,6 +204,22 @@ export function useWorldEngine(canvasRef) {
 		if (waterMesh) waterMesh.position.y = h
 		rebuildTerrainFromStore()
 	})
+	// WHY no deep: App.vue's onRegionInfo replaces session.terrainTextures by reference on every
+	// RegionHandshake, so a shallow ref-compare watch fires exactly when it should.
+	// WHY not immediate: an immediate fire runs synchronously during setup, before `let terrainMesh`
+	// (declared far below) is initialized → TDZ ReferenceError. The populated-on-setup and remount
+	// cases are covered by initScene() calling loadTerrainTextures() directly; this watch only needs
+	// to catch textures that arrive AFTER setup, by which point terrainMesh exists.
+	const stopTerrainTexWatch = watch(
+		() => sessionStore.terrainTextures,
+		() => loadTerrainTextures(),
+	)
+	// WHY: rebuild the terrain plane when regionSize changes (var-region TP backfill arrives after
+	// the geometry was built). Fires only on a real change; terrainMesh guard covers pre-initScene.
+	const stopRegionSizeWatch = watch(
+		() => `${sessionStore.regionSizeX}x${sessionStore.regionSizeY}`,
+		() => rebuildTerrainGeometry(),
+	)
 	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
 	// WHY: LandContextMenu "Walk To" — snap own avatar + camera to chosen terrain point.
 	// Same snap logic as onAgentSpawnPos but triggered client-side via uiStore.requestWarp().
@@ -1104,6 +1122,99 @@ export function useWorldEngine(canvasRef) {
 		if (anyNonZero) terrainMesh.geometry.computeVertexNormals()
 	}
 
+	let terrainShaderMaterial = null   // built lazily once textures arrive
+	let _terrainVtxMaterial   = null   // the original MeshBasicMaterial, kept for region resets
+
+	// WHY: the bundled default WebP tiles are decoded ONCE and shared across every slot, region
+	// cross, and remount. TextureLoader.load allocates a fresh THREE.Texture each call and
+	// Material.dispose() doesn't free uniform textures — without this memo, loadTerrainTextures
+	// would orphan ~4 MB of GPU texture per run (deep watch + region cross + remount = unbounded).
+	// These shared textures are app-lifetime (≤4 tiles) and intentionally never disposed; custom
+	// slots come from getTexture() which owns its own LRU. _bundledPending dedups concurrent loads.
+	const _bundledTerrainTex     = new Map()  // url -> shared THREE.Texture
+	const _bundledTerrainPending = new Map()  // url -> Array<cb> while a load is in flight
+	function loadBundledTerrainTex(url, onReady) {
+		const cached = _bundledTerrainTex.get(url)
+		if (cached) { onReady(cached); return }
+		const pending = _bundledTerrainPending.get(url)
+		if (pending) { pending.push(onReady); return }
+		_bundledTerrainPending.set(url, [onReady])
+		new THREE.TextureLoader().load(url, (tex) => {
+			_bundledTerrainTex.set(url, tex)
+			const cbs = _bundledTerrainPending.get(url) || []
+			_bundledTerrainPending.delete(url)
+			for (const cb of cbs) cb(tex)
+		})
+	}
+
+	// WHY: RegionHandshake gives 4 detail-texture UUIDs + per-corner start/range. Known
+	// default UUIDs paint instantly from bundled WebP (no grid fetch / no J2C decode);
+	// custom UUIDs stream through the normal texture pipeline and swap in when decoded.
+	function loadTerrainTextures() {
+		if (!terrainMesh) return
+		const tt = sessionStore.terrainTextures
+		if (!tt || !Array.isArray(tt.detail)) return
+
+		if (!terrainShaderMaterial) {
+			terrainShaderMaterial = buildTerrainMaterial({
+				startHeight: tt.startHeight,
+				heightRange: tt.heightRange,
+				regionSizeX: sessionStore.regionSizeX,
+				regionSizeY: sessionStore.regionSizeY,
+			})
+		} else {
+			terrainShaderMaterial.uniforms.uStartHeight.value.set(...tt.startHeight)
+			terrainShaderMaterial.uniforms.uHeightRange.value.set(...tt.heightRange)
+		}
+
+		// Max anisotropy kills the grazing-angle "grain" on terrain (renderer exists — created in
+		// initScene before terrainMesh, which gated us above). Falls back to 1 if caps unavailable.
+		const aniso = renderer?.capabilities?.getMaxAnisotropy?.() ?? 1
+
+		for (let slot = 0; slot < 4; slot++) {
+			const r = resolveTerrainSlot(tt.detail[slot])
+			if (r.kind === 'default') {
+				loadBundledTerrainTex(r.url, (tex) => setTerrainSlot(terrainShaderMaterial, slot, tex, aniso))
+			} else {
+				// bundled fallback while the custom texture decodes, then swap the real one in
+				const fb = resolveTerrainSlot('')
+				loadBundledTerrainTex(fb.url, (tex) => setTerrainSlot(terrainShaderMaterial, slot, tex, aniso))
+				getTexture(r.uuid).then((tex) => { if (tex) setTerrainSlot(terrainShaderMaterial, slot, tex, aniso) })
+			}
+		}
+
+		// Swap the mesh onto the shader material (keep the vertex-color one for region resets).
+		if (terrainMesh.material !== terrainShaderMaterial) {
+			_terrainVtxMaterial = terrainMesh.material
+			terrainMesh.material = terrainShaderMaterial
+		}
+	}
+
+	// WHY: the terrain PlaneGeometry is sized to regionSize at initScene (login). Cross-region TP
+	// to a DIFFERENT-sized region only updates the regionSize numbers (onTeleportFinish backfill /
+	// onEngineMapBlocks) — the geometry was never rebuilt, so terrain stayed the login size (e.g. a
+	// 256 plane in a 512 var-region → no surface past 256m). Rebuild the plane when the size changes,
+	// preserving the current material (vtx or shader) and re-syncing the shader's uRegionSize.
+	function rebuildTerrainGeometry() {
+		if (!terrainMesh) return
+		const rx = sessionStore.regionSizeX
+		const ry = sessionStore.regionSizeY
+		const old = terrainMesh.geometry
+		const geo = new THREE.PlaneGeometry(rx, ry, rx, ry)
+		geo.rotateX(-Math.PI / 2)
+		geo.translate(rx / 2, 0, -ry / 2)
+		const vtxColors = new Float32Array(geo.attributes.position.count * 3)
+		const [ir, ig, ib] = heightColor(22)
+		for (let i = 0; i < vtxColors.length; i += 3) {
+			vtxColors[i] = ir; vtxColors[i + 1] = ig; vtxColors[i + 2] = ib
+		}
+		geo.setAttribute('color', new THREE.BufferAttribute(vtxColors, 3))
+		terrainMesh.geometry = geo
+		old.dispose()
+		if (terrainShaderMaterial) terrainShaderMaterial.uniforms.uRegionSize.value.set(rx, ry)
+		rebuildTerrainFromStore()
+	}
+
 	// ── Scene setup ──────────────────────────────────────────────────────────
 	function initScene() {
 		scene = new THREE.Scene()
@@ -1237,6 +1348,10 @@ export function useWorldEngine(canvasRef) {
 		onResize()
 
 		rebuildTerrainFromStore()
+		// WHY: terrainTextures (like terrainHeights) persists across HMR/navigate-away remounts,
+		// but terrainMesh was just recreated. The immediate watch already fired with terrainMesh
+		// null, so re-texture here to close the remount gap — mirrors rebuildTerrainFromStore.
+		loadTerrainTextures()
 	}
 
 	function onResize() {
@@ -2312,6 +2427,13 @@ export function useWorldEngine(canvasRef) {
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
 		worldStore.clearTerrain()
+		// New region: revert the mesh to the vertex-color material (never blank) and drop the
+		// shader so the next RegionHandshake rebuilds it fresh for the new region's textures.
+		if (terrainMesh && _terrainVtxMaterial && terrainMesh.material === terrainShaderMaterial) {
+			terrainMesh.material = _terrainVtxMaterial
+		}
+		terrainShaderMaterial?.dispose()
+		terrainShaderMaterial = null
 		avatarSLPos = null
 		ownAvatarLocalId = null
 		vertVel = 0
@@ -3526,6 +3648,10 @@ export function useWorldEngine(canvasRef) {
 		stopGizmoVisWatch()
 		stopSelSyncWatch()
 		stopWaterHeightWatch()
+		stopTerrainTexWatch()
+		stopRegionSizeWatch()
+		terrainShaderMaterial?.dispose()
+		terrainShaderMaterial = null
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
 		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
 		clearGizmo()
