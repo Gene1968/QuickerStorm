@@ -5,9 +5,11 @@ import { useTheme }				from '@/composables/useTheme'
 import { useGridStore }			from '@/stores/gridStore'
 import { useGridLogin }			from '@/composables/useGridLogin'
 import { useAccountsStore }		from '@/stores/accountsStore'
+import { useUiStore }			from '@/stores/uiStore'
 
 const { isDark, toggle } = useTheme()
 const gridStore      = useGridStore()
+const ui             = useUiStore()
 const accountsStore  = useAccountsStore()
 const { login, checkCircuit } = useGridLogin()
 
@@ -78,6 +80,11 @@ onMounted(async () => {
 			v-else
 			class="absolute inset-0 bg-gradient-to-br from-slate-900 via-bg to-black"
 		/>
+
+		<!-- WHY: iframes steal wheel/click events even when a position:fixed element
+		     sits on top. This transparent shield at z-49 (below floaters at z-50+)
+		     absorbs those events while any floater is open. -->
+		<div v-if="ui.floaterStack.length > 0" class="absolute inset-0" style="z-index: 49" />
 
 		<!-- ── Login strip — 1rem from all edges, rounded, dark bg ───────── -->
 		<div
