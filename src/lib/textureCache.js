@@ -5,7 +5,12 @@
 // URL by UUID, survive reloads, evict least-recently-fetched once a configurable size cap is hit.
 // (A second, server-side tier can come later once self-hosted on VPS/NAS.)
 const DB_NAME    = 'qs-tex'
-const DB_VERSION = 2
+const DB_VERSION = 3          // v2 added 'failed'; v3 purges all stores once — PNGs cached before
+                              // the server J2C decoder swap (cornerstone-openjpeg → magick-wasm)
+                              // can be poisoned (mis-decoded RGBA Kakadu streams: alpha cutouts
+                              // rendered as opaque white). 'failed' is cleared too so cornerstone-
+                              // specific hard-fails get one retry under the new decoder. See
+                              // server/__tests__/j2c-rgba-kakadu.test.ts.
 const STORE      = 'tex'      // { uuid, url, bytes, lastUsed }
 const META       = 'meta'     // { k:'stats', totalBytes }
 const FAILED     = 'failed'   // { uuid, ts } — permanent decode/404 failures with TTL
@@ -30,6 +35,13 @@ function openDb() {
 		const req = indexedDB.open(DB_NAME, DB_VERSION)
 		req.onupgradeneeded = (e) => {
 			const db = e.target.result
+			// One-time v3 purge: drop every store so nothing decoded by the old (mis-decoding)
+			// J2C pipeline survives — see DB_VERSION note. Stores are recreated empty below.
+			if (e.oldVersion > 0 && e.oldVersion < 3) {
+				for (const name of [STORE, META, FAILED]) {
+					if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name)
+				}
+			}
 			if (!db.objectStoreNames.contains(STORE)) {
 				const s = db.createObjectStore(STORE, { keyPath: 'uuid' })
 				s.createIndex('lastUsed', 'lastUsed')

@@ -6,11 +6,28 @@
 // a format createImageBitmap() accepts. WASM (not native) → no build step, runs on the prod host.
 // Decode location decision: see docs/superpowers/specs/2026-06-03-caps-feature-map.md slice 0.
 import openjpegFactory from '@cornerstonejs/codec-openjpeg'
+import { initializeImageMagick, ImageMagick } from '@imagemagick/magick-wasm'
 import { encode as encodePng } from 'fast-png'
 
-// WHY: the WASM module is initialised once and reused. The factory is async (compiles wasm); we
-// memoise the promise so concurrent callers share a single instance. print/printErr are silenced —
-// OpenJPEG emits an "[INFO] …main header…" line per decode that would otherwise flood server logs.
+// WHY ImageMagick as primary: the cornerstone openjpeg-wasm build silently mis-decodes some
+// codestreams — live-confirmed on Kakadu-encoded multi-quality-layer RGBA foliage (palm frond
+// 59c3769c…): luma/chroma/alpha all corrupted, so alpha-cutout textures rendered as opaque white
+// blobs. magick-wasm (which wraps a current OpenJPEG) is byte-identical to cornerstone on streams
+// cornerstone gets right, and matches independent ground truth (Pillow) on the ones it gets wrong.
+// See __tests__/j2c-rgba-kakadu.test.ts. Cornerstone is kept as a fallback for any stream
+// ImageMagick rejects, since its tolerance envelope differs.
+let magickReady: Promise<void> | null = null
+function initMagick(): Promise<void> {
+	if (!magickReady) {
+		const wasmUrl = new URL(import.meta.resolve('@imagemagick/magick-wasm/magick.wasm'))
+		magickReady = Bun.file(wasmUrl).arrayBuffer().then(b => initializeImageMagick(b))
+	}
+	return magickReady
+}
+
+// WHY: the cornerstone WASM module is initialised once and reused. The factory is async (compiles
+// wasm); we memoise the promise so concurrent callers share a single instance. print/printErr are
+// silenced — OpenJPEG emits an "[INFO] …main header…" line per decode that would flood server logs.
 let modPromise: Promise<any> | null = null
 function getModule(): Promise<any> {
 	if (!modPromise) modPromise = openjpegFactory({ print: () => {}, printErr: () => {} })
@@ -24,8 +41,23 @@ export interface DecodedImage {
 	pixels: Uint8Array      // interleaved, 8-bit per sample
 }
 
-/** Decode a J2C codestream to raw interleaved 8-bit pixels. */
-export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImage> {
+function magickDecode(bytes: Uint8Array): DecodedImage {
+	let out: DecodedImage | null = null
+	ImageMagick.read(bytes, img => {
+		// WHY copy inside the callbacks: ImageMagick frees the native image (and its pixel area)
+		// when the callbacks return; the Uint8Array copy must be taken before that.
+		img.getPixels(px => {
+			const channels = img.channelCount
+			if (channels < 1 || channels > 4) throw new Error(`j2c_unsupported_channels: ${channels}`)
+			const area = px.getArea(0, 0, img.width, img.height)   // channel-interleaved, Q8 (0-255)
+			out = { width: img.width, height: img.height, channels, pixels: new Uint8Array(area) }
+		})
+	})
+	if (!out) throw new Error('j2c_decode_empty')
+	return out
+}
+
+async function openjpegDecode(bytes: Buffer | Uint8Array): Promise<DecodedImage> {
 	const mod = await getModule()
 	const dec = new mod.J2KDecoder()
 	try {
@@ -33,6 +65,11 @@ export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImag
 		enc.set(bytes)
 		dec.decode()
 		const fi = dec.getFrameInfo()
+		// WHY: on garbage input openjpeg "succeeds" with a 0×0 frame — surface that as a decode
+		// failure here rather than letting the PNG encoder downstream throw a confusing size error.
+		if (!fi.width || !fi.height || !fi.componentCount) {
+			throw new Error(`j2c_decode_invalid_frame: ${fi.width}×${fi.height}×${fi.componentCount}`)
+		}
 		// WHY copy: getDecodedBuffer() returns a view into the WASM heap that the next decode (and
 		// dec.delete()) will clobber. Copy into a standalone array before the buffer is reused.
 		const raw = dec.getDecodedBuffer()
@@ -49,6 +86,24 @@ export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImag
 		return { width: fi.width, height: fi.height, channels: fi.componentCount, pixels }
 	} finally {
 		dec.delete?.()
+	}
+}
+
+/** Decode a J2C codestream to raw interleaved 8-bit pixels. */
+export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImage> {
+	await initMagick()
+	try {
+		return magickDecode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes))
+	} catch (e) {
+		// Truncated grid assets fail BOTH decoders (expected, classified failedHard downstream).
+		// A stream only cornerstone can handle is the interesting case — log it so we notice.
+		try {
+			const r = await openjpegDecode(bytes)
+			console.warn(`[j2c] magick decode failed (${(e as Error).message.slice(0, 80)}) but openjpeg succeeded — served fallback`)
+			return r
+		} catch {
+			throw e instanceof Error ? e : new Error(String(e))
+		}
 	}
 }
 

@@ -85,19 +85,33 @@ function hasMultiFacePrim(obj) {
 	return primFacesDiffer(obj)
 }
 
-// Build a UV transform from TE repeat/offset/rotation, or null for identity. Clamps repeats to the
-// SL editor max (±100/face): the decoder occasionally yields a garbage scale (e.g. 8215) that would
-// over-tile a face into a solid color — clamp neutralizes it; a clamped-to-0 repeat falls back to 1.
-const MAX_REPEAT = 100
+// Build a UV transform from TE repeat/offset/rotation, or null for identity.
+// NO repeat clamp — FS parity (LLTextureEntry::setScale stores raw F32, no min/max). Huge repeats
+// are legitimate content: billboard-forest sculpts phase-align grid-multiple repeats (live-verified
+// palm 1f22d8ad…: RepeatV=-256 on a 32-side sculpt grid = exactly -8.0 periods per row). The old
+// ±100 clamp broke that alignment; the "garbage 8215" it guarded against came from the misaligned
+// full-ObjectUpdate tail decode fixed by the Data-Var2 fix (objupdate-data-var2.test.ts).
 function uvXform(rep, ofs, rot) {
 	if (!rep && !ofs && rot == null) return null
-	const clamp = (v) => (Number.isFinite(v) ? Math.max(-MAX_REPEAT, Math.min(MAX_REPEAT, v)) : 1)
+	const fin = (v) => (Number.isFinite(v) ? v : 1)
 	const r = rep ?? [1, 1]
 	return {
-		repeat:   [clamp(r[0]) || 1, clamp(r[1]) || 1],
+		repeat:   [fin(r[0]) || 1, fin(r[1]) || 1],
 		offset:   ofs ?? [0, 0],
 		rotation: Number.isFinite(rot) ? rot : 0,
 	}
+}
+
+// #17b: module-level bridge so UI (ObjectEditFloater's Alpha-mode select) can poke the live engine
+// instance without threading props through WorldView. Set on engine mount, nulled on unmount.
+let _liveEngine = null
+/**
+ * Override how the selected object's textures treat alpha. mode: '' | null = auto (blend when the
+ * texture has alpha), 'none', 'blend', 'mask', 'emissive' (renders as none — no emissive support
+ * on unlit prim materials). Persists on the worldStore object so later texture re-applies keep it.
+ */
+export function setObjectAlphaMode(localId, mode) {
+	return _liveEngine?.setObjectAlphaMode(localId, mode) ?? false
 }
 
 // Dev diagnostic: client-only render warnings (e.g. Three.js "Computed radius is NaN") never reach
@@ -1673,14 +1687,7 @@ export function useWorldEngine(canvasRef) {
 						// tinted prim with a plain texture isn't forced white.
 						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 						else mat.color.set(0xffffff)
-						// Alpha (#17): a texture with real transparency (server-reported hasAlpha). Use
-						// alphaTest (cutout) not blend: it discards fully-transparent fragments — fixing
-						// the black-where-transparent symptom — while KEEPING depthWrite, so alpha prims
-						// don't turn the scene see-through/white (the regression from depthWrite=false).
-						// Hard-edged vs smooth blend, but robust without a back-to-front transparent sort.
-						if (tex.userData?.hasAlpha) {
-							mat.alphaTest = 0.5
-						}
+						applyTexAlpha(mat, tex, obj)   // #17b: blend gradient alphas, see helper
 						mat.needsUpdate = true
 					}
 				})
@@ -1718,8 +1725,11 @@ export function useWorldEngine(canvasRef) {
 					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat) { mat.normalMap = t; mat.needsUpdate = true } })
 					// MeshStandard has no spec map; approximate shininess via roughness (higher exp = smoother).
 					if (m.specExp) mat.roughness = Math.max(0.1, 1 - m.specExp / 255)
-					if (m.alphaMode === 1) mat.transparent = true
-					else if (m.alphaMode === 2) mat.alphaTest = (m.alphaCutoff ?? 128) / 255
+					// Persist the material's alpha mode on the object — authoritative for every later
+					// texture (re)apply regardless of which .then resolves first (see alphaPolicyStamp).
+					obj.materialAlphaMode = m.alphaMode ?? null
+					obj.materialAlphaCutoff = m.alphaCutoff
+					alphaPolicyStamp(mat, !!mat.map?.userData?.hasAlpha, obj)
 					mat.needsUpdate = true
 				})
 			}
@@ -2926,10 +2936,72 @@ export function useWorldEngine(canvasRef) {
 				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
 				m.map = tex
 				if (!(obj.faceColors?.[sf(i)] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
-				if (tex.userData?.hasAlpha) m.alphaTest = 0.5
+				applyTexAlpha(m, tex, obj)
 				m.needsUpdate = true
 			})
 		}
+	}
+
+	// Alpha (#17b): a texture with real transparency (server-reported hasAlpha) renders alpha-BLENDED,
+	// matching the SL legacy default (DIFFUSE_ALPHA_MODE_BLEND) — gradient alphas (sky domes, fades,
+	// soft foliage edges) stay smooth. The previous alphaTest=0.5 cutout quantized gradients into hard
+	// opaque/invisible bands (striping). depthWrite STAYS ON — the earlier white-wash regression came
+	// from depthWrite=false, not from blending. The small alphaTest discards near-zero fragments so a
+	// texture's fully-transparent regions don't write depth and hide what's behind them.
+	// 'mask' restores the old hard cutout; '' / null = auto (blend when the texture has alpha).
+	function stampAlphaMode(mat, hasAlpha, mode) {
+		const m = mode || (hasAlpha ? 'blend' : 'none')
+		if (m === 'blend')     { mat.transparent = true;  mat.alphaTest = 0.05; mat.depthWrite = true }
+		else if (m === 'mask') { mat.transparent = false; mat.opacity = 1; mat.alphaTest = 0.5; mat.depthWrite = true }
+		else                   { mat.transparent = false; mat.opacity = 1; mat.alphaTest = 0 }   // none/emissive
+	}
+
+	// Alpha precedence (FS parity): floater override > legacy-material DiffuseAlphaMode (FS greys the
+	// edit controls out when a material drives them) > auto (blend when the texture has alpha).
+	// materialAlphaMode: 0 none, 1 blend, 2 mask (AlphaMaskCutoff/255), 3 emissive (no emissive on
+	// unlit prim materials → renders as none).
+	function alphaPolicyStamp(mat, hasAlpha, obj) {
+		const override = obj?.alphaModeOverride
+		if (override) return stampAlphaMode(mat, hasAlpha, override)
+		const dm = obj?.materialAlphaMode
+		if (dm === 1) return stampAlphaMode(mat, hasAlpha, 'blend')
+		if (dm === 2) {
+			mat.transparent = false; mat.opacity = 1; mat.depthWrite = true
+			mat.alphaTest = (obj.materialAlphaCutoff ?? 128) / 255
+			return
+		}
+		if (dm === 0 || dm === 3) return stampAlphaMode(mat, hasAlpha, 'none')
+		if (hasAlpha) stampAlphaMode(mat, hasAlpha, 'blend')
+	}
+
+	function applyTexAlpha(mat, tex, obj) {
+		const hasAlpha = !!tex.userData?.hasAlpha
+		// Nothing to say → leave the material untouched so TE-color translucency (set at build) survives.
+		if (!hasAlpha && !obj?.alphaModeOverride && obj?.materialAlphaMode == null) return
+		alphaPolicyStamp(mat, hasAlpha, obj)
+	}
+
+	// #17b: manual Alpha-mode override from the Edit floater. Persisted on the store object (so the
+	// backfill sweep and later ObjectUpdates keep honoring it via applyTexAlpha), then re-stamped onto
+	// the live material(s) immediately. Returning to auto/none re-applies TE-color translucency.
+	function setObjectAlphaModeLive(localId, mode) {
+		const obj = worldStore.objects.get(localId)
+		if (obj) obj.alphaModeOverride = mode || null
+		const mesh = meshMap.get(localId)
+		if (!mesh || !mesh.material) return false
+		const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+		for (const m of mats) {
+			const hasAlpha = !!m.map?.userData?.hasAlpha
+			if (mode) stampAlphaMode(m, hasAlpha, mode)
+			else if (obj?.materialAlphaMode != null || hasAlpha) alphaPolicyStamp(m, hasAlpha, obj)
+			else stampAlphaMode(m, hasAlpha, 'none')   // Auto on a plain texture → explicit opaque reset
+			if ((!mode || mode === 'none') && obj?.defaultColor && obj.defaultColor[3] < 0.99 && !m.transparent) {
+				m.transparent = true
+				m.opacity = obj.defaultColor[3]
+			}
+			m.needsUpdate = true
+		}
+		return true
 	}
 
 	function reapplyDiffuse(mesh, obj) {
@@ -2944,7 +3016,7 @@ export function useWorldEngine(canvasRef) {
 			mat.map = tex
 			if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 			else mat.color.set(0xffffff)
-			if (tex.userData?.hasAlpha) mat.alphaTest = 0.5
+			applyTexAlpha(mat, tex, obj)
 			mat.needsUpdate = true
 		})
 	}
@@ -3342,6 +3414,7 @@ export function useWorldEngine(canvasRef) {
 	})
 
 	onUnmounted(() => {
+		_liveEngine = null
 		stopAlwaysRunWatch()
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
@@ -3399,6 +3472,8 @@ export function useWorldEngine(canvasRef) {
 		worldStore.clearTerrain()
 		worldStore.clearAll()
 	})
+
+	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
 	return { scene, camera }
 }

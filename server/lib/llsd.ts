@@ -211,6 +211,27 @@ function readBin(buf: Buffer, p: number): { value: any; end: number } {
 }
 
 /**
+ * Encode a list of UUIDs as a headerless LLSD-Binary array of 16-byte binaries — the exact shape
+ * OpenSim's RenderMaterials POST expects inside its zlib "Zipped" payload (MaterialsModule.cs
+ * RenderMaterialsPostCap reads each element via `new UUID(elem.AsBinary(), 0)`). OpenSim itself
+ * serializes with useHeader=false, and DeserializeLLSDBinary accepts headerless documents.
+ */
+export function encodeLLSDBinaryUuidArray(uuids: string[]): Buffer {
+	const u32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b }
+	const parts: Buffer[] = [Buffer.from([0x5b]), u32(uuids.length)]                 // '['
+	for (const u of uuids) {
+		parts.push(Buffer.from([0x62]), u32(16), Buffer.from(u.replace(/-/g, ''), 'hex'))  // 'b' 16 raw
+	}
+	parts.push(Buffer.from([0x5d]))                                                  // ']'
+	return Buffer.concat(parts)
+}
+
+/** Canonical-order UUID string from 16 raw bytes (LLSD binary 'b'/'u' payloads). */
+export function uuidFromBytes(buf: Buffer): string {
+	return uuidHex(buf, 0)
+}
+
+/**
  * Parse an LLSD Binary document. Skips the optional `<? LLSD/Binary ?>\n` header line.
  * Returns the decoded value plus `end` = byte index just past the document.
  */
