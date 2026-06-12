@@ -78,4 +78,12 @@ describe('createByteLRU', () => {
 		c.set('c', 40)             // evicts 'a'
 		expect(c.has('a')).toBe(false)
 	})
+
+	it('clear() empties the map and resets bytes', () => {
+		const c = lru(100)
+		c.set('a', 1); c.set('b', 2)
+		c.clear()
+		expect(c.size()).toBe(0)
+		expect(c.bytes()).toBe(0)
+	})
 })

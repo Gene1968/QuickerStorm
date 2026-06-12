@@ -1,0 +1,261 @@
+// src/__tests__/lib/geomCache.test.js
+import 'fake-indexeddb/auto'
+import { describe, it, expect } from 'bun:test'
+import {
+	resolveGeomCap, geomCacheStore, geomMemGet, geomCacheGetMany, bytesOfArrays,
+	getGeomCacheStats, clearGeomCache, geomMemClear, getGeomMemBytes,
+	setGeomCapBytes, __flushGeomWritesNow, __flushGeomTouchesNow, geomCacheEvict,
+} from '@/lib/geomCache.js'
+
+const GB = 1024 ** 3
+const mkArrays = (fill = 1, verts = 12) => ({
+	position: new Float32Array(verts * 3).fill(fill),
+	normal:   new Float32Array(verts * 3).fill(fill),
+	uv:       new Float32Array(verts * 2).fill(fill),
+	index:    new Uint32Array(verts).fill(fill),
+	groups:   [{ start: 0, count: verts, materialIndex: 0 }],
+})
+
+describe('resolveGeomCap', () => {
+	it('caps at 20% of quota, hard max 2GB, 1GB fallback', () => {
+		expect(resolveGeomCap({ quota: 5 * GB })).toBe(1 * GB)
+		expect(resolveGeomCap({ quota: 100 * GB })).toBe(2 * GB)   // 20% would be 20GB → clamp
+		expect(resolveGeomCap({})).toBe(1 * GB)
+		expect(resolveGeomCap(undefined)).toBe(1 * GB)
+	})
+})
+
+describe('bytesOfArrays', () => {
+	it('sums the four typed-array byteLengths', () => {
+		const a = mkArrays(1, 10)
+		expect(bytesOfArrays(a)).toBe(120 + 120 + 80 + 40)
+	})
+	it('tolerates missing arrays (uv-less geometry)', () => {
+		expect(bytesOfArrays({ position: new Float32Array(3) })).toBe(12)
+	})
+})
+
+describe('memory tier — clone-on-hand-out invariant', () => {
+	it('store returns a copy; mutating it does not corrupt the cached entry', async () => {
+		geomMemClear(); await clearGeomCache()
+		const handed = geomCacheStore('k1', mkArrays(7))
+		handed.position[0] = 999                       // simulate in-place ratio rescale
+		expect(geomMemGet('k1').position[0]).toBe(7)   // entry unharmed
+	})
+	it('geomMemGet returns a fresh copy each time', () => {
+		geomMemClear()
+		geomCacheStore('k2', mkArrays(3))
+		const a = geomMemGet('k2'), b = geomMemGet('k2')
+		expect(a.position).not.toBe(b.position)
+		a.position[0] = 42
+		expect(b.position[0]).toBe(3)
+	})
+	it('miss returns null; bytes are tracked', () => {
+		geomMemClear()
+		expect(geomMemGet('nope')).toBeNull()
+		geomCacheStore('k3', mkArrays())
+		expect(getGeomMemBytes()).toBe(bytesOfArrays(mkArrays()))
+	})
+})
+
+describe('IDB tier', () => {
+	it('roundtrips arrays through the write buffer and getMany, preserving types + groups', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('r1', mkArrays(5))
+		await __flushGeomWritesNow()
+		geomMemClear()                                  // force the IDB path
+		const m = await geomCacheGetMany(['r1', 'missing'])
+		expect(m.size).toBe(1)
+		const a = m.get('r1')
+		expect(a.position).toBeInstanceOf(Float32Array)
+		expect(a.index).toBeInstanceOf(Uint32Array)
+		expect(a.position[0]).toBe(5)
+		expect(a.groups).toEqual([{ start: 0, count: 12, materialIndex: 0 }])
+	})
+	it('getMany promotes hits into the memory tier', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('r2', mkArrays(9))
+		await __flushGeomWritesNow()
+		geomMemClear()
+		await geomCacheGetMany(['r2'])
+		expect(geomMemGet('r2').position[0]).toBe(9)    // now a sync hit
+	})
+	it('promotion does not alias the returned arrays', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('r3', mkArrays(4))
+		await __flushGeomWritesNow()
+		geomMemClear()
+		const m = await geomCacheGetMany(['r3'])
+		m.get('r3').position[0] = 777
+		expect(geomMemGet('r3').position[0]).toBe(4)
+	})
+	it('latest-wins coalescing in the write buffer', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('r4', mkArrays(1))
+		geomCacheStore('r4', mkArrays(2))
+		await __flushGeomWritesNow()
+		geomMemClear()
+		const m = await geomCacheGetMany(['r4'])
+		expect(m.get('r4').position[0]).toBe(2)
+	})
+	it('stats reflect flushed entries; clear resets', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('s1', mkArrays())
+		await __flushGeomWritesNow()
+		const st = await getGeomCacheStats()
+		expect(st.count).toBe(1)
+		expect(st.bytes).toBe(bytesOfArrays(mkArrays()))
+		expect(st.capBytes).toBeGreaterThan(0)
+		await clearGeomCache()
+		expect((await getGeomCacheStats()).count).toBe(0)
+	})
+	it('evicts oldest-lastUsed entries when over cap', async () => {
+		geomMemClear(); await clearGeomCache()
+		const one = bytesOfArrays(mkArrays())
+		setGeomCapBytes(Math.floor(one * 2.5))          // room for 2 of 3
+		geomCacheStore('old', mkArrays(), 1000)
+		await __flushGeomWritesNow()
+		geomCacheStore('mid', mkArrays(), 2000)
+		await __flushGeomWritesNow()
+		geomCacheStore('new', mkArrays(), 3000)
+		await __flushGeomWritesNow()
+		geomMemClear()
+		const m = await geomCacheGetMany(['old', 'mid', 'new'])
+		expect(m.has('old')).toBe(false)                // oldest evicted
+		expect(m.has('mid')).toBe(true)
+		expect(m.has('new')).toBe(true)
+		setGeomCapBytes(1 * GB)                          // restore for later tests
+	})
+
+	it('totalBytes does not drift on same-key overwrite', async () => {
+		geomMemClear(); await clearGeomCache()
+		const one = bytesOfArrays(mkArrays())
+		// Store the same key twice across two flush windows.
+		geomCacheStore('dup', mkArrays(), 1000)
+		await __flushGeomWritesNow()
+		geomCacheStore('dup', mkArrays(), 2000)   // same key = byte-identical content
+		await __flushGeomWritesNow()
+		const st = await getGeomCacheStats()
+		// totalBytes must equal one record's bytes, not two.
+		expect(st.bytes).toBe(one)
+		expect(st.count).toBe(1)
+	})
+
+	it('touch via __flushGeomTouchesNow updates lastUsed; touched record outlives untouched in eviction', async () => {
+		geomMemClear(); await clearGeomCache()
+		const one = bytesOfArrays(mkArrays())
+		setGeomCapBytes(Math.floor(one * 2.5))    // room for 2 of 3
+
+		// Write two old records at the same timestamp.
+		geomCacheStore('touch-a', mkArrays(), 1000)
+		geomCacheStore('touch-b', mkArrays(), 1000)
+		await __flushGeomWritesNow()
+		geomMemClear()
+
+		// Read 'touch-a' — this schedules a touch at a later timestamp.
+		await geomCacheGetMany(['touch-a'], 5000)
+		await __flushGeomTouchesNow()             // flush touches to IDB immediately
+
+		// Now store a third, newest record that pushes us over cap.
+		geomCacheStore('touch-c', mkArrays(), 6000)
+		await __flushGeomWritesNow()
+
+		// 'touch-b' (lastUsed=1000) is the oldest → evicted; 'touch-a' (lastUsed=5000) survives.
+		geomMemClear()
+		const m = await geomCacheGetMany(['touch-a', 'touch-b', 'touch-c'])
+		expect(m.has('touch-b')).toBe(false)      // untouched old record evicted
+		expect(m.has('touch-a')).toBe(true)       // touched record survived
+		expect(m.has('touch-c')).toBe(true)       // newest survived
+		setGeomCapBytes(1 * GB)
+	})
+
+	it('FLUSH_MAX hard-flush: 200 stores trigger flush without explicit __flushGeomWritesNow', async () => {
+		geomMemClear(); await clearGeomCache()
+		setGeomCapBytes(1 * GB)
+		const small = () => ({
+			position: new Float32Array(3).fill(1),
+			normal:   new Float32Array(3).fill(1),
+			uv:       new Float32Array(2).fill(1),
+			index:    new Uint32Array(1).fill(1),
+			groups:   [],
+		})
+		for (let i = 0; i < 200; i++) {
+			geomCacheStore(`hf${i}`, small())
+		}
+		// The 200th store triggers a synchronous _flushNow() call, which kicks off an async
+		// IDB write. Give the microtask/Promise queue a moment to settle.
+		await new Promise(r => setTimeout(r, 50))
+		const st = await getGeomCacheStats()
+		expect(st.count).toBe(200)
+	})
+})
+
+describe('corrupt-record degrade (spec: corrupt entry on hit → miss + evict)', () => {
+	// Overwrite a record via a SECOND raw IDB connection (same fake-indexeddb namespace), so the
+	// module's own connection sees disk-level corruption it never wrote itself. The store already
+	// exists (module openDb ran), so opening at v1 needs no upgrade handler.
+	const rawPut = (record) => new Promise((resolve, reject) => {
+		const req = indexedDB.open('qs-geom', 1)
+		req.onsuccess = () => {
+			const db = req.result
+			const tx = db.transaction('geom', 'readwrite')
+			tx.objectStore('geom').put(record)
+			tx.oncomplete = () => { db.close(); resolve() }
+			tx.onerror = () => { db.close(); reject(tx.error) }
+		}
+		req.onerror = () => reject(req.error)
+	})
+
+	it('serves a corrupt record as a miss, never promotes it, and evicts it', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('cor1', mkArrays(6))
+		await __flushGeomWritesNow()
+		await rawPut({ key: 'cor1', position: 'not-an-array', bytes: 5, savedAt: 1, lastUsed: 1 })
+		geomMemClear()
+		const m = await geomCacheGetMany(['cor1'])
+		expect(m.has('cor1')).toBe(false)               // miss, not a throw
+		expect(geomMemGet('cor1')).toBeNull()           // never entered the memory tier
+		// Evict is fire-and-forget from inside the readonly txn — give it a beat to commit.
+		await new Promise(r => setTimeout(r, 50))
+		const m2 = await geomCacheGetMany(['cor1'])
+		expect(m2.has('cor1')).toBe(false)              // gone from IDB too
+	})
+
+	it('a corrupt record does not abort the batch txn — later keys still hit', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('cor2', mkArrays(1))
+		geomCacheStore('good2', mkArrays(8))
+		await __flushGeomWritesNow()
+		await rawPut({ key: 'cor2', position: 'nope', bytes: 5, savedAt: 1, lastUsed: 1 })
+		geomMemClear()
+		const m = await geomCacheGetMany(['cor2', 'good2'])
+		expect(m.has('cor2')).toBe(false)
+		expect(m.get('good2').position[0]).toBe(8)      // batch survived the corrupt key
+	})
+})
+
+describe('geomCacheEvict', () => {
+	it('removes a healthy entry from both tiers and decrements stats', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('ev1', mkArrays(2))
+		await __flushGeomWritesNow()
+		expect((await getGeomCacheStats()).count).toBe(1)
+		expect(geomMemGet('ev1')).not.toBeNull()
+		await geomCacheEvict('ev1')
+		expect(geomMemGet('ev1')).toBeNull()            // memory tier cleared
+		const st = await getGeomCacheStats()
+		expect(st.count).toBe(0)                        // stats decremented
+		expect(st.bytes).toBe(0)
+		const m = await geomCacheGetMany(['ev1'])
+		expect(m.has('ev1')).toBe(false)                // IDB tier cleared
+	})
+
+	it('is a no-op on a missing key', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('keep', mkArrays(3))
+		await __flushGeomWritesNow()
+		await geomCacheEvict('not-there')
+		expect((await getGeomCacheStats()).count).toBe(1)
+		expect(geomMemGet('keep').position[0]).toBe(3)
+	})
+})

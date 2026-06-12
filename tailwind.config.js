@@ -196,7 +196,7 @@ export default {
 					95: '#14191F',
 				},
 
-				thomas: {
+				various: {
 					1: '#63637E',
 					2: '#495672',
 					3: '#383330',
@@ -210,9 +210,6 @@ export default {
 					red: '#A43F4A',
 					blue: '#3C80D2',
 					green: '#289B80',
-				},
-
-				ssc: {
 					primarylight: '#00263a',
 					light: '#c4ccd0',
 					light2nd: '#d4e3ff',

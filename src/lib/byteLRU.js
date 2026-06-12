@@ -47,6 +47,7 @@ export function createByteLRU({ budgetBytes, sizeOf }) {
 			bytes -= e.b
 			return true
 		},
+		clear() { map.clear(); bytes = 0 },
 		size: () => map.size,
 		bytes: () => bytes,
 		evictions: () => evictions,

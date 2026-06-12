@@ -293,7 +293,7 @@ const stubChannels = [
 		<div v-if="ui.showFps" class="flex items-center gap-1">
 			<div
 				:title="`Frames per second (click for Graphics preferences)`"
-				class="me-2 text-xs cursor-pointer tabular-nums"
+				class="w-3 me-2 text-xs text-end cursor-pointer tabular-nums"
 				:class="fpsColor"
 				@click="ui.openPreferencesOnTab('graphics')"
 			>{{ fpsText }}</div>

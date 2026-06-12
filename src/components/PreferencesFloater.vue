@@ -532,7 +532,7 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Scene (resident vs known objects — memory-budget culling) -->
-						<div class="pf-cache-card">
+						<div class="pf-cache-card bg-forest/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Scene</span>
 							</div>
@@ -555,12 +555,12 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Texture Cache -->
-						<div class="pf-cache-card">
+						<div class="pf-cache-card bg-forest/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Texture Cache</span>
-								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
 									Clear Textures
-									<small class="font-normal">(not recommended)</small>
+									<p class="font-normal text-xs">(not recommended)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -590,13 +590,43 @@ onUnmounted(() => {
 							</div>
 						</div>
 
+						<!-- Geometry Cache (baked shape+scale geometry — instant region re-entry) -->
+						<div class="pf-cache-card bg-forest/70">
+							<div class="pf-cache-header">
+								<span class="pf-cache-title">Geometry Cache</span>
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearGeom()" :disabled="cache.geomStats.value.loading">
+									Clear Geometry
+									<p class="font-normal text-xs">(forces full re-bake)</p>
+								</button>
+							</div>
+							<div class="pf-cache-stats">
+								<template v-if="cache.geomStats.value.loading">
+									<span class="pf-cache-stat text-tm">Loading…</span>
+								</template>
+								<template v-else-if="cache.geomStats.value.unavailable">
+									<span class="pf-cache-stat text-tm">Unavailable</span>
+								</template>
+								<template v-else>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Entries</span>
+										<span class="pf-cache-val">{{ cache.geomStats.value.count.toLocaleString() }}</span>
+									</span>
+									<span class="pf-cache-sep">·</span>
+									<span class="pf-cache-stat">
+										<span class="pf-cache-label">Size</span>
+										<span class="pf-cache-val">{{ formatBytes(cache.geomStats.value.bytes) }}</span>
+									</span>
+								</template>
+							</div>
+						</div>
+
 						<!-- Mesh Cache -->
-						<div class="pf-cache-card">
+						<div class="pf-cache-card bg-forest/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Mesh Cache</span>
-								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
 									Clear Meshes
-									<small class="font-normal">(not recommended)</small>
+									<p class="font-normal text-xs">(not recommended)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -621,12 +651,12 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Object Cache (persistent scene per region — instant reload paint) -->
-						<div class="pf-cache-card">
+						<div class="pf-cache-card bg-forest/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Object Cache</span>
-								<button class="qs-btn ui-btn flex flex-col font-bold text-xs px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
 									Clear Objects
-									<small class="font-normal">(forces full re-stream)</small>
+									<p class="font-normal text-xs">(forces full re-stream)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -759,10 +789,10 @@ onUnmounted(() => {
 .pf-content {
 	flex: 1;
 	overflow-y: auto;
-	padding: 1rem 1.25rem;
+	padding: 0.75rem 1rem;
 	display: flex;
 	flex-direction: column;
-	gap: 0.25rem;
+	gap: 0.35rem;
 }
 
 .pf-section-heading {
@@ -872,14 +902,12 @@ onUnmounted(() => {
 
 /* ── Cache cards (Network tab) ──────────────────────────────────────────── */
 .pf-cache-card {
-	background: var(--color-card2);
 	border: 1px solid var(--color-brd);
 	border-radius: 0.5rem;
 	padding: 0.75rem 1rem;
 	display: flex;
 	flex-direction: column;
 	gap: 0.5rem;
-	margin-bottom: 0.75rem;
 }
 
 .pf-cache-header {

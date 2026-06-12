@@ -251,7 +251,15 @@
       "PowerShell(npx esbuild src/composables/useWorldEngine.js --log-level=error --outfile=NUL; $a=$LASTEXITCODE; npx esbuild src/lib/memGovernor.js --log-level=error --outfile=NUL; if \\($a -eq 0 -and $LASTEXITCODE -eq 0\\) { \"both parse OK\" })",
       "PowerShell(git checkout *)",
       "Bash(echo \"exit=$?\")",
-      "Bash(timeout 120 bun *)"
+      "Bash(timeout 120 bun *)",
+      "Bash(bun -e *)",
+      "Bash(bun eval ' *)",
+      "Bash(grep -r \"geomKey\\\\|primGeomKey\\\\|meshGeomKey\\\\|sculptGeomKey\\\\|GEOM_VERSION\" src/ --include=\"*.js\" -l)",
+      "Bash(grep -r \"scaleBytes\\\\|scaleHash\" src/ --include=\"*.js\" -l)",
+      "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 8)",
+      "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 4)",
+      "PowerShell(npx vite build --mode prod 2>&1 | Select-Object -Last 15)",
+      "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 12)"
     ]
   }
 }

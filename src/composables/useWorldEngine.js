@@ -32,8 +32,10 @@ import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
 	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
-	geometryFromArrays,       // consumes worker-baked arrays in applySwap
+	geometryFromArrays,       // worker-baked/cached arrays → BufferGeometry (applySwap + tier-1 sync cache hits)
 } from '@/lib/primGeometry.js'
+import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap } from '@/lib/geomCache.js'
+import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -310,6 +312,94 @@ export function useWorldEngine(canvasRef) {
 	let _cullStatTick = 0        // throttle the O(n) stats scan (every Nth cull tick)
 	let _drainBuilt = 0, _drainMs = 0, _drainMaxMs = 0  // upsertMesh throughput probe (reset each 5s report)
 	let _applyN = 0, _applyMs = 0, _applyMaxMs = 0      // applySwap (bake-result → THREE geometry) probe
+	// Geometry-cache telemetry (reported + reset by the 5s [Bake] line)
+	let _geomHitMem = 0, _geomHitIdb = 0, _geomMiss = 0
+	// Deferred-lookup backpressure: requestGeometry entries whose async IDB lookup hasn't settled
+	// yet. Each is a potential future bake the drain loop's inflight cap must see (see
+	// drainMeshQueue) — otherwise a cold load floods thousands of misses past the cap before
+	// meshBaker.outstanding() rises. Every entry decrements exactly once: when it's served from
+	// cache, applied bad/null, dropped post-unmount, or its jobThunk is invoked (at which point
+	// outstanding() takes over the accounting).
+	let _geomPending = 0
+	// WHY: set on unmount so in-flight lookup batches are dropped — applying them would sync-bake
+	// on the disposed baker and mutate orphaned meshes.
+	let _engineDead = false
+
+	// WHY microtask batching: every requestGeometry() call within one synchronous burst (one
+	// drainMeshQueue tick, one evict re-stream pass…) coalesces into ONE qs-geom readonly txn —
+	// the per-prim-transaction storm is the exact pattern that starved texCacheGet. Same trick
+	// as useMeshBaker's flush.
+	let _geomLookupBatch = []
+	function requestGeometry(key, jobThunk, applySwap) {
+		_geomPending++
+		_geomLookupBatch.push({ key, jobThunk, applySwap })
+		if (_geomLookupBatch.length === 1) queueMicrotask(_flushGeomLookups)
+	}
+	function _flushGeomLookups() {
+		if (!_geomLookupBatch.length) return
+		const batch = _geomLookupBatch
+		_geomLookupBatch = []
+		// WHY by-key grouping + per-entry clones: applySwap ratio-rescales positions and regenerates
+		// UVs IN PLACE, so every mesh must own its arrays outright. geomCacheGetMany returns ONE clone
+		// per unique key — duplicate keys in a batch (identical prims) sharing that clone would
+		// cross-contaminate each other's geometry. Each sibling therefore pulls its own fresh clone
+		// from the memory tier (geomMemGet clones per call), never a shared or cache-owned buffer.
+		const byKey = new Map()
+		for (const b of batch) {
+			const list = byKey.get(b.key)
+			if (list) list.push(b)
+			else byKey.set(b.key, [b])
+		}
+		geomCacheGetMany([...byKey.keys()]).then(hits => {
+			// WHY: post-unmount batches would sync-bake on the disposed baker + mutate orphaned meshes.
+			if (_engineDead) { _geomPending -= batch.length; return }
+			for (const [key, entries] of byKey) {
+				const arrays = hits.get(key)
+				if (!arrays) { _bakeGeomGroup(key, entries); continue }
+				// IDB hit: getMany promoted the key into the memory tier and returned one clone — it
+				// serves the first entry; every additional entry gets its own fresh clone via geomMemGet.
+				_geomHitIdb++; _geomPending--
+				entries[0].applySwap(arrays)
+				let evictedSiblings = null
+				for (let i = 1; i < entries.length; i++) {
+					const clone = geomMemGet(key)
+					if (clone) { _geomHitIdb++; _geomPending--; entries[i].applySwap(clone) }
+					// Mem tier evicted the key between promote and read (rare) → real miss path.
+					else (evictedSiblings ??= []).push(entries[i])
+				}
+				if (evictedSiblings) _bakeGeomGroup(key, evictedSiblings)
+			}
+		})
+	}
+	// Miss path for one key's entries: ONE real bake (entries[0]'s thunk), siblings served as fresh
+	// clones from the just-stored memory-tier entry. Siblings must NEVER receive the raw worker
+	// `out` — geomCacheStore takes ownership of those buffers, so handing them out would alias
+	// cache-owned arrays into a mesh that mutates them in place.
+	function _bakeGeomGroup(key, entries) {
+		_geomMiss++
+		_geomPending--   // entries[0]'s bake dispatches now → meshBaker.outstanding() takes over
+		entries[0].jobThunk().then(out => {
+			// WHY: engine unmounted while the bake was in flight — drop the remaining entries.
+			if (_engineDead) { _geomPending -= entries.length - 1; return }
+			if (!out || out.bad) {
+				// Bad/null bake: every entry keeps its placeholder (applySwap bails on bad input).
+				for (const e of entries) e.applySwap(out)
+				_geomPending -= entries.length - 1
+				return
+			}
+			// Store FIRST (cache takes ownership of the worker-transferred buffers), swap the
+			// returned copy — applySwap may ratio-rescale in place, which must never touch the entry.
+			entries[0].applySwap(geomCacheStore(key, out))
+			for (let i = 1; i < entries.length; i++) {
+				const clone = geomMemGet(key)
+				// Siblings ARE memory-tier serves (the store just populated tier 1) — count them as
+				// mem hits so the hit/miss telemetry stays meaningful (one real bake per key).
+				if (clone) { _geomHitMem++; _geomPending--; entries[i].applySwap(clone) }
+				// Store entry already evicted (rare) → this sibling runs its OWN bake (never raw `out`).
+				else _bakeGeomGroup(key, [entries[i]])
+			}
+		})
+	}
 	// Drain-loop exit accounting: why does each tick stop? (ticks that ran / skipped-empty /
 	// governor-paused / broke on bake-cap / broke on time budget). Reset each 5s report.
 	let _dtTicks = 0, _dtEmpty = 0, _dtGov = 0, _dtBrkCap = 0, _dtBrkBudget = 0
@@ -1642,9 +1732,21 @@ export function useWorldEngine(canvasRef) {
 			// Prim shape: show a cheap unit cube immediately (instant, non-blocking); the real geometry
 			// is baked off-thread (useMeshBaker) and hot-swapped in via applySwap below. Box prims swap
 			// cube→box invisibly. Mesh/sculpt prims fetch their asset first, then bake its submeshes.
+			// Geometry cache: a tier-1 (memory) hit means the FINAL baked geometry is available
+			// synchronously — build with it directly, no placeholder cube, no bake dispatch.
+			// bakeScale snapshot moved up here: the cache key needs it before geometry creation.
+			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			const geomKey = (isAvatar || obj._placeholder) ? null
+				: obj.meshId   ? meshGeomKey(obj.meshId, bakeScale)
+				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1, bakeScale)
+				: primGeomKey(obj.shape, bakeScale)
+			const cachedArrays = geomKey ? geomMemGet(geomKey) : null
+			if (cachedArrays) _geomHitMem++
 			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
-				: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
+				: cachedArrays
+					? geometryFromArrays(cachedArrays)
+					: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
 			// NaN-vertex guard (#D): a prim whose built geometry has non-finite verts would be
 			// frustum-culled = invisible. Swap in a 0.5m cube + placeholder color so it's findable.
 			let geoBad = false
@@ -1708,15 +1810,23 @@ export function useWorldEngine(canvasRef) {
 			// it to SL-space submesh arrays) then bake those submeshes; plain prims bake the shape.
 			// Hot-swap baked geometry (from the worker, or sync fallback) onto the live mesh. `out` is the
 			// geometryFromArrays input shape, or { bad:true } if the bake produced non-finite verts.
-			// Snapshot the scale the bakes are dispatched with. The update path (existing-mesh branch)
-			// may rescale the placeholder + advance mesh.userData.primScale while a bake is in flight;
-			// applySwap reconciles the worker geometry (baked at bakeScale) to the current primScale.
-			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			// bakeScale (snapshotted above, before key derivation) is the scale the bakes are dispatched
+			// with. The update path (existing-mesh branch) may rescale the placeholder + advance
+			// mesh.userData.primScale while a bake is in flight; applySwap reconciles the worker
+			// geometry (baked at bakeScale) to the current primScale.
 			// Mesh per-face multi-material: a mesh carrying ≥2 distinct textures gets one material per
 			// submesh/face (built in applySwap once the grouped geometry exists), instead of the single
 			// dominant-texture pick below.
 			const meshMulti = hasMultiFaceMesh(obj)
 			const primMulti = hasMultiFacePrim(obj)
+			// Post-geometry finishing shared by the hot-swap path and the sync cache-hit path:
+			// planar-face UV regen + per-face material array (both need the final grouped geometry).
+			const finishGeom = () => {
+				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
+				applyPlanarUVs(mesh, obj, faceMap)
+				if (meshMulti) buildFaceMaterials(mesh, obj)
+				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
+			}
 			const applySwap = (out) => {
 				const _t0 = performance.now()
 				// userData.relit: the lit-shading toggle swapped this mesh's material while the bake was
@@ -1743,14 +1853,7 @@ export function useWorldEngine(canvasRef) {
 				const old = mesh.geometry
 				mesh.geometry = baked
 				old.dispose()
-				// Planar texgen: regenerate UVs for planar faces now the final scaled geometry exists
-				// (applies to single- and multi-material objects alike — UVs live on the geometry).
-				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
-				applyPlanarUVs(mesh, obj, faceMap)
-				// Mesh per-face: now the grouped geometry exists, replace the single material with a
-				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
-				if (meshMulti) buildFaceMaterials(mesh, obj)
-				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
+				finishGeom()
 				const _dt = performance.now() - _t0
 				_applyN++; _applyMs += _dt; if (_dt > _applyMaxMs) _applyMaxMs = _dt
 			}
@@ -1772,19 +1875,25 @@ export function useWorldEngine(canvasRef) {
 				pathTaperY:     obj.shape.pathTaperY,
 			} : undefined
 
-			if (!isAvatar && !obj._placeholder && obj.meshId) {
-				getMesh(obj.meshId).then(subs => {
-					if (!subs || !subs.length) return
-					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
-				})
-			} else if (!isAvatar && !obj._placeholder && obj.sculptId) {
-				getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs => {
-					if (!subs || !subs.length) return
-					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
-				})
-			} else if (!isAvatar && !obj._placeholder) {
-				// plain prim shape → bake the real geometry off-thread, swap over the placeholder cube
-				meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale }).then(applySwap)
+			if (!isAvatar && !obj._placeholder) {
+				if (cachedArrays) {
+					// Tier-1 hit: geometry is already final (created above) — run only the
+					// post-swap finishing. Mesh/sculpt hits never even fetch the raw asset.
+					finishGeom()
+				} else {
+					// Miss path, deferred behind one batched qs-geom lookup (an IDB hit swaps like a
+					// worker result; a true miss runs this thunk → bake → persist).
+					// WHY thunk: a mesh/sculpt cache hit must skip getMesh/getSculpt entirely — the
+					// raw-submesh fetch only happens when the baked cache truly misses.
+					const jobThunk = obj.meshId
+						? () => getMesh(obj.meshId).then(subs =>
+							(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
+						: obj.sculptId
+							? () => getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs =>
+								(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
+							: () => meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale })
+					requestGeometry(geomKey, jobThunk, applySwap)
+				}
 			}
 
 			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
@@ -2902,8 +3011,10 @@ export function useWorldEngine(canvasRef) {
 	function cullTick() {
 		if (!camera) return
 		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
-		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan).
-		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB)
+		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan) +
+		// geometry-cache memory tier (O(1)) — must match the 3s stats-timer sum or the governor
+		// signal oscillates by up to the tier's 128MB budget between the two call sites.
+		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB + getGeomMemBytes())
 		const r = appRatio()
 		const heapR = memRatio()
 		const over = r > CULL_TARGET || emergencyHeap()
@@ -2994,7 +3105,9 @@ export function useWorldEngine(canvasRef) {
 		// big budget per (rare) tick instead. Visible tab keeps the small per-frame budget.
 		const budget = (typeof document !== 'undefined' && document.hidden) ? 250 : MESH_DRAIN_BUDGET_MS
 		for (const localId of pendingMeshIds) {
-			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
+			// WHY + _geomPending: bake dispatch is deferred behind the async IDB lookup, so deferred
+			// entries are future bakes the cap must see — outstanding() alone rises too late on cold load.
+			if (meshBaker.outstanding() + _geomPending > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
 			pendingMeshIds.delete(localId)
 			const obj = worldStore.objects.get(localId)
 			if (!obj) continue  // killed before its mesh was built
@@ -3595,6 +3708,7 @@ export function useWorldEngine(canvasRef) {
 		// focus-gated. 12ms budget × ~33Hz ≈ 400ms/s of build time vs the old focus-gated rAF path.
 		// Reparent sweep is cheaper; run it every 4th tick.
 		let _drainTick = 0
+		initGeomCacheCap()   // size the qs-geom IDB cap from the storage estimate before bakes start persisting
 		_meshDrainTimer = setInterval(() => {
 			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
 			drainMeshQueue()
@@ -3627,15 +3741,15 @@ export function useWorldEngine(canvasRef) {
 				geomB += g.index?.array?.byteLength || 0
 			}
 			_lastGeomB = geomB
-			const texB = getTextureBytes(), meshB = getMeshBytes()
-			setAppBytes(texB + meshB + geomB)
+			const texB = getTextureBytes(), meshB = getMeshBytes(), geomCacheB = getGeomMemBytes()
+			setAppBytes(texB + meshB + geomB + geomCacheB)
 			{
 				const mg = memStats()
 				const pressure = memUnderPressure()
 				const mb = (b) => (b / 1048576).toFixed(0)
 				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
-				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)}` +
+				const line = `[Mem] app ${mb(texB + meshB + geomB + geomCacheB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}` +
 					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size}`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
@@ -3663,13 +3777,16 @@ export function useWorldEngine(canvasRef) {
 				}
 				_frN = 0; _frMs = 0; _frMaxMs = 0; _ltN = 0; _ltMs = 0; _ltMaxMs = 0
 			}
-			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms.
+			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms,
+			// plus how much baking the geometry cache AVOIDED (hit=mem+idb vs miss=real bakes).
 			const bs = meshBaker.takeStats()
-			if (bs.jobs || _applyN) {
-				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}`
+			if (bs.jobs || _applyN || _geomHitMem || _geomHitIdb || _geomMiss) {
+				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}` +
+					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending}`
 				debugStore.push('info', bline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
 				_applyN = 0; _applyMs = 0; _applyMaxMs = 0
+				_geomHitMem = 0; _geomHitIdb = 0; _geomMiss = 0
 			}
 			const busy = t.inflight || t.queued || m.inflight || m.queued
 			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
@@ -3707,6 +3824,9 @@ export function useWorldEngine(canvasRef) {
 	})
 
 	onUnmounted(() => {
+		// WHY first: in-flight geometry-lookup batches check this flag — applying them after
+		// unmount would sync-bake on the disposed baker and mutate orphaned meshes.
+		_engineDead = true
 		_liveEngine = null
 		stopAlwaysRunWatch()
 		stopLitShadingWatch()

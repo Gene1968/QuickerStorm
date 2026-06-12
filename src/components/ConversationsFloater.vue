@@ -133,9 +133,9 @@ const floaterTitle = computed(() =>
 )
 
 const TYPE_CLASS = {
-	0: 'text-white/50 italic',          // whisper
-	1: 'text-t1',                        // normal
-	2: 'text-yellow-400 font-semibold',  // shout
+	0: 'text-gray-800 italic',		// whisper
+	1: 'text-t1',					// normal
+	2: 'text-gold font-semibold',	// shout
 }
 
 function formatTime(ts) {
