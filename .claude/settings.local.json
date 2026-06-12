@@ -250,7 +250,8 @@
       "PowerShell(npx esbuild src/composables/useWorldEngine.js --log-level=error --outfile=NUL; if \\($LASTEXITCODE -eq 0\\) { \"parse OK\" })",
       "PowerShell(npx esbuild src/composables/useWorldEngine.js --log-level=error --outfile=NUL; $a=$LASTEXITCODE; npx esbuild src/lib/memGovernor.js --log-level=error --outfile=NUL; if \\($a -eq 0 -and $LASTEXITCODE -eq 0\\) { \"both parse OK\" })",
       "PowerShell(git checkout *)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(timeout 120 bun *)"
     ]
   }
 }

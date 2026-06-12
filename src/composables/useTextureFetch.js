@@ -59,6 +59,12 @@ const TEX_PRUNE_AGE_MS = 20000 // never prune a texture applied within the last 
 // Live counters so we can watch steady population (vs flooding) — see getTextureStats().
 const stats = { requested: 0, done: 0, failed: 0, timeout: 0, late: 0 }
 
+// DIAG(webp-trickle): per-leg slot-cycle timing — queue-wait | IDB recheck | net round trip | server
+// handler time (from the reply's tMs). Read via getTextureStats().timing; remove once the trickle
+// bottleneck is identified.
+const timing = { qWait: { n: 0, ms: 0, max: 0 }, idb: { n: 0, ms: 0, max: 0 }, net: { n: 0, ms: 0, max: 0 }, srv: { n: 0, ms: 0, max: 0 } }
+function _acc(k, ms) { const t = timing[k]; t.n++; t.ms += ms; if (ms > t.max) t.max = ms }
+
 const EPS = 1e-4
 const isIdentityXform = (x) =>
 	!x || (Math.abs(x.repeat[0] - 1) < EPS && Math.abs(x.repeat[1] - 1) < EPS &&
@@ -98,6 +104,7 @@ function _onAssetData(d) {
 	if (p) pending.delete(d.uuid)
 	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p?.resolve(null); return }
 	stats.done++
+	if (typeof d.tMs === 'number') _acc('srv', d.tMs)   // DIAG(webp-trickle)
 	alphaCache.set(d.uuid, !!d.hasAlpha)
 	let blob = null
 	try { blob = b64ToBlob(d.dataB64, d.mime || 'image/webp') } catch { /* malformed payload */ }
@@ -123,23 +130,29 @@ function _wsFetch(uuid) {
 	_wire()
 	stats.requested++
 	return new Promise(resolve => {
+		const tQueued = performance.now()   // DIAG(webp-trickle)
 		const run = async () => {
+			const tRun = performance.now()           // DIAG(webp-trickle)
+			_acc('qWait', tRun - tQueued)            // DIAG(webp-trickle)
 			// The queue can be thousands deep (hours of slot-time at 12×30s) and late arrivals
 			// land in IDB the whole while. Re-check the caches when the slot finally opens —
 			// settling from IDB here costs ~ms instead of a 30s timeout AND another server-queue
 			// entry (re-asks are what keep the server's FIFO minutes deep in the first place).
 			const cachedBlob = blobCache.get(uuid)
 				?? await texCacheGet(uuid).then(c => { if (c) alphaCache.set(uuid, c.hasAlpha); return c?.blob ?? null }).catch(() => null)
+			_acc('idb', performance.now() - tRun)    // DIAG(webp-trickle)
 			if (cachedBlob) { active--; _pump(); resolve(cachedBlob); return }
 			const { emit } = useRealtimeSocket()
 			// settle() runs exactly once: frees the slot, pumps the queue, resolves. Both the data
 			// path (via pending.resolve) and the timeout path go through it.
 			let settled = false
-			const settle = (blob) => {
+			let tEmit = 0   // DIAG(webp-trickle)
+			const settle = (blob, viaTimeout = false) => {
 				if (settled) return
 				settled = true
 				clearTimeout(timer)
 				pending.delete(uuid)
+				if (!viaTimeout && tEmit) _acc('net', performance.now() - tEmit)   // DIAG(webp-trickle)
 				active--
 				_pump()
 				resolve(blob)
@@ -149,9 +162,10 @@ function _wsFetch(uuid) {
 			const timer = setTimeout(() => {
 				stats.timeout++
 				softAttempts.set(uuid, (softAttempts.get(uuid) || 0) + 1)  // retryable: server was slow
-				settle(null)
+				settle(null, true)
 			}, FETCH_TIMEOUT_MS)
 			pending.set(uuid, { resolve: settle, timer })
+			tEmit = performance.now()   // DIAG(webp-trickle)
 			emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
 		}
 		// active was already incremented by _pump(); queue + pump keeps the bookkeeping in one place.
@@ -162,8 +176,18 @@ function _wsFetch(uuid) {
 
 /** Live fetch counters (textures). For watching steady population / confirming the cap holds. */
 export function getTextureStats() {
-	return { ...stats, inflight: active, queued: netQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size }
+	// DIAG(webp-trickle): avg/max per slot-cycle leg. net includes client event-loop delay + transit +
+	// server time; srv is the server handler's own measure — (net − srv) ≈ loop/transit overhead.
+	const f = (t) => ({ n: t.n, avg: t.n ? Math.round(t.ms / t.n) : 0, max: Math.round(t.max) })
+	return {
+		...stats, inflight: active, queued: netQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size,
+		timing: { qWait: f(timing.qWait), idb: f(timing.idb), net: f(timing.net), srv: f(timing.srv) },
+	}
 }
+
+// DIAG(webp-trickle): console access to the LIVE module instance — a bare dynamic import from
+// DevTools can resolve a second, zero-counter copy after an HMR update. Dev-only.
+if (import.meta.env.DEV) globalThis.__texStats = getTextureStats
 
 // Estimated JS-heap bytes held by resident texture bitmaps (decoded RGBA: w*h*4 per base texture).
 // UV-transform clones share the base's image source, so only base textures are counted.

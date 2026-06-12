@@ -45,6 +45,7 @@ export function assetRequestSpec(assetType: string): AssetRequestSpec | null {
 export async function handleAssetFetch(circuitId: string, req: { assetType: string; uuid: string }): Promise<void> {
 	const s = getSession(circuitId)
 	if (!s) return
+	const t0 = performance.now()   // DIAG(webp-trickle): handler entry → reply send, reported as tMs
 	const { assetType, uuid } = req || ({} as any)
 	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.ASSET_DATA, d: { uuid, assetType, ...d } }))
 
@@ -89,7 +90,8 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 			}
 		})
 		if (!payload) { send({ error: 'unavailable' }); return }
-		send(payload)
+		// DIAG(webp-trickle): tMs added per-request (NOT memoized — memo hits report their own, near-0 time)
+		send({ ...payload, tMs: Math.round(performance.now() - t0) })
 		if ((++_memoStatTick % 200) === 0) {
 			const m = assetMemo.stats()
 			slog.info(s.ws, `[AssetMemo] size=${m.size} MB=${(m.bytes / 1048576).toFixed(0)} hits=${m.hits} misses=${m.misses} evict=${m.evictions} inflight=${m.inflight}`)
