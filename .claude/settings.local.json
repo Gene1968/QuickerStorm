@@ -259,7 +259,19 @@
       "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 8)",
       "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 4)",
       "PowerShell(npx vite build --mode prod 2>&1 | Select-Object -Last 15)",
-      "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 12)"
+      "PowerShell(npx vite build --mode staging 2>&1 | Select-Object -Last 12)",
+      "PowerShell($ports = @\\(5174, 8787, 5173\\); foreach \\($p in $ports\\) { $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $pid0 = \\($c | Select-Object -First 1\\).OwningProcess; $proc = Get-Process -Id $pid0 -ErrorAction SilentlyContinue; \"port ${p}: LISTENING \\(pid=$pid0 $\\($proc.ProcessName\\)\\)\" } else { \"port ${p}: free\" } })",
+      "PowerShell(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\b0fho6rvl.output\" | Select-String -Pattern 'region run|dropped|pre-seeded|probe flow|CacheMiss\\\\]|PrimDiag' | Select-Object -Last 12 | ForEach-Object { $_.Line })",
+      "PowerShell(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\b0fho6rvl.output\" | Select-String -Pattern 'RegionHandshake:|resync|Resync|circuit|Circuit|login|Login|hold|teardown|closed' | Select-Object -Last 15 | ForEach-Object { $_.Line })",
+      "PowerShell(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\b0fho6rvl.output\" | Select-String -Pattern 'PrimDiag|probe|Probe|run unknown|run changed|dropped|CacheMiss' | Select-String -Pattern '19:3[3-9]' | Select-Object -Last 14 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(300, $_.Line.Length\\)\\) })",
+      "PowerShell(npm ls *)",
+      "PowerShell(ConvertTo-Json *)",
+      "PowerShell(Select-String -Path \"src\\\\__tests__\\\\lib\\\\textureCache.test.js\",\"src\\\\__tests__\\\\lib\\\\geomCache.test.js\",\"src\\\\__tests__\\\\lib\\\\meshCache.test.js\" -Pattern 'fake-indexeddb|indexedDB' | Select-Object -First 8 | ForEach-Object { \"$\\($_.Filename\\):$\\($_.LineNumber\\): $\\($_.Line.Trim\\(\\)\\)\" })",
+      "PowerShell(git stash *)",
+      "PowerShell(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\b0fho6rvl.output\" -Tail 120 | Select-String -Pattern 'resume|RegionHandshake:|login|circuit|hold|teardown|destroy|expired' | Select-Object -Last 8 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(200, $_.Line.Length\\)\\) })",
+      "Bash(npx tailwindcss *)",
+      "Bash(npx @tailwindcss/upgrade@next --dry-run)",
+      "PowerShell($f = \"node_modules\\\\.vite\\\\deps\\\\chunk-NCBKGOGC.js\"; \\(Get-Content $f -TotalCount 40262 | Select-Object -Skip 40249\\) -join \"`n\")"
     ]
   }
 }
