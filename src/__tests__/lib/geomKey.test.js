@@ -43,14 +43,13 @@ describe('primGeomKey', () => {
 })
 
 describe('meshGeomKey / sculptGeomKey', () => {
-	it('embed asset id, version, and scale hash', () => {
-		const k = meshGeomKey('aaaa-bbbb', SCALE)
-		expect(k.startsWith(`m1:${GEOM_VERSION}:aaaa-bbbb:`)).toBe(true)
-		expect(k).not.toBe(meshGeomKey('aaaa-bbbb', [9, 9, 9]))
-		expect(meshGeomKey('xxxx', SCALE)).not.toBe(meshGeomKey('yyyy', SCALE))
+	it('embed asset id + version, scale-FREE (unscaled bakes, m2/s2 prefixes)', () => {
+		const k = meshGeomKey('aaaa-bbbb')
+		expect(k).toBe(`m2:${GEOM_VERSION}:aaaa-bbbb`)
+		expect(meshGeomKey('xxxx')).not.toBe(meshGeomKey('yyyy'))
 	})
 	it('sculpt key includes sculptType (type changes decode output)', () => {
-		expect(sculptGeomKey('ssss', 1, SCALE)).not.toBe(sculptGeomKey('ssss', 2, SCALE))
-		expect(sculptGeomKey('ssss', 1, SCALE).startsWith(`s1:${GEOM_VERSION}:ssss:1:`)).toBe(true)
+		expect(sculptGeomKey('ssss', 1)).not.toBe(sculptGeomKey('ssss', 2))
+		expect(sculptGeomKey('ssss', 1)).toBe(`s2:${GEOM_VERSION}:ssss:1`)
 	})
 })

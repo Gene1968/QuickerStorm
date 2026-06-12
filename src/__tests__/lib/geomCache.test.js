@@ -17,9 +17,9 @@ const mkArrays = (fill = 1, verts = 12) => ({
 })
 
 describe('resolveGeomCap', () => {
-	it('caps at 20% of quota, hard max 2GB, 1GB fallback', () => {
-		expect(resolveGeomCap({ quota: 5 * GB })).toBe(1 * GB)
-		expect(resolveGeomCap({ quota: 100 * GB })).toBe(2 * GB)   // 20% would be 20GB → clamp
+	it('caps at 30% of quota, hard max 4GB, 1GB fallback', () => {
+		expect(resolveGeomCap({ quota: 5 * GB })).toBe(1.5 * GB)
+		expect(resolveGeomCap({ quota: 100 * GB })).toBe(4 * GB)   // 30% would be 30GB → clamp
 		expect(resolveGeomCap({})).toBe(1 * GB)
 		expect(resolveGeomCap(undefined)).toBe(1 * GB)
 	})

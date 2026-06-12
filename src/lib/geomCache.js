@@ -17,9 +17,12 @@ const DB_NAME = 'qs-geom', DB_VERSION = 1, STORE = 'geom', META = 'meta'
 // upgrade hangs otherwise — see objectCache.js for the pattern).
 
 // ── Cap (initCacheCap pattern from textureCache.js) ─────────────────────────
-export const GEOM_CACHE_MAX_BYTES      = 2 * 1024 * 1024 * 1024
+// 0.2/2GB filled to 97% after just two regions (15.9k entries, 11.7k of them per-scale mesh
+// copies) — interim bump to 0.3/4GB until unscaled-bake dedup lands. Origin quota ~11.6GB;
+// qs-tex holds ~60%, so 0.3 keeps geom under the texture share.
+export const GEOM_CACHE_MAX_BYTES      = 4 * 1024 * 1024 * 1024
 export const GEOM_CACHE_FALLBACK_BYTES = 1 * 1024 * 1024 * 1024
-const CAP_FRACTION = 0.2
+const CAP_FRACTION = 0.3
 let _capBytes = GEOM_CACHE_FALLBACK_BYTES
 // WHY _capExplicit: setGeomCapBytes (test hook / governor escape hatch) must win over
 // initGeomCacheCap's storage estimate, even if initGeomCacheCap runs first or runs again.
@@ -199,7 +202,10 @@ async function _flushNow() {
 					}
 				}
 				tx.oncomplete = () => { if (statsResult) _lastStats = statsResult; resolve() }
-				tx.onerror = () => reject(tx.error)
+				// onabort too: an aborted txn settles NEITHER oncomplete nor onerror — the awaiting
+				// flush chain (and everything queued behind _flushing) would hang forever.
+				tx.onerror = () => reject(tx.error ?? new Error('flush txn error'))
+				tx.onabort = () => reject(tx.error ?? new Error('flush txn aborted'))
 			})
 		} catch (e) { console.warn('[GeomCache] flush failed:', e) }
 	})()
@@ -233,6 +239,7 @@ async function _flushTouches() {
 			}
 			tx.oncomplete = resolve
 			tx.onerror = resolve
+			tx.onabort = resolve
 		})
 	} catch { /* best-effort LRU */ }
 }
@@ -277,6 +284,7 @@ export async function geomCacheGetMany(keys, now = Date.now()) {
 			}
 			tx.oncomplete = resolve
 			tx.onerror = resolve   // degrade: whatever resolved before the error still counts
+			tx.onabort = resolve   // aborted read = all-miss for unresolved keys; never hang the drain
 		})
 	} catch (e) { console.warn('[GeomCache] getMany failed:', e) }
 	return out
@@ -308,6 +316,7 @@ export async function geomCacheEvict(key) {
 			}
 			tx.oncomplete = resolve
 			tx.onerror = resolve
+			tx.onabort = resolve
 		})
 	} catch { /* best-effort */ }
 }
@@ -326,6 +335,7 @@ export async function getGeomCacheStats() {
 			metaReq.onsuccess = () => { bytes = metaReq.result?.totalBytes ?? 0 }
 			tx.oncomplete = () => { _lastStats = { count, bytes }; resolve({ count, bytes, capBytes: _capBytes }) }
 			tx.onerror = () => reject(tx.error)
+			tx.onabort = () => reject(tx.error ?? new Error('stats txn aborted'))
 		})
 	} catch { return { count: 0, bytes: 0, capBytes: _capBytes } }
 }
@@ -345,6 +355,7 @@ export async function clearGeomCache() {
 			tx.objectStore(META).put({ k: 'stats', totalBytes: 0, count: 0 })
 			tx.oncomplete = () => { _lastStats = { count: 0, bytes: 0 }; resolve() }
 			tx.onerror = () => reject(tx.error)
+			tx.onabort = () => reject(tx.error ?? new Error('clear txn aborted'))
 		})
 	} catch { /* ignore */ }
 }
