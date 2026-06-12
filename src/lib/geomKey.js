@@ -42,13 +42,18 @@ export function primGeomKey(shape, scale) {
 	return `p1:${GEOM_VERSION}:${fnv1aHex64(new Uint8Array(buf))}`
 }
 
-export function meshGeomKey(meshId, scale) {
-	return `m1:${GEOM_VERSION}:${meshId}:${scaleHash(scale)}`
+// WHY no scale in asset keys (m1→m2, s1→s2): submesh bakes are LINEAR in scale (axis swap +
+// geom.scale), so the bake is stored UNSCALED and the engine re-applies the prim's scale on
+// every serve (applySwap ratio path / bakePrimScale on sync hits). Per-scale copies were 11.7k
+// of 14.4k qs-geom entries (97% of a 2GB cap after two regions). Old m1/s1 entries are
+// unreachable garbage that ages out via the lastUsed LRU — no migration needed.
+export function meshGeomKey(meshId) {
+	return `m2:${GEOM_VERSION}:${meshId}`
 }
 
 // sculptType is part of the key because getSculpt(sculptId, sculptType) decodes differently
 // per type. (Mirror/invert are not passed to the decoder today, so they are not keyed; if
 // the decoder grows those params, add them here AND bump GEOM_VERSION.)
-export function sculptGeomKey(sculptId, sculptType, scale) {
-	return `s1:${GEOM_VERSION}:${sculptId}:${sculptType}:${scaleHash(scale)}`
+export function sculptGeomKey(sculptId, sculptType) {
+	return `s2:${GEOM_VERSION}:${sculptId}:${sculptType}`
 }
