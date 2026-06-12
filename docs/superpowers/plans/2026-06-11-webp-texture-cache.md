@@ -686,6 +686,29 @@ git commit -m "feat(render): quota-derived IDB cap + persistent storage request"
 - **Full-size export path.** Render cache is lossy/downscaled. For texture/mesh export, re-fetch the original J2C from the grid by UUID at export time (UUIDs are immutable) rather than storing originals.
 - **Tune `WEBP_QUALITY`.** q90 chosen for safety; measure size vs. visual delta at q80 on a dense region if footprint is still a concern.
 
+## Addendum 2026-06-11 — instant-load context (post cull-spiral session)
+
+This plan fixes one of the three reasons a fully-cached reload still takes 4–6 minutes (texture
+decode: data-URL → Image → canvas, serial on main thread — Phase B's `createImageBitmap` path is
+exactly the cure). The other two are **separate follow-on plans**, tracked in `docs/tech-debt.md`:
+
+1. **`instant-load-geometry-cache`** — the dominant cost. ~10k prims re-bake through the single
+   worker at ~30–40/s on every reload (≈4–5 min, CPU-bound, zero network). Persist the worker's
+   baked output arrays (BufferGeometry-ready, keyed by shape+scale hash) in IDB so reload becomes
+   deserialize + GPU upload. Without this, WebP alone will not make reloads feel instant.
+2. **`crc-probe-audit`** — server logs show `asked≈19.9k` of ~24k objects on reload: the
+   CRC/CacheID probe path isn't suppressing the sim re-feed it was designed to suppress.
+
+Execution notes for this plan (state as of 2026-06-11 night, cull-spiral session):
+- `handleAssetFetch` is now memoized via `assetMemo` and the `[Asset]` log line is **sampled**
+  (`_assetLogN`: first 10 then 1-in-25, prefixed `#N`) — Task 2 Step 4's replacement must preserve
+  the memo `work()` structure and the sampling guard, not reintroduce a per-asset log.
+- `useTextureFetch._wsFetch` already does a cache re-check at slot-open and `_onAssetData` persists
+  late arrivals (`stats.late`); Tasks 5–6 already mirror these — keep both behaviors through the
+  Blob conversion.
+- Texture intake gates on `TEX_INTAKE_BUDGET` (320 MB own budget) + `emergencyHeap()`, not the old
+  `memUnderPressure()` — don't regress that import during Task 6 edits.
+
 ## Self-Review Notes
 
 - **Spec coverage:** WebP format (Task 1–2), lossless-for-alpha (Task 2 `lossless = hasAlpha`), q90 (Task 1 `WEBP_QUALITY`), Blob storage (Task 5–6), quota cap + persist (Task 7), DB purges (Task 4 v4, Task 5 v5). Server RAM tier already exists — noted, benefits for free.
