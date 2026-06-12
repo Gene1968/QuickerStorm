@@ -59,8 +59,9 @@ const tabs = [
 ]
 
 // ── Texture thumbnail loading ─────────────────────────────────────────────
-// WHY: getTextureUrl resolves async (ViewerAsset→J2C→PNG, IDB-cached). Keep a reactive uuid→url
-// map so face chips + the preview panel reuse one fetch per UUID. null = still loading / no image.
+// WHY: getTextureUrl resolves async (ViewerAsset→J2C→WebP, IDB-cached) to an object URL. Keep a
+// reactive uuid→url map so face chips + the preview panel reuse one fetch per UUID. null = still
+// loading / no image. (The fetcher owns + revokes the object URLs — don't revoke here.)
 const texUrls = reactive({})
 function loadTex(uuid) {
 	if (!uuid || uuid in texUrls) return

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { decode as decodePng } from 'fast-png'
 import { pickWorkerIndex, decodeInPool, getPoolStats } from '../lib/j2cPool'
 
 // Real SL terrain texture codestream — exercises the actual decode path end-to-end, not a mock.
@@ -25,13 +24,14 @@ describe('pickWorkerIndex', () => {
 })
 
 describe('decodeInPool', () => {
-	it('decodes a J2C codestream to a valid PNG (via pool or inline fallback)', async () => {
+	it('decodes a J2C codestream to a valid WebP (via pool or inline fallback)', async () => {
 		const r = await decodeInPool(fixture)
-		const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-		expect(r.png.subarray(0, 8).equals(sig)).toBe(true)
-		const img = decodePng(r.png)
-		expect(img.width).toBe(128)
-		expect(img.height).toBe(128)
+		// WHY container-magic check (not a magick round-trip): the decode may have run in a worker
+		// thread, so this process's ImageMagick instance is not necessarily initialized here.
+		expect(r.image.subarray(0, 4).toString('latin1')).toBe('RIFF')
+		expect(r.image.subarray(8, 12).toString('latin1')).toBe('WEBP')
+		expect(r.width).toBe(128)
+		expect(r.height).toBe(128)
 		expect(r.srcWidth).toBe(128)
 		expect(r.srcHeight).toBe(128)
 		expect(r.hasAlpha).toBe(false)

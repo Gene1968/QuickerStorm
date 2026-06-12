@@ -1796,7 +1796,7 @@ export function useWorldEngine(canvasRef) {
 
 			// ── Slice 1: real prim texture ──────────────────────────────────────
 			// WHY: TE default texture UUID (decoded server-side) → fetch via asset cap (server
-			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
+			// transcodes J2C→WebP) → set material.map. Color goes white so the texture shows its
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
 			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti && !primMulti) ? pickPrimTexture(obj) : null

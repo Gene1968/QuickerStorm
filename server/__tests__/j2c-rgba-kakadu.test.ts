@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { decodeJ2C, j2cToPngWithAlpha } from '../lib/j2c'
+import { decodeJ2C, j2cToImageWithAlpha } from '../lib/j2c'
 
 // Live-captured RGBA foliage texture (palm frond, 59c3769c…, encoded by Kakadu-v4.2.1, 6 quality
 // layers, 4 components, 9-7 irreversible + ICT). The cornerstone openjpeg-wasm build mis-decoded
@@ -36,8 +36,8 @@ describe('j2c RGBA multi-layer Kakadu codestream', () => {
 		expect(alpha).toBeGreaterThan(247)
 	})
 
-	it('reports real transparency via j2cToPngWithAlpha', async () => {
-		const { hasAlpha, width, height } = await j2cToPngWithAlpha(fixture)
+	it('reports real transparency via j2cToImageWithAlpha', async () => {
+		const { hasAlpha, width, height } = await j2cToImageWithAlpha(fixture)
 		expect(hasAlpha).toBe(true)
 		expect(width).toBe(512)
 		expect(height).toBe(512)

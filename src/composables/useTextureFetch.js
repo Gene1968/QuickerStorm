@@ -1,7 +1,7 @@
 // src/composables/useTextureFetch.js — fetch SL/OpenSim textures by UUID and hand back THREE.Texture.
-// Layers (cheapest first): in-memory THREE.Texture cache → in-memory data-URL mirror → IndexedDB
+// Layers (cheapest first): in-memory THREE.Texture cache → in-memory Blob mirror → IndexedDB
 // (persists across reload/relogin, see lib/textureCache.js) → server fetch (C.ASSET_FETCH →
-// ViewerAsset/GetTexture cap → J2C→PNG → S.ASSET_DATA). Per-layer dedupe + a negative cache stop
+// ViewerAsset/GetTexture cap → J2C→WebP → S.ASSET_DATA). Per-layer dedupe + a negative cache stop
 // repeated calls and thrash on the same (or dead) UUIDs.
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
@@ -9,9 +9,19 @@ import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/te
 import { emergencyHeap } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 
+// Decode a base64 payload (as delivered over WS) into a typed Blob for IDB storage + createImageBitmap.
+// WHY: storing the Blob (not a data-URL string) drops the +33% base64 inflation and lets the GPU
+// texture build via createImageBitmap (no data-URL parse).
+function b64ToBlob(b64, mime) {
+	const bin = atob(b64)
+	const bytes = new Uint8Array(bin.length)
+	for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+	return new Blob([bytes], { type: mime })
+}
+
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 const FETCH_TIMEOUT_MS = 30_000
-// WHY cap: a region delivers ~1-2k textures. The server transcodes J2C→PNG on a single-instance
+// WHY cap: a region delivers ~1-2k textures. The server transcodes J2C→WebP on a single-instance
 // WASM decoder (CPU-bound, serialized on the event loop). Firing every request at once means the
 // late ones sit behind hundreds of decodes and blow FETCH_TIMEOUT_MS → negative-cached → invisible
 // for the session, and which ones win the race varies per load. Cap concurrent network fetches like
@@ -23,11 +33,12 @@ const MAX_INFLIGHT = 12
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
 const texInflight = new Map()  // uuid → Promise<THREE.Texture|null>
-const urlInflight = new Map()  // uuid → Promise<string|null>  (IDB-or-network data URL)
+const blobInflight = new Map()  // uuid → Promise<Blob|null>  (IDB-or-network WebP Blob)
 const pending     = new Map()  // uuid → { resolve, timer }     (in-flight WS request)
 const xformCache  = new Map()  // `uuid|repS|repT|offS|offT|rot` → cloned THREE.Texture w/ UV transform
-const urlCache    = new Map()  // uuid → PNG data URL (sync mirror; thumbnails + fast re-reads)
-const alphaCache  = new Map()  // uuid → bool: PNG carries real transparency (drives blend vs opaque)
+const blobCache   = new Map()  // uuid → Blob (sync mirror; preview <img> + fast re-reads)
+const objUrlCache = new Map()  // uuid → object URL (lazily created for <img> previews; revoked on prune/clear)
+const alphaCache  = new Map()  // uuid → bool: WebP carries real transparency (drives blend vs opaque)
 // WHY two failure classes: a server ERROR (j2c_decode_incomplete, 404) means the asset can't be
 // produced — retrying wastes a slot, so it's permanent. A TIMEOUT means the server was just slow/
 // overloaded (serialized J2C decoder under a flood) — likely to succeed once load drops, so it's
@@ -80,7 +91,7 @@ function _pump() {
 // governor pauses them — _pump is otherwise only re-triggered when a slot frees.
 export function pumpTextures() { _pump() }
 
-// S.ASSET_DATA → resolve the pending WS request with a data URL (or null on error/missing).
+// S.ASSET_DATA → resolve the pending WS request with a WebP Blob (or null on error/missing).
 function _onAssetData(d) {
 	if (!d || d.assetType !== 'texture') return
 	const p = pending.get(d.uuid)
@@ -88,22 +99,24 @@ function _onAssetData(d) {
 	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p?.resolve(null); return }
 	stats.done++
 	alphaCache.set(d.uuid, !!d.hasAlpha)
-	const url = `data:${d.mime || 'image/png'};base64,${d.dataB64}`
-	if (p) { p.resolve(url); return }
+	let blob = null
+	try { blob = b64ToBlob(d.dataB64, d.mime || 'image/webp') } catch { /* malformed payload */ }
+	if (p) { p.resolve(blob); return }
+	if (!blob) return
 	// Late arrival — the request already timed out and freed its slot, but the transcode is paid
 	// for. Persist it to IDB and clear the timeout strikes so the next soft-retry succeeds from
 	// cache instantly. WHY: when the grid answers consistently just above FETCH_TIMEOUT_MS, every
 	// batch times out, the late data was discarded, and the retry refetched from scratch — observed
 	// as 8.8k queued textures with 12 slots recycling on timeout and zero forward progress for
 	// minutes. Persisting late arrivals converts that loop into steady progress at the server's
-	// real throughput. (IDB only, NOT urlCache: thousands of pending data-URL strings in a Map
-	// would be its own heap hog; texCacheGet picks them up fine.)
+	// real throughput. (IDB only, NOT blobCache: thousands of pending Blobs in a Map would be its
+	// own heap hog; texCacheGet picks them up fine.)
 	stats.late++
 	softAttempts.delete(d.uuid)
-	texCachePut(d.uuid, url, !!d.hasAlpha)
+	texCachePut(d.uuid, blob, !!d.hasAlpha)
 }
 
-// Fetch a texture's PNG bytes from the server over WS, gated by MAX_INFLIGHT. Resolves the data URL
+// Fetch a texture's WebP bytes from the server over WS, gated by MAX_INFLIGHT. Resolves the Blob
 // or null (timeout/miss). The slot is held from emit() until S.ASSET_DATA or timeout, so the server's
 // serialized J2C decoder is never asked for more than MAX_INFLIGHT textures at once.
 function _wsFetch(uuid) {
@@ -115,21 +128,21 @@ function _wsFetch(uuid) {
 			// land in IDB the whole while. Re-check the caches when the slot finally opens —
 			// settling from IDB here costs ~ms instead of a 30s timeout AND another server-queue
 			// entry (re-asks are what keep the server's FIFO minutes deep in the first place).
-			const cachedUrl = urlCache.get(uuid)
-				?? await texCacheGet(uuid).then(c => { if (c) alphaCache.set(uuid, c.hasAlpha); return c?.url ?? null }).catch(() => null)
-			if (cachedUrl) { active--; _pump(); resolve(cachedUrl); return }
+			const cachedBlob = blobCache.get(uuid)
+				?? await texCacheGet(uuid).then(c => { if (c) alphaCache.set(uuid, c.hasAlpha); return c?.blob ?? null }).catch(() => null)
+			if (cachedBlob) { active--; _pump(); resolve(cachedBlob); return }
 			const { emit } = useRealtimeSocket()
 			// settle() runs exactly once: frees the slot, pumps the queue, resolves. Both the data
 			// path (via pending.resolve) and the timeout path go through it.
 			let settled = false
-			const settle = (url) => {
+			const settle = (blob) => {
 				if (settled) return
 				settled = true
 				clearTimeout(timer)
 				pending.delete(uuid)
 				active--
 				_pump()
-				resolve(url)
+				resolve(blob)
 			}
 			// WHY timeout: a UUID the sim can't serve never produces S.ASSET_DATA; without this the
 			// resolver, the inflight entry, AND the slot would leak forever (starving the queue).
@@ -163,60 +176,65 @@ export function getTextureBytes() {
 	return b
 }
 
-// Resolve a UUID to its PNG data URL through all cache layers. Deduped; populates IDB on a miss.
-function getDataUrl(uuid) {
+// Resolve a UUID to its WebP Blob through all cache layers. Deduped; populates IDB on a miss.
+function getBlob(uuid) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
-	if (urlCache.has(uuid)) return Promise.resolve(urlCache.get(uuid))
+	if (blobCache.has(uuid)) return Promise.resolve(blobCache.get(uuid))
 	if (failedHard.has(uuid)) return Promise.resolve(null)                       // server errored — never retry
 	if ((softAttempts.get(uuid) || 0) >= MAX_SOFT_RETRY) return Promise.resolve(null)  // timed out too many times
-	if (urlInflight.has(uuid)) return urlInflight.get(uuid)
+	if (blobInflight.has(uuid)) return blobInflight.get(uuid)
 
 	const p = (async () => {
 		const cached = await texCacheGet(uuid)         // IndexedDB (survives reloads)
-		if (cached) { urlCache.set(uuid, cached.url); alphaCache.set(uuid, cached.hasAlpha); return cached.url }
+		if (cached) { blobCache.set(uuid, cached.blob); alphaCache.set(uuid, cached.hasAlpha); return cached.blob }
 		const net = await _wsFetch(uuid)               // server fetch + transcode (sets alphaCache)
-		if (net) { urlCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time
+		if (net) { blobCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time
 		// null here = hard error (failedHard set in _onAssetData) or timeout (softAttempts bumped in
-		// _wsFetch). Either way classified already — a later getDataUrl call retries soft ones.
+		// _wsFetch). Either way classified already — a later getBlob call retries soft ones.
 		return null
-	})().then(url => { urlInflight.delete(uuid); return url })
+	})().then(blob => { blobInflight.delete(uuid); return blob })
 
-	urlInflight.set(uuid, p)
+	blobInflight.set(uuid, p)
 	return p
 }
 
 // Client-side resident-texture dimension cap. WHY: a dense region holds thousands of THREE.Textures;
-// each retains its decoded image in memory at the source PNG size. At 512² that's ~1 MB each — 3.4k
+// each retains its decoded image in memory at the source size. At 512² that's ~1 MB each — 3.4k
 // textures ≈ 3.4 GB, which alone fills Chrome's ~4 GB tab heap and stalls/crashes the load. Downscaling
-// the resident image to ≤256² quarters that (~0.9 GB) regardless of the cached PNG size, trading some
-// sharpness for the ability to load the whole region. The source img is dropped (GC'd) after the draw.
+// the resident image to ≤256² quarters that (~0.9 GB) regardless of the cached WebP size, trading some
+// sharpness for the ability to load the whole region.
 const MAX_TEX_DIM = 256
 
-// Build a THREE.Texture from a PNG data URL, downscaling the resident image to MAX_TEX_DIM.
-function buildTexture(url) {
-	return new Promise(resolve => {
-		const img = new Image()
-		img.onload = () => {
-			let source = img
-			const longest = Math.max(img.width, img.height)
-			if (longest > MAX_TEX_DIM) {
-				const s = MAX_TEX_DIM / longest
-				const cw = Math.max(1, Math.round(img.width * s))
-				const ch = Math.max(1, Math.round(img.height * s))
-				const canvas = document.createElement('canvas')
-				canvas.width = cw; canvas.height = ch
-				const ctx = canvas.getContext('2d')
-				if (ctx) { ctx.drawImage(img, 0, 0, cw, ch); source = canvas }
-			}
-			const tex = new THREE.Texture(source)
-			tex.colorSpace = THREE.SRGBColorSpace
-			tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-			tex.needsUpdate = true
-			resolve(tex)
-		}
-		img.onerror = () => resolve(null)
-		img.src = url
-	})
+// Build a THREE.Texture from a WebP Blob, downscaling the resident image to MAX_TEX_DIM.
+// WHY imageOrientation:'flipY' + tex.flipY=false: the old path uploaded an <img> with Three's
+// default flipY=true (UNPACK_FLIP_Y_WEBGL). WebGL IGNORES that pixel-store flag for ImageBitmap
+// sources, so we bake the flip into the decode instead and disable Three's flip — otherwise the
+// canvas-downscale branch (a canvas DOES honor the flag) and the direct-bitmap branch would
+// disagree on orientation. Both branches now carry pre-flipped pixels + flipY=false → UVs match
+// the previous Image-element behavior exactly.
+// WHY premultiplyAlpha:'none': WebGL ignores texture.premultiplyAlpha for ImageBitmap sources —
+// the creation-time option governs, and the browser default may premultiply (darkened cutout
+// edges vs the old straight-alpha <img> path); 'none' pins straight alpha.
+async function buildTexture(blob) {
+	let bitmap
+	try { bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' }) } catch { return null }
+	let source = bitmap
+	const longest = Math.max(bitmap.width, bitmap.height)
+	if (longest > MAX_TEX_DIM) {
+		const s = MAX_TEX_DIM / longest
+		const cw = Math.max(1, Math.round(bitmap.width * s))
+		const ch = Math.max(1, Math.round(bitmap.height * s))
+		const canvas = document.createElement('canvas')
+		canvas.width = cw; canvas.height = ch
+		const ctx = canvas.getContext('2d')
+		if (ctx) { ctx.drawImage(bitmap, 0, 0, cw, ch); source = canvas; bitmap.close?.() }
+	}
+	const tex = new THREE.Texture(source)
+	tex.flipY = false
+	tex.colorSpace = THREE.SRGBColorSpace
+	tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+	tex.needsUpdate = true
+	return tex
 }
 
 // Base texture for a UUID (no UV transform). Cached + deduped at the GPU-texture layer.
@@ -225,18 +243,18 @@ function getBaseTexture(uuid) {
 	if (cache.has(uuid))       { lastUsed.set(uuid, Date.now()); return Promise.resolve(cache.get(uuid)) }
 	if (texInflight.has(uuid)) return texInflight.get(uuid)
 
-	const p = getDataUrl(uuid)
-		.then(url => (url ? buildTexture(url) : null))
+	const p = getBlob(uuid)
+		.then(blob => (blob ? buildTexture(blob) : null))
 		.then(tex => {
 			texInflight.delete(uuid)
 			if (tex) {
 				tex.userData.hasAlpha = alphaCache.get(uuid) || false
 				cache.set(uuid, tex)
 				lastUsed.set(uuid, Date.now())
-				// Free the in-memory PNG data URL now the GPU texture exists — these strings are big
-				// (100s of KB–MB each × ~1500 textures = the tab-crashing heap hog). Thumbnails re-read
-				// IndexedDB on demand via getTextureUrl; the GPU texture is what rendering needs.
-				urlCache.delete(uuid)
+				// Free the in-memory Blob mirror now the GPU texture exists — thousands of resident
+				// Blobs would be their own heap hog. Previews re-read IndexedDB on demand via
+				// getTextureUrl; the GPU texture is what rendering needs.
+				blobCache.delete(uuid)
 			}
 			return tex
 		})
@@ -276,9 +294,17 @@ export function getTexture(uuid, xform = null) {
 	})
 }
 
-/** Resolve a texture UUID to its PNG data URL (for an <img> preview). Null on missing/failed. */
+/** Resolve a texture UUID to an object URL for an <img> preview. Null on missing/failed.
+ *  Cached + reused per uuid; revoked by pruneTexturesLRU / clearTextureCache. */
 export function getTextureUrl(uuid) {
-	return getDataUrl(uuid)
+	const existing = objUrlCache.get(uuid)
+	if (existing) return Promise.resolve(existing)
+	return getBlob(uuid).then(blob => {
+		if (!blob) return null
+		const u = URL.createObjectURL(blob)
+		objUrlCache.set(uuid, u)
+		return u
+	})
 }
 
 // Drop up to `maxPerCall` least-recently-applied textures (base + their UV clones) from the in-memory
@@ -301,7 +327,9 @@ export function pruneTexturesLRU(maxPerCall = 64, now = Date.now()) {
 	let n = 0
 	for (const uuid of eligible) {
 		if (n >= maxPerCall) break
-		cache.delete(uuid); lastUsed.delete(uuid); urlCache.delete(uuid); alphaCache.delete(uuid)
+		cache.delete(uuid); lastUsed.delete(uuid); alphaCache.delete(uuid)
+		blobCache.delete(uuid)
+		const ou = objUrlCache.get(uuid); if (ou) { URL.revokeObjectURL(ou); objUrlCache.delete(uuid) }
 		const prefix = uuid + '|'
 		for (const k of [...xformCache.keys()]) if (k.startsWith(prefix)) xformCache.delete(k)
 		n++
@@ -318,7 +346,9 @@ export function clearTextureCache() {
 	for (const tex of xformCache.values()) tex.dispose?.()
 	cache.clear()
 	xformCache.clear()
-	urlCache.clear()
+	for (const u of objUrlCache.values()) URL.revokeObjectURL(u)
+	objUrlCache.clear()
+	blobCache.clear()
 	alphaCache.clear()
 	failedHard.clear()
 	softAttempts.clear()
