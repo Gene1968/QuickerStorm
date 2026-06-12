@@ -53,55 +53,70 @@ function computeNormals(positions: Float32Array, indices: Uint16Array): Float32A
 }
 
 /**
- * Build a sculpt mesh from decoded RGB(A) pixels. `detail` = base grid resolution (verts per side
- * before type-specific wrap rows/cols are added). 32 matches a typical viewer sculpt LOD; 33×33-ish
- * vertex counts stay well under the Uint16 index limit.
+ * Aspect-aware sculpt grid resolution — verbatim port of FS sculpt_calc_mesh_resolution
+ * (llvolume.cpp:3170). Returns quads (sides) per axis: sidesT across (profile/width),
+ * sidesS down (path/height). The mesh aspect tracks the MAP aspect within a vertex budget of
+ * min(detail², width×height/4) — an oblong 8×512 billboard-forest map gets a 4×256-side grid
+ * (NOT 32×32; a fixed square grid skips rows and mangles the shape).
+ */
+export function sculptGridResolution(width: number, height: number, detail: number): { sidesS: number; sidesT: number } {
+	const maxLod = detail * detail
+	const maxMap = Math.floor((width * height) / 4)
+	const vertices = maxMap > 0 ? Math.min(maxLod, maxMap) : maxLod
+	const ratio = width > 0 && height > 0 ? width / height : 1
+	let s = Math.floor(Math.sqrt(vertices / ratio))
+	s = Math.max(s, 4)
+	let t = Math.floor(vertices / s)
+	t = Math.max(t, 4)
+	s = Math.floor(vertices / t)
+	return { sidesS: s, sidesT: t }
+}
+
+/**
+ * Build a sculpt mesh from decoded RGB(A) pixels, mirroring Firestorm's
+ * LLVolume::sculpt → sculptGenerateMapVertices (llvolume.cpp:3050/3205) EXACTLY:
+ *   grid = (sidesS+1)×(sidesT+1) vertices (genNGon emits sides+1 points spanning 0..1 inclusive),
+ *   map sampled at texel floor(k/sides × dim) — for canonical power-of-two maps that is EVEN
+ *   texels only. Creators rely on this: odd texels are never read by SL viewers at max sculpt LOD
+ *   and may hold garbage; sampling them (as we previously did via round(k/(verts-1) × (dim-1)))
+ *   produced stray geometry. UV spacing is k/sides, which phase-aligns grid-multiple texture
+ *   repeats (live-verified palm forest: 8×512 map → 4×256-side grid; RepeatU=4/RepeatV=-256 land
+ *   exactly one full texture per quad — by authorial design).
+ * `detail` = max LOD sides (32 = max viewer sculpt LOD).
  */
 export function sculptToSubmesh(
 	px: Uint8Array | number[], width: number, height: number, channels: number,
 	sculptTypeRaw: number, detail = 32,
 ): SculptSubmesh {
 	const type = sculptTypeRaw & TYPE_MASK
-	const cols = Math.max(2, detail)
-	const rows = Math.max(2, detail)
+	const invert = (sculptTypeRaw & 0x40) !== 0   // LL_SCULPT_FLAG_INVERT
+	const mirror = (sculptTypeRaw & 0x80) !== 0   // LL_SCULPT_FLAG_MIRROR
+	const reverseHorizontal = invert ? !mirror : mirror   // XOR, llvolume.cpp:3055
+	const { sidesS, sidesT } = sculptGridResolution(width, height, Math.max(2, detail))
+	const down = sidesS + 1
+	const across = sidesT + 1
 
-	// Sample the source image into a grid of local-space vertices.
-	const grid: Vec3[][] = []
-	for (let y = 0; y < rows; y++) {
-		const sy = Math.round((y / (rows - 1)) * (height - 1))
-		const row: Vec3[] = []
-		for (let x = 0; x < cols; x++) {
-			const sx = Math.round((x / (cols - 1)) * (width - 1))
-			row.push(sampleVertex(px, width, height, channels, sx, sy))
-		}
-		grid.push(row)
-	}
-
-	// Non-plane sculpts wrap horizontally: duplicate column 0 as a trailing column so the seam closes.
-	if (type !== PLANE) for (const row of grid) row.push([...row[0]])
-
-	// Sphere: collapse the top and bottom rows each to a single pole point (the mid-column sample).
-	if (type === SPHERE) {
-		const across = grid[0].length
-		const topPole = [...grid[0][across >> 1]] as Vec3
-		const botPole = [...grid[rows - 1][across >> 1]] as Vec3
-		for (let x = 0; x < across; x++) { grid[0][x] = [...topPole]; grid[rows - 1][x] = [...botPole] }
-	}
-
-	// Torus wraps vertically too: append row 0 as a trailing row.
-	if (type === TORUS) grid.push(grid[0].map(c => [...c] as Vec3))
-
-	const down = grid.length
-	const across = grid[0].length
 	const vCount = down * across
 	const positions = new Float32Array(vCount * 3)
 	const uvs = new Float32Array(vCount * 2)
-	for (let y = 0; y < down; y++) {
-		for (let x = 0; x < across; x++) {
-			const vi = y * across + x
-			const c = grid[y][x]
+	for (let j = 0; j <= sidesS; j++) {
+		let syFS = Math.floor((j / sidesS) * height)
+		if (syFS >= height) syFS = type === TORUS ? 0 : height - 1   // end row: wrap (torus) / clamp
+		// WHY flip: FS samples LLImageRaw, whose scanlines are stored BOTTOM-UP (llimagej2coj.cpp
+		// copies decoded J2C rows in reverse). Our decoder yields top-down rows, so mirror the row
+		// index — without this the row pairing is reversed, which flips the texture vertically on
+		// the surface (upside-down fronds) AND reverses triangle winding (inside-out trunks).
+		const sy = height - 1 - syFS
+		for (let k = 0; k <= sidesT; k++) {
+			const rk = reverseHorizontal ? sidesT - k : k
+			let sx = Math.floor((rk / sidesT) * width)
+			if (sx >= width) sx = type === PLANE ? width - 1 : 0   // side seam: clamp (plane) / wrap
+			if (type === SPHERE && (j === 0 || j === sidesS)) sx = width >> 1   // pole pinch rows
+			const c = sampleVertex(px, width, height, channels, sx, sy)
+			if (mirror) c[0] = -c[0]
+			const vi = j * across + k
 			positions[vi * 3] = c[0]; positions[vi * 3 + 1] = c[1]; positions[vi * 3 + 2] = c[2]
-			uvs[vi * 2] = x / (across - 1); uvs[vi * 2 + 1] = y / (down - 1)
+			uvs[vi * 2] = k / sidesT; uvs[vi * 2 + 1] = j / sidesS
 		}
 	}
 

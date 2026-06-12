@@ -1,6 +1,11 @@
 // src/lib/primGeometry.js — shared prim/mesh geometry helpers used by the world engine and workers.
 import * as THREE from 'three'
 
+// WHY: cache-buster for the persistent baked-geometry cache (qs-geom). Bump whenever any
+// function in this file changes its OUTPUT for the same inputs (new deform support, segment
+// count changes, axis-map fixes…). Old entries become unreachable and age out via LRU.
+export const GEOM_VERSION = 1
+
 // WHY: Map SL prim PathCurve+ProfileCurve to a Three.js geometry. Reference table
 // (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
 // sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,

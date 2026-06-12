@@ -52,7 +52,7 @@
 	},
 	"nwgrid": {
 		"nick": "nwgrid",
-		"name": "Neverworld Grid",
+		"name": "Neverworld",
 		"loginURI": "http://hg.neverworldgrid.com:8002/",
 		"slurlBase": "hop://hg.neverworldgrid.com:8002/",
 		"platform": "OpenSim",
@@ -67,7 +67,7 @@
 	},
 	"gbg": {
 		"nick": "gbg",
-		"name": "GBG METAVERSE NEON Grid",
+		"name": "GBG World",
 		"loginURI": "http://hg.gbg-world.com:8002/",
 		"slurlBase": "hop://hg.gbg-world.com:8002/",
 		"platform": "OpenSim",
@@ -131,7 +131,7 @@
 	},
 	"gcg": {
 		"nick": "gcg",
-		"name": "Great Canadian Grid",
+		"name": "Great Canadian Grid (New/DG)",
 		"loginURI": "http://login.greatcanadiangrid.ca:8002/",
 		"slurlBase": "hop://login.greatcanadiangrid.ca:8002/",
 		"platform": "OpenSim",

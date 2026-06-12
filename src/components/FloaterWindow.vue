@@ -152,6 +152,7 @@ onUnmounted(() => {
 	ro?.disconnect()
 	window.removeEventListener('mousemove', onMousemove)
 	window.removeEventListener('mouseup',   onMouseup)
+	ui.floaterStack = ui.floaterStack.filter(f => f !== props.id)
 })
 
 // ── Computed style / class ────────────────────────────────────────────────────

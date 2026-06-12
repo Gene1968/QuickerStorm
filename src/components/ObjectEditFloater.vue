@@ -3,6 +3,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { getTextureUrl } from '@/composables/useTextureFetch.js'
+import { setObjectAlphaMode } from '@/composables/useWorldEngine.js'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { C } from '@shared/protocol.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
@@ -41,6 +42,14 @@ const gizmoOps = [
 ]
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
+// Alpha-mode override (#17b): live render lever, local-only (NOT sent to the sim — the legacy TE
+// has no alpha-mode field; the real one lives in RenderMaterials, #16). '' = auto: blend when the
+// texture carries alpha. Setting it re-stamps the object's materials immediately via the engine.
+const alphaMode = computed({
+	get: () => obj.value?.alphaModeOverride || '',
+	set: (v) => { if (obj.value) setObjectAlphaMode(obj.value.localId, v || null) },
+})
+
 const tabs = [
 	{ id: 'general',  label: 'General' },
 	{ id: 'object',   label: 'Object' },
@@ -50,8 +59,9 @@ const tabs = [
 ]
 
 // ── Texture thumbnail loading ─────────────────────────────────────────────
-// WHY: getTextureUrl resolves async (ViewerAsset→J2C→PNG, IDB-cached). Keep a reactive uuid→url
-// map so face chips + the preview panel reuse one fetch per UUID. null = still loading / no image.
+// WHY: getTextureUrl resolves async (ViewerAsset→J2C→WebP, IDB-cached) to an object URL. Keep a
+// reactive uuid→url map so face chips + the preview panel reuse one fetch per UUID. null = still
+// loading / no image. (The fetcher owns + revokes the object URLs — don't revoke here.)
 const texUrls = reactive({})
 function loadTex(uuid) {
 	if (!uuid || uuid in texUrls) return
@@ -357,6 +367,7 @@ watch(
 		: arr
 	const dump = '[TEDUMP] ' + JSON.stringify({
 		localId: o.localId, name: o.name, type: typeInfo.value.label, meshId: o.meshId,
+		sculptId: o.sculptId, sculptType: o.sculptType,
 		shape: o.shape && { pathCurve: o.shape.pathCurve, profileCurve: o.shape.profileCurve,
 			profileHollow: o.shape.profileHollow, pathBegin: o.shape.pathBegin, pathEnd: o.shape.pathEnd,
 			profileBegin: o.shape.profileBegin, profileEnd: o.shape.profileEnd },
@@ -367,6 +378,7 @@ watch(
 		defaultOffset: o.defaultOffset, faceOffset: sparse(o.faceOffset),
 		defaultRotation: o.defaultRotation, faceRotation: sparse(o.faceRotation),
 		defaultTexGen: o.defaultTexGen, faceTexGen: sparse(o.faceTexGen),
+		textureAnim: o.textureAnim,
 		defaultShiny: o.defaultShiny, defaultFullbright: o.defaultFullbright,
 		defaultPbrMaterial: o.defaultPbrMaterial, pbrMaterials: sparse(o.pbrMaterials),
 	})
@@ -676,17 +688,20 @@ function close() {
 
 					<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
 					<template v-if="texSubTab === 'bp'">
-						<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
+						<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-2 text-xs">
 							<div class="text-white/50 self-center">Texture</div>
-							<div class="flex items-center gap-2 min-w-0">
-								<button
-									class="w-16 h-16 shrink-0 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs overflow-hidden hover:border-accent"
-									:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
-									@click="openPreview(obj.defaultTexture)"
-								>
-									<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" />
-									<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
-								</button>
+							<div class="flex items-center gap-1 min-w-0">
+								<div class="flex flex-col items-center gap-1">
+									<button
+										class="w-16 h-16 shrink-0 bg-white/5 border border-brd rounded flex items-center justify-center text-white/30 text-2xs overflow-hidden hover:border-accent"
+										:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
+										@click="openPreview(obj.defaultTexture)"
+									>
+										<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" />
+										<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
+									</button>
+									Diffuse
+								</div>
 								<div class="flex-1 min-w-0">
 									<div v-if="isMultiTexture" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctTextures.length }})</div>
 									<input
@@ -696,7 +711,7 @@ function close() {
 									/>
 								</div>
 							</div>
-							<div class="text-white/50 self-center">Color</div>
+							<div class="text-white/50 self-center">Tint</div>
 							<div class="flex items-center gap-2">
 								<div
 									class="w-6 h-6 rounded border border-brd"
@@ -712,18 +727,41 @@ function close() {
 									class="flex-1 bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono"
 								/>
 							</div>
+							<div class="text-white/50 self-center">Full bright</div>
+							<div class="text-t1">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
+							<div class="text-white/50 self-center">Glow</div>
+							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 							<div class="text-white/50 self-center">Trans %</div>
 							<input
 								:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
 								readonly
 								class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono"
 							/>
-							<div class="text-white/50 self-center">Glow</div>
-							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
-							<div class="text-white/50 self-center">Full bright</div>
-							<div class="text-t1">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
+							<div class="text-white/50 self-center">Alpha mode</div>
+							<div class="text-t1">
+								<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
+									texture has alpha. Emissive mask renders as None (unlit materials). -->
+								<select
+									v-model="alphaMode"
+									class="ui-select w-full bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1"
+								>
+									<option value="">Auto (blend if alpha)</option>
+									<option value="none">None</option>
+									<option value="blend">Alpha blending</option>
+									<option value="mask">Alpha masking</option>
+									<option value="emissive">Emissive mask</option>
+								</select>
+							</div>
+							<div class="text-white/50 self-center">Mask cutoff</div>
+							<div class="text-t1">to-do</div>
+							<div class="text-white/50 self-center">Bumpiness</div>
+							<div class="text-t1">to-do</div>
 							<div class="text-white/50 self-center">Shininess</div>
 							<div class="text-t1">{{ shinyLabel }}</div>
+							<div class="text-white/50 self-center">Glossiness</div>
+							<div class="text-t1">to-do</div>
+							<div class="text-white/50 self-center">Environment</div>
+							<div class="text-t1">to-do</div>
 						</div>
 
 						<!-- Per-face diffuse chips (only faces overriding the default) -->
@@ -763,18 +801,13 @@ function close() {
 
 						<!-- Mapping (default face) — FS-style: Mapping mode + Scale H/V + Offset H/V + Rotation -->
 						<div class="border-t border-brd pt-2">
-							<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-								<div class="text-white/50 self-center">Mapping</div>
-								<div class="text-t1">{{ defaultMapping.mapping }}</div>
+							<div class="tabnav my-1 text-gray-500">|| DIFFUSE | Normal | Specular ||</div>
+							<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 								<div class="text-white/50 self-center">Scale H / V</div>
 								<div class="grid grid-cols-2 gap-1">
 									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
 								</div>
-								<template v-if="defaultMapping.rpm != null">
-									<div class="text-white/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
-									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
-								</template>
 								<div class="text-white/50 self-center">Offset H / V</div>
 								<div class="grid grid-cols-2 gap-1">
 									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
@@ -782,7 +815,15 @@ function close() {
 								</div>
 								<div class="text-white/50 self-center">Rotation°</div>
 								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								<template v-if="defaultMapping.rpm != null">
+									<div class="text-white/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
+									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-white/5 border border-brd rounded px-1.5 py-0.5 text-t1 font-mono" />
+								</template>
+								<div class="text-white/50 self-center">Mapping</div>
+								<div class="text-t1">{{ defaultMapping.mapping }}</div>
 							</div>
+							<div class="my-1 text-gray-500">[ ] Synchronize materials</div>
+							<div class="my-1 text-gray-500">[ ] Align planar faces</div>
 						</div>
 						<div v-if="obj.defaultMaterialId" class="border-t border-brd pt-2">
 							<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
@@ -791,7 +832,7 @@ function close() {
 					</template>
 
 					<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
-					<template v-if="texSubTab === 'pbr'">
+					<template v-else-if="texSubTab === 'pbr'">
 						<div v-if="!hasPbr" class="text-white/40 italic px-1 py-3 text-center">
 							No PBR material on this object — it uses Blinn-Phong (legacy) textures.
 						</div>

@@ -17,6 +17,17 @@ describe('selectEvictions', () => {
 		selectEvictions(cands, 1)
 		expect(cands.map(c => c.id)).toEqual([1, 2])
 	})
+	it('never evicts candidates at or within minDist (near guard)', () => {
+		const cands = [{ id: 1, dist: 50 }, { id: 2, dist: 96 }, { id: 3, dist: 97 }, { id: 4, dist: 300 }]
+		expect(selectEvictions(cands, 10, 96)).toEqual([4, 3])
+	})
+	it('all candidates within minDist → [] (culler converges to near set, not zero)', () => {
+		const cands = [{ id: 1, dist: 10 }, { id: 2, dist: 96 }]
+		expect(selectEvictions(cands, 10, 96)).toEqual([])
+	})
+	it('minDist omitted → legacy behavior (no guard)', () => {
+		expect(selectEvictions([{ id: 1, dist: 5 }], 5)).toEqual([1])
+	})
 })
 
 describe('groupChildrenByRoot', () => {

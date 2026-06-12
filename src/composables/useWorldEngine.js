@@ -9,7 +9,7 @@ import { useMapStore } from '@/stores/mapStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useDebugStore } from '@/stores/debugStore'
 import { useNotificationStore } from '@/stores/notificationStore'
-import { useRealtimeSocket, takeWsStats } from './useRealtimeSocket'
+import { useRealtimeSocket, takeWsStats, takeWsBytes } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
@@ -19,19 +19,23 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
-import { memStats, memUnderPressure, memRatio } from '@/lib/memGovernor.js'
+import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
+import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
+import { resolveTerrainSlot } from '@/lib/terrainTextures.js'
 import { C, S } from '@shared/protocol.js'
 import {
 	bakePrimScale,            // bakes prim scale into the placeholder cube
 	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
-	geometryFromArrays,       // consumes worker-baked arrays in applySwap
+	geometryFromArrays,       // worker-baked/cached arrays → BufferGeometry (applySwap + tier-1 sync cache hits)
 } from '@/lib/primGeometry.js'
+import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap } from '@/lib/geomCache.js'
+import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
@@ -85,19 +89,33 @@ function hasMultiFacePrim(obj) {
 	return primFacesDiffer(obj)
 }
 
-// Build a UV transform from TE repeat/offset/rotation, or null for identity. Clamps repeats to the
-// SL editor max (±100/face): the decoder occasionally yields a garbage scale (e.g. 8215) that would
-// over-tile a face into a solid color — clamp neutralizes it; a clamped-to-0 repeat falls back to 1.
-const MAX_REPEAT = 100
+// Build a UV transform from TE repeat/offset/rotation, or null for identity.
+// NO repeat clamp — FS parity (LLTextureEntry::setScale stores raw F32, no min/max). Huge repeats
+// are legitimate content: billboard-forest sculpts phase-align grid-multiple repeats (live-verified
+// palm 1f22d8ad…: RepeatV=-256 on a 32-side sculpt grid = exactly -8.0 periods per row). The old
+// ±100 clamp broke that alignment; the "garbage 8215" it guarded against came from the misaligned
+// full-ObjectUpdate tail decode fixed by the Data-Var2 fix (objupdate-data-var2.test.ts).
 function uvXform(rep, ofs, rot) {
 	if (!rep && !ofs && rot == null) return null
-	const clamp = (v) => (Number.isFinite(v) ? Math.max(-MAX_REPEAT, Math.min(MAX_REPEAT, v)) : 1)
+	const fin = (v) => (Number.isFinite(v) ? v : 1)
 	const r = rep ?? [1, 1]
 	return {
-		repeat:   [clamp(r[0]) || 1, clamp(r[1]) || 1],
+		repeat:   [fin(r[0]) || 1, fin(r[1]) || 1],
 		offset:   ofs ?? [0, 0],
 		rotation: Number.isFinite(rot) ? rot : 0,
 	}
+}
+
+// #17b: module-level bridge so UI (ObjectEditFloater's Alpha-mode select) can poke the live engine
+// instance without threading props through WorldView. Set on engine mount, nulled on unmount.
+let _liveEngine = null
+/**
+ * Override how the selected object's textures treat alpha. mode: '' | null = auto (blend when the
+ * texture has alpha), 'none', 'blend', 'mask', 'emissive' (renders as none — no emissive support
+ * on unlit prim materials). Persists on the worldStore object so later texture re-applies keep it.
+ */
+export function setObjectAlphaMode(localId, mode) {
+	return _liveEngine?.setObjectAlphaMode(localId, mode) ?? false
 }
 
 // Dev diagnostic: client-only render warnings (e.g. Three.js "Computed radius is NaN") never reach
@@ -180,6 +198,9 @@ export function useWorldEngine(canvasRef) {
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
 	const stopAlwaysRunWatch = watch(() => uiStore.alwaysRun, (v) => sendSetAlwaysRun(v))
+	const stopLitShadingWatch = watch(() => uiStore.litShading, (on) => relightScene(on))
+	// MenuBar "Rebuild Scene" → full client-side recovery (clear evictions, requeue, resync).
+	const stopSceneRebuildWatch = watch(() => uiStore.sceneRebuildTick, () => rebuildScene('user'))
 	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
 	// built — water plane starts at the default 20m and terrain is coloured against it. When the
 	// real sea level arrives, reposition the water plane and recolour terrain to match.
@@ -187,6 +208,22 @@ export function useWorldEngine(canvasRef) {
 		if (waterMesh) waterMesh.position.y = h
 		rebuildTerrainFromStore()
 	})
+	// WHY no deep: App.vue's onRegionInfo replaces session.terrainTextures by reference on every
+	// RegionHandshake, so a shallow ref-compare watch fires exactly when it should.
+	// WHY not immediate: an immediate fire runs synchronously during setup, before `let terrainMesh`
+	// (declared far below) is initialized → TDZ ReferenceError. The populated-on-setup and remount
+	// cases are covered by initScene() calling loadTerrainTextures() directly; this watch only needs
+	// to catch textures that arrive AFTER setup, by which point terrainMesh exists.
+	const stopTerrainTexWatch = watch(
+		() => sessionStore.terrainTextures,
+		() => loadTerrainTextures(),
+	)
+	// WHY: rebuild the terrain plane when regionSize changes (var-region TP backfill arrives after
+	// the geometry was built). Fires only on a real change; terrainMesh guard covers pre-initScene.
+	const stopRegionSizeWatch = watch(
+		() => `${sessionStore.regionSizeX}x${sessionStore.regionSizeY}`,
+		() => rebuildTerrainGeometry(),
+	)
 	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
 	// WHY: LandContextMenu "Walk To" — snap own avatar + camera to chosen terrain point.
 	// Same snap logic as onAgentSpawnPos but triggered client-side via uiStore.requestWarp().
@@ -246,18 +283,19 @@ export function useWorldEngine(canvasRef) {
 	let _cullTimer = null        // memory-budget distance-culling tick (~1s)
 	let _longTaskObs = null      // PerformanceObserver for main-thread long tasks (telemetry)
 	const evicted = new Set()    // localIds dropped for memory (kept in worldStore + IDB; rebuilt on approach)
-	// WHY a budget below the 0.85 governor: park heap ~60% so the governor is a rare backstop, not the
-	// steady state. R_NEAR < (implicit evict radius): far objects evict first under pressure; only
-	// objects within R_NEAR rebuild — hysteresis prevents thrash at the boundary. Per-tick caps spread
-	// the dispose/build work so the frame doesn't hitch.
-	// Park heap near (but below) the 0.85 governor so we hold as many objects as safely fit, while the
-	// evict/reload swap keeps the RESIDENT set proximity-ordered. (0.60 was too aggressive — it evicted
-	// ~30% more than the governor-only path held.)
-	const CULL_TARGET = 0.78
-	const CULL_RESUME = 0.70     // below this, stream evicted objects back at ANY distance (nearest first).
-	// WHY: a TRANSIENT heap spike (GC sawtooth, worker garbage between recycles) can trip CULL_TARGET
-	// for a few ticks and evict thousands of roots; with reload capped to R_NEAR the scene then stays
-	// gutted forever once pressure clears (observed: 31.9k stored / 606 rendered, heap idling at 25%).
+	// Cull thresholds are fractions of the SELF-ACCOUNTED asset budget (memGovernor appRatio:
+	// tex + mesh-cache + geometry bytes vs appBudgetBytes), NOT process heap. Process heap counts
+	// uncollected garbage and can be inherited from a previous page in the same renderer process —
+	// both lied hard during busy-region cold loads (heap read 87-95% forever → the culler evicted
+	// the entire scene to zero while 1.1GB sat in an unbounded mesh cache). appRatio is truthful and
+	// immediate, so eviction stops exactly when enough far geometry has actually been released.
+	// R_NEAR < (implicit evict radius): far objects evict first under pressure; only objects within
+	// R_NEAR rebuild — hysteresis prevents thrash at the boundary. Per-tick caps spread the
+	// dispose/build work so the frame doesn't hitch.
+	const CULL_TARGET = 1.0      // evict while resident assets exceed the budget
+	const CULL_RESUME = 0.85     // below this, stream evicted objects back at ANY distance (nearest first).
+	// WHY: a transient over-budget spike can trip CULL_TARGET for a few ticks and evict thousands of
+	// roots; with reload capped to R_NEAR the scene would stay gutted once pressure clears.
 	// With real headroom, distance is no reason to keep anything evicted.
 	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
 	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
@@ -269,14 +307,105 @@ export function useWorldEngine(canvasRef) {
 	const MAX_RELOAD_PER_TICK = 48
 	const EVICT_AFTER_TICKS = 3  // require N consecutive over-target ticks before evicting (spike debounce)
 	let _overTicks = 0
+	let _lastGeomB = 0           // live-geometry bytes, refreshed by the 3s telemetry scan (O(n))
+	let _lastDrainTickAt = 0     // last 30ms-interval drain tick — animate() drains only when this starves
 	let _cullStatTick = 0        // throttle the O(n) stats scan (every Nth cull tick)
 	let _drainBuilt = 0, _drainMs = 0, _drainMaxMs = 0  // upsertMesh throughput probe (reset each 5s report)
 	let _applyN = 0, _applyMs = 0, _applyMaxMs = 0      // applySwap (bake-result → THREE geometry) probe
+	// Geometry-cache telemetry (reported + reset by the 5s [Bake] line)
+	let _geomHitMem = 0, _geomHitIdb = 0, _geomMiss = 0
+	// Deferred-lookup backpressure: requestGeometry entries whose async IDB lookup hasn't settled
+	// yet. Each is a potential future bake the drain loop's inflight cap must see (see
+	// drainMeshQueue) — otherwise a cold load floods thousands of misses past the cap before
+	// meshBaker.outstanding() rises. Every entry decrements exactly once: when it's served from
+	// cache, applied bad/null, dropped post-unmount, or its jobThunk is invoked (at which point
+	// outstanding() takes over the accounting).
+	let _geomPending = 0
+	// WHY: set on unmount so in-flight lookup batches are dropped — applying them would sync-bake
+	// on the disposed baker and mutate orphaned meshes.
+	let _engineDead = false
+
+	// WHY microtask batching: every requestGeometry() call within one synchronous burst (one
+	// drainMeshQueue tick, one evict re-stream pass…) coalesces into ONE qs-geom readonly txn —
+	// the per-prim-transaction storm is the exact pattern that starved texCacheGet. Same trick
+	// as useMeshBaker's flush.
+	let _geomLookupBatch = []
+	function requestGeometry(key, jobThunk, applySwap) {
+		_geomPending++
+		_geomLookupBatch.push({ key, jobThunk, applySwap })
+		if (_geomLookupBatch.length === 1) queueMicrotask(_flushGeomLookups)
+	}
+	function _flushGeomLookups() {
+		if (!_geomLookupBatch.length) return
+		const batch = _geomLookupBatch
+		_geomLookupBatch = []
+		// WHY by-key grouping + per-entry clones: applySwap ratio-rescales positions and regenerates
+		// UVs IN PLACE, so every mesh must own its arrays outright. geomCacheGetMany returns ONE clone
+		// per unique key — duplicate keys in a batch (identical prims) sharing that clone would
+		// cross-contaminate each other's geometry. Each sibling therefore pulls its own fresh clone
+		// from the memory tier (geomMemGet clones per call), never a shared or cache-owned buffer.
+		const byKey = new Map()
+		for (const b of batch) {
+			const list = byKey.get(b.key)
+			if (list) list.push(b)
+			else byKey.set(b.key, [b])
+		}
+		geomCacheGetMany([...byKey.keys()]).then(hits => {
+			// WHY: post-unmount batches would sync-bake on the disposed baker + mutate orphaned meshes.
+			if (_engineDead) { _geomPending -= batch.length; return }
+			for (const [key, entries] of byKey) {
+				const arrays = hits.get(key)
+				if (!arrays) { _bakeGeomGroup(key, entries); continue }
+				// IDB hit: getMany promoted the key into the memory tier and returned one clone — it
+				// serves the first entry; every additional entry gets its own fresh clone via geomMemGet.
+				_geomHitIdb++; _geomPending--
+				entries[0].applySwap(arrays)
+				let evictedSiblings = null
+				for (let i = 1; i < entries.length; i++) {
+					const clone = geomMemGet(key)
+					if (clone) { _geomHitIdb++; _geomPending--; entries[i].applySwap(clone) }
+					// Mem tier evicted the key between promote and read (rare) → real miss path.
+					else (evictedSiblings ??= []).push(entries[i])
+				}
+				if (evictedSiblings) _bakeGeomGroup(key, evictedSiblings)
+			}
+		})
+	}
+	// Miss path for one key's entries: ONE real bake (entries[0]'s thunk), siblings served as fresh
+	// clones from the just-stored memory-tier entry. Siblings must NEVER receive the raw worker
+	// `out` — geomCacheStore takes ownership of those buffers, so handing them out would alias
+	// cache-owned arrays into a mesh that mutates them in place.
+	function _bakeGeomGroup(key, entries) {
+		_geomMiss++
+		_geomPending--   // entries[0]'s bake dispatches now → meshBaker.outstanding() takes over
+		entries[0].jobThunk().then(out => {
+			// WHY: engine unmounted while the bake was in flight — drop the remaining entries.
+			if (_engineDead) { _geomPending -= entries.length - 1; return }
+			if (!out || out.bad) {
+				// Bad/null bake: every entry keeps its placeholder (applySwap bails on bad input).
+				for (const e of entries) e.applySwap(out)
+				_geomPending -= entries.length - 1
+				return
+			}
+			// Store FIRST (cache takes ownership of the worker-transferred buffers), swap the
+			// returned copy — applySwap may ratio-rescale in place, which must never touch the entry.
+			entries[0].applySwap(geomCacheStore(key, out))
+			for (let i = 1; i < entries.length; i++) {
+				const clone = geomMemGet(key)
+				// Siblings ARE memory-tier serves (the store just populated tier 1) — count them as
+				// mem hits so the hit/miss telemetry stays meaningful (one real bake per key).
+				if (clone) { _geomHitMem++; _geomPending--; entries[i].applySwap(clone) }
+				// Store entry already evicted (rare) → this sibling runs its OWN bake (never raw `out`).
+				else _bakeGeomGroup(key, [entries[i]])
+			}
+		})
+	}
 	// Drain-loop exit accounting: why does each tick stop? (ticks that ran / skipped-empty /
 	// governor-paused / broke on bake-cap / broke on time budget). Reset each 5s report.
 	let _dtTicks = 0, _dtEmpty = 0, _dtGov = 0, _dtBrkCap = 0, _dtBrkBudget = 0
 	let _frN = 0, _frMs = 0, _frMaxMs = 0               // rAF frame-work gauge (reset each 5s report)
 	let _ltN = 0, _ltMs = 0, _ltMaxMs = 0               // PerformanceObserver longtask totals
+	let _ltTotalMs = 0                                  // never-reset longtask accumulator (lit-gate reads deltas)
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -307,9 +436,22 @@ export function useWorldEngine(canvasRef) {
 			if (storedRun !== runId) {
 				// Run changed — or unknown (records cached before run-tracking existed): either way the
 				// records can't be trusted, so drop them and let this session rebuild the cache fresh.
-				const n = await objCacheClearRegion(key)
+				// WHY try/catch + always-resync: this await once hung FOREVER (cursor-walk purge wedged,
+				// txn aborted with no onabort route) — preseed died silently, the probe resync below
+				// never fired, and the scene starved at 47/5,572 prims. A failed purge must never block
+				// the probe pipeline: skip the run-marker write (next session retries the purge) and let
+				// probes reconcile — stale records only cost harmless re-requests via the crcMap reset.
+				let n = 0, purged = true
+				try { n = await objCacheClearRegion(key) }
+				catch (e) {
+					purged = false
+					debugStore.push('warn', `[ObjCache] region purge FAILED (${e?.message ?? e}) — degrading to request-all`)
+				}
 				if (n) debugStore.push('warn', `[ObjCache] region run ${storedRun ? 'changed' : 'unknown'} (CacheID ${(storedRun ?? '????????').slice(0, 8)}→${runId.slice(0, 8)}) — dropped ${n} stale cached objects, skipping replay`)
-				try { localStorage.setItem(runKey, runId) } catch { /* ignore */ }
+				if (purged) { try { localStorage.setItem(runKey, runId) } catch { /* ignore */ } }
+				// Probes arriving DURING the purge may have memoized a pre-purge crcMap — those CRCs
+				// belong to the dead region run. Reset so the next batch rebuilds from the purged store.
+				_crcMapKey = null
 				requestProbeResync()
 				return
 			}
@@ -322,7 +464,16 @@ export function useWorldEngine(canvasRef) {
 				pendingMeshIds.add(o.localId)
 				n++
 			}
-			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)})`)
+			// Seed the probe crcMap from this read — it already holds every record, so the partition
+			// never needs its own IDB walk racing the persist write stream (the 3s-timeout → empty-map
+			// path that silently turned warm sessions into request-all re-feeds).
+			const seeded = new Map()
+			for (const o of (cached ?? [])) {
+				if (typeof o?.localId === 'number' && typeof o?.crc === 'number') seeded.set(o.localId, o.crc)
+			}
+			_crcMapKey = key
+			_crcMapP = Promise.resolve(seeded)
+			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)}, crcMap=${seeded.size})`)
 			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
 			requestProbeResync()
 		}
@@ -366,13 +517,22 @@ export function useWorldEngine(canvasRef) {
 		function getRegionCrcMap(key) {
 			if (key !== _crcMapKey) {
 				_crcMapKey = key
-				_crcMapP = Promise.race([
+				let p
+				p = Promise.race([
 					objCacheCrcMap(key),
 					new Promise((_, rej) => setTimeout(() => rej(new Error('crcMap timeout (3s)')), 3000)),
 				]).catch(e => {
-					try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Probe] crcMap failed (${e.message}) — degrading to request-all`, stack: '' }) } catch { /* ignore */ }
-					return new Map()   // empty map → every probe partitions as a miss (request-all)
+					try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Probe] crcMap failed (${e.message}) — this batch degrades to request-all`, stack: '' }) } catch { /* ignore */ }
+					// WHY un-memoize: caching this empty map poisoned the WHOLE session — one transient
+					// IDB starvation (read queued behind the persist flush stream) turned every later
+					// probe batch into request-all, re-feeding ~20k objects despite a valid cache. Fail
+					// only the batches in flight; the next batch retries the read (or gets the preseed-
+					// seeded map). Promise-identity guard: preseed may have installed its seeded map
+					// while this race was still pending — never clobber that.
+					if (_crcMapP === p) { _crcMapKey = null; _crcMapP = null }
+					return new Map()   // empty map → these probes partition as misses (request-all)
 				})
+				_crcMapP = p
 			}
 			return _crcMapP
 		}
@@ -1089,6 +1249,99 @@ export function useWorldEngine(canvasRef) {
 		if (anyNonZero) terrainMesh.geometry.computeVertexNormals()
 	}
 
+	let terrainShaderMaterial = null   // built lazily once textures arrive
+	let _terrainVtxMaterial   = null   // the original MeshBasicMaterial, kept for region resets
+
+	// WHY: the bundled default WebP tiles are decoded ONCE and shared across every slot, region
+	// cross, and remount. TextureLoader.load allocates a fresh THREE.Texture each call and
+	// Material.dispose() doesn't free uniform textures — without this memo, loadTerrainTextures
+	// would orphan ~4 MB of GPU texture per run (deep watch + region cross + remount = unbounded).
+	// These shared textures are app-lifetime (≤4 tiles) and intentionally never disposed; custom
+	// slots come from getTexture() which owns its own LRU. _bundledPending dedups concurrent loads.
+	const _bundledTerrainTex     = new Map()  // url -> shared THREE.Texture
+	const _bundledTerrainPending = new Map()  // url -> Array<cb> while a load is in flight
+	function loadBundledTerrainTex(url, onReady) {
+		const cached = _bundledTerrainTex.get(url)
+		if (cached) { onReady(cached); return }
+		const pending = _bundledTerrainPending.get(url)
+		if (pending) { pending.push(onReady); return }
+		_bundledTerrainPending.set(url, [onReady])
+		new THREE.TextureLoader().load(url, (tex) => {
+			_bundledTerrainTex.set(url, tex)
+			const cbs = _bundledTerrainPending.get(url) || []
+			_bundledTerrainPending.delete(url)
+			for (const cb of cbs) cb(tex)
+		})
+	}
+
+	// WHY: RegionHandshake gives 4 detail-texture UUIDs + per-corner start/range. Known
+	// default UUIDs paint instantly from bundled WebP (no grid fetch / no J2C decode);
+	// custom UUIDs stream through the normal texture pipeline and swap in when decoded.
+	function loadTerrainTextures() {
+		if (!terrainMesh) return
+		const tt = sessionStore.terrainTextures
+		if (!tt || !Array.isArray(tt.detail)) return
+
+		if (!terrainShaderMaterial) {
+			terrainShaderMaterial = buildTerrainMaterial({
+				startHeight: tt.startHeight,
+				heightRange: tt.heightRange,
+				regionSizeX: sessionStore.regionSizeX,
+				regionSizeY: sessionStore.regionSizeY,
+			})
+		} else {
+			terrainShaderMaterial.uniforms.uStartHeight.value.set(...tt.startHeight)
+			terrainShaderMaterial.uniforms.uHeightRange.value.set(...tt.heightRange)
+		}
+
+		// Max anisotropy kills the grazing-angle "grain" on terrain (renderer exists — created in
+		// initScene before terrainMesh, which gated us above). Falls back to 1 if caps unavailable.
+		const aniso = renderer?.capabilities?.getMaxAnisotropy?.() ?? 1
+
+		for (let slot = 0; slot < 4; slot++) {
+			const r = resolveTerrainSlot(tt.detail[slot])
+			if (r.kind === 'default') {
+				loadBundledTerrainTex(r.url, (tex) => setTerrainSlot(terrainShaderMaterial, slot, tex, aniso))
+			} else {
+				// bundled fallback while the custom texture decodes, then swap the real one in
+				const fb = resolveTerrainSlot('')
+				loadBundledTerrainTex(fb.url, (tex) => setTerrainSlot(terrainShaderMaterial, slot, tex, aniso))
+				getTexture(r.uuid).then((tex) => { if (tex) setTerrainSlot(terrainShaderMaterial, slot, tex, aniso) })
+			}
+		}
+
+		// Swap the mesh onto the shader material (keep the vertex-color one for region resets).
+		if (terrainMesh.material !== terrainShaderMaterial) {
+			_terrainVtxMaterial = terrainMesh.material
+			terrainMesh.material = terrainShaderMaterial
+		}
+	}
+
+	// WHY: the terrain PlaneGeometry is sized to regionSize at initScene (login). Cross-region TP
+	// to a DIFFERENT-sized region only updates the regionSize numbers (onTeleportFinish backfill /
+	// onEngineMapBlocks) — the geometry was never rebuilt, so terrain stayed the login size (e.g. a
+	// 256 plane in a 512 var-region → no surface past 256m). Rebuild the plane when the size changes,
+	// preserving the current material (vtx or shader) and re-syncing the shader's uRegionSize.
+	function rebuildTerrainGeometry() {
+		if (!terrainMesh) return
+		const rx = sessionStore.regionSizeX
+		const ry = sessionStore.regionSizeY
+		const old = terrainMesh.geometry
+		const geo = new THREE.PlaneGeometry(rx, ry, rx, ry)
+		geo.rotateX(-Math.PI / 2)
+		geo.translate(rx / 2, 0, -ry / 2)
+		const vtxColors = new Float32Array(geo.attributes.position.count * 3)
+		const [ir, ig, ib] = heightColor(22)
+		for (let i = 0; i < vtxColors.length; i += 3) {
+			vtxColors[i] = ir; vtxColors[i + 1] = ig; vtxColors[i + 2] = ib
+		}
+		geo.setAttribute('color', new THREE.BufferAttribute(vtxColors, 3))
+		terrainMesh.geometry = geo
+		old.dispose()
+		if (terrainShaderMaterial) terrainShaderMaterial.uniforms.uRegionSize.value.set(rx, ry)
+		rebuildTerrainFromStore()
+	}
+
 	// ── Scene setup ──────────────────────────────────────────────────────────
 	function initScene() {
 		scene = new THREE.Scene()
@@ -1111,15 +1364,22 @@ export function useWorldEngine(canvasRef) {
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
 		// WHY: Shadow maps disabled for Phase 1 (see prior WHY on shadow frustum mismatch).
 		renderer.shadowMap.enabled = false
-		renderer.toneMapping = THREE.ACESFilmicToneMapping
+		// WHY NoToneMapping (was ACESFilmic): ACES darkens mid-tones and desaturates/hue-shifts
+		// saturated colors — measured against Firestorm as "everything darker and less red", on
+		// unlit textures too (the filmic curve applies to every fragment, lit or not). Firestorm's
+		// legacy (non-PBR) pipeline applies NO filmic curve — linear lighting straight to gamma.
+		// NoToneMapping + SRGBColorSpace = sRGB-faithful unlit textures (decode→encode round-trip)
+		// and FS-style lighting in lit mode. SL content is LDR; sun-facing white clipping to full
+		// white is the authentic SL look, not an artifact.
+		renderer.toneMapping = THREE.NoToneMapping
 		// WHY: Explicit SRGBColorSpace — older Three.js defaulted to LinearEncoding which skips
-		// gamma correction. Without this, ACES linear output hits an sRGB monitor raw → colours
+		// gamma correction. Without this, linear output hits an sRGB monitor raw → colours
 		// appear darker than expected, and prim shadow faces show as an unintended dark brown.
 		renderer.outputColorSpace = THREE.SRGBColorSpace
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
 		labelRenderer = new CSS2DRenderer()
-		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;'
+		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;'
 		canvasRef.value.parentElement.appendChild(labelRenderer.domElement)
 
 		// WHY: Region size from sessionStore (256 standard, 512 var-region). PlaneGeometry segments
@@ -1205,16 +1465,19 @@ export function useWorldEngine(canvasRef) {
 
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
 		// Prims now use MeshBasicMaterial (unlit) so lighting doesn't affect them at all.
-		const sun = new THREE.DirectionalLight(0xfff4e6, 1.2)
+		// Intensities calibrated for NoToneMapping (ACES used to compress these): sun 1.0 + ambient
+		// 0.45 ≈ SL's legacy sun/ambient balance — a sun-facing white surface reaches full white
+		// (authentic), shadow sides stay readable via ambient + sky fill.
+		const sun = new THREE.DirectionalLight(0xfff4e6, 1.0)
 		sun.position.set(50, 80, 50)
 		scene.add(sun)
 		// WHY: Fill light from opposite side of sun. Prevents avatar shadow faces going near-zero
-		// (which after ACES + any outputColorSpace quirk produces the dark-face artefact).
-		// ~35% sun intensity keeps shadow side visible without flattening the 3D form.
-		const fill = new THREE.DirectionalLight(0xaad4f5, 0.45)
+		// (which after any outputColorSpace quirk produces the dark-face artefact).
+		// ~30% sun intensity keeps shadow side visible without flattening the 3D form.
+		const fill = new THREE.DirectionalLight(0xaad4f5, 0.3)
 		fill.position.set(-60, -20, -80)
 		scene.add(fill)
-		scene.add(new THREE.AmbientLight(0xfff4e6, 0.5))
+		scene.add(new THREE.AmbientLight(0xfff4e6, 0.45))
 
 		// Resize observer
 		ro = new ResizeObserver(onResize)
@@ -1222,6 +1485,10 @@ export function useWorldEngine(canvasRef) {
 		onResize()
 
 		rebuildTerrainFromStore()
+		// WHY: terrainTextures (like terrainHeights) persists across HMR/navigate-away remounts,
+		// but terrainMesh was just recreated. The immediate watch already fired with terrainMesh
+		// null, so re-texture here to close the remount gap — mirrors rebuildTerrainFromStore.
+		loadTerrainTextures()
 	}
 
 	function onResize() {
@@ -1507,9 +1774,27 @@ export function useWorldEngine(canvasRef) {
 			// Prim shape: show a cheap unit cube immediately (instant, non-blocking); the real geometry
 			// is baked off-thread (useMeshBaker) and hot-swapped in via applySwap below. Box prims swap
 			// cube→box invisibly. Mesh/sculpt prims fetch their asset first, then bake its submeshes.
+			// Geometry cache: a tier-1 (memory) hit means the FINAL baked geometry is available
+			// synchronously — build with it directly, no placeholder cube, no bake dispatch.
+			// bakeScale snapshot moved up here: the cache key needs it before geometry creation.
+			// Mesh/sculpt assets bake + cache UNSCALED (submesh bakes are linear in scale): one
+			// entry per asset regardless of in-world scale. bakeScale=[1,1,1] makes applySwap's
+			// cur/bakeScale ratio re-apply the prim's full scale on every serve; sync hits scale
+			// via bakePrimScale below. Plain prims keep per-scale bakes (shape deform math is not
+			// scale-linear).
+			const isAsset = !isAvatar && !obj._placeholder && !!(obj.meshId || obj.sculptId)
+			const bakeScale = isAsset ? [1, 1, 1] : (obj.scale ? obj.scale.slice() : [1, 1, 1])
+			const geomKey = (isAvatar || obj._placeholder) ? null
+				: obj.meshId   ? meshGeomKey(obj.meshId)
+				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
+				: primGeomKey(obj.shape, bakeScale)
+			const cachedArrays = geomKey ? geomMemGet(geomKey) : null
+			if (cachedArrays) _geomHitMem++
 			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
-				: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
+				: cachedArrays
+					? bakePrimScale(geometryFromArrays(cachedArrays), isAsset ? obj.scale : null)
+					: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
 			// NaN-vertex guard (#D): a prim whose built geometry has non-finite verts would be
 			// frustum-culled = invisible. Swap in a 0.5m cube + placeholder color so it's findable.
 			let geoBad = false
@@ -1543,11 +1828,18 @@ export function useWorldEngine(canvasRef) {
 			// lit MeshStandardMaterial; plain prims + avatars keep the fast unlit MeshBasicMaterial
 			// (avoids the historical rotation-flicker on the bulk of the scene).
 			const hasMaterial = !isAvatar && !obj._placeholder && !!(obj.defaultPbrMaterial || obj.defaultMaterialId)
+			// Lit-shading A/B (QuickPrefs ▸ Graphics): material-less prims switch to MeshLambert so
+			// untextured/blank-white surfaces show form through sun/ambient shading like FS, instead of
+			// rendering flat. Fullbright stays unlit — MeshBasic IS fullbright, exactly SL semantics.
+			const wantLit = !isAvatar && !obj._placeholder && uiStore.litShading && !obj.defaultFullbright
 			const mat = hasMaterial
 				? new THREE.MeshStandardMaterial({ color: primColor, metalness: 0, roughness: 1 })
-				: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
-			if (hasMaterial && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
+				: wantLit
+					? new THREE.MeshLambertMaterial({ color: primColor })
+					: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+			if ((hasMaterial || wantLit) && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+			mesh.onBeforeRender = _noteDraw   // render-exception forensics: see the quarantine catch in animate()
 
 			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
 			// WHY: defaultColor is RGBA; we previously used only RGB, so a prim the sim sent as
@@ -1567,24 +1859,35 @@ export function useWorldEngine(canvasRef) {
 			// it to SL-space submesh arrays) then bake those submeshes; plain prims bake the shape.
 			// Hot-swap baked geometry (from the worker, or sync fallback) onto the live mesh. `out` is the
 			// geometryFromArrays input shape, or { bad:true } if the bake produced non-finite verts.
-			// Snapshot the scale the bakes are dispatched with. The update path (existing-mesh branch)
-			// may rescale the placeholder + advance mesh.userData.primScale while a bake is in flight;
-			// applySwap reconciles the worker geometry (baked at bakeScale) to the current primScale.
-			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			// bakeScale (snapshotted above, before key derivation) is the scale the bakes are dispatched
+			// with. The update path (existing-mesh branch) may rescale the placeholder + advance
+			// mesh.userData.primScale while a bake is in flight; applySwap reconciles the worker
+			// geometry (baked at bakeScale) to the current primScale.
 			// Mesh per-face multi-material: a mesh carrying ≥2 distinct textures gets one material per
 			// submesh/face (built in applySwap once the grouped geometry exists), instead of the single
 			// dominant-texture pick below.
 			const meshMulti = hasMultiFaceMesh(obj)
 			const primMulti = hasMultiFacePrim(obj)
+			// Post-geometry finishing shared by the hot-swap path and the sync cache-hit path:
+			// planar-face UV regen + per-face material array (both need the final grouped geometry).
+			const finishGeom = () => {
+				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
+				applyPlanarUVs(mesh, obj, faceMap)
+				if (meshMulti) buildFaceMaterials(mesh, obj)
+				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
+			}
 			const applySwap = (out) => {
 				const _t0 = performance.now()
-				if (!out || out.bad || !mesh.parent || mesh.material !== mat) {
+				// userData.relit: the lit-shading toggle swapped this mesh's material while the bake was
+				// in flight — the mesh is NOT stale, accept the geometry (a real re-material/removal
+				// still bails via mesh.parent / the rebuilt-mesh path).
+				if (!out || out.bad || !mesh.parent || (mesh.material !== mat && !mesh.userData.relit)) {
 					if (out && out.bad) geoNaNCount++   // keep the placeholder cube
 					return
 				}
 				const baked = geometryFromArrays(out)
 				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
-				if (hasMaterial && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
+				if ((hasMaterial || uiStore.litShading) && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
 				// WHY: an in-flight update may have rescaled the placeholder + advanced primScale since
 				// dispatch. Re-apply the bakeScale→primScale ratio so the swapped geometry matches the
 				// current scale (same axis map as bakePrimScale / the update path). Divisor 0/non-finite → 1.
@@ -1599,14 +1902,7 @@ export function useWorldEngine(canvasRef) {
 				const old = mesh.geometry
 				mesh.geometry = baked
 				old.dispose()
-				// Planar texgen: regenerate UVs for planar faces now the final scaled geometry exists
-				// (applies to single- and multi-material objects alike — UVs live on the geometry).
-				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
-				applyPlanarUVs(mesh, obj, faceMap)
-				// Mesh per-face: now the grouped geometry exists, replace the single material with a
-				// per-submesh material array (each face's texture + tint). Only for multi-textured meshes.
-				if (meshMulti) buildFaceMaterials(mesh, obj)
-				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
+				finishGeom()
 				const _dt = performance.now() - _t0
 				_applyN++; _applyMs += _dt; if (_dt > _applyMaxMs) _applyMaxMs = _dt
 			}
@@ -1628,19 +1924,25 @@ export function useWorldEngine(canvasRef) {
 				pathTaperY:     obj.shape.pathTaperY,
 			} : undefined
 
-			if (!isAvatar && !obj._placeholder && obj.meshId) {
-				getMesh(obj.meshId).then(subs => {
-					if (!subs || !subs.length) return
-					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
-				})
-			} else if (!isAvatar && !obj._placeholder && obj.sculptId) {
-				getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs => {
-					if (!subs || !subs.length) return
-					return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
-				})
-			} else if (!isAvatar && !obj._placeholder) {
-				// plain prim shape → bake the real geometry off-thread, swap over the placeholder cube
-				meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale }).then(applySwap)
+			if (!isAvatar && !obj._placeholder) {
+				if (cachedArrays) {
+					// Tier-1 hit: geometry is already final (created above) — run only the
+					// post-swap finishing. Mesh/sculpt hits never even fetch the raw asset.
+					finishGeom()
+				} else {
+					// Miss path, deferred behind one batched qs-geom lookup (an IDB hit swaps like a
+					// worker result; a true miss runs this thunk → bake → persist).
+					// WHY thunk: a mesh/sculpt cache hit must skip getMesh/getSculpt entirely — the
+					// raw-submesh fetch only happens when the baked cache truly misses.
+					const jobThunk = obj.meshId
+						? () => getMesh(obj.meshId).then(subs =>
+							(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
+						: obj.sculptId
+							? () => getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs =>
+								(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
+							: () => meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale })
+					requestGeometry(geomKey, jobThunk, applySwap)
+				}
 			}
 
 			// Glow / fullbright → emissive (only meaningful on the lit material; plain unlit prims are
@@ -1652,7 +1954,7 @@ export function useWorldEngine(canvasRef) {
 
 			// ── Slice 1: real prim texture ──────────────────────────────────────
 			// WHY: TE default texture UUID (decoded server-side) → fetch via asset cap (server
-			// transcodes J2C→PNG) → set material.map. Color goes white so the texture shows its
+			// transcodes J2C→WebP) → set material.map. Color goes white so the texture shows its
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
 			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti && !primMulti) ? pickPrimTexture(obj) : null
@@ -1673,14 +1975,7 @@ export function useWorldEngine(canvasRef) {
 						// tinted prim with a plain texture isn't forced white.
 						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 						else mat.color.set(0xffffff)
-						// Alpha (#17): a texture with real transparency (server-reported hasAlpha). Use
-						// alphaTest (cutout) not blend: it discards fully-transparent fragments — fixing
-						// the black-where-transparent symptom — while KEEPING depthWrite, so alpha prims
-						// don't turn the scene see-through/white (the regression from depthWrite=false).
-						// Hard-edged vs smooth blend, but robust without a back-to-front transparent sort.
-						if (tex.userData?.hasAlpha) {
-							mat.alphaTest = 0.5
-						}
+						applyTexAlpha(mat, tex, obj)   // #17b: blend gradient alphas, see helper
 						mat.needsUpdate = true
 					}
 				})
@@ -1690,7 +1985,13 @@ export function useWorldEngine(canvasRef) {
 			// Skip for multi-face meshes: those swap to a per-face material array in applySwap, which
 			// would discard (and leak) any PBR-mutated single material. Per-face + PBR is a rare combo;
 			// see docs/tech-debt.md (perface-pbr-skip). Per-face textures win for these meshes.
-			if (obj.defaultPbrMaterial && !meshMulti && !primMulti) {
+			// WHY !obj._placeholder on BOTH material blocks: placeholders skip `hasMaterial` (line
+			// above), so their creation material is MeshBasic/Lambert — but these blocks used to run
+			// anyway and the async callbacks then assigned normalMap onto a BASIC material. Basic's
+			// program has no normalMap uniforms → three's refreshUniformsCommon throws EVERY FRAME
+			// ("Cannot set properties of undefined") — measured live as 89 poisoned meshes wedging
+			// the whole render. Initial-load-only (placeholders come from the cache-paint path).
+			if (obj.defaultPbrMaterial && !obj._placeholder && !meshMulti && !primMulti) {
 				getPbrMaterial(obj.defaultPbrMaterial).then(gltf => {
 					if (!gltf || !mesh.parent || mesh.material !== mat) return
 					const d = gltfToDescriptor(gltf)
@@ -1711,15 +2012,20 @@ export function useWorldEngine(canvasRef) {
 					setMap(d.emissiveTex, 'emissiveMap', true)
 					mat.needsUpdate = true
 				})
-			} else if (obj.defaultMaterialId && !primMulti) {
+			} else if (obj.defaultMaterialId && !obj._placeholder && !primMulti) {
 				// ── Slice 2: legacy RenderMaterials — normal + (specular→roughness approx) ──
 				getLegacyMaterial(obj.defaultMaterialId).then(m => {
 					if (!m || !mesh.parent || mesh.material !== mat) return
-					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat) { mat.normalMap = t; mat.needsUpdate = true } })
+					// isMeshStandardMaterial guard: normalMap on a Basic/Lambert-from-relight material
+					// poisons its program (see the placeholder WHY above) — only Standard takes it.
+					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat && mat.isMeshStandardMaterial) { mat.normalMap = t; mat.needsUpdate = true } })
 					// MeshStandard has no spec map; approximate shininess via roughness (higher exp = smoother).
 					if (m.specExp) mat.roughness = Math.max(0.1, 1 - m.specExp / 255)
-					if (m.alphaMode === 1) mat.transparent = true
-					else if (m.alphaMode === 2) mat.alphaTest = (m.alphaCutoff ?? 128) / 255
+					// Persist the material's alpha mode on the object — authoritative for every later
+					// texture (re)apply regardless of which .then resolves first (see alphaPolicyStamp).
+					obj.materialAlphaMode = m.alphaMode ?? null
+					obj.materialAlphaCutoff = m.alphaCutoff
+					alphaPolicyStamp(mat, !!mat.map?.userData?.hasAlpha, obj)
 					mat.needsUpdate = true
 				})
 			}
@@ -2292,6 +2598,13 @@ export function useWorldEngine(canvasRef) {
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
 		worldStore.clearTerrain()
+		// New region: revert the mesh to the vertex-color material (never blank) and drop the
+		// shader so the next RegionHandshake rebuilds it fresh for the new region's textures.
+		if (terrainMesh && _terrainVtxMaterial && terrainMesh.material === terrainShaderMaterial) {
+			terrainMesh.material = _terrainVtxMaterial
+		}
+		terrainShaderMaterial?.dispose()
+		terrainShaderMaterial = null
 		avatarSLPos = null
 		ownAvatarLocalId = null
 		vertVel = 0
@@ -2714,21 +3027,58 @@ export function useWorldEngine(canvasRef) {
 		}
 		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
 		worldStore.setCullStats({ resident, known, evicted: evicted.size, pct })
+		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
+		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
+		// R_NEAR-guard fixes; this recovers users anyway instead of asking them to hard-reload).
+		_deadScans = (known > 200 && resident === 0) ? _deadScans + 1 : 0
+		if (_deadScans >= 3 && Date.now() - _lastAutoRebuild > 120_000) {
+			_lastAutoRebuild = Date.now()
+			_deadScans = 0
+			rebuildScene('auto: dead scene detected')
+		}
+	}
+
+	// Recovery: clear cull state and rebuild everything we know about. Heavier than Resync World —
+	// the resync replay alone can't recover a culled-empty scene because inbound updates for
+	// memory-evicted roots are deliberately ignored (see the evicted-gate in onObjectUpdate).
+	// Idempotent: re-queuing already-resident objects is a no-op, and cullTick re-evicts (far-first,
+	// R_NEAR-guarded) if the rebuild genuinely re-exceeds the budget.
+	let _lastAutoRebuild = 0
+	let _deadScans = 0
+	function rebuildScene(reason) {
+		const line = `[3D] Rebuild Scene (${reason}): evicted=${evicted.size} resident=${meshMap.size} known=${worldStore.objects.size} buildQ=${pendingMeshIds.size}`
+		debugStore.push('warn', line)
+		try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: line, stack: '' }) } catch { /* ignore */ }
+		evicted.clear()
+		_overTicks = 0
+		for (const [id] of worldStore.objects) {
+			if (!meshMap.has(id)) pendingMeshIds.add(id)
+		}
+		// Server replay refreshes worldStore (objects + terrain) underneath the rebuild.
+		try { wsEmit(C.RESYNC_WORLD, {}) } catch { /* not connected */ }
 	}
 
 	// Memory-budget distance culling. WHY both passes EVERY tick (not evict-XOR-reload): on a dense
-	// region heap stays above target, so an "else if reload" never runs → objects ahead never rebuild
+	// region assets stay above target, so an "else if reload" never runs → objects ahead never rebuild
 	// as you walk (you walk into emptiness). Instead, ALWAYS reload the nearest evicted within R_NEAR
 	// (stream-in), and SEPARATELY evict the farthest when over budget (fund it). Net: the resident set
 	// tracks proximity, bounded by the budget. selectEvictions takes farthest-first so a just-reloaded
-	// near object is never the one evicted. Chrome-gated (memRatio null elsewhere → no-op).
+	// near object is never the one evicted. Works on all browsers (self-accounted bytes, not
+	// performance.memory); the process-heap emergency brake still applies where measurable.
 	function cullTick() {
-		const r = memRatio()
-		if (r == null || !camera) { return }
+		if (!camera) return
+		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
+		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan) +
+		// geometry-cache memory tier (O(1)) — must match the 3s stats-timer sum or the governor
+		// signal oscillates by up to the tier's 128MB budget between the two call sites.
+		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB + getGeomMemBytes())
+		const r = appRatio()
+		const heapR = memRatio()
+		const over = r > CULL_TARGET || emergencyHeap()
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
 		// Built once per tick, only when there is cull work to do.
-		const kids = (evicted.size || r > CULL_TARGET) ? groupChildrenByRoot(worldStore.objects) : null
+		const kids = (evicted.size || over) ? groupChildrenByRoot(worldStore.objects) : null
 		// 1) Stream-in: rebuild nearest evicted objects within R_NEAR, regardless of current pressure.
 		if (evicted.size) {
 			const cands = []
@@ -2751,9 +3101,9 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 		// 2) Stream-out: if over budget, evict the farthest resident ROOT meshes (whole linksets).
-		// Debounced: a single spiky memRatio sample (GC sawtooth) must not trigger eviction — only
-		// sustained pressure (EVICT_AFTER_TICKS consecutive over-target ticks) does.
-		_overTicks = r > CULL_TARGET ? _overTicks + 1 : 0
+		// Debounced: a single spiky sample must not trigger eviction — only sustained pressure
+		// (EVICT_AFTER_TICKS consecutive over-target ticks) does.
+		_overTicks = over ? _overTicks + 1 : 0
 		if (_overTicks >= EVICT_AFTER_TICKS) {
 			const editId = uiStore.editObjectId
 			const cands = []
@@ -2765,7 +3115,10 @@ export function useWorldEngine(canvasRef) {
 				if (id === ownAvatarLocalId || id === editId) continue
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK)
+			// R_NEAR guard: never evict the player's immediate surroundings — eviction stops once
+			// only near objects remain instead of emptying the scene (see selectEvictions).
+			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK, R_NEAR)
+			let _evRoots = 0, _evKids = 0
 			for (const id of ids) {
 				const childIds = kids.get(id) ?? []
 				// Never evict a linkset somebody is sitting on — a seated avatar parents to a prim, and
@@ -2779,6 +3132,14 @@ export function useWorldEngine(canvasRef) {
 				removeMesh(id)
 				pendingMeshIds.delete(id)
 				evicted.add(id)   // root only — reload re-queues children from the index
+				_evRoots++; _evKids += childIds.length
+			}
+			// Forensics for the mass-disappearance bug: cull evictions were previously silent, making
+			// them indistinguishable from sim KillObject in the logs. One line per evicting tick.
+			if (_evRoots) {
+				const eline = `[Cull] evicted ${_evRoots} roots (+${_evKids} children) app=${(r * 100).toFixed(0)}% heap=${heapR != null ? (heapR * 100).toFixed(0) + '%' : 'n/a'} overTicks=${_overTicks} evictedTotal=${evicted.size} resident=${meshMap.size}`
+				debugStore.push('warn', eline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: eline, stack: '' }) } catch { /* ignore */ }
 			}
 			// Also bound the in-memory texture cache (the larger, mesh-independent hog). Prunes only
 			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
@@ -2801,7 +3162,9 @@ export function useWorldEngine(canvasRef) {
 		// big budget per (rare) tick instead. Visible tab keeps the small per-frame budget.
 		const budget = (typeof document !== 'undefined' && document.hidden) ? 250 : MESH_DRAIN_BUDGET_MS
 		for (const localId of pendingMeshIds) {
-			if (meshBaker.outstanding() > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
+			// WHY + _geomPending: bake dispatch is deferred behind the async IDB lookup, so deferred
+			// entries are future bakes the cap must see — outstanding() alone rises too late on cold load.
+			if (meshBaker.outstanding() + _geomPending > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
 			pendingMeshIds.delete(localId)
 			const obj = worldStore.objects.get(localId)
 			if (!obj) continue  // killed before its mesh was built
@@ -2908,9 +3271,11 @@ export function useWorldEngine(canvasRef) {
 			obj.faceRotation?.[sf(i)] ?? obj.defaultRotation,
 		)
 		const mats = []
+		// Lit-shading A/B: same class choice as the single-material path (fullbright → stays unlit).
+		const FaceMat = (uiStore.litShading && !obj.defaultFullbright) ? THREE.MeshLambertMaterial : THREE.MeshBasicMaterial
 		for (let i = 0; i <= maxIdx; i++) {
 			const fc = obj.faceColors?.[sf(i)] ?? obj.defaultColor
-			const m = new THREE.MeshBasicMaterial({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
+			const m = new FaceMat({ color: fc ? new THREE.Color(fc[0], fc[1], fc[2]) : new THREE.Color(0xffffff) })
 			if (fc && fc[3] < 0.99) { m.transparent = true; m.opacity = fc[3] }
 			mats.push(m)
 		}
@@ -2926,10 +3291,72 @@ export function useWorldEngine(canvasRef) {
 				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
 				m.map = tex
 				if (!(obj.faceColors?.[sf(i)] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
-				if (tex.userData?.hasAlpha) m.alphaTest = 0.5
+				applyTexAlpha(m, tex, obj)
 				m.needsUpdate = true
 			})
 		}
+	}
+
+	// Alpha (#17b): a texture with real transparency (server-reported hasAlpha) renders alpha-BLENDED,
+	// matching the SL legacy default (DIFFUSE_ALPHA_MODE_BLEND) — gradient alphas (sky domes, fades,
+	// soft foliage edges) stay smooth. The previous alphaTest=0.5 cutout quantized gradients into hard
+	// opaque/invisible bands (striping). depthWrite STAYS ON — the earlier white-wash regression came
+	// from depthWrite=false, not from blending. The small alphaTest discards near-zero fragments so a
+	// texture's fully-transparent regions don't write depth and hide what's behind them.
+	// 'mask' restores the old hard cutout; '' / null = auto (blend when the texture has alpha).
+	function stampAlphaMode(mat, hasAlpha, mode) {
+		const m = mode || (hasAlpha ? 'blend' : 'none')
+		if (m === 'blend')     { mat.transparent = true;  mat.alphaTest = 0.05; mat.depthWrite = true }
+		else if (m === 'mask') { mat.transparent = false; mat.opacity = 1; mat.alphaTest = 0.5; mat.depthWrite = true }
+		else                   { mat.transparent = false; mat.opacity = 1; mat.alphaTest = 0 }   // none/emissive
+	}
+
+	// Alpha precedence (FS parity): floater override > legacy-material DiffuseAlphaMode (FS greys the
+	// edit controls out when a material drives them) > auto (blend when the texture has alpha).
+	// materialAlphaMode: 0 none, 1 blend, 2 mask (AlphaMaskCutoff/255), 3 emissive (no emissive on
+	// unlit prim materials → renders as none).
+	function alphaPolicyStamp(mat, hasAlpha, obj) {
+		const override = obj?.alphaModeOverride
+		if (override) return stampAlphaMode(mat, hasAlpha, override)
+		const dm = obj?.materialAlphaMode
+		if (dm === 1) return stampAlphaMode(mat, hasAlpha, 'blend')
+		if (dm === 2) {
+			mat.transparent = false; mat.opacity = 1; mat.depthWrite = true
+			mat.alphaTest = (obj.materialAlphaCutoff ?? 128) / 255
+			return
+		}
+		if (dm === 0 || dm === 3) return stampAlphaMode(mat, hasAlpha, 'none')
+		if (hasAlpha) stampAlphaMode(mat, hasAlpha, 'blend')
+	}
+
+	function applyTexAlpha(mat, tex, obj) {
+		const hasAlpha = !!tex.userData?.hasAlpha
+		// Nothing to say → leave the material untouched so TE-color translucency (set at build) survives.
+		if (!hasAlpha && !obj?.alphaModeOverride && obj?.materialAlphaMode == null) return
+		alphaPolicyStamp(mat, hasAlpha, obj)
+	}
+
+	// #17b: manual Alpha-mode override from the Edit floater. Persisted on the store object (so the
+	// backfill sweep and later ObjectUpdates keep honoring it via applyTexAlpha), then re-stamped onto
+	// the live material(s) immediately. Returning to auto/none re-applies TE-color translucency.
+	function setObjectAlphaModeLive(localId, mode) {
+		const obj = worldStore.objects.get(localId)
+		if (obj) obj.alphaModeOverride = mode || null
+		const mesh = meshMap.get(localId)
+		if (!mesh || !mesh.material) return false
+		const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+		for (const m of mats) {
+			const hasAlpha = !!m.map?.userData?.hasAlpha
+			if (mode) stampAlphaMode(m, hasAlpha, mode)
+			else if (obj?.materialAlphaMode != null || hasAlpha) alphaPolicyStamp(m, hasAlpha, obj)
+			else stampAlphaMode(m, hasAlpha, 'none')   // Auto on a plain texture → explicit opaque reset
+			if ((!mode || mode === 'none') && obj?.defaultColor && obj.defaultColor[3] < 0.99 && !m.transparent) {
+				m.transparent = true
+				m.opacity = obj.defaultColor[3]
+			}
+			m.needsUpdate = true
+		}
+		return true
 	}
 
 	function reapplyDiffuse(mesh, obj) {
@@ -2944,7 +3371,7 @@ export function useWorldEngine(canvasRef) {
 			mat.map = tex
 			if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 			else mat.color.set(0xffffff)
-			if (tex.userData?.hasAlpha) mat.alphaTest = 0.5
+			applyTexAlpha(mat, tex, obj)
 			mat.needsUpdate = true
 		})
 	}
@@ -2960,6 +3387,121 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// ── Lit-shading A/B toggle (QuickPrefs ▸ Graphics ▸ Lit Shading) ────────────────────────────
+	// Swap a single prim material between unlit MeshBasic and lit MeshLambert, preserving its
+	// already-applied texture/tint/alpha state. MeshStandard (legacy/PBR material path) is always
+	// lit and left alone; fullbright prims stay MeshBasic (unlit IS fullbright).
+	function relightMaterial(m, lit, obj) {
+		if (!m || m.isMeshStandardMaterial) return m
+		const wantLit = lit && !obj?.defaultFullbright
+		if (wantLit === !!m.isMeshLambertMaterial) return m
+		const next = wantLit
+			? new THREE.MeshLambertMaterial({ color: m.color.clone() })
+			: new THREE.MeshBasicMaterial({ color: m.color.clone() })
+		next.map = m.map
+		next.transparent = m.transparent
+		next.opacity = m.opacity
+		next.alphaTest = m.alphaTest
+		next.depthWrite = m.depthWrite
+		next.side = m.side
+		m.dispose()   // frees the old shader program only — textures are shared/cached, untouched
+		return next
+	}
+
+	// Re-materialize the whole scene when the toggle flips. Single materials swap in place (texture
+	// carries over instantly). Per-face arrays rebuild via buildFaceMaterials, which re-resolves each
+	// face texture through getTexture — cache hits apply instantly, misses fill in async. In-flight
+	// texture fetches guarded by `mesh.material !== mat` drop on swap; the 3s backfill sweep
+	// re-applies those, so the scene converges. Avatars/placeholders keep their current materials.
+	function relightScene(on) {
+		let swapped = 0
+		for (const [localId, mesh] of meshMap) {
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR || obj._placeholder) continue
+			if (on && !mesh.geometry?.attributes?.normal) mesh.geometry?.computeVertexNormals?.()
+			if (Array.isArray(mesh.material)) {
+				const old = mesh.material
+				buildFaceMaterials(mesh, obj, obj.meshId ? null : primFaceMap(obj.shape))
+				old.forEach(m => m.dispose())
+				mesh.userData.relit = true   // in-flight bake applySwap: not stale, accept geometry
+				swapped++
+				continue
+			}
+			const next = relightMaterial(mesh.material, on, obj)
+			if (next !== mesh.material) {
+				mesh.material = next
+				mesh.userData.relit = true   // in-flight bake applySwap: not stale, accept geometry
+				swapped++
+			}
+		}
+		debugStore.push('info', `[Lit] shading ${on ? 'ON (lambert)' : 'OFF (unlit)'} — ${swapped} meshes re-materialized`)
+	}
+
+	// ── FPS meter + weak-GPU mitigation ─────────────────────────────────────────────────────────
+	// Counts rendered frames over ~1s windows and publishes to uiStore.fps (TopRightTray readout).
+	// Windows spanning a focus-gap (rAF parked while unfocused) are discarded, not computed — they
+	// would read as a false FPS collapse. Mitigation: lit shading is the only render feature with a
+	// real per-frame cost knob, so if FPS stays under LIT_MIN_FPS for LIT_LOW_MS while lit shading is
+	// on, drop back to unlit ONCE per session (the one-shot stops a re-enable→re-disable fight if the
+	// user insists) and tell the user via notification toast.
+	// WHY load-gate (and not just low thresholds): cold/warm region loads legitimately pin FPS to
+	// ~5 for minutes even on a top-tier rig — thousands of geometry builds + asset fetches own the
+	// main thread. Judging lit-shading cost during that window auto-disabled it on every big load
+	// (observed as "dark/striped trees on soft load, fixed by hard reload"). The FPS verdict only
+	// counts once the build/fetch pipeline has been quiet for LIT_SETTLE_MS — so the thresholds can
+	// stay at their designed weak-GPU values instead of being detuned to dodge transients.
+	const LIT_MIN_FPS   = 20
+	const LIT_LOW_MS    = 10000
+	const LIT_SETTLE_MS = 5000     // pipeline must be quiet this long before low-FPS accumulates
+	let _fpsFrames = 0, _fpsWindowStart = 0, _lowFpsSince = 0, _litAutoDropped = false
+	let _loadBusyUntil = 0, _lastLtTotalMs = 0
+	// Render-exception quarantine state (see the try/catch around renderer.render).
+	let _lastDrawMesh = null, _renderFailN = 0
+	function _noteDraw() { _lastDrawMesh = this }
+	function updateFps(time) {
+		_fpsFrames++
+		if (!_fpsWindowStart) { _fpsWindowStart = time; return }
+		const elapsed = time - _fpsWindowStart
+		if (elapsed < 1000) return
+		const gapWindow = elapsed > 2500   // focus gap inside this window → sample invalid
+		const fps = gapWindow ? null : Math.round((_fpsFrames * 1000) / elapsed)
+		_fpsFrames = 0
+		_fpsWindowStart = time
+		// Bandwidth meter: WS bytes accumulated this window → kbps. Always take (resets the counter
+		// so a focus gap doesn't dump its backlog into the next valid window as a false spike).
+		const kbps = Math.round((takeWsBytes() * 8) / elapsed)   // bytes·8 bits / elapsed ms = kbps
+		if (fps == null) { _lowFpsSince = 0; return }
+		uiStore.setFps(fps)
+		uiStore.setNetKbps(kbps)
+		if (!uiStore.litShading || _litAutoDropped) { _lowFpsSince = 0; return }
+		// Load-transient gate (cheap counter reads, 1Hz): any meaningful build/fetch activity
+		// resets the settle clock; low-FPS windows inside the busy+settle span don't count.
+		const t = getTextureStats(), m = getMeshStats()
+		const loading = pendingMeshIds.size > 50 || t.queued > 0 || t.inflight > 0 || m.queued > 0 || _geomPending > 25
+		if (loading) _loadBusyUntil = time + LIT_SETTLE_MS
+		// Main-thread-bound discriminator: lit shading only adds GPU/fragment cost, so disabling it
+		// can only help when low FPS is RENDER-bound. If long tasks ate >30% of this window (texture
+		// createImageBitmap/upload tail, geometry deserialize, GC — none visible in the fetch
+		// queues), the frame rate is main-thread-bound and unlit would not recover it: don't count.
+		const ltDelta = _ltTotalMs - _lastLtTotalMs
+		_lastLtTotalMs = _ltTotalMs
+		const mainThreadBound = ltDelta / elapsed > 0.3
+		if (time < _loadBusyUntil || mainThreadBound) { _lowFpsSince = 0; return }
+		if (fps >= LIT_MIN_FPS) { _lowFpsSince = 0; return }
+		if (!_lowFpsSince) { _lowFpsSince = time; return }
+		if (time - _lowFpsSince >= LIT_LOW_MS) {
+			_litAutoDropped = true
+			uiStore.litShading = false   // persists; user can re-enable in Preferences ▸ Graphics
+			debugStore.push('warn', `[Lit] auto-disabled: FPS < ${LIT_MIN_FPS} for ${LIT_LOW_MS / 1000}s`)
+			notificationStore.notify({
+				title: 'Lit shading disabled',
+				body: `Frame rate stayed under ${LIT_MIN_FPS} FPS, so lit shading was turned off to keep things smooth. Re-enable it any time in Preferences ▸ Graphics.`,
+				icon: '🖥️',
+				toast: true,
+			})
+		}
+	}
+
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
 		// WHY (perf): when the page is unfocused (mouse on taskbar, another window, or devtools)
@@ -2970,10 +3512,12 @@ export function useWorldEngine(canvasRef) {
 		// Advance lastTime so dt doesn't spike on the first frame back.
 		if (!document.hasFocus()) { lastTime = time; return }
 		const _frT0 = performance.now()
+		updateFps(time)
 		// Starvation-proof drain: ~125ms long tasks (see [Main] telemetry) starve the 30ms interval to
-		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. Budgeted (8ms), so
-		// the frame cost is bounded; the interval still covers the unfocused case.
-		drainMeshQueue()
+		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. ONLY when actually
+		// starved (>100ms since the last interval tick): unconditionally draining added up to 8ms to
+		// EVERY frame on top of the render cost, tripping rAF-violation floods on dense regions.
+		if (_frT0 - _lastDrainTickAt > 100) drainMeshQueue()
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
@@ -3185,8 +3729,37 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
-		renderer.render(scene, camera)
-		labelRenderer.render(scene, camera)
+		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
+		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
+		// refreshUniformsCommon) makes renderer.render THROW EVERY FRAME. Measured live 2026-06-12:
+		// a single multi-face mesh wedged two full sessions — partial black render, 4,625 exceptions,
+		// each ~250ms attempt starving the drain timers, scene stuck at 13%. The thrower is the last
+		// mesh whose onBeforeRender fired (_noteDraw). First strike: swap in a fresh placeholder
+		// material (a new program usually clears it). Second strike: hide the mesh. Either way the
+		// NEXT frame renders past it and the session self-heals.
+		try {
+			renderer.render(scene, camera)
+			labelRenderer.render(scene, camera)
+		} catch (err) {
+			const bad = _lastDrawMesh
+			_renderFailN++
+			if (bad?.isMesh) {
+				const strikes = (bad.userData._rescueN = (bad.userData._rescueN ?? 0) + 1)
+				// Forensics: which material state poisoned the program (uniforms/feature mismatch)?
+				const _mats = Array.isArray(bad.material) ? bad.material : [bad.material]
+				const _diag = _mats.map(m => m ? `${m.type.replace('Mesh', '').replace('Material', '')}v${m.version}${m.map ? '+map' : ''}${m.normalMap ? '+nrm' : ''}${m.alphaTest ? '+at' : ''}${m.transparent ? '+tr' : ''}` : 'null').join(',')
+				if (strikes === 1) {
+					const old = bad.material
+					bad.material = new THREE.MeshBasicMaterial({ color: PLACEHOLDER_COLOR })
+					;(Array.isArray(old) ? old : [old]).forEach(m => m?.dispose?.())
+				} else {
+					bad.visible = false
+				}
+				debugStore.push('warn', `[3D] render exception — quarantined localId=${bad.userData?.localId} (strike ${strikes}) mats=[${_diag}]: ${err?.message}`)
+			} else if (_renderFailN <= 3 || _renderFailN % 300 === 0) {
+				debugStore.push('warn', `[3D] render exception #${_renderFailN} (no culprit mesh): ${err?.message}`)
+			}
+		}
 		// Frame-work gauge: total main-thread ms this frame consumed (camera + scene walk + render).
 		// At 31k objects frames can run 100s of ms — a continuous rAF loop then starves every
 		// setInterval (drain ticks observed at ~0.5Hz in a visible tab). Reported via [Main] each 5s.
@@ -3235,7 +3808,7 @@ export function useWorldEngine(canvasRef) {
 		// elsewhere.
 		try {
 			_longTaskObs = new PerformanceObserver((list) => {
-				for (const e of list.getEntries()) { _ltN++; _ltMs += e.duration; if (e.duration > _ltMaxMs) _ltMaxMs = e.duration }
+				for (const e of list.getEntries()) { _ltN++; _ltMs += e.duration; _ltTotalMs += e.duration; if (e.duration > _ltMaxMs) _ltMaxMs = e.duration }
 			})
 			_longTaskObs.observe({ entryTypes: ['longtask'] })
 		} catch { _longTaskObs = null }
@@ -3245,7 +3818,9 @@ export function useWorldEngine(canvasRef) {
 		// focus-gated. 12ms budget × ~33Hz ≈ 400ms/s of build time vs the old focus-gated rAF path.
 		// Reparent sweep is cheaper; run it every 4th tick.
 		let _drainTick = 0
+		initGeomCacheCap()   // size the qs-geom IDB cap from the storage estimate before bakes start persisting
 		_meshDrainTimer = setInterval(() => {
+			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
 			drainMeshQueue()
 			pumpTextures()   // resume governor-paused texture fetches once heap pressure clears
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
@@ -3256,28 +3831,40 @@ export function useWorldEngine(canvasRef) {
 		_texBackfillTimer = setInterval(backfillTextures, 3000)
 		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
 		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
+		let _relayTick = 0
 		_assetStatsTimer = setInterval(() => {
+			// Server-log relay cadence: every 3rd tick (~9s). The 3s full rate stays in the client
+			// debug panel; relaying every tick made [Mem]/[Main] the server log's biggest flood.
+			const _relay = (_relayTick++ % 3) === 0
 			const t = getTextureStats(), m = getMeshStats()
 			// Memory telemetry: always report heap pressure to the server log (C.CLIENT_LOG → [ClientLog])
 			// so it can be watched live while tuning the governor. Quiet on non-Chrome (memStats null).
-			const mg = memStats()
-			if (mg) {
+			// Resident-byte breakdown: where OUR bytes actually live. geomMB sums each meshMap entry's
+			// own BufferGeometry attributes (children are their own entries — no double count). This
+			// scan feeds the governor's self-accounted budget, so it runs on every browser (the
+			// process-heap segment of the log line stays Chrome-only).
+			let geomB = 0
+			for (const mm of meshMap.values()) {
+				const g = mm.geometry
+				if (!g) continue
+				for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
+				geomB += g.index?.array?.byteLength || 0
+			}
+			_lastGeomB = geomB
+			const texB = getTextureBytes(), meshB = getMeshBytes(), geomCacheB = getGeomMemBytes()
+			setAppBytes(texB + meshB + geomB + geomCacheB)
+			{
+				const mg = memStats()
 				const pressure = memUnderPressure()
-				// Heap-hog breakdown: where the resident bytes actually live. geomMB sums each meshMap
-				// entry's own BufferGeometry attributes (children are their own entries — no double count).
-				let geomB = 0
-				for (const mm of meshMap.values()) {
-					const g = mm.geometry
-					if (!g) continue
-					for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
-					geomB += g.index?.array?.byteLength || 0
-				}
 				const mb = (b) => (b / 1048576).toFixed(0)
-				const line = `[Mem] heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(getTextureBytes())} meshCacheMB=${mb(getMeshBytes())} geomMB=${mb(geomB)}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size}`
+				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
+				const line = `[Mem] app ${mb(texB + meshB + geomB + geomCacheB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}` +
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size}`
 				debugStore.push(pressure ? 'warn' : 'info', line)
-				try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+				if (_relay || pressure) {
+					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+				}
 			}
 			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
 			if (_drainBuilt) {
@@ -3295,22 +3882,27 @@ export function useWorldEngine(canvasRef) {
 					` | longtasks=${_ltN} total=${_ltMs.toFixed(0)}ms max=${_ltMaxMs.toFixed(0)}ms` +
 					` | ws parse=${ws.parseMs.toFixed(0)}ms top: ${ws.top || '-'}`
 				debugStore.push('info', mline)
-				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
+				if (_relay) {
+					try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
+				}
 				_frN = 0; _frMs = 0; _frMaxMs = 0; _ltN = 0; _ltMs = 0; _ltMaxMs = 0
 			}
-			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms.
+			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms,
+			// plus how much baking the geometry cache AVOIDED (hit=mem+idb vs miss=real bakes).
 			const bs = meshBaker.takeStats()
-			if (bs.jobs || _applyN) {
-				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}`
+			if (bs.jobs || _applyN || _geomHitMem || _geomHitIdb || _geomMiss) {
+				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}` +
+					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending}`
 				debugStore.push('info', bline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
 				_applyN = 0; _applyMs = 0; _applyMaxMs = 0
+				_geomHitMem = 0; _geomHitIdb = 0; _geomMiss = 0
 			}
 			const busy = t.inflight || t.queued || m.inflight || m.queued
 			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
 			_lastTexReq = t.requested; _lastMeshReq = m.requested
 			debugStore.push('info',
-				`[Assets] tex ✓${t.done} ✗${t.failed} ⏱${t.timeout} inflight=${t.inflight} q=${t.queued} cache=${t.cached} | ` +
+				`[Assets] tex ✓${t.done} ✗${t.failed} ⏱${t.timeout} late=${t.late} inflight=${t.inflight} q=${t.queued} cache=${t.cached} | ` +
 				`mesh ✓${m.done} ✗${m.failed} ⏱${m.timeout} inflight=${m.inflight} q=${m.queued} cache=${m.cached}`)
 		}, 3000)
 		window.addEventListener('keydown', onKeyDown, { passive: false })
@@ -3342,12 +3934,22 @@ export function useWorldEngine(canvasRef) {
 	})
 
 	onUnmounted(() => {
+		// WHY first: in-flight geometry-lookup batches check this flag — applying them after
+		// unmount would sync-bake on the disposed baker and mutate orphaned meshes.
+		_engineDead = true
+		_liveEngine = null
 		stopAlwaysRunWatch()
+		stopLitShadingWatch()
+		stopSceneRebuildWatch()
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()
 		stopSelSyncWatch()
 		stopWaterHeightWatch()
+		stopTerrainTexWatch()
+		stopRegionSizeWatch()
+		terrainShaderMaterial?.dispose()
+		terrainShaderMaterial = null
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
 		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
 		clearGizmo()
@@ -3399,6 +4001,8 @@ export function useWorldEngine(canvasRef) {
 		worldStore.clearTerrain()
 		worldStore.clearAll()
 	})
+
+	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
 	return { scene, camera }
 }

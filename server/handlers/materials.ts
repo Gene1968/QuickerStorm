@@ -6,7 +6,7 @@
 import { deflateSync, inflateSync } from 'zlib'
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
-import { parseLLSD, llsdStr, llsdNum } from '../lib/llsd'
+import { parseLLSD, parseLLSDBinary, encodeLLSDBinaryUuidArray, uuidFromBytes, llsdStr, llsdNum } from '../lib/llsd'
 import { S } from '../../shared/protocol.js'
 
 export async function handleMaterialFetch(circuitId: string, req: { kind: string; ids: string[] }): Promise<void> {
@@ -36,34 +36,56 @@ async function fetchPbr(s: any, ids: string[]): Promise<void> {
 	s.ws.send(JSON.stringify({ t: S.MATERIAL_DATA, d: { kind: 'pbr', materials } }))
 }
 
-// DEFERRED: our RenderMaterials request format is wrong — the cap returns an empty (0-byte) body,
-// so inflate fails. Rather than thrash blind, legacy is disabled (returns empty, logs once) until
-// the request/response zip format is captured from a real viewer and TDD'd. See materials-pbr spec.
-// PBR (the cleaner GLTF path) is unaffected.
-let _legacyLoggedFail = false
+// RenderMaterials wire format (root-caused from OpenSim MaterialsModule.cs RenderMaterialsPostCap):
+// BOTH directions wrap a zlib blob in LLSD-XML { Zipped: <binary> }, but the zipped payload itself
+// is LLSD *BINARY*, not XML — request: array of 16-byte binary material IDs (read via
+// `new UUID(elem.AsBinary(), 0)`); response: array of { ID: binary16, Material: map } (see
+// FaceMaterial.toOSD in SOPMaterial.cs). Our old request zipped LLSD-XML → the sim's
+// DeserializeLLSDBinary threw → BadRequest/empty body, which is why legacy was disabled.
+
+/** Build the RenderMaterials POST body for a list of material UUIDs. Pure for tests. */
+export function buildRenderMaterialsPostBody(ids: string[]): string {
+	const zipped = deflateSync(encodeLLSDBinaryUuidArray(ids))
+	return `<?xml version="1.0"?><llsd><map><key>Zipped</key><binary encoding="base64">${zipped.toString('base64')}</binary></map></llsd>`
+}
+
+/** Decode a RenderMaterials response into uuid → flat legacy material record. Pure for tests. */
+export function decodeRenderMaterialsResponse(xml: string): Record<string, unknown> {
+	const materials: Record<string, unknown> = {}
+	const top = parseLLSD(xml) as Record<string, unknown> | null
+	const b64 = llsdStr((top as any)?.Zipped).replace(/\s+/g, '')
+	if (!b64) return materials
+	const arr = parseLLSDBinary(inflateSync(Buffer.from(b64, 'base64'))).value
+	for (const entry of (Array.isArray(arr) ? arr : [])) {
+		const rawId = entry?.ID
+		const id = Buffer.isBuffer(rawId) ? uuidFromBytes(rawId) : llsdStr(rawId)
+		const M = entry?.Material ?? {}
+		if (!id) continue
+		materials[id] = {
+			normMap: llsdStr(M.NormMap), specMap: llsdStr(M.SpecMap), specExp: llsdNum(M.SpecExp),
+			envIntensity: llsdNum(M.EnvIntensity),
+			alphaMode: llsdNum(M.DiffuseAlphaMode), alphaCutoff: llsdNum(M.AlphaMaskCutoff),
+		}
+	}
+	return materials
+}
+
 async function fetchLegacy(s: any, ids: string[]): Promise<void> {
 	const cap = s.caps.get('RenderMaterials')
-	const materials: Record<string, unknown> = {}
+	let materials: Record<string, unknown> = {}
 	if (cap) {
 		try {
-			const idsLlsd = `<?xml version="1.0"?><llsd><array>${ids
-				.map(u => `<binary encoding="base16">${u.replace(/-/g, '')}</binary>`).join('')}</array></llsd>`
-			const zipped = deflateSync(Buffer.from(idsLlsd))
-			const body = `<?xml version="1.0"?><llsd><map><key>Zipped</key><binary encoding="base64">${zipped.toString('base64')}</binary></map></llsd>`
-			const res = await fetch(cap, { method: 'POST', headers: { 'Content-Type': 'application/llsd+xml' }, body, signal: AbortSignal.timeout(20_000) })
-			const top = parseLLSD(await res.text()) as Record<string, unknown> | null
-			const zb = Buffer.from(llsdStr((top as any)?.Zipped).replace(/\s+/g, ''), 'base64')
-			const arr = parseLLSD(inflateSync(zb).toString('utf8')) as any[] | null
-			for (const entry of (Array.isArray(arr) ? arr : [])) {
-				const id = llsdStr(entry?.ID)
-				const M = entry?.Material ?? {}
-				if (id) materials[id] = {
-					normMap: llsdStr(M.NormMap), specMap: llsdStr(M.SpecMap), specExp: llsdNum(M.SpecExp),
-					alphaMode: llsdNum(M.DiffuseAlphaMode), alphaCutoff: llsdNum(M.AlphaMaskCutoff),
-				}
-			}
+			const res = await fetch(cap, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/llsd+xml' },
+				body: buildRenderMaterialsPostBody(ids),
+				signal: AbortSignal.timeout(20_000),
+			})
+			if (!res.ok) throw new Error(`http_${res.status}`)
+			materials = decodeRenderMaterialsResponse(await res.text())
+			slog.info(s.ws, `[Mat] legacy ${ids.length} requested → ${Object.keys(materials).length} returned`)
 		} catch (e) {
-			if (!_legacyLoggedFail) { _legacyLoggedFail = true; slog.warn(s.ws, `[Mat] legacy disabled (request format TBD): ${(e as Error).message}`) }
+			slog.warn(s.ws, `[Mat] legacy fetch failed (${ids.length} ids): ${(e as Error).message}`)
 		}
 	}
 	s.ws.send(JSON.stringify({ t: S.MATERIAL_DATA, d: { kind: 'legacy', materials } }))

@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { getTextureCacheStats, clearTextureCache } from '@/lib/textureCache.js'
 import { getMeshCacheStats, clearMeshCache } from '@/lib/meshCache.js'
 import { getObjectCacheStats, objCacheClearAll } from '@/lib/objectCache.js'
+import { getGeomCacheStats, clearGeomCache } from '@/lib/geomCache.js'
 
 // IDB readonly txns are blocked by concurrent readwrite puts during world loading.
 // Race with a timeout so the panel never hangs; user can retry once loading settles.
@@ -18,6 +19,7 @@ export function useCacheStats() {
 	const texStats  = ref({ count: 0, bytes: 0, capBytes: 512 * 1024 * 1024, loading: false, unavailable: false })
 	const meshStats = ref({ count: 0, bytes: 0, loading: false, unavailable: false })
 	const objStats  = ref({ regions: 0, objects: 0, loading: false, unavailable: false })
+	const geomStats = ref({ count: 0, bytes: 0, capBytes: 0, loading: false, unavailable: false })
 
 	// WHY independent loads: a single Promise.all([...]) with one shared timeout meant ONE slow
 	// cache (e.g. texture/mesh readonly count() starving behind a write storm during world load)
@@ -34,15 +36,17 @@ export function useCacheStats() {
 	}
 
 	function refresh() {
-		// Fire all three concurrently but independently — do NOT await as a group.
+		// Fire all four concurrently but independently — do NOT await as a group.
 		load(getTextureCacheStats, texStats)
 		load(getMeshCacheStats, meshStats)
 		load(getObjectCacheStats, objStats)
+		load(getGeomCacheStats, geomStats)
 	}
 
 	async function clearTex() { await clearTextureCache(); await load(getTextureCacheStats, texStats) }
 	async function clearMesh() { await clearMeshCache(); await load(getMeshCacheStats, meshStats) }
 	async function clearObj() { await objCacheClearAll(); await load(getObjectCacheStats, objStats) }
+	async function clearGeom() { await clearGeomCache(); await load(getGeomCacheStats, geomStats) }
 
-	return { texStats, meshStats, objStats, refresh, clearTex, clearMesh, clearObj }
+	return { texStats, meshStats, objStats, geomStats, refresh, clearTex, clearMesh, clearObj, clearGeom }
 }

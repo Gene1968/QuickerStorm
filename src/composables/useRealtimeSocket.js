@@ -149,9 +149,11 @@ function _createConnection() {
 
 	ws.onmessage = ({ data }) => {
 		if (data instanceof ArrayBuffer) {
+			_bytesIn += data.byteLength
 			_dispatch('_binary', data)
 			return
 		}
+		_bytesIn += data.length   // chars ≈ bytes for our (ASCII-dominant) JSON envelopes
 
 		let msg
 		const _p0 = performance.now()
@@ -200,6 +202,15 @@ function _createConnection() {
 // by the engine's 5s telemetry so the top offenders are visible in the server log.
 const _msgStats = new Map()  // type → { n, ms, max }
 let _parseMs = 0
+// Inbound WS bytes since last take — feeds the top-bar bandwidth meter (engine samples ~1 Hz).
+// All sim traffic reaches the client through this socket, so this IS the client's network intake.
+let _bytesIn = 0
+
+export function takeWsBytes() {
+	const b = _bytesIn
+	_bytesIn = 0
+	return b
+}
 
 export function takeWsStats() {
 	const top = [..._msgStats.entries()]

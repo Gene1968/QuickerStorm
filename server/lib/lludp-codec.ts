@@ -980,6 +980,38 @@ export function parseMaterialsExtraParam(buf: Buffer, start: number, len: number
 
 // ExtraParam type 0x30 (Sculpt/Mesh): [sculptTexture UUID 16B][sculptType U8]. sculptType & 0x07:
 // 1 sphere, 2 torus, 3 plane, 4 cylinder, 5 MESH. For mesh, the UUID is the mesh asset id.
+export interface TextureAnim {
+	mode: number    // bit flags: 0x01 ON, 0x02 LOOP, 0x04 REVERSE, 0x08 PING_PONG, 0x10 SMOOTH, 0x20 ROTATE, 0x40 SCALE
+	face: number    // -1 = all faces
+	sizeX: number
+	sizeY: number
+	start: number
+	length: number
+	rate: number
+}
+
+// LLTextureAnim wire format (FS llprimitive.cpp LLTextureAnim::unpackTAMessage): 16 bytes —
+// mode u8, face s8, sizeX u8, sizeY u8, start f32le, length f32le, rate f32le. WHY captured:
+// when a texture animation is ON, viewers route the face through a texture matrix and BYPASS the
+// TE repeats entirely (llface.cpp tex_mode path) — creators exploit this as a static UV-scale
+// trick (e.g. sculpt foliage carrying garbage TE repeats like V=-256 that FS never applies).
+// Without this field the client tiles those garbage repeats → striping. Returns null when the
+// block is absent/short or ANIM_ON is clear (no render effect either way).
+export function parseTextureAnim(buf: Buffer, off: number, len: number): TextureAnim | null {
+	if (len < 16 || off + 16 > buf.length) return null
+	const mode = buf[off]
+	if (!(mode & 0x01)) return null
+	return {
+		mode,
+		face:   buf.readInt8(off + 1),
+		sizeX:  buf[off + 2],
+		sizeY:  buf[off + 3],
+		start:  buf.readFloatLE(off + 4),
+		length: buf.readFloatLE(off + 8),
+		rate:   buf.readFloatLE(off + 12),
+	}
+}
+
 export function parseSculptExtraParam(buf: Buffer, start: number, len: number): { uuid: string; sculptType: number } | null {
   if (len < 17) return null
   return { uuid: bytesToUuid(buf, start), sculptType: buf[start + 16] }
@@ -1104,6 +1136,7 @@ export function decodeObjectUpdateCompressed(
       let parentId = 0
       let shape: PrimShape | undefined
       let te: TEFields = {}
+      let textureAnim: TextureAnim | undefined
       let pbrFaces: Record<number, string> = {}
       let meshId: string | undefined
       let sculptId: string | undefined
@@ -1178,6 +1211,14 @@ export function decodeObjectUpdateCompressed(
               if (teLen > 0 && (teLen & 0xffff0000) === 0 && off + teLen <= dataEnd) {
                 te = parseTextureEntryFields(buf, off, off + teLen)
               }
+              off += teLen
+              // TextureAnim trails the TE in compressed layout (LLClientView
+              // CreateCompressedUpdateBlock), U32 length prefix, only when flag 0x40 set.
+              if ((cflags & 0x40) && off + 4 <= dataEnd) {
+                const taLen = buf.readUInt32LE(off); off += 4
+                if (off + taLen <= dataEnd) textureAnim = parseTextureAnim(buf, off, taLen) ?? undefined
+                off += taLen
+              }
             }
           }
         }
@@ -1218,6 +1259,7 @@ export function decodeObjectUpdateCompressed(
         ...(sculptId ? { sculptId } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
+        ...(textureAnim ? { textureAnim } : {}),
       })
     } catch (e) {
       onError?.(`compressedObj[${i}/${count}] failOff=${off}: ${(e as Error).message}`)
@@ -1430,10 +1472,18 @@ export function decodeObjectUpdate(
       let nameValue = ''
       let text = ''
       let textColor: [number, number, number, number] | undefined
+      let textureAnim: TextureAnim | undefined
       let tailOk = false
       let _silentTail = false
       try {
-        skipVar1('TA')  // TextureAnim (Variable1)
+        // TextureAnim (Variable1) — capture, advance like skipVar1 (clamped on truncated tails).
+        {
+          if (off >= buf.length) throw new Error(`TA prefix OOB at off=${off}`)
+          const taLen = buf[off++]
+          _diag += ` TA=${taLen}`
+          textureAnim = parseTextureAnim(buf, off, taLen) ?? undefined
+          off = Math.min(off + taLen, buf.length)
+        }
         // NameValue: Variable2
         if (off + 1 >= buf.length) throw new Error(`NV prefix OOB at off=${off}`)
         const nvLen = buf.readUInt16LE(off); off += 2
@@ -1535,6 +1585,7 @@ export function decodeObjectUpdate(
         ...(sculptId ? { sculptId } : {}),
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
+        ...(textureAnim ? { textureAnim } : {}),
       })
       // WHY: A tail OOB means `off` is no longer aligned to the next object's start.
       // Subsequent objects in this packet can't be safely decoded — break out cleanly so

@@ -1,8 +1,8 @@
 /**
  *
- * This still has a lot of code from the older app we started from
+ * useAudio.js - QuickSim audio system — procedural sound effects via Web Audio API + file-based MP3 playback.
  *
- * useAudio — procedural sound effects via Web Audio API + file-based MP3 playback.
+ * This still has a lot of code from the older app we started from
  *
  * AudioContext is unlocked on the first user click or keydown — no consent modal needed.
  * Volume channels: Master (isAllAudioMuted / masterVolume) and Interface are wired.
@@ -13,10 +13,10 @@ import { ref, watch } from 'vue'
 const _sfx = import.meta.glob('../assets/audio/*.mp3', { eager: true, query: '?url', import: 'default' })
 
 // ── localStorage keys ─────────────────────────────────────────────────────────
-const LS_ALL_AUDIO      = 'ava_all_audio_muted'
-const LS_VOL_MASTER     = 'ava_vol_master'
-const LS_VOL_INTERFACE  = 'ava_vol_interface'
-const LS_MUTE_INTERFACE = 'ava_mute_interface'
+const LS_ALL_AUDIO      = 'qs_all_audio_muted'
+const LS_VOL_MASTER     = 'qs_vol_master'
+const LS_VOL_INTERFACE  = 'qs_vol_interface'
+const LS_MUTE_INTERFACE = 'qs_mute_interface'
 
 function _readBool(key, fallback = false) {
 	try { const v = localStorage.getItem(key); return v === null ? fallback : v === '1' } catch { return fallback }
@@ -78,7 +78,6 @@ export const voiceVolume   = ref(1); export const voiceMuted   = ref(false)
 function soundOk()          { return _unlocked && !isAllAudioMuted.value }
 function interfaceSoundOk() { return soundOk() && !interfaceMuted.value }
 
-// WHY: kept for backward compat with useOfficeEngine.js which imports hasSoundConsent.
 // Always returns true — consent gate is removed.
 export function hasSoundConsent() { return true }
 

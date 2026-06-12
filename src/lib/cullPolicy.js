@@ -4,8 +4,16 @@
 
 // Farthest-first, capped at maxN. Used when over the memory budget: evict the most-distant resident
 // objects. `candidates` must already exclude protected ids (avatars / own / selected).
-export function selectEvictions(candidates, maxN) {
-	return [...candidates].sort((a, b) => b.dist - a.dist).slice(0, maxN).map(c => c.id)
+// minDist: candidates at or within this distance are NEVER evicted — without the guard, sustained
+// memory pressure walks the farthest-first eviction all the way down to the player's feet and the
+// scene monotonically empties (the busy-region "objects drop to 0" bug). With it, the culler
+// converges to "everything near you stays" and eviction simply stops when only near objects remain.
+export function selectEvictions(candidates, maxN, minDist = 0) {
+	return [...candidates]
+		.filter(c => c.dist > minDist)
+		.sort((a, b) => b.dist - a.dist)
+		.slice(0, maxN)
+		.map(c => c.id)
 }
 
 // Group child localIds under their root: Map<parentId, childId[]> from a Map<localId, obj> (the

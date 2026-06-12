@@ -129,13 +129,13 @@ function imRemove()    { const c = activeConv.value; if (c) confirmRemove({ id: 
 function imCloseConv() { const c = activeConv.value; if (c) closeImTab(c.agentId) }
 
 const floaterTitle = computed(() =>
-	avatar.displayName ? `Conversations — ${avatar.displayName}` : 'Conversations'
+	avatar.displayName ? `Conversations – ${ tabs.value.find(t => t.id === activeTab.value)?.label ?? 'Unknown' }` : 'Conversations'
 )
 
 const TYPE_CLASS = {
-	0: 'text-white/50 italic',          // whisper
-	1: 'text-t1',                        // normal
-	2: 'text-yellow-400 font-semibold',  // shout
+	0: 'text-gray-800 italic',		// whisper
+	1: 'text-t1',					// normal
+	2: 'text-gold font-semibold',	// shout
 }
 
 function formatTime(ts) {

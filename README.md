@@ -1,11 +1,16 @@
 # quickerSTORM 🌩️
 
-## A web-based 3D viewer for OpenSimulator and Second Life
+## A web-based 3D viewer for OpenSimulator and Second Life that actually works
 
-No install. Open a browser tab, log in, and you're in-world.
-Testing with OSGrid, NeverWorld & DigiWorldz so far — the rest of the usual grids are listed for near-future testing.
+Open a browser tab, log in, and you're in-world. No install needed.
+
+While there are some limitations to working with the browser's cap on memory rendering (3gb Chrome) and storage for cache
 
 ## Current state · June 2026
+
+Now decoding J2C and showing textures as detailed further below.
+
+Testing ongoing with OSGrid, NeverWorld, GBG & DigiWorldz so far — the rest of the usual grids are added and should be testable. Tested in a busy region.
 
 **Phase 2 ship status:** done. Prim rendering resolved (1500–1800 prims/region), Map 2D + cross-region TP shipped, terrain + ocean horizon stable. Avatar/object right-click menus + IM + child-prim linksets + hovertext all in. Only deferred must-have is neighbor-sim terrain (accepting seamless 8 km ocean horizon as substitute) + voice (Phase 2.5).
 
@@ -124,7 +129,7 @@ Build order (each slice = server→frontend→verify-live-once):
 
 **🔧 Enhancement ideas**
 - [ ] Inventory: find/filter duplicates by UUID (might still have different tints, sizes, next perms, ...)
-- [ ] Bulk inventory true export probably not accurate from here and needs IAR console access (scripts and ?)
+- [ ] Bulk inventory true backup probably not accurate from here and needs IAR console access (scripts and ?)
 
 ---
 

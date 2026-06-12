@@ -30,7 +30,7 @@ export const C = {
 	TP_HOME:        'tp_home',         // {} — TeleportLandmarkRequest with zero UUID; sim sends avatar to stored home position
 	SET_HOME:       'set_home',        // { regionName, x, y, z } — SetStartLocationRequest (Low 204) LocationID=1
 	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } or { folderIds:[] } — fetch folder item(s) via FetchInventoryDescendents2 cap (batched)
-	ASSET_FETCH:      'asset_fetch',      // { assetType:'texture'|'mesh'|'sound'|..., uuid } — fetch via ViewerAsset/GetTexture/GetMesh cap (server transcodes J2C→PNG)
+	ASSET_FETCH:      'asset_fetch',      // { assetType:'texture'|'mesh'|'sound'|..., uuid } — fetch via ViewerAsset/GetTexture/GetMesh cap (server transcodes J2C→WebP)
 	MATERIAL_FETCH:   'material_fetch',   // { kind:'pbr'|'legacy', ids:string[] } — fetch GLTF (ViewerAsset) or legacy (RenderMaterials cap)
 	MESH_FETCH:       'mesh_fetch',       // { meshId } — fetch + decode a mesh asset (GetMesh/ViewerAsset) → geometry arrays
 	SCULPT_FETCH:     'sculpt_fetch',     // { sculptId, sculptType } — fetch sculpt-map texture (J2C) → sculpt geometry
@@ -76,7 +76,7 @@ export const S = {
 	CAPS_READY:      'caps_ready',    // { caps: string[] } — HTTP cap names available after seed-cap fetch
 	INV_FOLDER:      'inv_folder',    // { folderId, items: [{ itemId, parentId, name, desc, assetType, invType, assetId, flags }], error? } — FetchInventoryDescendents2 reply
 	INV_ITEM_CREATED:'inv_item_created', // { items: [{ itemId, parentId, assetId, name, desc, assetType, invType, flags, ownerMask }] } — UpdateCreateInventoryItem (Low 267)
-	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error? } — fetched asset; textures arrive as PNG (server-transcoded from J2C)
+	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error? } — fetched asset; textures arrive as WebP (server-transcoded from J2C)
 	MATERIAL_DATA:   'material_data',    // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
 	MESH_DATA:       'mesh_data',        // { meshId, submeshes:[{positions:number[],normals:number[],uvs:number[],indices:number[]}], error? }
 	SCULPT_DATA:     'sculpt_data',      // { sculptId, sculptType, submeshes:[{positions,normals,uvs,indices (base64)}], error? }

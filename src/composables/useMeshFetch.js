@@ -4,17 +4,31 @@
 // hundreds of mesh requests at once (which stalled the sim circuit).
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { meshCacheGet, meshCachePut } from '@/lib/meshCache.js'
+import { createByteLRU } from '@/lib/byteLRU.js'
 import { C, S } from '@shared/protocol.js'
 
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_INFLIGHT = 12       // concurrent network mesh fetches (was 6; 0 timeouts at 6 → headroom)
-const mem = new Map()         // uuid → submeshes[] (typed arrays)
+// WHY bounded: unbounded, this cache hit ~1.1GB on a 24k-object region and pinned the heap above
+// the cull/governor thresholds permanently (the busy-region death-spiral root cause). IDB holds
+// every mesh durably, so RAM is just the hot tier — an evicted asset costs one IDB re-read.
+const MESH_MEM_BUDGET = 256 * 1048576
+const _subsBytes = (subs) => {
+	if (!Array.isArray(subs)) return 0
+	let b = 0
+	for (const s of subs) {
+		b += (s.positions?.byteLength || 0) + (s.normals?.byteLength || 0) +
+			(s.uvs?.byteLength || 0) + (s.indices?.byteLength || 0)
+	}
+	return b
+}
+const mem = createByteLRU({ budgetBytes: MESH_MEM_BUDGET, sizeOf: _subsBytes })  // uuid → submeshes[]
 const inflight = new Map()    // uuid → Promise<submeshes|null>
 const pending = new Map()     // uuid → resolve fn (awaiting S.MESH_DATA)
 const failed = new Set()
 const queue = []              // uuids waiting for a network slot
 let active = 0
-const stats = { requested: 0, done: 0, failed: 0, timeout: 0 }  // live counters (see getMeshStats)
+const stats = { requested: 0, done: 0, failed: 0, timeout: 0, late: 0 }  // live counters (see getMeshStats)
 
 let _wired = false
 function _wire() { if (_wired) return; _wired = true; useRealtimeSocket().on(S.MESH_DATA, _on) }
@@ -28,9 +42,9 @@ function b64ToTyped(s, Type) {
 
 function _on(d) {
 	const resolve = pending.get(d?.meshId)
-	if (!resolve) return
-	pending.delete(d.meshId)
-	if (d.error || !d.submeshes) { stats.failed++; resolve(null); return }
+	if (resolve) pending.delete(d.meshId)
+	else if (!d?.meshId) return
+	if (d.error || !d.submeshes) { stats.failed++; resolve?.(null); return }
 	stats.done++
 	const subs = d.submeshes.map(s => ({
 		positions: b64ToTyped(s.positions, Float32Array),
@@ -38,14 +52,26 @@ function _on(d) {
 		uvs:       b64ToTyped(s.uvs, Float32Array),
 		indices:   b64ToTyped(s.indices, Uint16Array),
 	}))
-	resolve(subs)
+	if (resolve) { resolve(subs); return }
+	// Late arrival (request already timed out): keep the decode anyway — cache in RAM + IDB and
+	// clear the failure mark so the next getMesh (cull stream-in re-bake, reload) succeeds without
+	// refetching. Mesh timeouts have NO soft retry, so without this a single slow grid response
+	// blanked that mesh for the whole session. Mirrors the texture-side late-arrival fix.
+	stats.late++
+	failed.delete(d.meshId)
+	mem.set(d.meshId, subs)
+	meshCachePut(d.meshId, subs)
 }
 
 // Send one network request, respecting the in-flight cap; queue if full.
 function _netFetch(uuid) {
 	return new Promise(resolve => {
-		const run = () => {
+		const run = async () => {
 			active++
+			// Late arrivals land in RAM/IDB while this request waits in the queue — settle from
+			// cache when the slot opens instead of burning a 30s timeout (mirrors useTextureFetch).
+			const cached = mem.has(uuid) ? mem.get(uuid) : await meshCacheGet(uuid).catch(() => null)
+			if (cached) { _done(); resolve(cached); return }
 			const { emit } = useRealtimeSocket()
 			const timer = setTimeout(() => { stats.timeout++; pending.delete(uuid); _done(); resolve(null) }, FETCH_TIMEOUT_MS)
 			pending.set(uuid, v => { clearTimeout(timer); _done(); resolve(v) })
@@ -58,20 +84,12 @@ function _done() { active--; if (queue.length && active < MAX_INFLIGHT) queue.sh
 
 /** Live fetch counters (mesh). For watching steady population / confirming the cap holds. */
 export function getMeshStats() {
-	return { ...stats, inflight: active, queued: queue.length, cached: mem.size }
+	return { ...stats, inflight: active, queued: queue.length, cached: mem.size(), lruEvicted: mem.evictions() }
 }
 
-// Estimated JS-heap bytes held by the decoded-submesh cache (typed arrays per cached mesh asset).
+// JS-heap bytes held by the decoded-submesh cache. O(1): the LRU keeps a running total.
 export function getMeshBytes() {
-	let b = 0
-	for (const subs of mem.values()) {
-		if (!Array.isArray(subs)) continue
-		for (const s of subs) {
-			b += (s.positions?.byteLength || 0) + (s.normals?.byteLength || 0) +
-				(s.uvs?.byteLength || 0) + (s.indices?.byteLength || 0)
-		}
-	}
-	return b
+	return mem.bytes()
 }
 
 export function getMesh(uuid) {

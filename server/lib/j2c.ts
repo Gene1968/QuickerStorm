@@ -1,16 +1,32 @@
-// server/lib/j2c.ts — server-side JPEG2000 (J2C) → PNG transcode.
+// server/lib/j2c.ts — server-side JPEG2000 (J2C) → WebP transcode.
 //
 // WHY: SL/OpenSim deliver every texture (and mesh skin, map tiles, profile pics, terrain detail)
 // as a raw J2C codestream (Content-Type image/x-j2c). Browsers cannot decode J2C natively. We
-// decode on the Bun server with the OpenJPEG WASM build and re-encode as PNG so the browser gets
+// decode on the Bun server with the OpenJPEG WASM build and re-encode as WebP so the browser gets
 // a format createImageBitmap() accepts. WASM (not native) → no build step, runs on the prod host.
 // Decode location decision: see docs/superpowers/specs/2026-06-03-caps-feature-map.md slice 0.
 import openjpegFactory from '@cornerstonejs/codec-openjpeg'
-import { encode as encodePng } from 'fast-png'
+import { initializeImageMagick, ImageMagick, MagickFormat, MagickReadSettings } from '@imagemagick/magick-wasm'
 
-// WHY: the WASM module is initialised once and reused. The factory is async (compiles wasm); we
-// memoise the promise so concurrent callers share a single instance. print/printErr are silenced —
-// OpenJPEG emits an "[INFO] …main header…" line per decode that would otherwise flood server logs.
+// WHY ImageMagick as primary: the cornerstone openjpeg-wasm build silently mis-decodes some
+// codestreams — live-confirmed on Kakadu-encoded multi-quality-layer RGBA foliage (palm frond
+// 59c3769c…): luma/chroma/alpha all corrupted, so alpha-cutout textures rendered as opaque white
+// blobs. magick-wasm (which wraps a current OpenJPEG) is byte-identical to cornerstone on streams
+// cornerstone gets right, and matches independent ground truth (Pillow) on the ones it gets wrong.
+// See __tests__/j2c-rgba-kakadu.test.ts. Cornerstone is kept as a fallback for any stream
+// ImageMagick rejects, since its tolerance envelope differs.
+let magickReady: Promise<void> | null = null
+function initMagick(): Promise<void> {
+	if (!magickReady) {
+		const wasmUrl = new URL(import.meta.resolve('@imagemagick/magick-wasm/magick.wasm'))
+		magickReady = Bun.file(wasmUrl).arrayBuffer().then(b => initializeImageMagick(b))
+	}
+	return magickReady
+}
+
+// WHY: the cornerstone WASM module is initialised once and reused. The factory is async (compiles
+// wasm); we memoise the promise so concurrent callers share a single instance. print/printErr are
+// silenced — OpenJPEG emits an "[INFO] …main header…" line per decode that would flood server logs.
 let modPromise: Promise<any> | null = null
 function getModule(): Promise<any> {
 	if (!modPromise) modPromise = openjpegFactory({ print: () => {}, printErr: () => {} })
@@ -24,8 +40,23 @@ export interface DecodedImage {
 	pixels: Uint8Array      // interleaved, 8-bit per sample
 }
 
-/** Decode a J2C codestream to raw interleaved 8-bit pixels. */
-export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImage> {
+function magickDecode(bytes: Uint8Array): DecodedImage {
+	let out: DecodedImage | null = null
+	ImageMagick.read(bytes, img => {
+		// WHY copy inside the callbacks: ImageMagick frees the native image (and its pixel area)
+		// when the callbacks return; the Uint8Array copy must be taken before that.
+		img.getPixels(px => {
+			const channels = img.channelCount
+			if (channels < 1 || channels > 4) throw new Error(`j2c_unsupported_channels: ${channels}`)
+			const area = px.getArea(0, 0, img.width, img.height)   // channel-interleaved, Q8 (0-255)
+			out = { width: img.width, height: img.height, channels, pixels: new Uint8Array(area) }
+		})
+	})
+	if (!out) throw new Error('j2c_decode_empty')
+	return out
+}
+
+async function openjpegDecode(bytes: Buffer | Uint8Array): Promise<DecodedImage> {
 	const mod = await getModule()
 	const dec = new mod.J2KDecoder()
 	try {
@@ -33,13 +64,18 @@ export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImag
 		enc.set(bytes)
 		dec.decode()
 		const fi = dec.getFrameInfo()
+		// WHY: on garbage input openjpeg "succeeds" with a 0×0 frame — surface that as a decode
+		// failure here rather than letting the WebP encoder downstream throw a confusing size error.
+		if (!fi.width || !fi.height || !fi.componentCount) {
+			throw new Error(`j2c_decode_invalid_frame: ${fi.width}×${fi.height}×${fi.componentCount}`)
+		}
 		// WHY copy: getDecodedBuffer() returns a view into the WASM heap that the next decode (and
 		// dec.delete()) will clobber. Copy into a standalone array before the buffer is reused.
 		const raw = dec.getDecodedBuffer()
 		// WHY explicit: openjpeg-wasm sometimes parses the header (real width/height/components) but
 		// produces an EMPTY pixel buffer for certain codestreams (progression order / truncation it
-		// can't handle). Without this, fast-png later throws the opaque "wrong data size. Found 0,
-		// expected N". Surface it as a clear, greppable decode failure instead.
+		// can't handle). Without this, the WebP encoder downstream throws a confusing size-mismatch
+		// error. Surface it as a clear, greppable decode failure instead.
 		const expected = fi.width * fi.height * fi.componentCount
 		if (raw.length < expected) {
 			throw new Error(`j2c_decode_incomplete: got ${raw.length} of ${expected}B (${fi.width}×${fi.height}×${fi.componentCount})`)
@@ -49,6 +85,24 @@ export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImag
 		return { width: fi.width, height: fi.height, channels: fi.componentCount, pixels }
 	} finally {
 		dec.delete?.()
+	}
+}
+
+/** Decode a J2C codestream to raw interleaved 8-bit pixels. */
+export async function decodeJ2C(bytes: Buffer | Uint8Array): Promise<DecodedImage> {
+	await initMagick()
+	try {
+		return magickDecode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes))
+	} catch (e) {
+		// Truncated grid assets fail BOTH decoders (expected, classified failedHard downstream).
+		// A stream only cornerstone can handle is the interesting case — log it so we notice.
+		try {
+			const r = await openjpegDecode(bytes)
+			console.warn(`[j2c] magick decode failed (${(e as Error).message.slice(0, 80)}) but openjpeg succeeded — served fallback`)
+			return r
+		} catch {
+			throw e instanceof Error ? e : new Error(String(e))
+		}
 	}
 }
 
@@ -94,18 +148,70 @@ export function pixelsHaveAlpha(pixels: Uint8Array | number[], channels: number)
 	return false
 }
 
-/** Decode a J2C codestream → PNG buffer plus a flag for whether it carries real transparency. */
-export async function j2cToPngWithAlpha(
+// Lossy WebP quality for OPAQUE textures. 90 ≈ visually lossless on SL surfaces while staying
+// 3-5× smaller than PNG. Alpha textures are encoded LOSSLESS instead (lossy RGB bleed fuzzes
+// cutout edges); see j2cToImageWithAlpha. Override with QS_WEBP_QUALITY.
+const WEBP_QUALITY = Number(process.env.QS_WEBP_QUALITY) || 90
+
+// Map a raw interleaved channel count to the MagickFormat that describes those samples, so magick
+// can import our already-decoded pixel buffer without a container header. WHY exported: pure, unit-
+// tested without a WASM round-trip. Throws outside 1-4 (matches magickDecode's channel guard).
+export function rawFormatFor(channels: number): MagickFormat {
+	switch (channels) {
+		case 1: return MagickFormat.Gray
+		case 2: return MagickFormat.Graya
+		case 3: return MagickFormat.Rgb
+		case 4: return MagickFormat.Rgba
+		default: throw new Error(`webp_unsupported_channels: ${channels}`)
+	}
+}
+
+// Encode raw interleaved 8-bit pixels → WebP. Lossy (WEBP_QUALITY) by default; lossless when
+// `lossless` is set (alpha cutouts). WHY magick: the J2C decode already runs through magick-wasm in
+// this module, so the encoder is loaded — no second WASM, no native build on the prod host.
+export function encodeWebp(
+	pixels: Uint8Array, width: number, height: number, channels: number, lossless: boolean,
+): Buffer {
+	if (pixels.length !== width * height * channels) {
+		throw new Error(`webp_encode_size_mismatch: got ${pixels.length}B, expected ${width * height * channels} (${width}×${height}×${channels})`)
+	}
+	const settings = new MagickReadSettings()
+	settings.format = rawFormatFor(channels)
+	settings.width = width
+	settings.height = height
+	settings.depth = 8
+	let out: Buffer | null = null
+	ImageMagick.read(pixels, settings, img => {
+		// WHY: lossless quality = encode effort only (fidelity is guaranteed by the lossless define).
+		// 100 costs ~3× encode time in the pool for no fidelity gain; 75 = libwebp default effort.
+		img.quality = lossless ? 75 : WEBP_QUALITY
+		if (lossless) {
+			img.settings.setDefine(MagickFormat.WebP, 'lossless', 'true')
+			// Settings-level defines are what the WebP encoder reads; artifact calls are ignored by magick-wasm.
+			// WHY: 'exact' preserves RGB under fully-transparent (alpha=0) pixels; bilinear sampling reads
+			// those texels at cutout edges (foliage), so without exact the GPU sees zeroed RGB → dark halos.
+			img.settings.setDefine(MagickFormat.WebP, 'exact', 'true')
+		}
+		img.write(MagickFormat.WebP, data => { out = Buffer.from(data) })
+	})
+	if (!out) throw new Error('webp_encode_empty')
+	return out
+}
+
+/** Decode a J2C codestream → WebP buffer plus whether it carries real transparency. Opaque textures
+ *  use lossy q90; alpha textures use lossless (no cutout edge-bleed). */
+export async function j2cToImageWithAlpha(
 	bytes: Buffer | Uint8Array,
-): Promise<{ png: Buffer; hasAlpha: boolean; width: number; height: number; srcWidth: number; srcHeight: number }> {
+): Promise<{ image: Buffer; hasAlpha: boolean; width: number; height: number; srcWidth: number; srcHeight: number }> {
 	const dec = await decodeJ2C(bytes)
 	const { channels } = dec
 	const { pixels, width, height } = downscalePixels(dec.pixels, dec.width, dec.height, channels, MAX_TEX_DIM)
-	const png = encodePng({ width, height, data: pixels, channels: channels as 1 | 2 | 3 | 4, depth: 8 })
-	return { png: Buffer.from(png), hasAlpha: pixelsHaveAlpha(pixels, channels), width, height, srcWidth: dec.width, srcHeight: dec.height }
+	const hasAlpha = pixelsHaveAlpha(pixels, channels)
+	const image = encodeWebp(pixels, width, height, channels, hasAlpha)
+	return { image, hasAlpha, width, height, srcWidth: dec.width, srcHeight: dec.height }
 }
 
-/** Decode a J2C codestream and re-encode it as a PNG buffer. */
-export async function j2cToPng(bytes: Buffer | Uint8Array): Promise<Buffer> {
-	return (await j2cToPngWithAlpha(bytes)).png
+/** Decode a J2C codestream and re-encode it as a WebP buffer. */
+export async function j2cToImage(bytes: Buffer | Uint8Array): Promise<Buffer> {
+	return (await j2cToImageWithAlpha(bytes)).image
 }
