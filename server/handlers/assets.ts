@@ -1,7 +1,7 @@
 // server/handlers/assets.ts — asset fetch over the HTTP cap layer (ViewerAsset / GetTexture / GetMesh).
 // WHY: SL/OpenSim serve textures, mesh, sounds, etc. as binary assets by UUID. ViewerAsset is the
 // unified cap; type-specific caps are fallbacks. Textures come back as J2C (image/x-j2c) which the
-// browser can't decode, so we transcode to PNG server-side (see lib/j2c.ts). Cap URLs + tokens stay
+// browser can't decode, so we transcode to WebP server-side (see lib/j2c.ts). Cap URLs + tokens stay
 // on the server; the browser gets clean base64. Shapes from caps-feature-map cluster A.
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
@@ -21,7 +21,7 @@ export interface AssetRequestSpec {
 	capNames: string[]      // cap names to try, in preference order
 	queryKey: string        // the `?<key>=<uuid>` query parameter
 	accept: string          // Accept header
-	transcodeToPng: boolean // true → decode J2C and re-encode PNG before sending
+	transcode: boolean      // true → decode J2C and re-encode WebP before sending
 	mime: string            // Content-Type sent to the browser (post-transcode for textures)
 }
 
@@ -30,13 +30,13 @@ export interface AssetRequestSpec {
 export function assetRequestSpec(assetType: string): AssetRequestSpec | null {
 	switch (assetType) {
 		case 'texture':
-			return { capNames: ['ViewerAsset', 'GetTexture'], queryKey: 'texture_id', accept: 'image/x-j2c', transcodeToPng: true, mime: 'image/png' }
+			return { capNames: ['ViewerAsset', 'GetTexture'], queryKey: 'texture_id', accept: 'image/x-j2c', transcode: true, mime: 'image/webp' }
 		case 'mesh':
-			return { capNames: ['ViewerAsset', 'GetMesh2', 'GetMesh'], queryKey: 'mesh_id', accept: 'application/vnd.ll.mesh', transcodeToPng: false, mime: 'application/vnd.ll.mesh' }
+			return { capNames: ['ViewerAsset', 'GetMesh2', 'GetMesh'], queryKey: 'mesh_id', accept: 'application/vnd.ll.mesh', transcode: false, mime: 'application/vnd.ll.mesh' }
 		case 'sound':
-			return { capNames: ['ViewerAsset'], queryKey: 'sound_id', accept: 'audio/ogg', transcodeToPng: false, mime: 'audio/ogg' }
+			return { capNames: ['ViewerAsset'], queryKey: 'sound_id', accept: 'audio/ogg', transcode: false, mime: 'audio/ogg' }
 		case 'animation':
-			return { capNames: ['ViewerAsset'], queryKey: 'animatn_id', accept: 'application/vnd.ll.animation', transcodeToPng: false, mime: 'application/vnd.ll.animation' }
+			return { capNames: ['ViewerAsset'], queryKey: 'animatn_id', accept: 'application/vnd.ll.animation', transcode: false, mime: 'application/vnd.ll.animation' }
 		default:
 			return null
 	}
@@ -72,20 +72,20 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 			const raw = Buffer.from(await res.arrayBuffer())
 
 			let out: Buffer, hasAlpha = false, dims = ''
-			if (spec.transcodeToPng) {
-				const r = await decodeInPool(raw); out = r.png; hasAlpha = r.hasAlpha
+			if (spec.transcode) {
+				const r = await decodeInPool(raw); out = r.image; hasAlpha = r.hasAlpha
 				dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
 			}
 			else out = raw
 			// Sampled: first 10 then every 25th (real work only — cache hits are silent; [AssetMemo]
 			// stats carry the totals). Per-asset lines were the dominant server-log flood.
 			if (++_assetLogN <= 10 || _assetLogN % 25 === 0) {
-				slog.info(s.ws, `[Asset] #${_assetLogN} ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcodeToPng ? ` → ${out.length}B png${dims}` : ''})`)
+				slog.info(s.ws, `[Asset] #${_assetLogN} ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcode ? ` → ${out.length}B webp${dims}` : ''})`)
 			}
 			return {
-				mime: spec.transcodeToPng ? spec.mime : (res.headers.get('content-type') || spec.mime),
+				mime: spec.transcode ? spec.mime : (res.headers.get('content-type') || spec.mime),
 				dataB64: out.toString('base64'),
-				...(spec.transcodeToPng ? { hasAlpha } : {}),
+				...(spec.transcode ? { hasAlpha } : {}),
 			}
 		})
 		if (!payload) { send({ error: 'unavailable' }); return }

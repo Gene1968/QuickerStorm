@@ -1,14 +1,14 @@
-// server/lib/j2cPool.ts — worker-thread pool for J2C→PNG decoding, with an inline fallback.
+// server/lib/j2cPool.ts — worker-thread pool for J2C→WebP decoding, with an inline fallback.
 //
 // WHY: decoding is a synchronous WASM call that blocks Bun's event loop (see lib/j2cWorker.ts). This
 // pool fans decodes out to N worker threads so the main loop stays responsive and decodes run in
 // parallel. If workers can't be spawned (or one dies fatally), we degrade gracefully to an inline
 // decode — correctness over parallelism. A decode must never hang forever: a worker `onerror` rejects
 // all of that worker's in-flight jobs so callers fall through to their existing error handling.
-import { j2cToPngWithAlpha } from './j2c'
+import { j2cToImageWithAlpha } from './j2c'
 
 export interface DecodeResult {
-	png: Buffer
+	image: Buffer
 	hasAlpha: boolean
 	width: number
 	height: number
@@ -54,13 +54,13 @@ function spawnPool(): void {
 			const pw: PoolWorker = { worker, inflight: new Map() }
 
 			worker.onmessage = (e: MessageEvent) => {
-				const d = e.data as { id: number; ok: boolean; error?: string; png?: ArrayBuffer; hasAlpha?: boolean; width?: number; height?: number; srcWidth?: number; srcHeight?: number }
+				const d = e.data as { id: number; ok: boolean; error?: string; image?: ArrayBuffer; hasAlpha?: boolean; width?: number; height?: number; srcWidth?: number; srcHeight?: number }
 				const job = pw.inflight.get(d.id)
 				if (!job) return
 				pw.inflight.delete(d.id)
-				if (d.ok && d.png) {
+				if (d.ok && d.image) {
 					job.resolve({
-						png: Buffer.from(d.png),
+						image: Buffer.from(d.image),
 						hasAlpha: !!d.hasAlpha,
 						width: d.width || 0,
 						height: d.height || 0,
@@ -93,14 +93,14 @@ function spawnPool(): void {
 }
 
 /**
- * Decode a J2C codestream to PNG via a worker thread (or inline if the pool is degraded). Rejects
+ * Decode a J2C codestream to WebP via a worker thread (or inline if the pool is degraded). Rejects
  * with the same Error the inline decode would throw (e.g. j2c_decode_incomplete) so the caller's
  * existing catch can send {error} to the client.
  */
 export async function decodeInPool(bytes: Buffer): Promise<DecodeResult> {
 	if (!workers && !degraded) spawnPool()
 	if (degraded || !workers || workers.length === 0) {
-		return j2cToPngWithAlpha(bytes)
+		return j2cToImageWithAlpha(bytes)
 	}
 
 	const idx = pickWorkerIndex(workers.map(w => w.inflight.size))
