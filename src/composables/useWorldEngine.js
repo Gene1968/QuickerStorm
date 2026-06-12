@@ -405,6 +405,7 @@ export function useWorldEngine(canvasRef) {
 	let _dtTicks = 0, _dtEmpty = 0, _dtGov = 0, _dtBrkCap = 0, _dtBrkBudget = 0
 	let _frN = 0, _frMs = 0, _frMaxMs = 0               // rAF frame-work gauge (reset each 5s report)
 	let _ltN = 0, _ltMs = 0, _ltMaxMs = 0               // PerformanceObserver longtask totals
+	let _ltTotalMs = 0                                  // never-reset longtask accumulator (lit-gate reads deltas)
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -435,9 +436,22 @@ export function useWorldEngine(canvasRef) {
 			if (storedRun !== runId) {
 				// Run changed — or unknown (records cached before run-tracking existed): either way the
 				// records can't be trusted, so drop them and let this session rebuild the cache fresh.
-				const n = await objCacheClearRegion(key)
+				// WHY try/catch + always-resync: this await once hung FOREVER (cursor-walk purge wedged,
+				// txn aborted with no onabort route) — preseed died silently, the probe resync below
+				// never fired, and the scene starved at 47/5,572 prims. A failed purge must never block
+				// the probe pipeline: skip the run-marker write (next session retries the purge) and let
+				// probes reconcile — stale records only cost harmless re-requests via the crcMap reset.
+				let n = 0, purged = true
+				try { n = await objCacheClearRegion(key) }
+				catch (e) {
+					purged = false
+					debugStore.push('warn', `[ObjCache] region purge FAILED (${e?.message ?? e}) — degrading to request-all`)
+				}
 				if (n) debugStore.push('warn', `[ObjCache] region run ${storedRun ? 'changed' : 'unknown'} (CacheID ${(storedRun ?? '????????').slice(0, 8)}→${runId.slice(0, 8)}) — dropped ${n} stale cached objects, skipping replay`)
-				try { localStorage.setItem(runKey, runId) } catch { /* ignore */ }
+				if (purged) { try { localStorage.setItem(runKey, runId) } catch { /* ignore */ } }
+				// Probes arriving DURING the purge may have memoized a pre-purge crcMap — those CRCs
+				// belong to the dead region run. Reset so the next batch rebuilds from the purged store.
+				_crcMapKey = null
 				requestProbeResync()
 				return
 			}
@@ -450,7 +464,16 @@ export function useWorldEngine(canvasRef) {
 				pendingMeshIds.add(o.localId)
 				n++
 			}
-			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)})`)
+			// Seed the probe crcMap from this read — it already holds every record, so the partition
+			// never needs its own IDB walk racing the persist write stream (the 3s-timeout → empty-map
+			// path that silently turned warm sessions into request-all re-feeds).
+			const seeded = new Map()
+			for (const o of (cached ?? [])) {
+				if (typeof o?.localId === 'number' && typeof o?.crc === 'number') seeded.set(o.localId, o.crc)
+			}
+			_crcMapKey = key
+			_crcMapP = Promise.resolve(seeded)
+			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)}, crcMap=${seeded.size})`)
 			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
 			requestProbeResync()
 		}
@@ -494,13 +517,22 @@ export function useWorldEngine(canvasRef) {
 		function getRegionCrcMap(key) {
 			if (key !== _crcMapKey) {
 				_crcMapKey = key
-				_crcMapP = Promise.race([
+				let p
+				p = Promise.race([
 					objCacheCrcMap(key),
 					new Promise((_, rej) => setTimeout(() => rej(new Error('crcMap timeout (3s)')), 3000)),
 				]).catch(e => {
-					try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Probe] crcMap failed (${e.message}) — degrading to request-all`, stack: '' }) } catch { /* ignore */ }
-					return new Map()   // empty map → every probe partitions as a miss (request-all)
+					try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Probe] crcMap failed (${e.message}) — this batch degrades to request-all`, stack: '' }) } catch { /* ignore */ }
+					// WHY un-memoize: caching this empty map poisoned the WHOLE session — one transient
+					// IDB starvation (read queued behind the persist flush stream) turned every later
+					// probe batch into request-all, re-feeding ~20k objects despite a valid cache. Fail
+					// only the batches in flight; the next batch retries the read (or gets the preseed-
+					// seeded map). Promise-identity guard: preseed may have installed its seeded map
+					// while this race was still pending — never clobber that.
+					if (_crcMapP === p) { _crcMapKey = null; _crcMapP = null }
+					return new Map()   // empty map → these probes partition as misses (request-all)
 				})
+				_crcMapP = p
 			}
 			return _crcMapP
 		}
@@ -1332,9 +1364,16 @@ export function useWorldEngine(canvasRef) {
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
 		// WHY: Shadow maps disabled for Phase 1 (see prior WHY on shadow frustum mismatch).
 		renderer.shadowMap.enabled = false
-		renderer.toneMapping = THREE.ACESFilmicToneMapping
+		// WHY NoToneMapping (was ACESFilmic): ACES darkens mid-tones and desaturates/hue-shifts
+		// saturated colors — measured against Firestorm as "everything darker and less red", on
+		// unlit textures too (the filmic curve applies to every fragment, lit or not). Firestorm's
+		// legacy (non-PBR) pipeline applies NO filmic curve — linear lighting straight to gamma.
+		// NoToneMapping + SRGBColorSpace = sRGB-faithful unlit textures (decode→encode round-trip)
+		// and FS-style lighting in lit mode. SL content is LDR; sun-facing white clipping to full
+		// white is the authentic SL look, not an artifact.
+		renderer.toneMapping = THREE.NoToneMapping
 		// WHY: Explicit SRGBColorSpace — older Three.js defaulted to LinearEncoding which skips
-		// gamma correction. Without this, ACES linear output hits an sRGB monitor raw → colours
+		// gamma correction. Without this, linear output hits an sRGB monitor raw → colours
 		// appear darker than expected, and prim shadow faces show as an unintended dark brown.
 		renderer.outputColorSpace = THREE.SRGBColorSpace
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -1426,16 +1465,19 @@ export function useWorldEngine(canvasRef) {
 
 		// Lighting — avatar capsules use MeshStandardMaterial so they need real lights.
 		// Prims now use MeshBasicMaterial (unlit) so lighting doesn't affect them at all.
-		const sun = new THREE.DirectionalLight(0xfff4e6, 1.2)
+		// Intensities calibrated for NoToneMapping (ACES used to compress these): sun 1.0 + ambient
+		// 0.45 ≈ SL's legacy sun/ambient balance — a sun-facing white surface reaches full white
+		// (authentic), shadow sides stay readable via ambient + sky fill.
+		const sun = new THREE.DirectionalLight(0xfff4e6, 1.0)
 		sun.position.set(50, 80, 50)
 		scene.add(sun)
 		// WHY: Fill light from opposite side of sun. Prevents avatar shadow faces going near-zero
-		// (which after ACES + any outputColorSpace quirk produces the dark-face artefact).
-		// ~35% sun intensity keeps shadow side visible without flattening the 3D form.
-		const fill = new THREE.DirectionalLight(0xaad4f5, 0.45)
+		// (which after any outputColorSpace quirk produces the dark-face artefact).
+		// ~30% sun intensity keeps shadow side visible without flattening the 3D form.
+		const fill = new THREE.DirectionalLight(0xaad4f5, 0.3)
 		fill.position.set(-60, -20, -80)
 		scene.add(fill)
-		scene.add(new THREE.AmbientLight(0xfff4e6, 0.5))
+		scene.add(new THREE.AmbientLight(0xfff4e6, 0.45))
 
 		// Resize observer
 		ro = new ResizeObserver(onResize)
@@ -1735,17 +1777,23 @@ export function useWorldEngine(canvasRef) {
 			// Geometry cache: a tier-1 (memory) hit means the FINAL baked geometry is available
 			// synchronously — build with it directly, no placeholder cube, no bake dispatch.
 			// bakeScale snapshot moved up here: the cache key needs it before geometry creation.
-			const bakeScale = obj.scale ? obj.scale.slice() : [1, 1, 1]
+			// Mesh/sculpt assets bake + cache UNSCALED (submesh bakes are linear in scale): one
+			// entry per asset regardless of in-world scale. bakeScale=[1,1,1] makes applySwap's
+			// cur/bakeScale ratio re-apply the prim's full scale on every serve; sync hits scale
+			// via bakePrimScale below. Plain prims keep per-scale bakes (shape deform math is not
+			// scale-linear).
+			const isAsset = !isAvatar && !obj._placeholder && !!(obj.meshId || obj.sculptId)
+			const bakeScale = isAsset ? [1, 1, 1] : (obj.scale ? obj.scale.slice() : [1, 1, 1])
 			const geomKey = (isAvatar || obj._placeholder) ? null
-				: obj.meshId   ? meshGeomKey(obj.meshId, bakeScale)
-				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1, bakeScale)
+				: obj.meshId   ? meshGeomKey(obj.meshId)
+				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
 				: primGeomKey(obj.shape, bakeScale)
 			const cachedArrays = geomKey ? geomMemGet(geomKey) : null
 			if (cachedArrays) _geomHitMem++
 			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
 				: cachedArrays
-					? geometryFromArrays(cachedArrays)
+					? bakePrimScale(geometryFromArrays(cachedArrays), isAsset ? obj.scale : null)
 					: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
 			// NaN-vertex guard (#D): a prim whose built geometry has non-finite verts would be
 			// frustum-culled = invisible. Swap in a 0.5m cube + placeholder color so it's findable.
@@ -1791,6 +1839,7 @@ export function useWorldEngine(canvasRef) {
 					: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			if ((hasMaterial || wantLit) && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+			mesh.onBeforeRender = _noteDraw   // render-exception forensics: see the quarantine catch in animate()
 
 			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
 			// WHY: defaultColor is RGBA; we previously used only RGB, so a prim the sim sent as
@@ -1936,7 +1985,13 @@ export function useWorldEngine(canvasRef) {
 			// Skip for multi-face meshes: those swap to a per-face material array in applySwap, which
 			// would discard (and leak) any PBR-mutated single material. Per-face + PBR is a rare combo;
 			// see docs/tech-debt.md (perface-pbr-skip). Per-face textures win for these meshes.
-			if (obj.defaultPbrMaterial && !meshMulti && !primMulti) {
+			// WHY !obj._placeholder on BOTH material blocks: placeholders skip `hasMaterial` (line
+			// above), so their creation material is MeshBasic/Lambert — but these blocks used to run
+			// anyway and the async callbacks then assigned normalMap onto a BASIC material. Basic's
+			// program has no normalMap uniforms → three's refreshUniformsCommon throws EVERY FRAME
+			// ("Cannot set properties of undefined") — measured live as 89 poisoned meshes wedging
+			// the whole render. Initial-load-only (placeholders come from the cache-paint path).
+			if (obj.defaultPbrMaterial && !obj._placeholder && !meshMulti && !primMulti) {
 				getPbrMaterial(obj.defaultPbrMaterial).then(gltf => {
 					if (!gltf || !mesh.parent || mesh.material !== mat) return
 					const d = gltfToDescriptor(gltf)
@@ -1957,11 +2012,13 @@ export function useWorldEngine(canvasRef) {
 					setMap(d.emissiveTex, 'emissiveMap', true)
 					mat.needsUpdate = true
 				})
-			} else if (obj.defaultMaterialId && !primMulti) {
+			} else if (obj.defaultMaterialId && !obj._placeholder && !primMulti) {
 				// ── Slice 2: legacy RenderMaterials — normal + (specular→roughness approx) ──
 				getLegacyMaterial(obj.defaultMaterialId).then(m => {
 					if (!m || !mesh.parent || mesh.material !== mat) return
-					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat) { mat.normalMap = t; mat.needsUpdate = true } })
+					// isMeshStandardMaterial guard: normalMap on a Basic/Lambert-from-relight material
+					// poisons its program (see the placeholder WHY above) — only Standard takes it.
+					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat && mat.isMeshStandardMaterial) { mat.normalMap = t; mat.needsUpdate = true } })
 					// MeshStandard has no spec map; approximate shininess via roughness (higher exp = smoother).
 					if (m.specExp) mat.roughness = Math.max(0.1, 1 - m.specExp / 255)
 					// Persist the material's alpha mode on the object — authoritative for every later
@@ -3387,9 +3444,20 @@ export function useWorldEngine(canvasRef) {
 	// real per-frame cost knob, so if FPS stays under LIT_MIN_FPS for LIT_LOW_MS while lit shading is
 	// on, drop back to unlit ONCE per session (the one-shot stops a re-enable→re-disable fight if the
 	// user insists) and tell the user via notification toast.
-	const LIT_MIN_FPS = 4// suggested was 20 but I hit low a lot when it's just busy.  GPB
-	const LIT_LOW_MS  = 45000// suggested was 10000 but I'm testing whether this is a better timeframe
+	// WHY load-gate (and not just low thresholds): cold/warm region loads legitimately pin FPS to
+	// ~5 for minutes even on a top-tier rig — thousands of geometry builds + asset fetches own the
+	// main thread. Judging lit-shading cost during that window auto-disabled it on every big load
+	// (observed as "dark/striped trees on soft load, fixed by hard reload"). The FPS verdict only
+	// counts once the build/fetch pipeline has been quiet for LIT_SETTLE_MS — so the thresholds can
+	// stay at their designed weak-GPU values instead of being detuned to dodge transients.
+	const LIT_MIN_FPS   = 20
+	const LIT_LOW_MS    = 10000
+	const LIT_SETTLE_MS = 5000     // pipeline must be quiet this long before low-FPS accumulates
 	let _fpsFrames = 0, _fpsWindowStart = 0, _lowFpsSince = 0, _litAutoDropped = false
+	let _loadBusyUntil = 0, _lastLtTotalMs = 0
+	// Render-exception quarantine state (see the try/catch around renderer.render).
+	let _lastDrawMesh = null, _renderFailN = 0
+	function _noteDraw() { _lastDrawMesh = this }
 	function updateFps(time) {
 		_fpsFrames++
 		if (!_fpsWindowStart) { _fpsWindowStart = time; return }
@@ -3406,6 +3474,19 @@ export function useWorldEngine(canvasRef) {
 		uiStore.setFps(fps)
 		uiStore.setNetKbps(kbps)
 		if (!uiStore.litShading || _litAutoDropped) { _lowFpsSince = 0; return }
+		// Load-transient gate (cheap counter reads, 1Hz): any meaningful build/fetch activity
+		// resets the settle clock; low-FPS windows inside the busy+settle span don't count.
+		const t = getTextureStats(), m = getMeshStats()
+		const loading = pendingMeshIds.size > 50 || t.queued > 0 || t.inflight > 0 || m.queued > 0 || _geomPending > 25
+		if (loading) _loadBusyUntil = time + LIT_SETTLE_MS
+		// Main-thread-bound discriminator: lit shading only adds GPU/fragment cost, so disabling it
+		// can only help when low FPS is RENDER-bound. If long tasks ate >30% of this window (texture
+		// createImageBitmap/upload tail, geometry deserialize, GC — none visible in the fetch
+		// queues), the frame rate is main-thread-bound and unlit would not recover it: don't count.
+		const ltDelta = _ltTotalMs - _lastLtTotalMs
+		_lastLtTotalMs = _ltTotalMs
+		const mainThreadBound = ltDelta / elapsed > 0.3
+		if (time < _loadBusyUntil || mainThreadBound) { _lowFpsSince = 0; return }
 		if (fps >= LIT_MIN_FPS) { _lowFpsSince = 0; return }
 		if (!_lowFpsSince) { _lowFpsSince = time; return }
 		if (time - _lowFpsSince >= LIT_LOW_MS) {
@@ -3648,8 +3729,37 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
-		renderer.render(scene, camera)
-		labelRenderer.render(scene, camera)
+		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
+		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
+		// refreshUniformsCommon) makes renderer.render THROW EVERY FRAME. Measured live 2026-06-12:
+		// a single multi-face mesh wedged two full sessions — partial black render, 4,625 exceptions,
+		// each ~250ms attempt starving the drain timers, scene stuck at 13%. The thrower is the last
+		// mesh whose onBeforeRender fired (_noteDraw). First strike: swap in a fresh placeholder
+		// material (a new program usually clears it). Second strike: hide the mesh. Either way the
+		// NEXT frame renders past it and the session self-heals.
+		try {
+			renderer.render(scene, camera)
+			labelRenderer.render(scene, camera)
+		} catch (err) {
+			const bad = _lastDrawMesh
+			_renderFailN++
+			if (bad?.isMesh) {
+				const strikes = (bad.userData._rescueN = (bad.userData._rescueN ?? 0) + 1)
+				// Forensics: which material state poisoned the program (uniforms/feature mismatch)?
+				const _mats = Array.isArray(bad.material) ? bad.material : [bad.material]
+				const _diag = _mats.map(m => m ? `${m.type.replace('Mesh', '').replace('Material', '')}v${m.version}${m.map ? '+map' : ''}${m.normalMap ? '+nrm' : ''}${m.alphaTest ? '+at' : ''}${m.transparent ? '+tr' : ''}` : 'null').join(',')
+				if (strikes === 1) {
+					const old = bad.material
+					bad.material = new THREE.MeshBasicMaterial({ color: PLACEHOLDER_COLOR })
+					;(Array.isArray(old) ? old : [old]).forEach(m => m?.dispose?.())
+				} else {
+					bad.visible = false
+				}
+				debugStore.push('warn', `[3D] render exception — quarantined localId=${bad.userData?.localId} (strike ${strikes}) mats=[${_diag}]: ${err?.message}`)
+			} else if (_renderFailN <= 3 || _renderFailN % 300 === 0) {
+				debugStore.push('warn', `[3D] render exception #${_renderFailN} (no culprit mesh): ${err?.message}`)
+			}
+		}
 		// Frame-work gauge: total main-thread ms this frame consumed (camera + scene walk + render).
 		// At 31k objects frames can run 100s of ms — a continuous rAF loop then starves every
 		// setInterval (drain ticks observed at ~0.5Hz in a visible tab). Reported via [Main] each 5s.
@@ -3698,7 +3808,7 @@ export function useWorldEngine(canvasRef) {
 		// elsewhere.
 		try {
 			_longTaskObs = new PerformanceObserver((list) => {
-				for (const e of list.getEntries()) { _ltN++; _ltMs += e.duration; if (e.duration > _ltMaxMs) _ltMaxMs = e.duration }
+				for (const e of list.getEntries()) { _ltN++; _ltMs += e.duration; _ltTotalMs += e.duration; if (e.duration > _ltMaxMs) _ltMaxMs = e.duration }
 			})
 			_longTaskObs.observe({ entryTypes: ['longtask'] })
 		} catch { _longTaskObs = null }

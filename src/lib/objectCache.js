@@ -54,6 +54,22 @@ function openDb() {
 	})
 }
 
+// WHY onabort: an IDB transaction can end three ways — complete, error, ABORT. We wired the
+// first two; an abort (browser-initiated rollback, e.g. connection close mid-txn) settled
+// neither, so callers awaiting the promise hung FOREVER. Measured live 2026-06-12: a region
+// purge aborted mid-walk → preseedRegionCache dead-awaited it silently → no probe resync →
+// scene starved at 47/5,572 prims with zero logging. Every txn promise must route abort.
+function txDone(tx) {
+	return new Promise((resolve, reject) => {
+		tx.oncomplete = resolve
+		tx.onerror = () => reject(tx.error ?? new Error('objCache txn error'))
+		tx.onabort = () => reject(tx.error ?? new Error('objCache txn aborted'))
+	})
+}
+
+// All numeric localIds for one region under the [regionKey, localId] compound key.
+const regionRange = (regionKey) => IDBKeyRange.bound([regionKey, -Infinity], [regionKey, Infinity])
+
 // WHY pure + exported: the region-LRU policy is the only non-I/O logic worth unit-testing
 // (mirrors textureCache.planEvictions). Given [{regionKey, newestSavedAt}], return the
 // regionKeys to drop, oldest-first, so that at most maxRegions remain.
@@ -110,7 +126,8 @@ async function _flushNow() {
 					if (c) { regions++; c.continue() } else { cursored = true; writeMeta() }
 				}
 				tx.oncomplete = resolve
-				tx.onerror = () => reject(tx.error)
+				tx.onerror = () => reject(tx.error ?? new Error('flush txn error'))
+				tx.onabort = () => reject(tx.error ?? new Error('flush txn aborted'))
 			})
 		} catch (e) { console.warn('[ObjCache] flush failed:', e) }
 	})()
@@ -152,7 +169,9 @@ export async function objCacheGetAll(regionKey) {
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
-			const req = db.transaction(STORE, 'readonly').objectStore(STORE)
+			const t = db.transaction(STORE, 'readonly')
+			t.onabort = () => reject(t.error ?? new Error('getAll txn aborted'))
+			const req = t.objectStore(STORE)
 				.index('regionKey').getAll(IDBKeyRange.only(regionKey))
 			req.onsuccess = () => resolve((req.result || []).map(r => r.data))
 			req.onerror   = () => reject(req.error)
@@ -166,17 +185,21 @@ export async function objCacheCrcMap(regionKey) {
 	try {
 		const db = await openDb()
 		await new Promise((resolve, reject) => {
-			const req = db.transaction(STORE, 'readonly').objectStore(STORE)
-				.index('regionKey').openCursor(IDBKeyRange.only(regionKey))
+			const t = db.transaction(STORE, 'readonly')
+			t.onabort = () => reject(t.error ?? new Error('crcMap txn aborted'))
+			// getAll (one request) instead of a cursor walk (one event-loop turn per record):
+			// under cold-load longtask starvation the per-step walk is what made this read blow
+			// its caller's 3s timeout and poison the probe partition into request-all.
+			const req = t.objectStore(STORE).index('regionKey').getAll(IDBKeyRange.only(regionKey))
 			req.onsuccess = () => {
-				const c = req.result
-				if (!c) return resolve()
-				if (typeof c.value.crc === 'number') map.set(c.value.localId, c.value.crc)
-				c.continue()
+				for (const r of (req.result || [])) {
+					if (typeof r.crc === 'number') map.set(r.localId, r.crc)
+				}
+				resolve()
 			}
 			req.onerror = () => reject(req.error)
 		})
-	} catch (e) { console.warn('[ObjCache] crcMap failed:', e) }
+	} catch (e) { console.warn('[ObjCache] crcMap failed:', e); throw e }
 	return map
 }
 
@@ -185,24 +208,27 @@ export async function objCacheCrcMap(regionKey) {
  * dead localId, which paints ghost duplicates and bricks ObjectSelect/edit on click. */
 export async function objCacheClearRegion(regionKey) {
 	if (!regionKey) return 0
+	// An in-flight flush batch may still hold puts for this region — let it land first so the
+	// delete below can't race it (a batch committing AFTER the purge would resurrect records).
+	if (_flushing) { try { await _flushing } catch { /* flush failures already logged */ } }
 	for (const k of [..._writeBuf.keys()]) if (k.startsWith(`${regionKey} `)) _writeBuf.delete(k)
 	let n = 0
 	try {
 		const db = await openDb()
-		await new Promise((resolve, reject) => {
-			const tx = db.transaction(STORE, 'readwrite')
-			const req = tx.objectStore(STORE).index('regionKey').openCursor(IDBKeyRange.only(regionKey))
-			req.onsuccess = () => {
-				const c = req.result
-				if (!c) return
-				c.delete(); n++
-				c.continue()
-			}
-			tx.oncomplete = resolve
-			tx.onerror = () => reject(tx.error)
-		})
+		// WHY one range delete, not a cursor walk: deleting N records one cursor step at a time
+		// is N event-loop turns; under cold-load longtask saturation that took 6.5 MINUTES for
+		// 5.6k records (measured live 2026-06-12), wedging every queued qs-objects txn behind it
+		// (crcMap reads starve → probes all-miss → full re-feed). count + delete(range) is two
+		// requests in one atomic txn regardless of N.
+		const tx = db.transaction(STORE, 'readwrite')
+		const st = tx.objectStore(STORE)
+		const done = txDone(tx)
+		const cReq = st.count(regionRange(regionKey))
+		cReq.onsuccess = () => { n = cReq.result }
+		st.delete(regionRange(regionKey))
+		await done
 		_metaDirty = true; _scheduleFlush()
-	} catch (e) { console.warn('[ObjCache] clearRegion failed:', e) }
+	} catch (e) { console.warn('[ObjCache] clearRegion failed:', e); throw e }
 	return n
 }
 
@@ -211,12 +237,10 @@ export async function objCacheEvict(regionKey, localId) {
 	_writeBuf.delete(`${regionKey} ${localId}`)  // don't let a buffered put resurrect it
 	try {
 		const db = await openDb()
-		await new Promise((resolve, reject) => {
-			const tx = db.transaction(STORE, 'readwrite')
-			tx.objectStore(STORE).delete([regionKey, localId])
-			tx.oncomplete = resolve
-			tx.onerror = () => reject(tx.error)
-		})
+		const tx = db.transaction(STORE, 'readwrite')
+		const done = txDone(tx)
+		tx.objectStore(STORE).delete([regionKey, localId])
+		await done
 		_metaDirty = true; _scheduleFlush()  // STORE shrank → recompute stat counters
 	} catch { /* ignore */ }
 }
@@ -257,14 +281,11 @@ export async function objCachePruneRegions() {
 		const regions = [...newest.entries()].map(([regionKey, newestSavedAt]) => ({ regionKey, newestSavedAt }))
 		const toDrop = planRegionEvictions(regions, MAX_REGIONS)
 		if (!toDrop.length) return
-		const drop = new Set(toDrop)
-		await new Promise((resolve, reject) => {
-			const tx = db.transaction(STORE, 'readwrite')
-			const st = tx.objectStore(STORE)
-			for (const r of rows) if (drop.has(r.regionKey)) st.delete([r.regionKey, r.localId])
-			tx.oncomplete = resolve
-			tx.onerror = () => reject(tx.error)
-		})
+		const tx = db.transaction(STORE, 'readwrite')
+		const st = tx.objectStore(STORE)
+		const done = txDone(tx)
+		for (const rk of toDrop) st.delete(regionRange(rk))   // one range delete per dropped region
+		await done
 		_metaDirty = true; _scheduleFlush()  // STORE shrank → recompute stat counters
 	} catch (e) { console.warn('[ObjCache] prune failed:', e) }
 }
@@ -277,12 +298,10 @@ export async function objCacheClearAll() {
 	_lastStats = { regions: 0, objects: 0 }
 	try {
 		const db = await openDb()
-		await new Promise((resolve, reject) => {
-			const tx = db.transaction([STORE, META], 'readwrite')
-			tx.objectStore(STORE).clear()
-			tx.objectStore(META).put({ key: 'stats', regions: 0, objects: 0 })
-			tx.oncomplete = resolve
-			tx.onerror = () => reject(tx.error)
-		})
+		const tx = db.transaction([STORE, META], 'readwrite')
+		const done = txDone(tx)
+		tx.objectStore(STORE).clear()
+		tx.objectStore(META).put({ key: 'stats', regions: 0, objects: 0 })
+		await done
 	} catch { /* ignore */ }
 }
