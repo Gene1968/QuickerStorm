@@ -1,26 +1,53 @@
 // src/lib/textureCache.js — persistent (IndexedDB) cache of decoded textures, keyed by asset UUID.
 // WHY: textures are immutable by UUID and a region pulls hundreds-to-thousands of them. Without
 // persistence every reload/relogin re-fetches + re-transcodes the whole scene (slow + hammers the
-// sim). This is our portable equivalent of Firestorm's on-disk texture cache: store the PNG data
-// URL by UUID, survive reloads, evict least-recently-fetched once a configurable size cap is hit.
+// sim). This is our portable equivalent of Firestorm's on-disk texture cache: store the WebP Blob
+// by UUID, survive reloads, evict least-recently-fetched once a configurable size cap is hit.
 // (A second, server-side tier can come later once self-hosted on VPS/NAS.)
 const DB_NAME    = 'qs-tex'
-const DB_VERSION = 3          // v2 added 'failed'; v3 purges all stores once — PNGs cached before
+const DB_VERSION = 5          // v2 added 'failed'; v3 purges all stores once — PNGs cached before
                               // the server J2C decoder swap (cornerstone-openjpeg → magick-wasm)
                               // can be poisoned (mis-decoded RGBA Kakadu streams: alpha cutouts
                               // rendered as opaque white). 'failed' is cleared too so cornerstone-
                               // specific hard-fails get one retry under the new decoder. See
                               // server/__tests__/j2c-rgba-kakadu.test.ts.
-const STORE      = 'tex'      // { uuid, url, bytes, lastUsed }
+                              // v4 purges all stores again — PNG data-URLs cached before the
+                              // server switched its transcode output to WebP are stale (the WS
+                              // now sends mime:'image/webp'; old entries can't be reused).
+                              // v5 = data-URL string → Blob (record shape change; v4 entries hold strings).
+const STORE      = 'tex'      // { uuid, blob, bytes, hasAlpha, lastUsed }
 const META       = 'meta'     // { k:'stats', totalBytes }
 const FAILED     = 'failed'   // { uuid, ts } — permanent decode/404 failures with TTL
 
-// Default cap for cached PNG data URLs. 512 MB was an arbitrary early guess; with server-side
-// downscaling to ≤512px each texture is far smaller, so we can hold a whole region (and more) for
-// fast re-logins. 4 GB here (FS desktop caches use ~15 GB, but IndexedDB is bounded by the browser's
-// per-origin quota — typically a fraction of free disk — so the browser may evict below this anyway).
-// A real preference can drive this later.
-export const TEX_CACHE_CAP_BYTES = 8 * 1024 * 1024 * 1024
+// Fallback cap when the browser won't report a quota. Real cap is derived from navigator.storage
+// .estimate() at init (see initCacheCap) so the cache scales to the machine instead of guessing.
+export const TEX_CACHE_FALLBACK_BYTES = 8 * 1024 * 1024 * 1024
+const CAP_FRACTION = 0.6   // fraction of the origin's quota we're willing to hold
+let _capBytes = TEX_CACHE_FALLBACK_BYTES
+
+// Pure: choose a cap from a StorageEstimate-like object. Exported for unit tests (no navigator dep).
+export function resolveCacheCap(estimate, fraction = CAP_FRACTION, fallback = TEX_CACHE_FALLBACK_BYTES) {
+	const quota = estimate && typeof estimate.quota === 'number' ? estimate.quota : 0
+	return quota > 0 ? Math.floor(quota * fraction) : fallback
+}
+
+// Derive the cap from the real quota, then fire-and-forget persist(). Best-effort: any failure
+// leaves the fallback cap in place. Safe to call repeatedly; the first call does the work.
+let _capInit = null
+export function initCacheCap() {
+	if (_capInit) return _capInit
+	_capInit = (async () => {
+		try {
+			if (navigator.storage?.estimate) _capBytes = resolveCacheCap(await navigator.storage.estimate())
+		} catch { /* keep fallback */ }
+		// WHY fire-and-forget: Firefox may show a permission doorhanger for persist(); don't let an
+		// unanswered prompt (or a rejection) block or discard the quota-derived cap above.
+		try { navigator.storage?.persist?.()?.catch?.(() => {}) } catch { /* unsupported */ }
+		console.debug('[TexCache] cap', Math.round(_capBytes / 1048576) + 'MB')
+		return _capBytes
+	})()
+	return _capInit
+}
 
 let _db = null
 let _lastStats = null  // last known { count, bytes } — served to Prefs from memory. WHY: the
@@ -35,9 +62,11 @@ function openDb() {
 		const req = indexedDB.open(DB_NAME, DB_VERSION)
 		req.onupgradeneeded = (e) => {
 			const db = e.target.result
-			// One-time v3 purge: drop every store so nothing decoded by the old (mis-decoding)
-			// J2C pipeline survives — see DB_VERSION note. Stores are recreated empty below.
-			if (e.oldVersion > 0 && e.oldVersion < 3) {
+			// One-time purge: drop every store so nothing from a superseded transcode pipeline survives.
+			// v3 = post-cornerstone→magick J2C swap; v4 = PNG→WebP cutover (old PNG data-URLs are dead);
+			// v5 = data-URL string → Blob (v4 entries hold strings, incompatible with new record shape).
+			// Stores are recreated empty below.
+			if (e.oldVersion > 0 && e.oldVersion < 5) {
 				for (const name of [STORE, META, FAILED]) {
 					if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name)
 				}
@@ -49,7 +78,7 @@ function openDb() {
 			if (!db.objectStoreNames.contains(META))   db.createObjectStore(META,   { keyPath: 'k' })
 			if (!db.objectStoreNames.contains(FAILED)) db.createObjectStore(FAILED, { keyPath: 'uuid' })
 		}
-		req.onsuccess = (e) => { _db = e.target.result; resolve(_db) }
+		req.onsuccess = (e) => { _db = e.target.result; initCacheCap(); resolve(_db) }
 		req.onerror   = () => reject(req.error)
 	})
 }
@@ -71,9 +100,9 @@ export function planEvictions(entries, capBytes) {
 }
 
 /**
- * Look up a cached texture by UUID. Touches lastUsed (LRU). Returns `{ url, hasAlpha }` or null on
- * miss. `hasAlpha` (whether the PNG carries real transparency) rides along so the client can pick
- * blend-vs-opaque without re-fetching; old records pre-dating the field read as `false`.
+ * Look up a cached texture by UUID. Touches lastUsed (LRU). Returns `{ blob, hasAlpha }` or null
+ * on miss. `hasAlpha` (whether the WebP carries real transparency) rides along so the client can
+ * pick blend-vs-opaque without re-fetching; old records pre-dating the field read as `false`.
  */
 export async function texCacheGet(uuid, now = Date.now()) {
 	try {
@@ -88,7 +117,7 @@ export async function texCacheGet(uuid, now = Date.now()) {
 			req.onsuccess = () => {
 				const rec = req.result
 				if (rec) _touchLater(uuid, now)
-				resolve(rec ? { url: rec.url, hasAlpha: !!rec.hasAlpha } : null)
+				resolve(rec ? { blob: rec.blob, hasAlpha: !!rec.hasAlpha } : null)
 			}
 			req.onerror = () => reject(req.error)
 		})
@@ -126,16 +155,16 @@ async function flushTouches() {
 	} catch { /* best-effort LRU */ }
 }
 
-/** Persist a texture data URL by UUID, then evict LRU entries if over the size cap. */
-export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now()) {
+/** Persist a texture Blob by UUID, then evict LRU entries if over the size cap. */
+export async function texCachePut(uuid, blob, hasAlpha = false, now = Date.now()) {
 	try {
 		const db = await openDb()
-		const bytes = url.length
+		const bytes = blob.size
 		await new Promise((resolve, reject) => {
 			const tx = db.transaction([STORE, META], 'readwrite')
 			const st = tx.objectStore(STORE)
 			const mt = tx.objectStore(META)
-			st.put({ uuid, url, bytes, hasAlpha, lastUsed: now })
+			st.put({ uuid, blob, bytes, hasAlpha, lastUsed: now })
 			// After all mutations are queued: count (ordered after any deletes, so it reflects
 			// them), write META {totalBytes, count}, and stage the in-memory snapshot for commit.
 			let pending = null
@@ -149,7 +178,7 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 			const mreq = mt.get('stats')
 			mreq.onsuccess = () => {
 				let total = (mreq.result?.totalBytes ?? 0) + bytes
-				if (total <= TEX_CACHE_CAP_BYTES) {
+				if (total <= _capBytes) {
 					finishStats(total)
 					return
 				}
@@ -158,7 +187,7 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 				const cur = st.index('lastUsed').openCursor()
 				cur.onsuccess = () => {
 					const c = cur.result
-					if (!c || total <= TEX_CACHE_CAP_BYTES) { finishStats(total); return }
+					if (!c || total <= _capBytes) { finishStats(total); return }
 					if (c.value.uuid !== uuid) { total -= c.value.bytes; c.delete() }
 					c.continue()
 				}
@@ -174,7 +203,7 @@ export async function texCachePut(uuid, url, hasAlpha = false, now = Date.now())
 /** Returns { count, bytes, capBytes } for the texture cache. Served from memory once any put
  * (or one successful read) has run this session — see `_lastStats`. */
 export async function getTextureCacheStats() {
-	if (_lastStats) return { ..._lastStats, capBytes: TEX_CACHE_CAP_BYTES }
+	if (_lastStats) return { ..._lastStats, capBytes: _capBytes }
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
@@ -185,10 +214,10 @@ export async function getTextureCacheStats() {
 			let bytes = 0
 			countReq.onsuccess = () => { count = countReq.result }
 			metaReq.onsuccess  = () => { bytes = metaReq.result?.totalBytes ?? 0 }
-			tx.oncomplete = () => { _lastStats = { count, bytes }; resolve({ count, bytes, capBytes: TEX_CACHE_CAP_BYTES }) }
+			tx.oncomplete = () => { _lastStats = { count, bytes }; resolve({ count, bytes, capBytes: _capBytes }) }
 			tx.onerror = () => reject(tx.error)
 		})
-	} catch { return { count: 0, bytes: 0, capBytes: TEX_CACHE_CAP_BYTES } }
+	} catch { return { count: 0, bytes: 0, capBytes: _capBytes } }
 }
 
 /**
