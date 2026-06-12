@@ -1480,7 +1480,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	if (msg.t === C.CLIENT_DIAG) {
 		// Client-side mirror of [PrimDiag] so server-log.txt holds both ends of the pipe.
 		// Without this we have no record of mesh-count or upsert failures after session ends.
-		type DiagStats = { requested?: number; done?: number; failed?: number; timeout?: number; inflight?: number; queued?: number; cached?: number }
+		type DiagStats = { requested?: number; done?: number; failed?: number; timeout?: number; late?: number; inflight?: number; queued?: number; cached?: number }
 		const d = msg.d as {
 			received?: number; stored?: number; prims?: number; av?: number;
 			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number;
@@ -1490,7 +1490,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			faceTex?: { realDefault?: number; blankDefault?: number; blankButRealFaceTex?: number; anyRealFaceTex?: number }
 		}
 		const stat = (s?: DiagStats) => s
-			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
+			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} late=${s.late ?? 0} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
 			: '(n/a — frontend not reloaded?)'
 		slog.info(session.ws,
 			`[ClientDiag] received=${d.received ?? '?'} stored=${d.stored ?? '?'} ` +

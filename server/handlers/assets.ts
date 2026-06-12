@@ -6,7 +6,16 @@
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
 import { decodeInPool } from '../lib/j2cPool'
+import { createAssetMemo } from '../lib/assetMemo'
 import { S } from '../../shared/protocol.js'
+
+// Tier-2 asset cache + request coalescing. Assets are global by UUID (caps are per-session but the
+// bytes they serve are not), so one memo serves every circuit. dataB64 length ≈ payload bytes.
+type AssetPayload = { mime: string; dataB64: string; hasAlpha?: boolean }
+const ASSET_MEMO_BUDGET = 384 * 1048576
+const assetMemo = createAssetMemo<AssetPayload>({ budgetBytes: ASSET_MEMO_BUDGET, sizeOf: v => v.dataB64.length })
+let _memoStatTick = 0
+let _assetLogN = 0
 
 export interface AssetRequestSpec {
 	capNames: string[]      // cap names to try, in preference order
@@ -52,24 +61,39 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 
 	const url = `${capBase}/?${spec.queryKey}=${uuid}`
 	try {
-		const res = await fetch(url, { headers: { Accept: spec.accept }, signal: AbortSignal.timeout(25_000) })
-		// WHY: OpenSim returns 404 (not 416) when a speculative range overshoots; here we make no
-		// range request, so a 404 is a genuine missing asset.
-		if (!res.ok) { send({ error: `http_${res.status}` }); return }
-		const raw = Buffer.from(await res.arrayBuffer())
+		// Memoized: a cached asset answers instantly; a concurrent/retried request for the same uuid
+		// shares the in-flight grid fetch + decode instead of re-queuing both. Errors throw and are
+		// never cached (the rejection reaches every coalesced waiter; a later retry re-attempts).
+		const payload = await assetMemo.memo(`${assetType}:${uuid}`, async () => {
+			const res = await fetch(url, { headers: { Accept: spec.accept }, signal: AbortSignal.timeout(25_000) })
+			// WHY: OpenSim returns 404 (not 416) when a speculative range overshoots; here we make no
+			// range request, so a 404 is a genuine missing asset.
+			if (!res.ok) throw new Error(`http_${res.status}`)
+			const raw = Buffer.from(await res.arrayBuffer())
 
-		let out: Buffer, hasAlpha = false, dims = ''
-		if (spec.transcodeToPng) {
-			const r = await decodeInPool(raw); out = r.png; hasAlpha = r.hasAlpha
-			dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
-		}
-		else out = raw
-		send({
-			mime: spec.transcodeToPng ? spec.mime : (res.headers.get('content-type') || spec.mime),
-			dataB64: out.toString('base64'),
-			...(spec.transcodeToPng ? { hasAlpha } : {}),
+			let out: Buffer, hasAlpha = false, dims = ''
+			if (spec.transcodeToPng) {
+				const r = await decodeInPool(raw); out = r.png; hasAlpha = r.hasAlpha
+				dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
+			}
+			else out = raw
+			// Sampled: first 10 then every 25th (real work only — cache hits are silent; [AssetMemo]
+			// stats carry the totals). Per-asset lines were the dominant server-log flood.
+			if (++_assetLogN <= 10 || _assetLogN % 25 === 0) {
+				slog.info(s.ws, `[Asset] #${_assetLogN} ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcodeToPng ? ` → ${out.length}B png${dims}` : ''})`)
+			}
+			return {
+				mime: spec.transcodeToPng ? spec.mime : (res.headers.get('content-type') || spec.mime),
+				dataB64: out.toString('base64'),
+				...(spec.transcodeToPng ? { hasAlpha } : {}),
+			}
 		})
-		slog.info(s.ws, `[Asset] ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcodeToPng ? ` → ${out.length}B png${dims}` : ''})`)
+		if (!payload) { send({ error: 'unavailable' }); return }
+		send(payload)
+		if ((++_memoStatTick % 200) === 0) {
+			const m = assetMemo.stats()
+			slog.info(s.ws, `[AssetMemo] size=${m.size} MB=${(m.bytes / 1048576).toFixed(0)} hits=${m.hits} misses=${m.misses} evict=${m.evictions} inflight=${m.inflight}`)
+		}
 	} catch (e) {
 		slog.warn(s.ws, `[Asset] fetch failed ${assetType} ${uuid.slice(0, 8)}…: ${(e as Error).message}`)
 		send({ error: (e as Error).message })

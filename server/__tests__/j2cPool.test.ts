@@ -4,9 +4,10 @@ import { join } from 'path'
 import { decode as decodePng } from 'fast-png'
 import { pickWorkerIndex, decodeInPool, getPoolStats } from '../lib/j2cPool'
 
-// Real SL terrain texture codestream staged in the repo — exercise the actual decode path end-to-end,
-// not a mock. join(import.meta.dir, …) resolves relative to this file regardless of cwd.
-const fixture = readFileSync(join(import.meta.dir, '../../src/assets/img/terrain-dirt.j2c'))
+// Real SL terrain texture codestream — exercises the actual decode path end-to-end, not a mock.
+// Lives in fixtures/ since the runtime copy was replaced by .webp (terrain texturing, 17b14d4).
+// join(import.meta.dir, …) resolves relative to this file regardless of cwd.
+const fixture = readFileSync(join(import.meta.dir, 'fixtures/terrain-dirt.j2c'))
 
 describe('pickWorkerIndex', () => {
 	it('returns 0 for empty input (never indexes out of range)', () => {

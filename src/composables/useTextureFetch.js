@@ -6,7 +6,7 @@
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
-import { memUnderPressure } from '@/lib/memGovernor.js'
+import { emergencyHeap } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
@@ -46,7 +46,7 @@ const lastUsed    = new Map()  // uuid → last-access timestamp (ms)
 const TEX_PRUNE_AGE_MS = 20000 // never prune a texture applied within the last 20s (avoid blanking near faces)
 
 // Live counters so we can watch steady population (vs flooding) — see getTextureStats().
-const stats = { requested: 0, done: 0, failed: 0, timeout: 0 }
+const stats = { requested: 0, done: 0, failed: 0, timeout: 0, late: 0 }
 
 const EPS = 1e-4
 const isIdentityXform = (x) =>
@@ -64,12 +64,16 @@ function _wire() {
 }
 
 // Free an in-flight slot and start the next queued fetch (if any).
-// Memory governor: while the JS heap is near its limit, do NOT start new network fetches — each
-// completed fetch builds a THREE.Texture that retains its decoded image (the cold-load OOM hog).
-// Leaving them queued (not dropped) lets them resume once pressure clears (re-pumped by the engine's
-// drain interval). memUnderPressure() is false when performance.memory is unavailable → no change.
+// WHY a texture-OWN budget (not the shared app budget): on a dense region the geometry pool
+// saturates the global budget permanently, which paused texture intake to a trickle — the scene
+// finished building but stayed white (observed: ⏱0 timeouts yet ~0.3 fetches/s, intake only during
+// momentary budget dips). Textures now gate on their own resident bytes; as they fill, the global
+// budget rises and the culler trades far GEOMETRY for them — the right swap, since near geometry
+// is R_NEAR-protected and pruneTexturesLRU bounds this pool under pressure. emergencyHeap() stays
+// as the true near-OOM stop.
+const TEX_INTAKE_BUDGET = 320 * 1048576
 function _pump() {
-	while (active < MAX_INFLIGHT && netQueue.length && !memUnderPressure()) { active++; netQueue.shift()() }
+	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || getTextureBytes() > TEX_INTAKE_BUDGET)) { active++; netQueue.shift()() }
 }
 
 // Re-pump from a periodic caller (the world-engine drain tick) so queued fetches resume after the
@@ -80,12 +84,23 @@ export function pumpTextures() { _pump() }
 function _onAssetData(d) {
 	if (!d || d.assetType !== 'texture') return
 	const p = pending.get(d.uuid)
-	if (!p) return            // already timed out (slot already freed) — ignore late arrival
-	pending.delete(d.uuid)
-	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p.resolve(null); return }
+	if (p) pending.delete(d.uuid)
+	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p?.resolve(null); return }
 	stats.done++
 	alphaCache.set(d.uuid, !!d.hasAlpha)
-	p.resolve(`data:${d.mime || 'image/png'};base64,${d.dataB64}`)
+	const url = `data:${d.mime || 'image/png'};base64,${d.dataB64}`
+	if (p) { p.resolve(url); return }
+	// Late arrival — the request already timed out and freed its slot, but the transcode is paid
+	// for. Persist it to IDB and clear the timeout strikes so the next soft-retry succeeds from
+	// cache instantly. WHY: when the grid answers consistently just above FETCH_TIMEOUT_MS, every
+	// batch times out, the late data was discarded, and the retry refetched from scratch — observed
+	// as 8.8k queued textures with 12 slots recycling on timeout and zero forward progress for
+	// minutes. Persisting late arrivals converts that loop into steady progress at the server's
+	// real throughput. (IDB only, NOT urlCache: thousands of pending data-URL strings in a Map
+	// would be its own heap hog; texCacheGet picks them up fine.)
+	stats.late++
+	softAttempts.delete(d.uuid)
+	texCachePut(d.uuid, url, !!d.hasAlpha)
 }
 
 // Fetch a texture's PNG bytes from the server over WS, gated by MAX_INFLIGHT. Resolves the data URL
@@ -95,7 +110,14 @@ function _wsFetch(uuid) {
 	_wire()
 	stats.requested++
 	return new Promise(resolve => {
-		const run = () => {
+		const run = async () => {
+			// The queue can be thousands deep (hours of slot-time at 12×30s) and late arrivals
+			// land in IDB the whole while. Re-check the caches when the slot finally opens —
+			// settling from IDB here costs ~ms instead of a 30s timeout AND another server-queue
+			// entry (re-asks are what keep the server's FIFO minutes deep in the first place).
+			const cachedUrl = urlCache.get(uuid)
+				?? await texCacheGet(uuid).then(c => { if (c) alphaCache.set(uuid, c.hasAlpha); return c?.url ?? null }).catch(() => null)
+			if (cachedUrl) { active--; _pump(); resolve(cachedUrl); return }
 			const { emit } = useRealtimeSocket()
 			// settle() runs exactly once: frees the slot, pumps the queue, resolves. Both the data
 			// path (via pending.resolve) and the timeout path go through it.

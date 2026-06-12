@@ -19,7 +19,7 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
-import { memStats, memUnderPressure, memRatio } from '@/lib/memGovernor.js'
+import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -197,6 +197,8 @@ export function useWorldEngine(canvasRef) {
 	// (Low #21), NOT via AgentUpdate ControlFlags. Send once on each toggle.
 	const stopAlwaysRunWatch = watch(() => uiStore.alwaysRun, (v) => sendSetAlwaysRun(v))
 	const stopLitShadingWatch = watch(() => uiStore.litShading, (on) => relightScene(on))
+	// MenuBar "Rebuild Scene" → full client-side recovery (clear evictions, requeue, resync).
+	const stopSceneRebuildWatch = watch(() => uiStore.sceneRebuildTick, () => rebuildScene('user'))
 	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
 	// built — water plane starts at the default 20m and terrain is coloured against it. When the
 	// real sea level arrives, reposition the water plane and recolour terrain to match.
@@ -279,18 +281,19 @@ export function useWorldEngine(canvasRef) {
 	let _cullTimer = null        // memory-budget distance-culling tick (~1s)
 	let _longTaskObs = null      // PerformanceObserver for main-thread long tasks (telemetry)
 	const evicted = new Set()    // localIds dropped for memory (kept in worldStore + IDB; rebuilt on approach)
-	// WHY a budget below the 0.85 governor: park heap ~60% so the governor is a rare backstop, not the
-	// steady state. R_NEAR < (implicit evict radius): far objects evict first under pressure; only
-	// objects within R_NEAR rebuild — hysteresis prevents thrash at the boundary. Per-tick caps spread
-	// the dispose/build work so the frame doesn't hitch.
-	// Park heap near (but below) the 0.85 governor so we hold as many objects as safely fit, while the
-	// evict/reload swap keeps the RESIDENT set proximity-ordered. (0.60 was too aggressive — it evicted
-	// ~30% more than the governor-only path held.)
-	const CULL_TARGET = 0.78
-	const CULL_RESUME = 0.70     // below this, stream evicted objects back at ANY distance (nearest first).
-	// WHY: a TRANSIENT heap spike (GC sawtooth, worker garbage between recycles) can trip CULL_TARGET
-	// for a few ticks and evict thousands of roots; with reload capped to R_NEAR the scene then stays
-	// gutted forever once pressure clears (observed: 31.9k stored / 606 rendered, heap idling at 25%).
+	// Cull thresholds are fractions of the SELF-ACCOUNTED asset budget (memGovernor appRatio:
+	// tex + mesh-cache + geometry bytes vs appBudgetBytes), NOT process heap. Process heap counts
+	// uncollected garbage and can be inherited from a previous page in the same renderer process —
+	// both lied hard during busy-region cold loads (heap read 87-95% forever → the culler evicted
+	// the entire scene to zero while 1.1GB sat in an unbounded mesh cache). appRatio is truthful and
+	// immediate, so eviction stops exactly when enough far geometry has actually been released.
+	// R_NEAR < (implicit evict radius): far objects evict first under pressure; only objects within
+	// R_NEAR rebuild — hysteresis prevents thrash at the boundary. Per-tick caps spread the
+	// dispose/build work so the frame doesn't hitch.
+	const CULL_TARGET = 1.0      // evict while resident assets exceed the budget
+	const CULL_RESUME = 0.85     // below this, stream evicted objects back at ANY distance (nearest first).
+	// WHY: a transient over-budget spike can trip CULL_TARGET for a few ticks and evict thousands of
+	// roots; with reload capped to R_NEAR the scene would stay gutted once pressure clears.
 	// With real headroom, distance is no reason to keep anything evicted.
 	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
 	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
@@ -302,6 +305,8 @@ export function useWorldEngine(canvasRef) {
 	const MAX_RELOAD_PER_TICK = 48
 	const EVICT_AFTER_TICKS = 3  // require N consecutive over-target ticks before evicting (spike debounce)
 	let _overTicks = 0
+	let _lastGeomB = 0           // live-geometry bytes, refreshed by the 3s telemetry scan (O(n))
+	let _lastDrainTickAt = 0     // last 30ms-interval drain tick — animate() drains only when this starves
 	let _cullStatTick = 0        // throttle the O(n) stats scan (every Nth cull tick)
 	let _drainBuilt = 0, _drainMs = 0, _drainMaxMs = 0  // upsertMesh throughput probe (reset each 5s report)
 	let _applyN = 0, _applyMs = 0, _applyMaxMs = 0      // applySwap (bake-result → THREE geometry) probe
@@ -2856,21 +2861,56 @@ export function useWorldEngine(canvasRef) {
 		}
 		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
 		worldStore.setCullStats({ resident, known, evicted: evicted.size, pct })
+		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
+		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
+		// R_NEAR-guard fixes; this recovers users anyway instead of asking them to hard-reload).
+		_deadScans = (known > 200 && resident === 0) ? _deadScans + 1 : 0
+		if (_deadScans >= 3 && Date.now() - _lastAutoRebuild > 120_000) {
+			_lastAutoRebuild = Date.now()
+			_deadScans = 0
+			rebuildScene('auto: dead scene detected')
+		}
+	}
+
+	// Recovery: clear cull state and rebuild everything we know about. Heavier than Resync World —
+	// the resync replay alone can't recover a culled-empty scene because inbound updates for
+	// memory-evicted roots are deliberately ignored (see the evicted-gate in onObjectUpdate).
+	// Idempotent: re-queuing already-resident objects is a no-op, and cullTick re-evicts (far-first,
+	// R_NEAR-guarded) if the rebuild genuinely re-exceeds the budget.
+	let _lastAutoRebuild = 0
+	let _deadScans = 0
+	function rebuildScene(reason) {
+		const line = `[3D] Rebuild Scene (${reason}): evicted=${evicted.size} resident=${meshMap.size} known=${worldStore.objects.size} buildQ=${pendingMeshIds.size}`
+		debugStore.push('warn', line)
+		try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: line, stack: '' }) } catch { /* ignore */ }
+		evicted.clear()
+		_overTicks = 0
+		for (const [id] of worldStore.objects) {
+			if (!meshMap.has(id)) pendingMeshIds.add(id)
+		}
+		// Server replay refreshes worldStore (objects + terrain) underneath the rebuild.
+		try { wsEmit(C.RESYNC_WORLD, {}) } catch { /* not connected */ }
 	}
 
 	// Memory-budget distance culling. WHY both passes EVERY tick (not evict-XOR-reload): on a dense
-	// region heap stays above target, so an "else if reload" never runs → objects ahead never rebuild
+	// region assets stay above target, so an "else if reload" never runs → objects ahead never rebuild
 	// as you walk (you walk into emptiness). Instead, ALWAYS reload the nearest evicted within R_NEAR
 	// (stream-in), and SEPARATELY evict the farthest when over budget (fund it). Net: the resident set
 	// tracks proximity, bounded by the budget. selectEvictions takes farthest-first so a just-reloaded
-	// near object is never the one evicted. Chrome-gated (memRatio null elsewhere → no-op).
+	// near object is never the one evicted. Works on all browsers (self-accounted bytes, not
+	// performance.memory); the process-heap emergency brake still applies where measurable.
 	function cullTick() {
-		const r = memRatio()
-		if (r == null || !camera) { return }
+		if (!camera) return
+		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
+		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan).
+		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB)
+		const r = appRatio()
+		const heapR = memRatio()
+		const over = r > CULL_TARGET || emergencyHeap()
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
 		// Built once per tick, only when there is cull work to do.
-		const kids = (evicted.size || r > CULL_TARGET) ? groupChildrenByRoot(worldStore.objects) : null
+		const kids = (evicted.size || over) ? groupChildrenByRoot(worldStore.objects) : null
 		// 1) Stream-in: rebuild nearest evicted objects within R_NEAR, regardless of current pressure.
 		if (evicted.size) {
 			const cands = []
@@ -2893,9 +2933,9 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 		// 2) Stream-out: if over budget, evict the farthest resident ROOT meshes (whole linksets).
-		// Debounced: a single spiky memRatio sample (GC sawtooth) must not trigger eviction — only
-		// sustained pressure (EVICT_AFTER_TICKS consecutive over-target ticks) does.
-		_overTicks = r > CULL_TARGET ? _overTicks + 1 : 0
+		// Debounced: a single spiky sample must not trigger eviction — only sustained pressure
+		// (EVICT_AFTER_TICKS consecutive over-target ticks) does.
+		_overTicks = over ? _overTicks + 1 : 0
 		if (_overTicks >= EVICT_AFTER_TICKS) {
 			const editId = uiStore.editObjectId
 			const cands = []
@@ -2907,7 +2947,10 @@ export function useWorldEngine(canvasRef) {
 				if (id === ownAvatarLocalId || id === editId) continue
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK)
+			// R_NEAR guard: never evict the player's immediate surroundings — eviction stops once
+			// only near objects remain instead of emptying the scene (see selectEvictions).
+			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK, R_NEAR)
+			let _evRoots = 0, _evKids = 0
 			for (const id of ids) {
 				const childIds = kids.get(id) ?? []
 				// Never evict a linkset somebody is sitting on — a seated avatar parents to a prim, and
@@ -2921,6 +2964,14 @@ export function useWorldEngine(canvasRef) {
 				removeMesh(id)
 				pendingMeshIds.delete(id)
 				evicted.add(id)   // root only — reload re-queues children from the index
+				_evRoots++; _evKids += childIds.length
+			}
+			// Forensics for the mass-disappearance bug: cull evictions were previously silent, making
+			// them indistinguishable from sim KillObject in the logs. One line per evicting tick.
+			if (_evRoots) {
+				const eline = `[Cull] evicted ${_evRoots} roots (+${_evKids} children) app=${(r * 100).toFixed(0)}% heap=${heapR != null ? (heapR * 100).toFixed(0) + '%' : 'n/a'} overTicks=${_overTicks} evictedTotal=${evicted.size} resident=${meshMap.size}`
+				debugStore.push('warn', eline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: eline, stack: '' }) } catch { /* ignore */ }
 			}
 			// Also bound the in-memory texture cache (the larger, mesh-independent hog). Prunes only
 			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
@@ -3223,8 +3274,8 @@ export function useWorldEngine(canvasRef) {
 	// real per-frame cost knob, so if FPS stays under LIT_MIN_FPS for LIT_LOW_MS while lit shading is
 	// on, drop back to unlit ONCE per session (the one-shot stops a re-enable→re-disable fight if the
 	// user insists) and tell the user via notification toast.
-	const LIT_MIN_FPS = 20
-	const LIT_LOW_MS  = 10000
+	const LIT_MIN_FPS = 4// suggested was 20 but I hit low a lot when it's just busy.  GPB
+	const LIT_LOW_MS  = 45000// suggested was 10000 but I'm testing whether this is a better timeframe
 	let _fpsFrames = 0, _fpsWindowStart = 0, _lowFpsSince = 0, _litAutoDropped = false
 	function updateFps(time) {
 		_fpsFrames++
@@ -3269,9 +3320,10 @@ export function useWorldEngine(canvasRef) {
 		const _frT0 = performance.now()
 		updateFps(time)
 		// Starvation-proof drain: ~125ms long tasks (see [Main] telemetry) starve the 30ms interval to
-		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. Budgeted (8ms), so
-		// the frame cost is bounded; the interval still covers the unfocused case.
-		drainMeshQueue()
+		// ~0.5Hz, so also drain here — rAF keeps firing even when intervals don't. ONLY when actually
+		// starved (>100ms since the last interval tick): unconditionally draining added up to 8ms to
+		// EVERY frame on top of the render cost, tripping rAF-violation floods on dense regions.
+		if (_frT0 - _lastDrainTickAt > 100) drainMeshQueue()
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
@@ -3544,6 +3596,7 @@ export function useWorldEngine(canvasRef) {
 		// Reparent sweep is cheaper; run it every 4th tick.
 		let _drainTick = 0
 		_meshDrainTimer = setInterval(() => {
+			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
 			drainMeshQueue()
 			pumpTextures()   // resume governor-paused texture fetches once heap pressure clears
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
@@ -3554,28 +3607,40 @@ export function useWorldEngine(canvasRef) {
 		_texBackfillTimer = setInterval(backfillTextures, 3000)
 		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
 		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
+		let _relayTick = 0
 		_assetStatsTimer = setInterval(() => {
+			// Server-log relay cadence: every 3rd tick (~9s). The 3s full rate stays in the client
+			// debug panel; relaying every tick made [Mem]/[Main] the server log's biggest flood.
+			const _relay = (_relayTick++ % 3) === 0
 			const t = getTextureStats(), m = getMeshStats()
 			// Memory telemetry: always report heap pressure to the server log (C.CLIENT_LOG → [ClientLog])
 			// so it can be watched live while tuning the governor. Quiet on non-Chrome (memStats null).
-			const mg = memStats()
-			if (mg) {
+			// Resident-byte breakdown: where OUR bytes actually live. geomMB sums each meshMap entry's
+			// own BufferGeometry attributes (children are their own entries — no double count). This
+			// scan feeds the governor's self-accounted budget, so it runs on every browser (the
+			// process-heap segment of the log line stays Chrome-only).
+			let geomB = 0
+			for (const mm of meshMap.values()) {
+				const g = mm.geometry
+				if (!g) continue
+				for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
+				geomB += g.index?.array?.byteLength || 0
+			}
+			_lastGeomB = geomB
+			const texB = getTextureBytes(), meshB = getMeshBytes()
+			setAppBytes(texB + meshB + geomB)
+			{
+				const mg = memStats()
 				const pressure = memUnderPressure()
-				// Heap-hog breakdown: where the resident bytes actually live. geomMB sums each meshMap
-				// entry's own BufferGeometry attributes (children are their own entries — no double count).
-				let geomB = 0
-				for (const mm of meshMap.values()) {
-					const g = mm.geometry
-					if (!g) continue
-					for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
-					geomB += g.index?.array?.byteLength || 0
-				}
 				const mb = (b) => (b / 1048576).toFixed(0)
-				const line = `[Mem] heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(getTextureBytes())} meshCacheMB=${mb(getMeshBytes())} geomMB=${mb(geomB)}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size}`
+				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
+				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)}` +
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size}`
 				debugStore.push(pressure ? 'warn' : 'info', line)
-				try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+				if (_relay || pressure) {
+					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
+				}
 			}
 			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
 			if (_drainBuilt) {
@@ -3593,7 +3658,9 @@ export function useWorldEngine(canvasRef) {
 					` | longtasks=${_ltN} total=${_ltMs.toFixed(0)}ms max=${_ltMaxMs.toFixed(0)}ms` +
 					` | ws parse=${ws.parseMs.toFixed(0)}ms top: ${ws.top || '-'}`
 				debugStore.push('info', mline)
-				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
+				if (_relay) {
+					try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
+				}
 				_frN = 0; _frMs = 0; _frMaxMs = 0; _ltN = 0; _ltMs = 0; _ltMaxMs = 0
 			}
 			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms.
@@ -3608,7 +3675,7 @@ export function useWorldEngine(canvasRef) {
 			if (!busy && t.requested === _lastTexReq && m.requested === _lastMeshReq) return  // idle, nothing new
 			_lastTexReq = t.requested; _lastMeshReq = m.requested
 			debugStore.push('info',
-				`[Assets] tex ✓${t.done} ✗${t.failed} ⏱${t.timeout} inflight=${t.inflight} q=${t.queued} cache=${t.cached} | ` +
+				`[Assets] tex ✓${t.done} ✗${t.failed} ⏱${t.timeout} late=${t.late} inflight=${t.inflight} q=${t.queued} cache=${t.cached} | ` +
 				`mesh ✓${m.done} ✗${m.failed} ⏱${m.timeout} inflight=${m.inflight} q=${m.queued} cache=${m.cached}`)
 		}, 3000)
 		window.addEventListener('keydown', onKeyDown, { passive: false })
@@ -3643,6 +3710,7 @@ export function useWorldEngine(canvasRef) {
 		_liveEngine = null
 		stopAlwaysRunWatch()
 		stopLitShadingWatch()
+		stopSceneRebuildWatch()
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()

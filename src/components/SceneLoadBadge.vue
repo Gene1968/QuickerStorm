@@ -9,7 +9,7 @@ const show = computed(() => world.cullStats.known > 0 && world.cullStats.pct < 1
 <template>
 	<div
 		v-if="show"
-		class="absolute top-14 right-2 z-20 -mt-2 px-2 py-1 rounded bg-black/60 text-2xs font-mono text-white/80 pointer-events-none select-none"
+		class="absolute top-14 right-2 z-20 -mt-2 px-2 py-1 rounded bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
 		:title="`Resident ${world.cullStats.resident} / known ${world.cullStats.known} · evicted ${world.cullStats.evicted} for memory`"
 	>
 		nearby scene {{ world.cullStats.pct }}% loaded

@@ -528,7 +528,7 @@ onUnmounted(() => {
 					<template v-else-if="activeTab === 'network'">
 						<div class="flex items-center justify-between">
 							<h2 class="pf-section-heading">Network &amp; Files</h2>
-							<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh all caches</button>
+							<button class="pf-cache-retry" @click="cache.refresh()">↻ Refresh all cache counts</button>
 						</div>
 
 						<!-- Scene (resident vs known objects — memory-budget culling) -->

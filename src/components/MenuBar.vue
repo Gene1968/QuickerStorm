@@ -135,9 +135,17 @@ function resyncWorld() {
 	emit(C.RESYNC_WORLD, {})
 }
 
+// Heavier than Resync World: also clears the engine's cull-evicted set and re-queues every known
+// object (resync alone is ignored for memory-evicted roots, so it can't refill a culled scene).
+function rebuildScene() {
+	close()
+	ui.requestSceneRebuild()
+}
+
 // ── Menu definitions ──────────────────────────────────────────────────────
-// item: { label, kbd?, action?, disabled?, sep?, submenu? }
+// item: { label, kbd?, action?, disabled?, sep?, submenu?, title? }
 // sep: true → divider. submenu: Item[] → nested dropdown (hover to open, CSS-only).
+// title: native tooltip on hover — use for items whose effect isn't obvious from the label.
 
 const MENUS = [
 	{
@@ -150,15 +158,22 @@ const MENUS = [
 			{ sep: true },
 			{ label: 'Now wearing…',						action: () => act(() => ui.openAppearanceOnTab('wearing')) },
 			{ label: 'Outfits',				kbd: 'Ctrl+O',	checked: () => ui.showAppearance && ui.appearanceActiveTab === 'outfits', action: () => act(() => ui.toggleAppearanceOnTab('outfits')) },
-			{ sep: true },
-			{ label: 'Snapshot…',			disabled: true },
+			{ label: 'Move Controls',						action: () => ui.toggleMoveControls(), active: () => ui.showMoveControls },
 			{ sep: true },
 			{
 				label: 'Avatar Health',
 				submenu: [
-					{ label: 'Force Appearance Update', kbd: 'Ctrl+Alt+R', action: () => act(rebake) },
+					{ label: 'Force Appearance Update (Rebake)', kbd: 'Ctrl+Alt+R', action: () => act(rebake) },
+					{ label: 'Undeform Avatar',						disabled: true },
+					{ label: 'Reset skeleton',						disabled: true },
+					{ label: 'Show Avatar Complexity Information',	disabled: true },
+					{ label: 'Scripts',								disabled: true },
+					{ label: 'Lag meter',							disabled: true },
+					{ label: 'Recreate LSL bridge',					disabled: true },
 				],
 			},
+			{ sep: true },
+			{ label: 'Snapshot…',			disabled: true },
 			{ sep: true },
 			{ label: 'Logout avatar',						action: logout },
 		],
@@ -214,7 +229,10 @@ const MENUS = [
 	{
 		id: 'advanced', label: 'Advanced',
 		items: [
-			{ label: 'Resync World',										action: resyncWorld },
+			{ label: 'Resync World',										action: resyncWorld,
+				title: 'Quick: replay the relay server\'s cached world (terrain, objects, position) — fixes missed packets after a reconnect' },
+			{ label: 'Rebuild Scene',										action: rebuildScene,
+				title: 'Thorough: restore memory-evicted objects, rebuild every known mesh, then resync — use when objects are missing (slower)' },
 			{ label: 'Rebake Textures',	disabled: true },
 			{ sep: true },
 			{ label: '✅ Render UI menus',				kbd: 'Ctrl+Alt+F1',	action: () => act(() => ui.toggleUiVisible()) },
@@ -283,6 +301,7 @@ const MENUS = [
 										class="mb-item"
 										:class="{ 'mb-item--disabled': sub.disabled }"
 										:disabled="sub.disabled"
+										:title="sub.title"
 										@click="playSound('tick.mp3', 0.6); sub.action && sub.action()"
 									>
 										<span class="mb-item-label">{{ sub.label }}</span>
@@ -298,6 +317,7 @@ const MENUS = [
 							class="mb-item"
 							:class="{ 'mb-item--disabled': item.disabled }"
 							:disabled="item.disabled"
+							:title="item.title"
 							@click="playSound('tick.mp3', 0.6); item.action && item.action()"
 						>
 							<span class="mb-item-label"><span v-if="item.checked" class="mb-item-check">{{ item.checked() ? '✓' : '' }}</span>{{ item.label }}</span>

@@ -4,10 +4,11 @@ import { join } from 'path'
 import { decodeJ2C, j2cToPng, j2cToPngWithAlpha, pixelsHaveAlpha, downscalePixels } from '../lib/j2c'
 import { decode as decodePng } from 'fast-png'
 
-// Real SL terrain texture codestreams staged in the repo — exercise the actual decoder, not a mock.
+// Real SL terrain texture codestreams — exercise the actual decoder, not a mock. Fixtures live in
+// fixtures/ since the runtime copies were replaced by .webp (terrain texturing, 17b14d4).
 // WHY join(import.meta.dir, …): resolve relative to this file so the path holds regardless of the
 // cwd bun runs from (single-file vs directory test invocation differ).
-const img = (name: string) => readFileSync(join(import.meta.dir, '../../src/assets/img', name))
+const img = (name: string) => readFileSync(join(import.meta.dir, 'fixtures', name))
 const fixture = img('terrain-dirt.j2c')
 
 describe('j2c', () => {

@@ -241,7 +241,16 @@
       "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bljxllghi.output\" -Pattern 'Watch\\\\] Compressed raw' | Select-Object -Last 1 | ForEach-Object { $_.Line })",
       "PowerShell(Select-String -Path \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\bljxllghi.output\" -Pattern 'TEDUMP|Sculpt\\\\]' | Select-Object -Last 6 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(260, $_.Line.Length\\)\\) })",
       "PowerShell($dirs = @\\(\"$env:TEMP\", \"$env:USERPROFILE\\\\.claude\\\\projects\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\"\\); foreach \\($d in $dirs\\) { if \\(Test-Path $d\\) { Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt \\(Get-Date\\).AddHours\\(-6\\) -and $_.Length -gt 1000 } | Sort-Object LastWriteTime -Descending | Select-Object -First 15 FullName, Length, LastWriteTime } })",
-      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 12)"
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 12)",
+      "Bash(rg *)",
+      "PowerShell(npx esbuild src/composables/useWorldEngine.js --log-level=error --outfile=NUL 2>&1 | Select-Object -First 10)",
+      "PowerShell(Get-Item server-log.txt | Select-Object Length; \\(Get-Content server-log.txt | Measure-Object -Line\\).Lines)",
+      "PowerShell(npx vitest run src/__tests__/composables/useTeleport.test.js 2>&1 | Select-Object -Last 8)",
+      "PowerShell(npx esbuild src/composables/useMeshFetch.js --log-level=error --outfile=NUL; if \\($LASTEXITCODE -eq 0\\) { \"parse OK\" })",
+      "PowerShell(npx esbuild src/composables/useWorldEngine.js --log-level=error --outfile=NUL; if \\($LASTEXITCODE -eq 0\\) { \"parse OK\" })",
+      "PowerShell(npx esbuild src/composables/useWorldEngine.js --log-level=error --outfile=NUL; $a=$LASTEXITCODE; npx esbuild src/lib/memGovernor.js --log-level=error --outfile=NUL; if \\($a -eq 0 -and $LASTEXITCODE -eq 0\\) { \"both parse OK\" })",
+      "PowerShell(git checkout *)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }
