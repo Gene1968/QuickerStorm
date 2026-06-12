@@ -1340,7 +1340,7 @@ export function useWorldEngine(canvasRef) {
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
 		labelRenderer = new CSS2DRenderer()
-		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;'
+		labelRenderer.domElement.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;'
 		canvasRef.value.parentElement.appendChild(labelRenderer.domElement)
 
 		// WHY: Region size from sessionStore (256 standard, 512 var-region). PlaneGeometry segments
