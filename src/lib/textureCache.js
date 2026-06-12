@@ -104,6 +104,14 @@ export function planEvictions(entries, capBytes) {
  * on miss. `hasAlpha` (whether the WebP carries real transparency) rides along so the client can
  * pick blend-vs-opaque without re-fetching; old records pre-dating the field read as `false`.
  */
+// WHY watchdog: a get that never settles (aborted txn with no onabort route, or a read starved
+// minutes behind a write convoy — measured live 38s avg / 178s max during session degradation)
+// freezes the caller's blobInflight promise FOREVER; every later request for that uuid joins the
+// frozen promise and the whole texture queue wedges. Past the watchdog we declare a miss — the
+// caller re-fetches from the network (server memoizes), which is slow-but-alive instead of stuck.
+const GET_WATCHDOG_MS = 10_000
+let _watchdogTrips = 0
+
 export async function texCacheGet(uuid, now = Date.now()) {
 	try {
 		const db = await openDb()
@@ -112,14 +120,23 @@ export async function texCacheGet(uuid, now = Date.now()) {
 			// touch lastUsed) takes a store write-lock, so IndexedDB SERIALIZES them all one-at-a-time
 			// → textures trickle in (white scene). readonly tx run concurrently. LRU instead tracks
 			// lastUsed at put-time (age-since-cached); a cache hit defers a batched touch (see below).
+			const timer = setTimeout(() => {
+				_watchdogTrips++
+				if (_watchdogTrips <= 5 || _watchdogTrips % 100 === 0) {
+					console.warn(`[TexCache] get watchdog (${GET_WATCHDOG_MS}ms) → miss for ${uuid} (trip #${_watchdogTrips})`)
+				}
+				resolve(null)
+			}, GET_WATCHDOG_MS)
+			const settle = (fn, v) => { clearTimeout(timer); fn(v) }
 			const tx  = db.transaction(STORE, 'readonly')
+			tx.onabort = () => settle(reject, tx.error ?? new Error('get txn aborted'))
 			const req = tx.objectStore(STORE).get(uuid)
 			req.onsuccess = () => {
 				const rec = req.result
 				if (rec) _touchLater(uuid, now)
-				resolve(rec ? { blob: rec.blob, hasAlpha: !!rec.hasAlpha } : null)
+				settle(resolve, rec ? { blob: rec.blob, hasAlpha: !!rec.hasAlpha } : null)
 			}
-			req.onerror = () => reject(req.error)
+			req.onerror = () => settle(reject, req.error)
 		})
 	} catch (e) {
 		console.warn('[TexCache] get failed:', e)
@@ -151,6 +168,7 @@ async function flushTouches() {
 			}
 			tx.oncomplete = resolve
 			tx.onerror = resolve
+			tx.onabort = resolve   // an abort must not strand the touch flush (best-effort anyway)
 		})
 	} catch { /* best-effort LRU */ }
 }
@@ -193,7 +211,8 @@ export async function texCachePut(uuid, blob, hasAlpha = false, now = Date.now()
 				}
 			}
 			tx.oncomplete = () => { if (pending) _lastStats = pending; resolve() }
-			tx.onerror    = () => reject(tx.error)
+			tx.onerror    = () => reject(tx.error ?? new Error('put txn error'))
+			tx.onabort    = () => reject(tx.error ?? new Error('put txn aborted'))
 		})
 	} catch (e) {
 		console.warn('[TexCache] put failed:', e)
@@ -216,6 +235,7 @@ export async function getTextureCacheStats() {
 			metaReq.onsuccess  = () => { bytes = metaReq.result?.totalBytes ?? 0 }
 			tx.oncomplete = () => { _lastStats = { count, bytes }; resolve({ count, bytes, capBytes: _capBytes }) }
 			tx.onerror = () => reject(tx.error)
+			tx.onabort = () => reject(tx.error ?? new Error('stats txn aborted'))
 		})
 	} catch { return { count: 0, bytes: 0, capBytes: _capBytes } }
 }
@@ -241,7 +261,9 @@ export async function texFailedLoad(now = Date.now()) {
 	try {
 		const db = await openDb()
 		const rows = await new Promise((resolve, reject) => {
-			const req = db.transaction(FAILED, 'readonly').objectStore(FAILED).getAll()
+			const tx = db.transaction(FAILED, 'readonly')
+			tx.onabort = () => reject(tx.error ?? new Error('failed-load txn aborted'))
+			const req = tx.objectStore(FAILED).getAll()
 			req.onsuccess = () => resolve(req.result || [])
 			req.onerror   = () => reject(req.error)
 		})
@@ -262,6 +284,7 @@ export async function texFailedMark(uuid, now = Date.now()) {
 			tx.objectStore(FAILED).put({ uuid, ts: now })
 			tx.oncomplete = resolve
 			tx.onerror    = resolve  // best-effort — swallow
+			tx.onabort    = resolve
 		})
 	} catch { /* best-effort */ }
 }
@@ -276,6 +299,7 @@ export async function clearTextureCache() {
 			tx.objectStore(META).put({ k: 'stats', totalBytes: 0, count: 0 })
 			tx.oncomplete = () => { _lastStats = { count: 0, bytes: 0 }; resolve() }
 			tx.onerror = () => reject(tx.error)
+			tx.onabort = () => reject(tx.error ?? new Error('clear txn aborted'))
 		})
 	} catch { /* ignore */ }
 }
