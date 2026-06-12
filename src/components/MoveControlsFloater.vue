@@ -17,7 +17,7 @@ const moveMode = computed(() => {
 })
 
 // ── Synthetic key dispatch ────────────────────────────────────────────────
-// WHY: useOfficeEngine.js movement loop reads `heldKeys` Set populated by
+// WHY: useWorldEngine.js movement loop reads `heldKeys` Set populated by
 // window keydown/keyup listeners. Synthetic events means these buttons work
 // identically to keyboard with zero engine changes needed.
 function press(code, key, shiftKey = false) {
@@ -48,7 +48,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 // ── Button map ────────────────────────────────────────────────────────────
 // Row layout: [TurnL][Fwd][TurnR][Up] / [StrafeL][Back][StrafeR][Down]
 // CPP ref for strafe: LLJoystickAgentSlide → gAgent.moveLeft(1) / gAgent.moveLeft(-1)
-// JS wired via Shift+A / Shift+D — confirmed working in useOfficeEngine.js
+// JS wired via Shift+A / Shift+D — confirmed working in useWorldEngine.js
 const BTNS = [
 	// ── Row 1 ──────────────────────────────────────────────────────────
 	{ id: 'turn_left',    label: '↰', sub: '← A',   title: 'Turn left (← or A)',    code: 'ArrowLeft',  key: 'ArrowLeft',  wired: true              },

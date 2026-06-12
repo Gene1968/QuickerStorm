@@ -53,16 +53,6 @@ export default ({ mode }) => {
 			host: '0.0.0.0',
 			port: 5173,
 			strictPort: false, // bump to next available port if 5173 is in use
-			proxy: {
-				// Proxy Slack API calls to avoid CORS in dev.
-				// SlackApi.js uses /slack-api/ as base when running on localhost.
-				'/slack-api': {
-					target: 'https://slack.com/api',
-					changeOrigin: true,
-					rewrite: (p) => p.replace(/^\/slack-api/, ''),
-					secure: true,
-				},
-			},
 		},
 		plugins: plugins,
 		assetsInclude: ['**/*.mp4', '**/*.pdf'],

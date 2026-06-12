@@ -34,7 +34,7 @@ Copy `.env.development.local-example` → `.env.development.local` before first 
 
 - **Vite SPA** served standalone (static host or local).
 - **Bun WS server** (`server/index.ts`) handles signaling, presence relay, pose sync, chat, cursors, reactions — all in real time. Modular handlers under `server/handlers/`.
-- **Hash-based routing** (`createWebHashHistory`) — required for standalone embedding. Two routes: `/setup` and `/office`. All unknown paths → `/office`.
+- **Hash-based routing** (`createWebHashHistory`) — required for standalone embedding. Two routes: `/landing` and `/world`. All unknown paths → `/landing`.
 
 ### Key Composables
 
@@ -51,13 +51,13 @@ Copy `.env.development.local-example` → `.env.development.local` before first 
 
 ### Pinia Stores
 
-`src/stores/` — `avatarStore` (identity, colors, avatar config, status), `presenceStore`, `officeStore`, `userStore`, `AuthStore`, `theme`, `error`.
+`src/stores/` — `avatarStore` (identity, colors, avatar config, status), `presenceStore`, `worldStore`, `userStore`, `sessionStore`, `uiStore`, `theme`, `error`.
 
 Naming: stores use `*Store` suffix; composables use `use*` prefix.
 
 ### Three.js / 3D Engine
 
-`useOfficeEngine.js` owns the Three.js scene. GSAP handles tweening. Door meshes animate open/close and block navigation when locked. Avatar meshes are built from `avatarStore` config (colors, skin, hair).
+`useWorldEngine.js` owns the Three.js scene. GSAP handles tweening. Avatar meshes, prim meshes, and terrain are built/updated here. Avatar appearance is driven by `avatarStore` config (colors, skin, hair).
 
 ## Presence System Warning
 

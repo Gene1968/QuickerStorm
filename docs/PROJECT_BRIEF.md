@@ -74,8 +74,8 @@ Phase 3 (HTTP capability layer — in progress, May 2026):
 ## Out of Scope
 
 - Backend database / multi-user persistence (sim is authoritative)
-- Slack / Google / Microsoft / Supabase integrations (removed earlier; do not reintroduce)
-- Office-collab / meeting-room features (legacy from prior product; `useOfficeEngine.js` being phased out)
+- Third-party auth / social integrations (removed earlier; do not reintroduce)
+- Calendar / video-conferencing features (removed earlier; do not reintroduce)
 - LSL script editing — write goes to sim caps anyway, but no client-side IDE
 - Marketplace / commerce — out of scope; users use thick client for L$ transactions
 - Mobile-native app — web-only

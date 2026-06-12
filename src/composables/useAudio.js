@@ -78,7 +78,6 @@ export const voiceVolume   = ref(1); export const voiceMuted   = ref(false)
 function soundOk()          { return _unlocked && !isAllAudioMuted.value }
 function interfaceSoundOk() { return soundOk() && !interfaceMuted.value }
 
-// WHY: kept for backward compat with useOfficeEngine.js which imports hasSoundConsent.
 // Always returns true — consent gate is removed.
 export function hasSoundConsent() { return true }
 

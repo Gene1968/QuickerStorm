@@ -26,7 +26,7 @@ Testing primarily against **OSGrid** and **NeverWorld** so far. Other grids plan
 
 - **Frontend**: Vue 3 SPA, hash-based routing for standalone embed.
 - **Bun WS server**: bridges LLUDP UDP packets to/from the browser via JSON messages; holds circuit state (`server/state/sessions.ts`).
-- **No backend database**. No Supabase, no Slack, no Google. Earlier scaffolding for those was removed per the `docs/superpowers/specs/` spec.
+- **No backend database**. No Supabase. Earlier scaffolding for those was removed per the `docs/superpowers/specs/` spec.
 
 ---
 
@@ -82,7 +82,7 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 
 | Path | Purpose |
 |------|---------|
-| `src/composables/useWorldEngine.js` | **Owns the Three.js scene.** Mesh creation, avatar/prim spawning, terrain mesh, follow camera, dead-reckoning, input. Replaces the older `useOfficeEngine.js`. |
+| `src/composables/useWorldEngine.js` | **Owns the Three.js scene.** Mesh creation, avatar/prim spawning, terrain mesh, follow camera, dead-reckoning, input. |
 | `src/composables/useRealtimeSocket.js` | Singleton WS connection; dispatches typed messages to handlers. **Dispatch passes `msg.d` directly to handler, not full envelope** — handlers receive payload, not `{t,d}` |
 | `src/composables/useTeleport.js` | `requestTeleport` (same-region) + `requestRegionTeleport` (cross-region via MapNameRequest→MAP_TELEPORT). Plays woosh on dispatch |
 | `src/composables/useLLUDP.js` | Client→server WS emit wrappers (move, chat, teleport, map query, etc) |
@@ -141,8 +141,7 @@ function slQuatToThree(x, y, z, w) { return new THREE.Quaternion(x, z, -y, w) }
 
 Removed earlier in development (don't reintroduce):
 - Supabase backend
-- Google / Slack auth
-- Office-collab / meeting-room scaffolding (`useOfficeEngine.js` is being phased out)
-- Calendar / Jitsi integration
+- Third-party auth / social integrations
+- Calendar / video-conferencing integration
 
 If old code or doc references these, treat as stale and remove on touch.

@@ -62,7 +62,7 @@ export function muteLocal () { _muteLocalFn?.() }
 
 /**
  * Per-peer audio analysers keyed by signalingId.
- * Exported so useOfficeEngine can read amplitude each render frame,
+ * Exported so useWorldEngine can read amplitude each render frame,
  * giving frame-accurate mouth sync without a signaling round-trip.
  */
 export const peerAnalysers = new Map()  // signalingId → { analyser, buf }
