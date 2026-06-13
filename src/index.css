@@ -4,106 +4,83 @@
    re-emits the CSS and full-reloads the dev server. Exclude non-source dirs. */
 @source not "../docs";
 
-/* ── Dark theme variables — earth / rust ─────────────────────────── */
+/* ── PALETTE (swap this block to change theme) ──────────────────── */
 /*
- * Palette shades used here:
- *   rufous-s80 #200B05 · rufous-s60 #40160B  · rufous-s40 #602010 · rufous-s20 #802B16
- *   rufous     #A0361B · rufous-80  #B35E49  · rufous-60  #C68676
- *   hunter-s40 #1A3726 · forest-s60 #081610
- *   carrot     #E9972D · carrot-60  #F2C181  · sinopia    #C4501B
+ * Replace --primary-1..9 and their -ch triplets to change the entire colour scheme.
+ * Semantic tokens below reference these — nothing else needs editing.
+ * Scale: 1 = darkest, 9 = lightest.
  */
 :root {
 	color-scheme: dark;
-	--color-bg:     #200B05;				/* rufous-s80 — deepest dark */
-	--color-bg2:    #40160B;				/* rufous-s60 */
-	--color-card:   #602010;				/* rufous-s40 */
-	--color-card2:  #1A3726;				/* hunter-s40 — green counterpoint */
-	--color-side:   rgba(8, 22, 16, 0.93);/* forest-s60 alpha */
-	--color-brd:    #802B16;				/* rufous-s20 */
-	--color-brd2:   #A0361B;				/* rufous */
-	--color-t1:     #F5EAE0;
-	--color-t2:     #C68676;				/* rufous-60 tint */
-	--color-tm:     #B35E49;				/* rufous-80 tint — muted warm */
-	--color-accent: #E9972D;				/* carrot — primary interactive */
-	--color-accent2:#C4501B;				/* sinopia */
-	--color-accent3:#F2C181;				/* carrot-60 tint */
-	/* RGB channel triplets — enable Tailwind opacity modifiers (bg-card/50 etc.) */
-	--color-bg-ch:      32 11 5;
-	--color-bg2-ch:     64 22 11;
-	--color-card-ch:    96 32 16;
-	--color-card2-ch:   26 55 38;
-	--color-side-ch:    8 22 16;
-	--color-brd-ch:     128 43 22;
-	--color-brd2-ch:    160 54 27;
-	--color-t1-ch:      245 234 224;
-	--color-t2-ch:      198 134 118;
-	--color-tm-ch:      179 94 73;
-	--color-accent-ch:  233 151 45;
-	--color-accent2-ch: 196 80 27;
-	--color-accent3-ch: 242 193 129;
-	--color-blue:   #2979ff;				/* functional info/link */
-	--color-teal:   #E9972D;				/* carrot alias */
-	--color-green:  #2B5B3F;				/* hunter */
-	--color-red:    #f44336;
-	--color-accent-orng: #E9972D;
-	/* ── Named palette ───────────────────────────────────────────── */
-	--color-rufous:  #A0361B;
-	--color-sinopia: #C4501B;
-	--color-carrot:  #E9972D;
-	--color-hunter:  #2B5B3F;
-	--color-forest:  #143829;
-	/* ── Floater alphas (use for HUD/panels/labels) ──────────────── */
-	--color-floater:    rgba(32, 11, 5, 0.85);	/* rufous-s80 */
-	--color-floater-sm: rgba(32, 11, 5, 0.45);
-	--color-floater-lg: rgba(32, 11, 5, 0.95);
-	--sidebar-w:         clamp(9rem, 15vw, 19rem);
-	--sidebar-collapsed-w: 3.25rem;
-	/* Updated by TheSidebar when collapsed; use --canvas-left to center fixed DOM elements over the canvas */
-	--canvas-left:       var(--sidebar-w);
+
+	/* primary scale */
+	--primary-1: #200B05;   --primary-1-ch: 32 11 5;
+	--primary-2: #40160B;   --primary-2-ch: 64 22 11;
+	--primary-3: #602010;   --primary-3-ch: 96 32 16;
+	--primary-4: #802B16;   --primary-4-ch: 128 43 22;
+	--primary-5: #A0361B;   --primary-5-ch: 160 54 27;
+	--primary-6: #B35E49;   --primary-6-ch: 179 94 73;
+	--primary-7: #C68676;   --primary-7-ch: 198 134 118;
+	--primary-8: #D9AFA4;   --primary-8-ch: 217 175 164;
+	--primary-9: #ECD7D1;   --primary-9-ch: 236 215 209;
+
+	/* accent: interactive / highlight */
+	--accent:       #E9972D;   --accent-ch:       233 151 45;
+	--accent-dark:  #C4501B;   --accent-dark-ch:  196 80 27;
+	--accent-light: #F2C181;   --accent-light-ch: 242 193 129;
+
+	/* green: alt surface family (sidebar, panel-alt) */
+	--green-deep:   #081610;   --green-deep-ch:   8 22 16;
+	--green-dark:   #1A3726;   --green-dark-ch:   26 55 38;
+	--green-mid:    #2B5B3F;   --green-mid-ch:    43 91 63;
+	--green-light:  #D5DED9;   --green-light-ch:  213 222 217;
+
+	/* functional (not palette-derived) */
+	--color-blue: #2979ff;
+	--color-red:  #f44336;
+
+	/* ── SEMANTIC TOKENS (don't edit — edit the palette above) ──────── */
+	--surface:      var(--primary-1);   --surface-ch:      var(--primary-1-ch);
+	--panel:        var(--primary-3);   --panel-ch:        var(--primary-3-ch);
+	--panel-alt:    var(--green-dark);  --panel-alt-ch:    var(--green-dark-ch);
+	--sidebar:      rgb(var(--green-deep-ch) / 0.93);
+	--sidebar-ch:   var(--green-deep-ch);
+	--edge:         var(--primary-4);   --edge-ch:         var(--primary-4-ch);
+	--edge-strong:  var(--primary-5);   --edge-strong-ch:  var(--primary-5-ch);
+	--fg:           var(--primary-9);   --fg-ch:           var(--primary-9-ch);
+	--fg-subtle:    var(--primary-7);   --fg-subtle-ch:    var(--primary-7-ch);
+	--fg-muted:     var(--primary-6);   --fg-muted-ch:     var(--primary-6-ch);
+
+	/* floater alpha surfaces — auto-follow panel when palette changes */
+	--floater:      rgb(var(--panel-ch) / 0.85);
+	--floater-sm:   rgb(var(--panel-ch) / 0.45);
+	--floater-lg:   rgb(var(--panel-ch) / 0.95);
+
+	/* layout — unchanged */
+	--sidebar-w:            clamp(9rem, 15vw, 19rem);
+	--sidebar-collapsed-w:  3.25rem;
+	--canvas-left:          var(--sidebar-w);
 }
 
-/* ── Light theme — warm earth / cream ────────────────────────────── */
+/* ── LIGHT MODE — reassigns semantic tokens to opposite palette ends ── */
 html.light {
 	color-scheme: light;
-	--color-bg:     #FBEAD5;					/* carrot-20 — warm page wash */
-	--color-bg2:    #FEFCFA;					/* near-white warm */
-	--color-card:   #F6EBE8;					/* rufous-s10 card surface */
-	--color-card2:  #F3DCD1;					/* sinopia-20 — warm secondary surface */
-	--color-side:   rgba(160, 54, 27, 0.88);	/* rufous alpha */
-	--color-brd:    #C68676;					/* rufous-60 */
-	--color-brd2:   #B35E49;					/* rufous-80 */
-	--color-t1:     #1A0905;
-	--color-t2:     #802B16;					/* rufous-s20 */
-	--color-tm:     #602010;					/* rufous-s40 — muted */
-	--color-accent: #A0361B;					/* rufous — primary interactive in light */
-	--color-accent2:#802B16;					/* rufous-s20 */
-	--color-accent3:#C4501B;					/* sinopia */
+	--surface:      var(--primary-9);   --surface-ch:      var(--primary-9-ch);
+	--panel:        var(--primary-8);   --panel-ch:        var(--primary-8-ch);
+	--panel-alt:    var(--green-light); --panel-alt-ch:    var(--green-light-ch);
+	--sidebar:      rgb(var(--accent-ch) / 0.88);
+	--sidebar-ch:   var(--accent-ch);
+	--edge:         var(--primary-6);   --edge-ch:         var(--primary-6-ch);
+	--edge-strong:  var(--primary-5);   --edge-strong-ch:  var(--primary-5-ch);
+	--fg:           var(--primary-1);   --fg-ch:           var(--primary-1-ch);
+	--fg-subtle:    var(--primary-3);   --fg-subtle-ch:    var(--primary-3-ch);
+	--fg-muted:     var(--primary-4);   --fg-muted-ch:     var(--primary-4-ch);
+	--accent:       var(--primary-5);   --accent-ch:       var(--primary-5-ch);
+	--accent-dark:  var(--primary-4);   --accent-dark-ch:  var(--primary-4-ch);
+	--accent-light: var(--primary-6);   --accent-light-ch: var(--primary-6-ch);
 	--fp-svg-bg:    #FDECD8;
-	/* RGB channel triplets for Tailwind opacity modifiers */
-	--color-bg-ch:      251 234 213;
-	--color-bg2-ch:     254 252 250;
-	--color-card-ch:    246 235 232;
-	--color-card2-ch:   243 220 209;
-	--color-side-ch:    160 54 27;
-	--color-brd-ch:     198 134 118;
-	--color-brd2-ch:    179 94 73;
-	--color-t1-ch:      26 9 5;
-	--color-t2-ch:      128 43 22;
-	--color-tm-ch:      96 32 16;
-	--color-accent-ch:  160 54 27;
-	--color-accent2-ch: 128 43 22;
-	--color-accent3-ch: 196 80 27;
 }
 
-
-
-/* Proximity voice bar */
-html.light .voice-bar {
-	background: rgba(160, 54, 27, 0.78);
-	border-color: rgba(255, 255, 255, 0.18);
-}
-html.light .talk-btn:hover    { background: rgba(255,255,255,0.15); color: #fff; }
-html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff; }
 
 
 /* ── quickerSTORM component helpers ─────────────────────────────────── */
@@ -135,17 +112,17 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 	.reset-input {
 		-webkit-appearance: none;
 		appearance: none;
-		background-color: var(--color-card2);
-		border: 1px solid var(--color-brd);
-		color: var(--color-t1);
+		background-color: var(--panel-alt);
+		border: 1px solid var(--edge);
+		color: var(--fg);
 	}
 	.reset-input::placeholder {
-		color: var(--color-t2);
+		color: var(--fg-subtle);
 	}
 
 	/* Compact action-bar button (Contacts tab). */
 	.qs-btn-mini {
-		@apply px-2 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed;
+		@apply px-2 py-0.5 text-2xs rounded border border-edge text-fg hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed;
 	}
 
 
@@ -159,9 +136,9 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 
 	/* ── Floaters UI elements ────────────────────────────────────────────────────────── */
 	.ui-select option {
-		background-color: var(--color-bg);
+		background-color: var(--surface);
 		padding: 0.35rem;
-		color: var(--color-t1);
+		color: var(--fg);
 		transition: color 0.15s, border-color 0.15s, background 0.15s;
 	}
 	:where(.floater button:not(.custom)),
@@ -169,27 +146,27 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background-color: var(--color-bg);
+		background-color: var(--surface);
 		padding: 0.35rem;
-		color: var(--color-t2);
+		color: var(--fg-subtle);
 		transition: color 0.15s, border-color 0.15s, background 0.15s;
 	}
 	.floater button:hover {
 		background: rgba(255, 255, 255, 0.05);
-		border-color: var(--color-accent);
-		color: var(--color-t1);
+		border-color: var(--accent);
+		color: var(--fg);
 	}
 	.floater button svg:not(.custom) {
 		width: 1rem;
 		height: 1rem;
 	}
 	.floater button.arrowctrl {
-		background-color: var(--color-bg2);
+		background-color: var(--panel);
 		padding: 0.35rem 0.125rem;
 	}
 
 	.floater .tabs {
-		@apply inline-flex shrink-0 border-b border-brd
+		@apply inline-flex shrink-0 border-b border-edge
 	}
 	.floater .tabs button:not(.sq) {
 		flex: 1;
@@ -199,20 +176,20 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 		border-radius: 0;
 		padding: 0.375rem 0.75rem;
 		font-size: 0.6875rem;
-		color: var(--color-t2);
+		color: var(--fg-subtle);
 		cursor: pointer;
 		transition: color 0.12s, border-color 0.12s, background 0.12s;
 	}
 	.floater .tabs button:hover {
 		background: rgba(255, 255, 255, 0.04);
-		color: var(--color-t1);
+		color: var(--fg);
 	}
 	.floater .tabs button.active {
 		@apply text-accent border-accent
 	}
 
 	.floater .vtabs {
-		@apply flex flex-col shrink-0 border-r border-brd overflow-y-auto;
+		@apply flex flex-col shrink-0 border-r border-edge overflow-y-auto;
 	}
 	.floater .vtabs > div {
 		@apply flex items-center justify-between;
@@ -223,10 +200,10 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 	}
 	.floater .vtabs button:not(.block):hover {
 		background: rgba(255, 255, 255, 0.06);
-		color: var(--color-t1);
+		color: var(--fg);
 	}
 	.floater .vtabs button:not(.block).active {
-		@apply bg-white/10 text-accent border-accent3
+		@apply bg-white/10 text-accent border-accent-light
 	}
 
 }
@@ -235,18 +212,18 @@ html.light .vb-ctrl:hover     { background: rgba(255,255,255,0.15); color: #fff;
 input.reset-input:-webkit-autofill,
 input.reset-input:-webkit-autofill:hover,
 input.reset-input:-webkit-autofill:focus,
-input.bg-card2:-webkit-autofill,
-input.bg-card2:-webkit-autofill:hover,
-input.bg-card2:-webkit-autofill:focus {
-	-webkit-box-shadow: 0 0 0 1000px var(--color-card2) inset !important;
-	-webkit-text-fill-color: var(--color-t1) !important;
-	caret-color: var(--color-t1);
+input.bg-panel-alt:-webkit-autofill,
+input.bg-panel-alt:-webkit-autofill:hover,
+input.bg-panel-alt:-webkit-autofill:focus {
+	-webkit-box-shadow: 0 0 0 1000px var(--panel-alt) inset !important;
+	-webkit-text-fill-color: var(--fg) !important;
+	caret-color: var(--fg);
 }
 
 
-/* Same appearance reset when using bg-card2 utility directly on inputs */
-input.bg-card2,
-textarea.bg-card2 {
+/* Same appearance reset when using bg-panel-alt utility directly on inputs */
+input.bg-panel-alt,
+textarea.bg-panel-alt {
 	-webkit-appearance: none;
 	appearance: none;
 }
@@ -259,8 +236,8 @@ textarea.bg-card2 {
 
 	html {
 		font-family: 'RobotoFlex', system-ui, sans-serif;
-		background: var(--color-bg);
-		color: var(--color-t1);
+		background: var(--surface);
+		color: var(--fg);
 		min-height: 100vh;
 		overflow: hidden;
 		-webkit-font-smoothing: antialiased;
@@ -275,7 +252,7 @@ textarea.bg-card2 {
 /* ── Scrollbar ───────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-brd2); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--edge-strong); border-radius: 3px; }
 
 
 /* ── App shell layout ────────────────────────────────────────────── */
@@ -283,7 +260,7 @@ textarea.bg-card2 {
 	display: flex;
 	height: 100vh;
 	overflow: hidden;
-	background: var(--color-bg);
+	background: var(--surface);
 }
 
 
@@ -343,10 +320,10 @@ html.light .animated-border::before {
 	left: calc(100% + 0.5rem);
 	top: 50%;
 	transform: translateY(-50%);
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge);
 	border-radius: 0.3125rem;
-	color: var(--color-t1);
+	color: var(--fg);
 	font-size: 0.75rem;
 	padding: 0.25rem 0.5rem;
 	white-space: nowrap;

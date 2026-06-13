@@ -63,125 +63,26 @@ export default {
 			},
 			colors: {
 				/*
-				 * ── quickerSTORM colors palette ──────────────────────────────────────
-				 * These reference CSS custom properties defined in index.css so that
-				 * bg-card, text-t1, border-brd2, etc. automatically respond to the
-				 * html.light class toggle.  Do NOT replace with hardcoded hex here —
-				 * that would break the light/dark theme.
-				 *
-				 * Opacity modifiers (bg-card/50) work via the -ch channel-triplet vars
-				 * defined alongside each color in index.css.  --color-side keeps its
-				 * built-in alpha so opacity modifiers on `side` ignore that base alpha.
+				 * Semantic tokens — contrast-aware, auto-flip with html.light
+				 * Opacity modifiers work (bg-panel/50) via -ch channel-triplet vars.
 				 */
-				bg: 'rgb(var(--color-bg-ch) / <alpha-value>)',
-				bg2: 'rgb(var(--color-bg2-ch) / <alpha-value>)',
-				card: 'rgb(var(--color-card-ch) / <alpha-value>)',
-				card2: 'rgb(var(--color-card2-ch) / <alpha-value>)',
-				side: 'rgb(var(--color-side-ch) / <alpha-value>)',
-				brd: 'rgb(var(--color-brd-ch) / <alpha-value>)',
-				brd2: 'rgb(var(--color-brd2-ch) / <alpha-value>)',
-				t1: 'rgb(var(--color-t1-ch) / <alpha-value>)',
-				t2: 'rgb(var(--color-t2-ch) / <alpha-value>)',
-				tm: 'rgb(var(--color-tm-ch) / <alpha-value>)',
-				accent: 'rgb(var(--color-accent-ch) / <alpha-value>)',
-				accent2: 'rgb(var(--color-accent2-ch) / <alpha-value>)',
-				accent3: 'rgb(var(--color-accent3-ch) / <alpha-value>)',
+				surface:        'rgb(var(--surface-ch) / <alpha-value>)',
+				panel:          'rgb(var(--panel-ch) / <alpha-value>)',
+				'panel-alt':    'rgb(var(--panel-alt-ch) / <alpha-value>)',
+				sidebar:        'rgb(var(--sidebar-ch) / <alpha-value>)',
+				edge:           'rgb(var(--edge-ch) / <alpha-value>)',
+				'edge-strong':  'rgb(var(--edge-strong-ch) / <alpha-value>)',
+				fg:             'rgb(var(--fg-ch) / <alpha-value>)',
+				'fg-subtle':    'rgb(var(--fg-subtle-ch) / <alpha-value>)',
+				'fg-muted':     'rgb(var(--fg-muted-ch) / <alpha-value>)',
+				accent:         'rgb(var(--accent-ch) / <alpha-value>)',
+				'accent-dark':  'rgb(var(--accent-dark-ch) / <alpha-value>)',
+				'accent-light': 'rgb(var(--accent-light-ch) / <alpha-value>)',
 
+				/* non-semantic — kept for direct usage */
 				lighten: '#ffffff51',
-				darken: '#00000051',
-				nav: '#2E2B3B',
-
-				/* ── Earth palette — tints (20–80) + base (DEFAULT) + shades (s20–s80) ── */
-				rufous: {
-					DEFAULT: '#A0361B',
-					20: '#ECD7D1',
-					40: '#D9AFA4',
-					60: '#C68676',
-					80: '#B35E49',
-					s20: '#802B16',
-					s40: '#602010',
-					s60: '#40160B',
-					s80: '#200B05',
-				},
-				sinopia: {
-					DEFAULT: '#C4501B',
-					20: '#F3DCD1',
-					40: '#E7B9A4',
-					60: '#DC9676',
-					80: '#D07349',
-					s20: '#9D4016',
-					s40: '#763010',
-					s60: '#4E200B',
-					s80: '#271005',
-				},
-				carrot: {
-					DEFAULT: '#E9972D',
-					20: '#FBEAD5',
-					40: '#F6D5AB',
-					60: '#F2C181',
-					80: '#EDAC57',
-					s20: '#BA7924',
-					s40: '#8C5B1B',
-					s60: '#5D3C12',
-					s80: '#2F1E09',
-				},
-				hunter: {
-					DEFAULT: '#2B5B3F',
-					20: '#D5DED9',
-					40: '#AABDB2',
-					60: '#809D8C',
-					80: '#557C65',
-					s20: '#224932',
-					s40: '#1A3726',
-					s60: '#112419',
-					s80: '#09120D',
-				},
-				forest: {
-					DEFAULT: '#143829',
-					20: '#D0D7D4',
-					40: '#A1AFA9',
-					60: '#72887F',
-					80: '#436054',
-					s20: '#102D21',
-					s40: '#0C2219',
-					s60: '#081610',
-					s80: '#040B08',
-				},
-
-				primary: 'var(--color-rufous)',
-
-				secondary: '#86D8DF',
-				'secondary-lt': '#D7F1F4',
-				'secondary-dk': '#2CAEBA',
-				'secondary-70': '#25939D',
-
-				tertiary: {
-					99: '#FFFBFF',
-					95: '#FFEED8',
-					90: '#FFDEA9',
-					80: '#FEBE3F',
-					70: '#DCA120',
-					60: '#BD8700',
-					50: '#9C6F00',
-					40: '#7D5800',
-					30: '#5E4100',
-					20: '#422C00',
-					10: '#271900',
-				},
-
-				neutral: {
-					10: '#F8F9FA',
-					20: '#EDEFF2',
-					30: '#DEE1E6',
-					40: '#CED3DA',
-					50: '#AAB1BB',
-					60: '#7E8690',
-					70: '#515861',
-					80: '#3E444C',
-					90: '#252A32',
-					95: '#14191F',
-				},
-
+				darken:  '#00000051',
+				nav:     '#2E2B3B',
 			},
 			containers: {
 				lg: '20px',

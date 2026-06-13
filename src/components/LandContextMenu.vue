@@ -64,22 +64,22 @@ onUnmounted(() => {
 		v-if="menu"
 		data-land-context-menu
 		:style="style"
-		class="fixed z-[200] min-w-[12rem] bg-card border border-brd rounded-sm shadow-lg text-xs select-none"
+		class="fixed z-[200] min-w-[12rem] bg-panel border border-edge rounded-sm shadow-lg text-xs select-none"
 		@contextmenu.prevent
 	>
-		<div class="px-3 py-1.5 text-accent font-medium border-b border-brd truncate">
+		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">
 			{{ session.regionName || 'Land' }}
-			<span class="text-t1/50 font-normal ml-1">({{ posLabel() }})</span>
+			<span class="text-fg/50 font-normal ml-1">({{ posLabel() }})</span>
 		</div>
-		<button class="block w-full text-left px-3 py-1.5 text-t1/40 cursor-not-allowed" disabled>About Land…</button>
-		<button class="block w-full text-left px-3 py-1.5 text-t1/40 cursor-not-allowed" disabled>Sit Here</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>About Land…</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Sit Here</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="walkTo">Walk To</button>
-		<div class="border-t border-brd my-0.5" />
-		<button class="block w-full text-left px-3 py-1.5 text-t1/40 cursor-not-allowed" disabled>Build</button>
-		<button class="block w-full text-left px-3 py-1.5 text-t1/40 cursor-not-allowed" disabled>Edit Terrain</button>
-		<div class="border-t border-brd my-0.5" />
+		<div class="border-t border-edge my-0.5" />
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Build</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Edit Terrain</button>
+		<div class="border-t border-edge my-0.5" />
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="landmarkHere">Landmark This Place</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="openMap">World Map</button>
-		<button class="block w-full text-left px-3 py-1.5 text-t1/40 cursor-not-allowed" disabled>Set Home Here</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Set Home Here</button>
 	</div>
 </template>

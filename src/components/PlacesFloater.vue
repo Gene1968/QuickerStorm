@@ -56,12 +56,12 @@ const filteredHistory = computed(() => {
 		<div class="flex flex-col h-full text-xs">
 
 			<!-- Top toolbar: filter + icon buttons -->
-			<div class="flex items-stretch gap-0 border-b border-brd shrink-0">
+			<div class="flex items-stretch gap-0 border-b border-edge shrink-0">
 				<input
 					v-model="filter"
 					type="search"
 					placeholder="Filter My Places"
-					class="flex-1 bg-brd2 rounded-xl m-1 px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
+					class="flex-1 bg-brd2 rounded-xl m-1 px-2 py-1 text-xs text-fg placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 				/>
 				<button class="tb-btn" title="Show options (TO-DO)"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 				<button class="tb-btn" title="Show sorting options (TO-DO)"><ArrowUpDownIcon /><ChevronDownIcon class="w-3" /></button>
@@ -98,7 +98,7 @@ const filteredHistory = computed(() => {
 							<button class="inline-btn" @click.stop="teleportToLandmark(lm)">TP</button>
 						</li>
 					</ul>
-					<div v-else class="py-8 text-white/30 italic text-center">
+					<div v-else class="py-8 text-fg/30 italic text-center">
 						{{ filter ? 'No matches (clear filter above).' : 'No favorites yet — use the star ✦ or + to add one.' }}
 					</div>
 				</template>
@@ -109,7 +109,7 @@ const filteredHistory = computed(() => {
 					via TeleportLandmarkRequest (sim resolves the LM asset's stored location). -->
 				<template v-else-if="ui.placesActiveTab === 'landmarks'">
 					<!-- Region anchors -->
-					<p class="px-3 pt-2 pb-1 text-2xs uppercase tracking-widest text-white/60">This region</p>
+					<p class="px-3 pt-2 pb-1 text-2xs uppercase tracking-widest text-fg/60">This region</p>
 					<ul v-if="filteredLandmarks.length" class="px-2">
 						<li
 							v-for="(p, i) in filteredLandmarks"
@@ -121,7 +121,7 @@ const filteredHistory = computed(() => {
 								<span class="mb-1 w-3.5 h-3.5 shrink-0">📍</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
-									<div class="text-2xs text-white/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
+									<div class="text-2xs text-fg/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
 								</div>
 							</div>
 							<button class="inline-btn" @click.stop="teleportTo(p)">TP</button>
@@ -129,7 +129,7 @@ const filteredHistory = computed(() => {
 					</ul>
 
 					<!-- Saved inventory landmarks -->
-					<p class="px-3 pt-3 pb-1 text-2xs uppercase tracking-widest text-white/60">My landmarks</p>
+					<p class="px-3 pt-3 pb-1 text-2xs uppercase tracking-widest text-fg/60">My landmarks</p>
 					<ul v-if="filteredInvLandmarks.length" class="px-2 pb-2">
 						<li
 							v-for="lm in filteredInvLandmarks"
@@ -144,7 +144,7 @@ const filteredHistory = computed(() => {
 							<button class="inline-btn" @click.stop="teleportToLandmark(lm)">TP</button>
 						</li>
 					</ul>
-					<div v-else class="px-3 pb-2 text-white/40 italic text-xs">
+					<div v-else class="px-3 pb-2 text-fg/40 italic text-xs">
 						{{ filter ? 'No matches (clear filter above).' : 'No saved landmarks (still loading inventory, or none in this account).' }}
 					</div>
 				</template>
@@ -162,13 +162,13 @@ const filteredHistory = computed(() => {
 								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
 								<div class="min-w-0">
 									<div class="truncate">{{ p.name }}</div>
-									<div class="text-2xs text-white/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
+									<div class="text-2xs text-fg/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
 								</div>
 							</div>
 							<button class="inline-btn opacity-0 group-hover:opacity-100" @click.stop="teleportTo(p)">TP</button>
 						</li>
 					</ul>
-					<div v-else class="py-8 text-white/30 italic text-center">
+					<div v-else class="py-8 text-fg/30 italic text-center">
 						{{ filter ? 'No matches (clear filter above).' : 'No teleport history yet.' }}
 					</div>
 				</template>
@@ -177,7 +177,7 @@ const filteredHistory = computed(() => {
 			<!-- History: clear log -->
 			<div
 				v-if="ui.placesActiveTab === 'history' && history.length"
-				class="flex justify-end px-3 py-2 border-t border-brd shrink-0"
+				class="flex justify-end px-3 py-2 border-t border-edge shrink-0"
 			>
 				<button class="save-btn" @click="clearHistory">
 					<Trash2Icon class="w-3 h-3" /> Clear history
@@ -196,16 +196,16 @@ const filteredHistory = computed(() => {
 	justify-content: center;
 	padding: 0.35rem;
 	border: none;
-	border-left: 1px solid var(--color-brd);
+	border-left: 1px solid var(--edge);
 	border-radius: 0;
 	background: none;
-	color: var(--color-t2);
+	color: var(--fg-subtle);
 	cursor: pointer;
 	transition: color 0.15s, background 0.15s;
 }
 .tb-btn:hover {
 	background: rgba(255, 255, 255, 0.07);
-	color: var(--color-t1);
+	color: var(--fg);
 }
 .tb-btn svg { width: 1rem; height: 1rem; }
 
@@ -216,7 +216,7 @@ const filteredHistory = computed(() => {
 	gap: 0.2rem;
 	padding: 0.125rem 0.5rem;
 	font-size: 0.65rem;
-	background: var(--color-accent);
+	background: var(--accent);
 	color: #fff;
 	border: none;
 	border-radius: 0.25rem;
@@ -239,7 +239,7 @@ li:hover .inline-btn { opacity: 1; }
 	gap: 0.25rem;
 	padding: 0.125rem 0.5rem;
 	font-size: 0.75rem;
-	background: var(--color-accent);
+	background: var(--accent);
 	color: #fff;
 	border: none;
 	border-radius: 0.25rem;

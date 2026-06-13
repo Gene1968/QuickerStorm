@@ -99,12 +99,12 @@ function openPreferences() {
 	flex-direction: column;
 	gap: 0.25rem;
 	padding: 0.5rem 0.875rem;
-	border-bottom: 1px solid var(--color-brd);
+	border-bottom: 1px solid var(--edge);
 }
 .qp-section-label {
 	font-size: 0.5625rem;
 	font-weight: 700;
-	color: var(--color-tm);
+	color: var(--fg-muted);
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
 	margin-bottom: 0.125rem;
@@ -119,44 +119,44 @@ function openPreferences() {
 	padding: 0.25rem 0;
 }
 .qp-row--disabled { opacity: 0.35; pointer-events: none; }
-.qp-row-label { font-size: 0.75rem; color: var(--color-t2); white-space: nowrap; flex-shrink: 0; }
+.qp-row-label { font-size: 0.75rem; color: var(--fg-subtle); white-space: nowrap; flex-shrink: 0; }
 
 /* ── Theme toggle ─────────────────────────────────────────────────────────── */
 .theme-toggle {
 	display: flex;
 	align-items: center;
 	gap: 0.4rem;
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge-strong);
 	border-radius: 2rem;
 	padding: 0.25rem 0.65rem 0.25rem 0.5rem;
 	cursor: pointer;
 	transition: background 0.2s, border-color 0.2s;
 	flex-shrink: 0;
 }
-.theme-toggle:hover { border-color: var(--color-accent); }
+.theme-toggle:hover { border-color: var(--accent); }
 .theme-knob {
 	width: 0.875rem;
 	height: 0.875rem;
 	border-radius: 50%;
-	background: var(--color-tm);
+	background: var(--fg-muted);
 	transition: background 0.2s;
 	flex-shrink: 0;
 }
-.theme-toggle.dark .theme-knob { background: var(--color-accent3); }
-.theme-label { font-size: 0.6875rem; font-weight: 600; color: var(--color-t2); white-space: nowrap; }
+.theme-toggle.dark .theme-knob { background: var(--accent-light); }
+.theme-label { font-size: 0.6875rem; font-weight: 600; color: var(--fg-subtle); white-space: nowrap; }
 
 /* ── Slider ──────────────────────────────────────────────────────────────── */
 .qp-slider-wrap { display: flex; align-items: center; gap: 0.375rem; flex-shrink: 0; }
-.qp-slider { width: 6rem; accent-color: var(--color-accent); }
-.qp-slider-val { font-size: 0.6875rem; color: var(--color-tm); width: 2.5rem; text-align: right; }
+.qp-slider { width: 6rem; accent-color: var(--accent); }
+.qp-slider-val { font-size: 0.6875rem; color: var(--fg-muted); width: 2.5rem; text-align: right; }
 
 /* ── Select ──────────────────────────────────────────────────────────────── */
 .qp-select {
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge-strong);
 	border-radius: 0.3125rem;
-	color: var(--color-t2);
+	color: var(--fg-subtle);
 	font-size: 0.6875rem;
 	padding: 0.2rem 0.4rem;
 	cursor: pointer;
@@ -170,7 +170,7 @@ function openPreferences() {
 	width: 100%;
 	background: none;
 	border: none;
-	color: var(--color-accent);
+	color: var(--accent);
 	font-size: 0.75rem;
 	font-weight: 500;
 	padding: 0.3rem 0.375rem;
@@ -186,9 +186,9 @@ function openPreferences() {
 .qp-kbhint {
 	margin-left: auto;
 	font-size: 0.5625rem;
-	color: var(--color-tm);
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
+	color: var(--fg-muted);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge-strong);
 	border-radius: 0.25rem;
 	padding: 0.1rem 0.3rem;
 	font-family: monospace;

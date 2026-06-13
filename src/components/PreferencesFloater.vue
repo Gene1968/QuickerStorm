@@ -213,7 +213,7 @@ onUnmounted(() => {
 								>Remove</button>
 							</div>
 						</template>
-						<p v-else class="text-t2 text-sm px-1">
+						<p v-else class="text-fg-subtle text-sm px-1">
 							No saved accounts. Check &ldquo;Remember me&rdquo; when logging in.
 						</p>
 					</template>
@@ -365,13 +365,13 @@ onUnmounted(() => {
 						<h2 class="pf-section-heading">Sound &amp; Media</h2>
 
 						<!-- Horizontal sub-tabs -->
-						<div class="flex gap-1 mb-4 border-b border-brd pb-2">
+						<div class="flex gap-1 mb-4 border-b border-edge pb-2">
 							<button
 								v-for="st in soundSubTabs" :key="st.id"
 								class="px-3 py-1 text-xs rounded-t font-semibold transition-colors"
 								:class="activeSoundTab === st.id
-									? 'bg-card2 text-accent border border-brd border-b-card2 -mb-px'
-									: 'text-tm hover:text-t2'"
+									? 'bg-panel-alt text-accent border border-edge border-b-card2 -mb-px'
+									: 'text-fg-muted hover:text-fg-subtle'"
 								@click="activeSoundTab = st.id"
 							>{{ st.label }}</button>
 						</div>
@@ -381,7 +381,7 @@ onUnmounted(() => {
 
 							<!-- Volume mixer -->
 							<div class="flex flex-col gap-3 mb-6">
-								<h3 class="text-xs font-bold uppercase tracking-widest text-tm">Volume</h3>
+								<h3 class="text-xs font-bold uppercase tracking-widest text-fg-muted">Volume</h3>
 
 								<!-- Master (wired) -->
 								<div class="pf-row">
@@ -396,7 +396,7 @@ onUnmounted(() => {
 											class="w-28 accent-accent" />
 										<button
 											class="text-xs w-6 h-6 flex items-center justify-center rounded-sm hover:bg-white/10"
-											:class="isAllAudioMuted ? 'text-red-400' : 'text-t2'"
+											:class="isAllAudioMuted ? 'text-red-400' : 'text-fg-subtle'"
 											@click="toggleAllAudioMute"
 											:title="isAllAudioMuted ? 'Unmute' : 'Mute'"
 										>{{ isAllAudioMuted ? '🔇' : '🔊' }}</button>
@@ -416,7 +416,7 @@ onUnmounted(() => {
 											class="w-28 accent-accent" />
 										<button
 											class="text-xs w-6 h-6 flex items-center justify-center rounded-sm hover:bg-white/10"
-											:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
+											:class="interfaceMuted ? 'text-red-400' : 'text-fg-subtle'"
 											@click="interfaceMuted = !interfaceMuted"
 											:title="interfaceMuted ? 'Unmute' : 'Mute'"
 										>{{ interfaceMuted ? '🔇' : '🔊' }}</button>
@@ -438,9 +438,9 @@ onUnmounted(() => {
 
 							<!-- Audio devices -->
 							<div class="flex flex-col gap-3">
-								<h3 class="text-xs font-bold uppercase tracking-widest text-tm">Devices</h3>
+								<h3 class="text-xs font-bold uppercase tracking-widest text-fg-muted">Devices</h3>
 
-								<p v-if="!micDevices.length && !spkDevices.length" class="text-xs text-tm">
+								<p v-if="!micDevices.length && !spkDevices.length" class="text-xs text-fg-muted">
 									Open voice to enumerate devices.
 								</p>
 
@@ -450,7 +450,7 @@ onUnmounted(() => {
 										<span class="pf-row-hint">Input device for voice chat.</span>
 									</div>
 									<select
-										class="bg-card2 border border-brd2 rounded-sm text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-hidden focus:border-accent"
+										class="bg-panel-alt border border-edge-strong rounded-sm text-xs text-fg px-2 py-1 cursor-pointer focus:outline-hidden focus:border-accent"
 										:value="voice.selectedMicId.value"
 										@change="voice.setMicDevice?.($event.target.value)"
 									>
@@ -469,7 +469,7 @@ onUnmounted(() => {
 										</span>
 									</div>
 									<select
-										class="bg-card2 border border-brd2 rounded-sm text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-hidden focus:border-accent"
+										class="bg-panel-alt border border-edge-strong rounded-sm text-xs text-fg px-2 py-1 cursor-pointer focus:outline-hidden focus:border-accent"
 										:value="voice.selectedSpkId.value"
 										@change="voice.setSpeakerDevice?.($event.target.value)"
 										:disabled="!canSetSink"
@@ -532,7 +532,7 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Scene (resident vs known objects — memory-budget culling) -->
-						<div class="pf-cache-card bg-forest/70">
+						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Scene</span>
 							</div>
@@ -555,7 +555,7 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Texture Cache -->
-						<div class="pf-cache-card bg-forest/70">
+						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Texture Cache</span>
 								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
@@ -565,10 +565,10 @@ onUnmounted(() => {
 							</div>
 							<div class="pf-cache-stats">
 								<template v-if="cache.texStats.value.loading">
-									<span class="pf-cache-stat text-tm">Loading…</span>
+									<span class="pf-cache-stat text-fg-muted">Loading…</span>
 								</template>
 								<template v-else-if="cache.texStats.value.unavailable">
-									<span class="pf-cache-stat text-tm">Unavailable</span>
+									<span class="pf-cache-stat text-fg-muted">Unavailable</span>
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
@@ -591,7 +591,7 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Geometry Cache (baked shape+scale geometry — instant region re-entry) -->
-						<div class="pf-cache-card bg-forest/70">
+						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Geometry Cache</span>
 								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearGeom()" :disabled="cache.geomStats.value.loading">
@@ -601,10 +601,10 @@ onUnmounted(() => {
 							</div>
 							<div class="pf-cache-stats">
 								<template v-if="cache.geomStats.value.loading">
-									<span class="pf-cache-stat text-tm">Loading…</span>
+									<span class="pf-cache-stat text-fg-muted">Loading…</span>
 								</template>
 								<template v-else-if="cache.geomStats.value.unavailable">
-									<span class="pf-cache-stat text-tm">Unavailable</span>
+									<span class="pf-cache-stat text-fg-muted">Unavailable</span>
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
@@ -621,7 +621,7 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Object Cache (persistent scene per region — instant reload paint) -->
-						<div class="pf-cache-card bg-forest/70">
+						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Object Cache</span>
 								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
@@ -631,10 +631,10 @@ onUnmounted(() => {
 							</div>
 							<div class="pf-cache-stats">
 								<template v-if="cache.objStats.value.loading">
-									<span class="pf-cache-stat text-tm">Loading…</span>
+									<span class="pf-cache-stat text-fg-muted">Loading…</span>
 								</template>
 								<template v-else-if="cache.objStats.value.unavailable">
-									<span class="pf-cache-stat text-tm">Unavailable</span>
+									<span class="pf-cache-stat text-fg-muted">Unavailable</span>
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
@@ -651,7 +651,7 @@ onUnmounted(() => {
 						</div>
 
 						<!-- Mesh Cache -->
-						<div class="pf-cache-card bg-forest/70">
+						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Mesh Cache</span>
 								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
@@ -661,10 +661,10 @@ onUnmounted(() => {
 							</div>
 							<div class="pf-cache-stats">
 								<template v-if="cache.meshStats.value.loading">
-									<span class="pf-cache-stat text-tm">Loading…</span>
+									<span class="pf-cache-stat text-fg-muted">Loading…</span>
 								</template>
 								<template v-else-if="cache.meshStats.value.unavailable">
-									<span class="pf-cache-stat text-tm">Unavailable</span>
+									<span class="pf-cache-stat text-fg-muted">Unavailable</span>
 								</template>
 								<template v-else>
 									<span class="pf-cache-stat">
@@ -708,21 +708,21 @@ onUnmounted(() => {
 	align-items: center;
 	gap: 0.5rem;
 	padding: 0.5rem 1rem;
-	border-bottom: 1px solid var(--color-brd);
+	border-bottom: 1px solid var(--edge);
 	flex-shrink: 0;
 }
 
-.pf-search-icon { color: var(--color-tm); flex-shrink: 0; }
+.pf-search-icon { color: var(--fg-muted); flex-shrink: 0; }
 
 .pf-search-input {
 	flex: 1;
 	background: none;
 	border: none;
 	outline: none;
-	color: var(--color-t1);
+	color: var(--fg);
 	font-size: 0.8125rem;
 }
-.pf-search-input::placeholder { color: var(--color-tm); }
+.pf-search-input::placeholder { color: var(--fg-muted); }
 
 /* ── Body ────────────────────────────────────────────────────────────────── */
 .pf-body {
@@ -737,7 +737,7 @@ onUnmounted(() => {
 	flex-direction: column;
 	width: 11rem;
 	flex-shrink: 0;
-	border-right: 1px solid var(--color-brd);
+	border-right: 1px solid var(--edge);
 	overflow-y: auto;
 	padding: 0.375rem 0;
 }
@@ -753,18 +753,18 @@ onUnmounted(() => {
 	cursor: pointer;
 	text-align: left;
 	transition: background 0.12s, color 0.12s;
-	color: var(--color-tm);
+	color: var(--fg-muted);
 	font-size: 0.8rem;
 	line-height: 1.2;
 }
 .pf-tab:hover:not(.pf-tab--disabled) {
 	background: rgba(255, 255, 255, 0.05);
-	color: var(--color-t2);
+	color: var(--fg-subtle);
 }
 .pf-tab--active {
 	background: rgba(255, 255, 255, 0.08);
-	border-left-color: var(--color-accent);
-	color: var(--color-accent);
+	border-left-color: var(--accent);
+	color: var(--accent);
 }
 .pf-tab--disabled {
 	opacity: 0.35;
@@ -778,9 +778,9 @@ onUnmounted(() => {
 	font-size: 0.5rem;
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
-	color: var(--color-tm);
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
+	color: var(--fg-muted);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge-strong);
 	border-radius: 0.25rem;
 	padding: 0.0625rem 0.25rem;
 	flex-shrink: 0;
@@ -801,7 +801,7 @@ onUnmounted(() => {
 	font-weight: 700;
 	text-transform: uppercase;
 	letter-spacing: 0.08em;
-	color: var(--color-tm);
+	color: var(--fg-muted);
 	margin-bottom: 0.5rem;
 }
 
@@ -812,18 +812,18 @@ onUnmounted(() => {
 	justify-content: space-between;
 	gap: 1rem;
 	padding: 0.35rem 0;
-	border-bottom: 1px solid var(--color-brd);
+	border-bottom: 1px solid var(--edge);
 }
 .pf-row:last-child { border-bottom: none; }
 .pf-row--disabled  { opacity: 0.4; }
 
 .pf-row-info  { display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
-.pf-row-label { font-size: 0.8125rem; font-weight: 500; color: var(--color-t1); }
-.pf-row-hint  { font-size: 0.625rem; color: var(--color-tm); line-height: 1.45; }
+.pf-row-label { font-size: 0.8125rem; font-weight: 500; color: var(--fg); }
+.pf-row-hint  { font-size: 0.625rem; color: var(--fg-muted); line-height: 1.45; }
 
 .pf-value-readonly {
 	font-size: 0.8125rem;
-	color: var(--color-t2);
+	color: var(--fg-subtle);
 	font-family: monospace;
 	flex-shrink: 0;
 }
@@ -832,9 +832,9 @@ onUnmounted(() => {
 	font-size: 0.6rem;
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
-	color: var(--color-tm);
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
+	color: var(--fg-muted);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge-strong);
 	border-radius: 0.25rem;
 	padding: 0.125rem 0.375rem;
 	flex-shrink: 0;
@@ -845,30 +845,30 @@ onUnmounted(() => {
 	display: flex;
 	align-items: center;
 	gap: 0.5rem;
-	background: var(--color-card2);
-	border: 1px solid var(--color-brd2);
+	background: var(--panel-alt);
+	border: 1px solid var(--edge-strong);
 	border-radius: 2rem;
 	padding: 0.25rem 0.65rem 0.25rem 0.5rem;
 	cursor: pointer;
 	transition: background 0.2s, border-color 0.2s;
 	flex-shrink: 0;
 }
-.theme-toggle:hover { border-color: var(--color-accent); }
+.theme-toggle:hover { border-color: var(--accent); }
 
 .theme-knob {
 	width: 1.125rem;
 	height: 1.125rem;
 	border-radius: 50%;
-	background: var(--color-tm);
+	background: var(--fg-muted);
 	transition: background 0.2s;
 	flex-shrink: 0;
 }
-.theme-toggle.dark .theme-knob { background: var(--color-accent3); }
+.theme-toggle.dark .theme-knob { background: var(--accent-light); }
 
 .theme-label {
 	font-size: 0.75rem;
 	font-weight: 600;
-	color: var(--color-t2);
+	color: var(--fg-subtle);
 	white-space: nowrap;
 }
 
@@ -879,7 +879,7 @@ onUnmounted(() => {
 	align-items: center;
 	gap: 0.75rem;
 	padding: 2rem 1rem;
-	color: var(--color-tm);
+	color: var(--fg-muted);
 	font-size: 0.8125rem;
 	text-align: center;
 }
@@ -888,7 +888,7 @@ onUnmounted(() => {
 	list-style: disc;
 	text-align: left;
 	font-size: 0.75rem;
-	color: var(--color-tm);
+	color: var(--fg-muted);
 	padding-left: 1.25rem;
 	line-height: 1.8;
 }
@@ -896,14 +896,14 @@ onUnmounted(() => {
 /* ── Empty state ──────────────────────────────────────────────────────────── */
 .pf-empty {
 	padding: 2rem;
-	color: var(--color-tm);
+	color: var(--fg-muted);
 	font-size: 0.8125rem;
 	text-align: center;
 }
 
 /* ── Cache cards (Network tab) ──────────────────────────────────────────── */
 .pf-cache-card {
-	border: 1px solid var(--color-brd);
+	border: 1px solid var(--edge);
 	border-radius: 0.5rem;
 	padding: 0.75rem 1rem;
 	display: flex;
@@ -920,7 +920,7 @@ onUnmounted(() => {
 .pf-cache-title {
 	font-size: 0.8125rem;
 	font-weight: 600;
-	color: var(--color-t1);
+	color: var(--fg);
 }
 
 .pf-cache-stats {
@@ -937,28 +937,28 @@ onUnmounted(() => {
 }
 
 .pf-cache-label {
-	color: var(--color-tm);
+	color: var(--fg-muted);
 }
 
 .pf-cache-val {
-	color: var(--color-t2);
+	color: var(--fg-subtle);
 	font-variant-numeric: tabular-nums;
 }
 
 .pf-cache-sep {
-	color: var(--color-brd2);
+	color: var(--edge-strong);
 }
 
 .pf-cache-bar-track {
 	height: 0.3125rem;
-	background: var(--color-brd);
+	background: var(--edge);
 	border-radius: 9999px;
 	overflow: hidden;
 }
 
 .pf-cache-bar-fill {
 	height: 100%;
-	background: var(--color-accent);
+	background: var(--accent);
 	border-radius: 9999px;
 	transition: width 0.3s ease;
 }
@@ -966,7 +966,7 @@ onUnmounted(() => {
 .pf-cache-retry {
 	margin-left: 0.5rem;
 	font-size: 0.75rem;
-	color: var(--color-accent);
+	color: var(--accent);
 	background: none;
 	border: none;
 	cursor: pointer;
@@ -981,7 +981,7 @@ onUnmounted(() => {
 	justify-content: flex-end;
 	gap: 0.5rem;
 	padding: 0.625rem 1rem;
-	border-top: 1px solid var(--color-brd);
+	border-top: 1px solid var(--edge);
 	flex-shrink: 0;
 }
 
@@ -995,12 +995,12 @@ onUnmounted(() => {
 }
 .pf-btn--cancel {
 	background: none;
-	border: 1px solid var(--color-brd2);
-	color: var(--color-t2);
+	border: 1px solid var(--edge-strong);
+	color: var(--fg-subtle);
 }
-.pf-btn--cancel:hover { border-color: var(--color-brd); color: var(--color-t1); }
+.pf-btn--cancel:hover { border-color: var(--edge); color: var(--fg); }
 .pf-btn--ok {
-	background: var(--color-accent);
+	background: var(--accent);
 	border: 1px solid transparent;
 	color: #fff;
 }

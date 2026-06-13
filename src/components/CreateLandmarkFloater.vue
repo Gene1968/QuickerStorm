@@ -70,22 +70,22 @@ function cancel() { ui.showCreateLandmark = false }
 		:default-pos="{ left: '50%', top: '38vh', transform: 'translate(-50%, -50%)' }"
 		@close="cancel"
 	>
-		<div class="flex flex-col gap-2 p-3 text-xs text-t1">
-			<h5 class="text-t2 text-xl font-semibold">Landmark Details</h5>
+		<div class="flex flex-col gap-2 p-3 text-xs text-fg">
+			<h5 class="text-fg-subtle text-xl font-semibold">Landmark Details</h5>
 
 			<label class="flex flex-col gap-1 mb-2">
-				<span class="text-t2">Name:</span>
+				<span class="text-fg-subtle">Name:</span>
 				<input
 					v-model="name"
 					type="text"
-					class="qs-input px-2 py-1 rounded-sm bg-card border border-brd text-t1"
+					class="qs-input px-2 py-1 rounded-sm bg-panel border border-edge text-fg"
 					@keydown.enter.prevent="save"
 				/>
 			</label>
 
 			<label class="flex flex-col gap-1">
-				<span class="text-t2">Save this landmark in:</span>
-				<select v-model="selectedFolder" class="qs-input px-2 py-1 rounded-sm bg-card border border-brd text-t1">
+				<span class="text-fg-subtle">Save this landmark in:</span>
+				<select v-model="selectedFolder" class="qs-input px-2 py-1 rounded-sm bg-panel border border-edge text-fg">
 					<option v-if="!folderOptions.length" value="">Loading folders…</option>
 					<option v-for="o in folderOptions" :key="o.folderId" :value="o.folderId">
 						{{ indent(o.depth) }}{{ o.favorite ? '★ ' : '' }}{{ o.name }}
@@ -103,25 +103,25 @@ function cancel() { ui.showCreateLandmark = false }
 					v-model="newFolderName"
 					type="text"
 					placeholder="New folder name"
-					class="qs-input flex-1 px-2 py-1 rounded-sm bg-card border border-brd text-t1"
+					class="qs-input flex-1 px-2 py-1 rounded-sm bg-panel border border-edge text-fg"
 					@keydown.enter.prevent="confirmNewFolder"
 					@keydown.esc.prevent="creatingFolder = false"
 				/>
 				<button class="qs-btn px-2 py-1 rounded-sm bg-accent text-white" @click="confirmNewFolder">Add</button>
-				<button class="qs-btn px-2 py-1 rounded-sm border border-brd" @click="creatingFolder = false">✕</button>
+				<button class="qs-btn px-2 py-1 rounded-sm border border-edge" @click="creatingFolder = false">✕</button>
 			</div>
 
 			<label class="flex flex-col gap-1">
-				<span class="text-t2">My notes:</span>
+				<span class="text-fg-subtle">My notes:</span>
 				<textarea
 					v-model="notes"
 					rows="4"
-					class="qs-input px-2 py-1 rounded-sm bg-card border border-brd text-t1 resize-none"
+					class="qs-input px-2 py-1 rounded-sm bg-panel border border-edge text-fg resize-none"
 				></textarea>
 			</label>
 
 			<div class="flex justify-end gap-2 mb-1 pt-1">
-				<button class="qs-btn px-3 py-1 rounded-sm border border-brd hover:bg-white/10" @click="cancel">Cancel</button>
+				<button class="qs-btn px-3 py-1 rounded-sm border border-edge hover:bg-white/10" @click="cancel">Cancel</button>
 				<button
 					class="qs-btn px-3 py-1 rounded-sm bg-accent text-white disabled:opacity-40"
 					:disabled="!canSave"

@@ -404,7 +404,7 @@ function close() {
 	>
 		<div class="relative flex flex-col h-full text-xs">
 			<!-- Build-tools toolbar (FS-parity) ──────────────────────────────────── -->
-			<div class="shrink-0 px-2 py-1.5 border-b border-brd space-y-1.5">
+			<div class="shrink-0 px-2 py-1.5 border-b border-edge space-y-1.5">
 				<!-- Top row: five major tools (icon radio) -->
 				<div class="flex items-center gap-1">
 					<button
@@ -414,10 +414,10 @@ function close() {
 						:disabled="t.disabled"
 						class="ui-btn flex-1 flex items-center justify-center px-1.5 py-1.5 rounded-sm border transition-colors"
 						:class="t.disabled
-							? 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'
+							? 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'
 							: buildTool === t.id
 								? 'border-accent text-accent bg-accent/10'
-								: 'border-brd text-white/70 hover:text-t1 hover:bg-white/5'"
+								: 'border-edge text-fg/70 hover:text-fg hover:bg-white/5'"
 						@click="pickTool(t)"
 					>
 						<component :is="t.icon" class="w-4 h-4" />
@@ -429,7 +429,7 @@ function close() {
 						v-for="g in gizmoOps"
 						:key="g.id"
 						:title="g.hint"
-						class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-t1 cursor-pointer select-none"
+						class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-fg cursor-pointer select-none"
 					>
 						<input
 							type="radio"
@@ -442,59 +442,59 @@ function close() {
 					</label>
 				</div>
 			</div>
-			<div class="shrink-0 px-2 py-1 flex items-center gap-2 border-b border-brd">
+			<div class="shrink-0 px-2 py-1 flex items-center gap-2 border-b border-edge">
 				<label
-					class="flex items-center gap-1.5 text-2xs text-t1 cursor-pointer select-none"
+					class="flex items-center gap-1.5 text-2xs text-fg cursor-pointer select-none"
 					title="Off: clicking selects the whole linked object. On: selects the individual prim under the cursor."
 				>
 					<input type="checkbox" v-model="ui.editLinked" class="accent-accent" />
 					Edit linked
 				</label>
-				<span class="text-2xs text-white/40 italic ml-auto truncate">Ctrl = rotate • Ctrl+Shift = scale</span>
+				<span class="text-2xs text-fg/40 italic ml-auto truncate">Ctrl = rotate • Ctrl+Shift = scale</span>
 			</div>
 
 			<!-- Link controls (FS-parity) ─────────────────────────────────────── -->
-			<div class="shrink-0 px-2 py-1.5 border-b border-brd space-y-1.5">
+			<div class="shrink-0 px-2 py-1.5 border-b border-edge space-y-1.5">
 				<div class="flex items-center gap-1">
 					<button
 						title="Select previous linked part or face"
 						:disabled="!canCycle"
 						class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-						:class="canCycle ? 'border-brd text-white/70 hover:text-t1 hover:bg-white/5' : 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'"
+						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-white/5' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
 						@click="selectLink(-1)"
 					><ChevronLeftIcon class="w-3 h-3" /></button>
 					<button
 						title="Select next linked part or face"
 						:disabled="!canCycle"
 						class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-						:class="canCycle ? 'border-brd text-white/70 hover:text-t1 hover:bg-white/5' : 'border-brd text-white/30 cursor-not-allowed bg-white/[0.02]'"
+						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-white/5' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
 						@click="selectLink(1)"
 					><ChevronRightIcon class="w-3 h-3" /></button>
 					<button
 						title="Link selected objects (Phase 3 — perms)"
 						disabled
-						class="ui-btn flex-1 px-2 py-1 text-2xs rounded-sm border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
+						class="ui-btn flex-1 px-2 py-1 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
 					>Link</button>
 					<button
 						title="Unlink selected object (Phase 3 — perms)"
 						disabled
-						class="ui-btn flex-1 px-2 py-1 text-2xs rounded-sm border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
+						class="ui-btn flex-1 px-2 py-1 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
 					>Unlink</button>
 					<button
 						title="World (Phase 3)"
 						disabled
-						class="ui-btn ml-auto px-2 py-1 text-2xs rounded-sm border border-brd text-white/30 cursor-not-allowed bg-white/[0.02]"
+						class="ui-btn ml-auto px-2 py-1 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
 					>World <ChevronDownIcon class="w-4 h-4" /></button>
 				</div>
-				<div class="text-2xs text-white/60 font-mono space-y-0.5">
-					<div v-show="ui.editLinked">Link number: <span class="text-t1">{{ linkNumber }}</span></div>
-					<div>{{ objectsSelected }} object{{ objectsSelected === 1 ? '' : 's' }} selected, land impact <span class="text-t1">{{ landImpact }}</span></div>
+				<div class="text-2xs text-fg/60 font-mono space-y-0.5">
+					<div v-show="ui.editLinked">Link number: <span class="text-fg">{{ linkNumber }}</span></div>
+					<div>{{ objectsSelected }} object{{ objectsSelected === 1 ? '' : 's' }} selected, land impact <span class="text-fg">{{ landImpact }}</span></div>
 					<div>
-						Remaining capacity <span class="me-2 text-t1">{{ remainingCapacity || '??' }}</span>
+						Remaining capacity <span class="me-2 text-fg">{{ remainingCapacity || '??' }}</span>
 						<a href="https://docs.opensimulator.org/en/latest/features/build-tools/" target="_blank" rel="noopener noreferrer"
 							title="More info (Phase 3)"
 							disabled
-							class="text-white/30 cursor-not-allowed"
+							class="text-fg/30 cursor-not-allowed"
 						>More info</a>
 					</div>
 				</div>
@@ -512,7 +512,7 @@ function close() {
 				>{{ tab.label }}</button>
 			</nav>
 
-			<div v-if="!obj" class="flex-1 flex items-center justify-center text-white/30 italic px-4 text-center">
+			<div v-if="!obj" class="flex-1 flex items-center justify-center text-fg/30 italic px-4 text-center">
 				Right-click a prim → Edit to inspect properties.
 			</div>
 
@@ -520,42 +520,42 @@ function close() {
 				<!-- General ─────────────────────────────────────────────── -->
 				<template v-if="activeTab === 'general'">
 					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-white/50" title="63 chars, ASCII-7 + pipe.">Name:</div>
-						<input :value="obj.name || '(Object)'" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1" />
-						<div class="text-white/50" title="127 chars. May get used in hover tips or scripting">Description:</div>
-						<input :value="obj.description || ''" readonly placeholder="—" class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1" />
-						<div class="text-white/50">UUID:</div>
-						<input :value="obj.fullId" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
-						<div class="text-white/50">Type:</div>
-						<div class="text-t1">{{ typeInfo.label }}</div>
-						<div class="text-white/50">Hover Text:</div>
-						<div class="text-t1 whitespace-pre-wrap">{{ obj.text || '—' }}</div>
+						<div class="text-fg/50" title="63 chars, ASCII-7 + pipe.">Name:</div>
+						<input :value="obj.name || '(Object)'" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
+						<div class="text-fg/50" title="127 chars. May get used in hover tips or scripting">Description:</div>
+						<input :value="obj.description || ''" readonly placeholder="—" class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
+						<div class="text-fg/50">UUID:</div>
+						<input :value="obj.fullId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+						<div class="text-fg/50">Type:</div>
+						<div class="text-fg">{{ typeInfo.label }}</div>
+						<div class="text-fg/50">Hover Text:</div>
+						<div class="text-fg whitespace-pre-wrap">{{ obj.text || '—' }}</div>
 					</div>
-					<div v-if="obj.creatorId" class="border-t border-brd pt-2">
+					<div v-if="obj.creatorId" class="border-t border-edge pt-2">
 						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-							<div class="text-white/50">Creator:</div>
-							<input :value="obj.creatorId" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
-							<div class="text-white/50">Owner:</div>
-							<input :value="obj.ownerId" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
-							<div class="text-white/50">Group:</div>
-							<input :value="obj.groupId" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
-							<div class="text-white/50">Created:</div>
-							<div class="text-t1 font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
-							<div class="text-white/50">Sale:</div>
-							<div class="text-t1">{{ obj.saleType ? `Type ${obj.saleType} — L$${obj.salePrice}` : 'Not for sale' }}</div>
+							<div class="text-fg/50">Creator:</div>
+							<input :value="obj.creatorId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="text-fg/50">Owner:</div>
+							<input :value="obj.ownerId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="text-fg/50">Group:</div>
+							<input :value="obj.groupId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="text-fg/50">Created:</div>
+							<div class="text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
+							<div class="text-fg/50">Sale:</div>
+							<div class="text-fg">{{ obj.saleType ? `Type ${obj.saleType} — L$${obj.salePrice}` : 'Not for sale' }}</div>
 						</div>
 					</div>
-					<div v-if="obj.baseMask != null" class="border-t border-brd pt-2">
-						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Permissions</div>
+					<div v-if="obj.baseMask != null" class="border-t border-edge pt-2">
+						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Permissions</div>
 						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1 text-xs font-mono">
-							<div class="text-white/50">Base:</div>      <div class="text-t1">{{ permLetters(obj.baseMask) }}</div>
-							<div class="text-white/50">Owner:</div>     <div class="text-t1">{{ permLetters(obj.ownerMask) }}</div>
-							<div class="text-white/50">Group:</div>     <div class="text-t1">{{ permLetters(obj.groupMask) }}</div>
-							<div class="text-white/50">Everyone:</div>  <div class="text-t1">{{ permLetters(obj.everyoneMask) }}</div>
-							<div class="text-white/50">Next Owner:</div><div class="text-t1">{{ permLetters(obj.nextOwnerMask) }}</div>
+							<div class="text-fg/50">Base:</div>      <div class="text-fg">{{ permLetters(obj.baseMask) }}</div>
+							<div class="text-fg/50">Owner:</div>     <div class="text-fg">{{ permLetters(obj.ownerMask) }}</div>
+							<div class="text-fg/50">Group:</div>     <div class="text-fg">{{ permLetters(obj.groupMask) }}</div>
+							<div class="text-fg/50">Everyone:</div>  <div class="text-fg">{{ permLetters(obj.everyoneMask) }}</div>
+							<div class="text-fg/50">Next Owner:</div><div class="text-fg">{{ permLetters(obj.nextOwnerMask) }}</div>
 						</div>
 					</div>
-					<div v-if="!obj.creatorId" class="border-t border-brd pt-2 text-2xs text-white/40 italic">
+					<div v-if="!obj.creatorId" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
 						Loading properties from sim…
 					</div>
 				</template>
@@ -573,19 +573,19 @@ function close() {
 					<button title="Paste Object Parameters from Clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
 					<!-- Identity / linkset -->
 					<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-white/50">Building Block</div>
-						<div class="text-t1">{{ typeInfo.label }}</div>
+						<div class="text-fg/50">Building Block</div>
+						<div class="text-fg">{{ typeInfo.label }}</div>
 						<template v-if="typeInfo.detail">
-							<div class="text-white/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
+							<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
 							<div class="flex items-center gap-1.5 min-w-0">
 								<button
-									class="w-10 h-10 shrink-0 bg-white/5 border border-brd rounded-sm flex items-center justify-center text-white/30 text-2xl overflow-hidden hover:border-accent"
+									class="w-10 h-10 shrink-0 bg-white/5 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
 									:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
 									@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
 								>
 									<span>{{ typeInfo.kind === 'mesh' ? '◰' : '⛰' }}</span>
 								</button>
-								<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
+								<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
 							</div>
 							LOD: Num Triangles
 							High: ####
@@ -593,69 +593,69 @@ function close() {
 							Low: ##
 							Lowest: ##
 						</template>
-						<div class="text-white/50">LocalID</div>
-						<div class="text-t1 font-mono">{{ obj.localId }}</div>
-						<div class="text-white/50">Parent ID</div>
-						<div class="text-t1 font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
-						<div class="text-white/50">Link Count</div>
-						<div class="text-t1">{{ linkCount }}</div>
+						<div class="text-fg/50">LocalID</div>
+						<div class="text-fg font-mono">{{ obj.localId }}</div>
+						<div class="text-fg/50">Parent ID</div>
+						<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
+						<div class="text-fg/50">Link Count</div>
+						<div class="text-fg">{{ linkCount }}</div>
 					</div>
 
 					<!-- Transform -->
-					<div class="border-t border-brd pt-2">
-						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Position (meters)</div>
+					<div class="border-t border-edge pt-2">
+						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Position (meters)</div>
 						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-red-500 font-bold">X</span> <span class="text-t1 font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-green-500 font-bold">Y</span> <span class="text-t1 font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-blue-500 font-bold">Z</span> <span class="text-t1 font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-red-500 font-bold">X</span> <span class="text-fg font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-green-500 font-bold">Y</span> <span class="text-fg font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-blue-500 font-bold">Z</span> <span class="text-fg font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
 						</div>
 					</div>
 					<div>
-						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Size (meters)</div>
+						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Size (meters)</div>
 						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-white/40">X</span> <span class="text-t1 font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-white/40">Y</span> <span class="text-t1 font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-white/40">Z</span> <span class="text-t1 font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
+							<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
 						</div>
 					</div>
 					<div>
-						<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Rotation (degrees)</div>
+						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Rotation (degrees)</div>
 						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-white/40">X</span> <span class="text-t1 font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
-							<div><span class="text-white/40">Y</span> <span class="text-t1 font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
-							<div><span class="text-white/40">Z</span> <span class="text-t1 font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
+							<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
+							<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
+							<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
 						</div>
 					</div>
 
 					<!-- Parametric prim shape (FS: lives on the Object tab) -->
-					<div v-if="showPrimShape" class="border-t border-brd pt-2 space-y-2">
-						<div class="text-white/50 text-2xs uppercase tracking-wide">Prim Shape</div>
+					<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
+						<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
 						<div class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-							<div class="text-white/50">Profile</div>
-							<div class="text-t1">{{ profileCurveLabel }}</div>
-							<div class="text-white/50">Path Cut (B/E)</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
-							<div class="text-white/50">Profile Cut (B/E)</div>
-							<div class="text-t1 font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
-							<div class="text-white/50">Hollow</div>
-							<div class="text-t1 font-mono">{{ obj.shape.profileHollow }}</div>
-							<div class="text-white/50">Twist (B/E)</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
-							<div class="text-white/50">Taper X/Y</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
-							<div class="text-white/50">Top Shear X/Y</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
-							<div class="text-white/50">Hole Size X/Y</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
-							<div class="text-white/50">Revolutions</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathRevolutions }}</div>
-							<div class="text-white/50">Radius Offset</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathRadiusOffset }}</div>
-							<div class="text-white/50">Skew</div>
-							<div class="text-t1 font-mono">{{ obj.shape.pathSkew }}</div>
+							<div class="text-fg/50">Profile</div>
+							<div class="text-fg">{{ profileCurveLabel }}</div>
+							<div class="text-fg/50">Path Cut (B/E)</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
+							<div class="text-fg/50">Profile Cut (B/E)</div>
+							<div class="text-fg font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
+							<div class="text-fg/50">Hollow</div>
+							<div class="text-fg font-mono">{{ obj.shape.profileHollow }}</div>
+							<div class="text-fg/50">Twist (B/E)</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
+							<div class="text-fg/50">Taper X/Y</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
+							<div class="text-fg/50">Top Shear X/Y</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
+							<div class="text-fg/50">Hole Size X/Y</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
+							<div class="text-fg/50">Revolutions</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathRevolutions }}</div>
+							<div class="text-fg/50">Radius Offset</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathRadiusOffset }}</div>
+							<div class="text-fg/50">Skew</div>
+							<div class="text-fg font-mono">{{ obj.shape.pathSkew }}</div>
 						</div>
 					</div>
-					<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-brd pt-2 text-2xs text-white/40 italic">
+					<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
 						Geometry comes from the mesh asset above. LOD triangle counts arrive with the
 						mesh-info decode (Phase 3).
 					</div>
@@ -668,18 +668,18 @@ function close() {
 					prim-shape params that used to live here (those now sit on the Object tab). -->
 				<template v-else-if="activeTab === 'features'">
 					<div class="grid grid-cols-[8rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-white/50">Flexible Path</div>
-						<div class="text-white/40 italic">not decoded</div>
-						<div class="text-white/50">Light</div>
-						<div class="text-white/40 italic">not decoded</div>
-						<div class="text-white/50">Reflection Probe</div>
-						<div class="text-white/40 italic">not decoded</div>
-						<div class="text-white/50">Physics Shape</div>
-						<div class="text-white/40 italic">not decoded</div>
-						<div class="text-white/50">Material (physics)</div>
-						<div class="text-white/40 italic">not decoded</div>
+						<div class="text-fg/50">Flexible Path</div>
+						<div class="text-fg/40 italic">not decoded</div>
+						<div class="text-fg/50">Light</div>
+						<div class="text-fg/40 italic">not decoded</div>
+						<div class="text-fg/50">Reflection Probe</div>
+						<div class="text-fg/40 italic">not decoded</div>
+						<div class="text-fg/50">Physics Shape</div>
+						<div class="text-fg/40 italic">not decoded</div>
+						<div class="text-fg/50">Material (physics)</div>
+						<div class="text-fg/40 italic">not decoded</div>
 					</div>
-					<div class="text-2xs text-white/30 italic pt-1">
+					<div class="text-2xs text-fg/30 italic pt-1">
 						Flexi / light / physics flags aren't carried in the object update we decode yet —
 						they arrive with the Phase 3 ExtraParams + physics-flags work.
 					</div>
@@ -700,11 +700,11 @@ function close() {
 					<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
 					<template v-if="texSubTab === 'bp'">
 						<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-2 text-xs">
-							<div class="text-white/50 self-center">Texture</div>
+							<div class="text-fg/50 self-center">Texture</div>
 							<div class="flex items-center gap-1 min-w-0">
 								<div class="flex flex-col items-center gap-1">
 									<button
-										class="w-16 h-16 shrink-0 bg-white/5 border border-brd rounded-sm flex items-center justify-center text-white/30 text-2xs overflow-hidden hover:border-accent"
+										class="w-16 h-16 shrink-0 bg-white/5 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xs overflow-hidden hover:border-accent"
 										:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
 										@click="openPreview(obj.defaultTexture)"
 									>
@@ -718,14 +718,14 @@ function close() {
 									<input
 										:value="obj.defaultTexture || '(none)'"
 										readonly
-										class="w-full bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs"
+										class="w-full bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
 									/>
 								</div>
 							</div>
-							<div class="text-white/50 self-center">Tint</div>
+							<div class="text-fg/50 self-center">Tint</div>
 							<div class="flex items-center gap-2">
 								<div
-									class="w-6 h-6 rounded-sm border border-brd"
+									class="w-6 h-6 rounded-sm border border-edge"
 									:style="obj.defaultColor
 										? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
 										: { background: 'rgba(255,255,255,0.05)' }"
@@ -735,26 +735,26 @@ function close() {
 									v-else
 									:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
 									readonly
-									class="flex-1 bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono"
+									class="flex-1 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
 								/>
 							</div>
-							<div class="text-white/50 self-center">Full bright</div>
-							<div class="text-t1">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
-							<div class="text-white/50 self-center">Glow</div>
-							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
-							<div class="text-white/50 self-center">Trans %</div>
+							<div class="text-fg/50 self-center">Full bright</div>
+							<div class="text-fg">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
+							<div class="text-fg/50 self-center">Glow</div>
+							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+							<div class="text-fg/50 self-center">Trans %</div>
 							<input
 								:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
 								readonly
-								class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono"
+								class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
 							/>
-							<div class="text-white/50 self-center">Alpha mode</div>
-							<div class="text-t1">
+							<div class="text-fg/50 self-center">Alpha mode</div>
+							<div class="text-fg">
 								<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
 									texture has alpha. Emissive mask renders as None (unlit materials). -->
 								<select
 									v-model="alphaMode"
-									class="ui-select w-full bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1"
+									class="ui-select w-full bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg"
 								>
 									<option value="">Auto (blend if alpha)</option>
 									<option value="none">None</option>
@@ -763,43 +763,43 @@ function close() {
 									<option value="emissive">Emissive mask</option>
 								</select>
 							</div>
-							<div class="text-white/50 self-center">Mask cutoff</div>
-							<div class="text-t1">to-do</div>
-							<div class="text-white/50 self-center">Bumpiness</div>
-							<div class="text-t1">to-do</div>
-							<div class="text-white/50 self-center">Shininess</div>
-							<div class="text-t1">{{ shinyLabel }}</div>
-							<div class="text-white/50 self-center">Glossiness</div>
-							<div class="text-t1">to-do</div>
-							<div class="text-white/50 self-center">Environment</div>
-							<div class="text-t1">to-do</div>
+							<div class="text-fg/50 self-center">Mask cutoff</div>
+							<div class="text-fg">to-do</div>
+							<div class="text-fg/50 self-center">Bumpiness</div>
+							<div class="text-fg">to-do</div>
+							<div class="text-fg/50 self-center">Shininess</div>
+							<div class="text-fg">{{ shinyLabel }}</div>
+							<div class="text-fg/50 self-center">Glossiness</div>
+							<div class="text-fg">to-do</div>
+							<div class="text-fg/50 self-center">Environment</div>
+							<div class="text-fg">to-do</div>
 						</div>
 
 						<!-- Per-face diffuse chips (only faces overriding the default) -->
-						<div v-if="faceTexChips.length" class="border-t border-brd pt-2">
-							<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Per-face textures</div>
+						<div v-if="faceTexChips.length" class="border-t border-edge pt-2">
+							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face textures</div>
 							<div class="flex flex-wrap gap-1.5">
 								<button
 									v-for="c in faceTexChips"
 									:key="c.face"
-									class="relative w-10 h-10 bg-white/5 border border-brd rounded-sm overflow-hidden hover:border-accent"
+									class="relative w-10 h-10 bg-white/5 border border-edge rounded-sm overflow-hidden hover:border-accent"
 									:title="`Face ${c.face} — click for preview`"
 									@click="openPreview(c.uuid)"
 								>
 									<img v-if="texUrls[c.uuid]" :src="texUrls[c.uuid]" class="w-full h-full object-cover" alt="" />
-									<span v-else class="absolute inset-0 flex items-center justify-center text-white/30 text-2xs">…</span>
-									<span class="absolute bottom-0 right-0 px-0.5 bg-black/60 text-[0.5rem] text-white/80 rounded-tl">{{ c.face }}</span>
+									<span v-else class="absolute inset-0 flex items-center justify-center text-fg/30 text-2xs">…</span>
+									<span class="absolute bottom-0 right-0 px-0.5 bg-black/60 text-[0.5rem] text-fg/80 rounded-tl">{{ c.face }}</span>
 								</button>
 							</div>
 						</div>
 
 						<!-- Per-face mapping overrides (Scale / Offset / Rotation / Mapping, planar-aware) -->
-						<div v-if="faceUvRows.length" class="border-t border-brd pt-2">
-							<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Per-face mapping</div>
+						<div v-if="faceUvRows.length" class="border-t border-edge pt-2">
+							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face mapping</div>
 							<div class="space-y-1">
 								<div v-for="r in faceUvRows" :key="r.face" class="grid grid-cols-[2rem,1fr] gap-x-2 items-baseline text-2xs">
-									<span class="text-white/50">F{{ r.face }}</span>
-									<div class="font-mono text-t1">
+									<span class="text-fg/50">F{{ r.face }}</span>
+									<div class="font-mono text-fg">
 										<span v-if="r.mapping !== 'Default'" class="text-accent">{{ r.mapping }}</span>
 										Scale {{ r.repeats[0].toFixed(5) }}×{{ r.repeats[1].toFixed(5) }}
 										<template v-if="r.rpm != null">· RPM {{ r.rpm.toFixed(5) }}</template>
@@ -811,67 +811,67 @@ function close() {
 						</div>
 
 						<!-- Mapping (default face) — FS-style: Mapping mode + Scale H/V + Offset H/V + Rotation -->
-						<div class="border-t border-brd pt-2">
+						<div class="border-t border-edge pt-2">
 							<div class="tabnav my-1 text-gray-500">|| DIFFUSE | Normal | Specular ||</div>
 							<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-								<div class="text-white/50 self-center">Scale H / V</div>
+								<div class="text-fg/50 self-center">Scale H / V</div>
 								<div class="grid grid-cols-2 gap-1">
-									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
-									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
+									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								</div>
-								<div class="text-white/50 self-center">Offset H / V</div>
+								<div class="text-fg/50 self-center">Offset H / V</div>
 								<div class="grid grid-cols-2 gap-1">
-									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
-									<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
+									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								</div>
-								<div class="text-white/50 self-center">Rotation°</div>
-								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
+								<div class="text-fg/50 self-center">Rotation°</div>
+								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								<template v-if="defaultMapping.rpm != null">
-									<div class="text-white/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
-									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono" />
+									<div class="text-fg/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
+									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								</template>
-								<div class="text-white/50 self-center">Mapping</div>
-								<div class="text-t1">{{ defaultMapping.mapping }}</div>
+								<div class="text-fg/50 self-center">Mapping</div>
+								<div class="text-fg">{{ defaultMapping.mapping }}</div>
 							</div>
 							<div class="my-1 text-gray-500">[ ] Synchronize materials</div>
 							<div class="my-1 text-gray-500">[ ] Align planar faces</div>
 						</div>
-						<div v-if="obj.defaultMaterialId" class="border-t border-brd pt-2">
-							<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
-							<input :value="obj.defaultMaterialId" readonly class="w-full bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
+						<div v-if="obj.defaultMaterialId" class="border-t border-edge pt-2">
+							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
+							<input :value="obj.defaultMaterialId" readonly class="w-full bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
 						</div>
 					</template>
 
 					<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
 					<template v-else-if="texSubTab === 'pbr'">
-						<div v-if="!hasPbr" class="text-white/40 italic px-1 py-3 text-center">
+						<div v-if="!hasPbr" class="text-fg/40 italic px-1 py-3 text-center">
 							No PBR material on this object — it uses Blinn-Phong (legacy) textures.
 						</div>
 						<template v-else>
 							<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
-								<div class="text-white/50 self-center">Material</div>
+								<div class="text-fg/50 self-center">Material</div>
 								<div class="flex-1 min-w-0">
 									<div v-if="isMultiPbr" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctPbr.length }})</div>
 									<div class="flex items-center gap-1.5">
 										<input
 											:value="obj.defaultPbrMaterial || distinctPbr[0] || '(none)'"
 											readonly
-											class="flex-1 min-w-0 bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs"
+											class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
 										/>
-										<button class="ui-btn p-1 rounded-sm border border-brd text-white/60 hover:text-t1 hover:bg-white/5" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
+										<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-white/5" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
 									</div>
 								</div>
 							</div>
-							<div v-if="pbrFaceChips.length" class="border-t border-brd pt-2">
-								<div class="text-white/50 text-2xs uppercase tracking-wide mb-1">Per-face PBR materials</div>
+							<div v-if="pbrFaceChips.length" class="border-t border-edge pt-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face PBR materials</div>
 								<div class="space-y-1">
 									<div v-for="c in pbrFaceChips" :key="c.face" class="flex items-center gap-1.5 text-2xs">
-										<span class="w-8 shrink-0 text-white/50">F{{ c.face }}</span>
-										<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-white/5 border border-brd rounded-sm px-1 py-0.5 text-t1 font-mono" />
+										<span class="w-8 shrink-0 text-fg/50">F{{ c.face }}</span>
+										<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
 									</div>
 								</div>
 							</div>
-							<div class="text-2xs text-white/30 italic pt-1">
+							<div class="text-2xs text-fg/30 italic pt-1">
 								GLTF material assets (base color / metallic-roughness / emissive / normal maps)
 								render via the materials cap. Per-channel editing arrives in Phase 3.
 							</div>
@@ -879,7 +879,7 @@ function close() {
 					</template>
 
 					<template v-else>
-						<div class="text-white/40 italic px-1 py-3 text-center">
+						<div class="text-fg/40 italic px-1 py-3 text-center">
 							Media to-do
 						</div>
 					</template>
@@ -891,15 +891,15 @@ function close() {
 					New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
 				<template v-else-if="activeTab === 'content'">
 					<div class="flex items-center gap-1 pb-1">
-						<button class="px-2 py-1 text-2xs border border-brd rounded-sm text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
-						<button class="px-2 py-1 text-2xs border border-brd rounded-sm text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
-						<button class="px-2 py-1 text-2xs border border-brd rounded-sm text-white/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
-						<div class="ml-auto text-2xs text-white/40">0 items</div>
+						<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
+						<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
+						<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
+						<div class="ml-auto text-2xs text-fg/40">0 items</div>
 					</div>
-					<div class="border border-brd rounded-sm bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-white/30 italic text-xs px-4 text-center">
+					<div class="border border-edge rounded-sm bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-fg/30 italic text-xs px-4 text-center">
 						Inventory contents will appear here (Phase 3).
 					</div>
-					<div class="text-2xs text-white/30 italic pt-1">
+					<div class="text-2xs text-fg/30 italic pt-1">
 						Object inventory uses HTTP capabilities — wired with Phase 3 cap layer.
 					</div>
 				</template>
@@ -908,26 +908,26 @@ function close() {
 			<!-- Texture preview ("texture picker") overlay ─────────────────────── -->
 			<div
 				v-if="previewUuid"
-				class="absolute inset-0 z-10 flex flex-col bg-card/95 backdrop-blur-xs"
+				class="absolute inset-0 z-10 flex flex-col bg-panel/95 backdrop-blur-xs"
 				@click.self="closePreview"
 			>
-				<div class="flex items-center gap-2 px-3 py-2 border-b border-brd shrink-0">
-					<span class="text-xs text-t1 font-semibold">Texture Preview</span>
-					<button class="ml-auto ui-btn p-1 rounded-sm border border-brd text-white/60 hover:text-t1 hover:bg-white/5" title="Close" @click="closePreview"><XIcon class="w-3.5 h-3.5" /></button>
+				<div class="flex items-center gap-2 px-3 py-2 border-b border-edge shrink-0">
+					<span class="text-xs text-fg font-semibold">Texture Preview</span>
+					<button class="ml-auto ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-white/5" title="Close" @click="closePreview"><XIcon class="w-3.5 h-3.5" /></button>
 				</div>
 				<div class="flex-1 min-h-0 flex items-center justify-center p-3">
 					<img
 						v-if="texUrls[previewUuid]"
 						:src="texUrls[previewUuid]"
-						class="max-w-full max-h-full object-contain border border-brd rounded-sm"
+						class="max-w-full max-h-full object-contain border border-edge rounded-sm"
 						:style="{ background: 'repeating-conic-gradient(#0003 0 25%, transparent 0 50%) 0 0 / 1rem 1rem' }"
 						alt="texture preview"
 					/>
-					<div v-else class="text-white/40 italic text-xs">Loading texture…</div>
+					<div v-else class="text-fg/40 italic text-xs">Loading texture…</div>
 				</div>
-				<div class="flex items-center gap-1.5 px-3 py-2 border-t border-brd shrink-0">
-					<input :value="previewUuid" readonly class="flex-1 min-w-0 bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
-					<button class="ui-btn p-1.5 rounded-sm border border-brd text-white/60 hover:text-t1 hover:bg-white/5" title="Copy UUID" @click="copyText(previewUuid)"><CopyIcon class="w-3.5 h-3.5" /></button>
+				<div class="flex items-center gap-1.5 px-3 py-2 border-t border-edge shrink-0">
+					<input :value="previewUuid" readonly class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+					<button class="ui-btn p-1.5 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-white/5" title="Copy UUID" @click="copyText(previewUuid)"><CopyIcon class="w-3.5 h-3.5" /></button>
 				</div>
 			</div>
 		</div>

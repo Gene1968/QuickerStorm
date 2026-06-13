@@ -121,23 +121,23 @@ const outfitFolders = [
 		:default-pos="{ right: '20%', bottom: '5rem' }"
 		@close="ui.toggleAppearance()"
 	>
-		<div class="flex flex-col flex-1 min-h-0 text-xs text-t1">
+		<div class="flex flex-col flex-1 min-h-0 text-xs text-fg">
 
 			<!-- ── Current Look header (always visible) ──────────────── -->
-			<div class="flex items-center gap-2 px-2.5 py-2 border-b border-brd shrink-0 bg-card2">
+			<div class="flex items-center gap-2 px-2.5 py-2 border-b border-edge shrink-0 bg-panel-alt">
 				<span class="text-2xl leading-none shrink-0 -mt-2">👕</span>
 				<div class="flex flex-col flex-1 min-w-0">
-					<span class="text-xs text-white/50 uppercase tracking-wide leading-none mb-0.5">
+					<span class="text-xs text-fg/50 uppercase tracking-wide leading-none mb-0.5">
 						{{ editMode ? 'Now editing…' : 'Now wearing…' }}
 					</span>
-					<span class="text-sm font-semibold text-t1 leading-tight truncate">
+					<span class="text-sm font-semibold text-fg leading-tight truncate">
 						{{ avatar.displayName || 'My Avatar' }}
 					</span>
 				</div>
 				<!-- Wrench / edit toggle -->
 				<button
 					class="p-1.5 rounded-sm hover:bg-white/10 transition-colors shrink-0"
-					:class="editMode ? 'text-accent' : 'text-white/50 hover:text-white'"
+					:class="editMode ? 'text-accent' : 'text-fg/50 hover:text-fg'"
 					:title="editMode ? 'Exit Edit' : 'Edit this outfit'"
 					@click="editMode ? exitEdit() : openEdit()"
 				>
@@ -151,26 +151,26 @@ const outfitFolders = [
 			<template v-if="!editMode">
 
 				<!-- Filter toolbar -->
-				<div class="flex items-center gap-0.5 px-1.5 py-1 border-b border-brd shrink-0">
+				<div class="flex items-center gap-0.5 px-1.5 py-1 border-b border-edge shrink-0">
 					<input
 						v-model="filterText"
 						type="search"
 						placeholder="Filter Outfits…"
-						class="flex-1 min-w-0 bg-card2 border border-brd text-t1 placeholder-tm rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
+						class="flex-1 min-w-0 bg-panel-alt border border-edge text-fg placeholder-fg-muted rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 					/>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Options — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Sort — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Sort — Phase 3" disabled>
 						<ArrowUpDownIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Delete Outfit — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Delete Outfit — Phase 3" disabled>
 						<Trash2Icon class="w-3.5 h-3.5" />
 					</button>
 				</div>
 
 				<!-- Tab bar -->
-				<div class="flex border-b border-brd shrink-0">
+				<div class="flex border-b border-edge shrink-0">
 					<button
 						v-for="tab in [
 							{ id: 'gallery', label: 'Outfit Gallery' },
@@ -181,7 +181,7 @@ const outfitFolders = [
 						class="flex-1 py-1.5 text-sm font-medium border-b-2 transition-colors"
 						:class="ui.appearanceActiveTab === tab.id
 							? 'border-accent text-accent bg-white/5'
-							: 'border-transparent text-white/50 hover:text-white hover:border-white/30'"
+							: 'border-transparent text-fg/50 hover:text-fg hover:border-white/30'"
 						@click="ui.appearanceActiveTab = tab.id"
 					>
 						{{ tab.label }}
@@ -201,15 +201,15 @@ const outfitFolders = [
 								title="Outfit Gallery — Phase 3"
 							>
 								<div
-									class="w-full aspect-square rounded-sm border-2 border-brd group-hover:border-accent transition-colors"
+									class="w-full aspect-square rounded-sm border-2 border-edge group-hover:border-accent transition-colors"
 									:style="{ background: `linear-gradient(135deg, ${item.color}55, ${item.color}22)` }"
 								>
 									<div class="flex items-center justify-center h-full text-2xl">👕</div>
 								</div>
-								<span class="text-xs text-tm text-center truncate w-full">{{ item.name }}</span>
+								<span class="text-xs text-fg-muted text-center truncate w-full">{{ item.name }}</span>
 							</div>
 						</div>
-						<div class="px-3 pb-2 text-tm/50 text-xs italic text-center">Outfit Gallery — Phase 3</div>
+						<div class="px-3 pb-2 text-fg-muted/50 text-xs italic text-center">Outfit Gallery — Phase 3</div>
 					</template>
 
 					<!-- Outfits tab ─────────────────────────────────── -->
@@ -218,7 +218,7 @@ const outfitFolders = [
 							<div
 								v-for="folder in outfitFolders"
 								:key="folder.id"
-								class="border-b border-brd/50 last:border-0"
+								class="border-b border-edge/50 last:border-0"
 							>
 								<!-- Folder row -->
 								<button
@@ -227,23 +227,23 @@ const outfitFolders = [
 								>
 									<component
 										:is="folder.open.value ? ChevronDownIcon : ChevronRightIcon"
-										class="w-3 h-3 text-white/40 shrink-0"
+										class="w-3 h-3 text-fg/40 shrink-0"
 									/>
-									<span class="text-t1 font-medium">{{ folder.label }}</span>
-									<span class="ml-auto text-tm/50 text-xs">{{ folder.count }}</span>
+									<span class="text-fg font-medium">{{ folder.label }}</span>
+									<span class="ml-auto text-fg-muted/50 text-xs">{{ folder.count }}</span>
 								</button>
 								<!-- Folder contents placeholder -->
 								<template v-if="folder.open.value && folder.count > 0">
-									<div class="px-4 py-1 text-tm/40 text-sm italic">
+									<div class="px-4 py-1 text-fg-muted/40 text-sm italic">
 										Contents — Phase 3
 									</div>
 								</template>
 								<template v-else-if="folder.open.value">
-									<div class="px-4 py-1 text-tm/30 text-sm italic">Empty</div>
+									<div class="px-4 py-1 text-fg-muted/30 text-sm italic">Empty</div>
 								</template>
 							</div>
 						</div>
-						<div class="px-3 py-2 text-tm/40 text-xs italic text-center">
+						<div class="px-3 py-2 text-fg-muted/40 text-xs italic text-center">
 							Full outfit library — Phase 3
 						</div>
 					</template>
@@ -253,7 +253,7 @@ const outfitFolders = [
 						<div
 							v-for="group in wearableGroups"
 							:key="group.id"
-							class="border-b border-brd/40 last:border-0"
+							class="border-b border-edge/40 last:border-0"
 						>
 							<!-- Group header -->
 							<button
@@ -262,16 +262,16 @@ const outfitFolders = [
 							>
 								<component
 									:is="expanded[group.id] ? ChevronDownIcon : ChevronRightIcon"
-									class="w-3 h-3 text-white/40 shrink-0"
+									class="w-3 h-3 text-fg/40 shrink-0"
 								/>
-								<span class="text-t1 font-medium text-sm">{{ group.label }}</span>
-								<span class="ml-auto text-tm/40 text-xs">{{ group.items.length }}</span>
+								<span class="text-fg font-medium text-sm">{{ group.label }}</span>
+								<span class="ml-auto text-fg-muted/40 text-xs">{{ group.items.length }}</span>
 							</button>
 							<!-- Items -->
 							<template v-if="expanded[group.id]">
 								<div
 									v-if="!group.items.length"
-									class="px-6 py-1.5 text-tm/40 text-sm italic"
+									class="px-6 py-1.5 text-fg-muted/40 text-sm italic"
 								>
 									{{ group.id === 'attachments' ? 'No attachments worn.' : 'None' }}
 								</div>
@@ -282,8 +282,8 @@ const outfitFolders = [
 								>
 									<span class="text-sm leading-none shrink-0">{{ item.icon }}</span>
 									<div class="flex flex-col flex-1 min-w-0">
-										<span class="text-t1 font-medium leading-tight">{{ item.label }}</span>
-										<span class="text-tm/60 text-xs leading-tight truncate">{{ item.detail }}</span>
+										<span class="text-fg font-medium leading-tight">{{ item.label }}</span>
+										<span class="text-fg-muted/60 text-xs leading-tight truncate">{{ item.detail }}</span>
 									</div>
 									<!-- Color swatch -->
 									<div
@@ -300,9 +300,9 @@ const outfitFolders = [
 				</div>
 
 				<!-- Bottom status bar -->
-				<div class="flex items-center px-2.5 py-1.5 border-t border-brd shrink-0 bg-card2 gap-2">
-					<span class="text-tm/50 text-xs flex-1">Complexity: — (Phase 3)</span>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-white/40 hover:text-white" title="Marketplace — Phase 3" disabled>
+				<div class="flex items-center px-2.5 py-1.5 border-t border-edge shrink-0 bg-panel-alt gap-2">
+					<span class="text-fg-muted/50 text-xs flex-1">Complexity: — (Phase 3)</span>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40 hover:text-fg" title="Marketplace — Phase 3" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -315,48 +315,48 @@ const outfitFolders = [
 			<template v-else>
 
 				<!-- Back + title row -->
-				<div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-brd shrink-0">
+				<div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-edge shrink-0">
 					<button
-						class="p-1 rounded-sm hover:bg-white/10 text-white/60 hover:text-white transition-colors shrink-0"
+						class="p-1 rounded-sm hover:bg-white/10 text-fg/60 hover:text-fg transition-colors shrink-0"
 						title="Back to outfits"
 						@click="exitEdit"
 					>
 						<ChevronLeftIcon class="w-4 h-4" />
 					</button>
-					<span class="text-sm font-semibold text-t1">Edit Outfit Parts</span>
+					<span class="text-sm font-semibold text-fg">Edit Outfit Parts</span>
 				</div>
 
 				<!-- Editable wearables list -->
 				<div class="flex-1 overflow-y-auto min-h-0">
 
 					<!-- Body Parts -->
-					<div class="border-b border-brd/40">
+					<div class="border-b border-edge/40">
 						<button
 							class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
 							@click="expanded.body = !expanded.body"
 						>
-							<component :is="expanded.body ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-white/40 shrink-0" />
-							<span class="text-t1 font-medium text-sm">Body Parts</span>
+							<component :is="expanded.body ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-fg/40 shrink-0" />
+							<span class="text-fg font-medium text-sm">Body Parts</span>
 						</button>
 						<template v-if="expanded.body">
 							<!-- Shape (read-only) -->
 							<div class="flex items-center gap-2 px-4 py-1.5">
 								<span class="text-sm shrink-0">🧍</span>
 								<div class="flex flex-col flex-1 min-w-0">
-									<span class="text-t1 font-medium leading-tight">Shape</span>
-									<span class="text-tm/50 text-xs">Classic Avatar — Phase 3</span>
+									<span class="text-fg font-medium leading-tight">Shape</span>
+									<span class="text-fg-muted/50 text-xs">Classic Avatar — Phase 3</span>
 								</div>
 							</div>
 							<!-- Skin -->
 							<div class="flex items-center gap-2 px-4 py-1.5">
 								<span class="text-sm shrink-0">🫀</span>
 								<div class="flex flex-col flex-1 min-w-0">
-									<span class="text-t1 font-medium leading-tight">Skin Tone</span>
+									<span class="text-fg font-medium leading-tight">Skin Tone</span>
 								</div>
 								<input
 									v-model="editSkinTone"
 									type="color"
-									class="w-7 h-6 rounded-sm border border-brd cursor-pointer bg-transparent"
+									class="w-7 h-6 rounded-sm border border-edge cursor-pointer bg-transparent"
 									title="Skin tone color"
 								/>
 							</div>
@@ -364,10 +364,10 @@ const outfitFolders = [
 							<div class="flex items-center gap-2 px-4 py-1.5">
 								<span class="text-sm shrink-0">💇</span>
 								<div class="flex flex-col flex-1 min-w-0">
-									<span class="text-t1 font-medium leading-tight">Hair</span>
+									<span class="text-fg font-medium leading-tight">Hair</span>
 									<select
 										v-model="editHairStyle"
-										class="bg-card2 border border-brd text-t1 rounded-sm px-1 py-0.5 text-xs mt-0.5 focus:outline-hidden focus:ring-1 focus:ring-accent"
+										class="bg-panel-alt border border-edge text-fg rounded-sm px-1 py-0.5 text-xs mt-0.5 focus:outline-hidden focus:ring-1 focus:ring-accent"
 									>
 										<option value="none">None</option>
 										<option value="short">Short</option>
@@ -378,7 +378,7 @@ const outfitFolders = [
 								<input
 									v-model="editHairColor"
 									type="color"
-									class="w-7 h-6 rounded-sm border border-brd cursor-pointer bg-transparent"
+									class="w-7 h-6 rounded-sm border border-edge cursor-pointer bg-transparent"
 									title="Hair color"
 								/>
 							</div>
@@ -386,34 +386,34 @@ const outfitFolders = [
 							<div class="flex items-center gap-2 px-4 py-1.5 opacity-50">
 								<span class="text-sm shrink-0">👁</span>
 								<div class="flex flex-col flex-1 min-w-0">
-									<span class="text-t1 font-medium leading-tight">Eyes</span>
-									<span class="text-tm/50 text-xs">Default — Phase 3</span>
+									<span class="text-fg font-medium leading-tight">Eyes</span>
+									<span class="text-fg-muted/50 text-xs">Default — Phase 3</span>
 								</div>
 							</div>
 						</template>
 					</div>
 
 					<!-- Clothing -->
-					<div class="border-b border-brd/40">
+					<div class="border-b border-edge/40">
 						<button
 							class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
 							@click="expanded.clothing = !expanded.clothing"
 						>
-							<component :is="expanded.clothing ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-white/40 shrink-0" />
-							<span class="text-t1 font-medium text-sm">Clothing</span>
+							<component :is="expanded.clothing ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-fg/40 shrink-0" />
+							<span class="text-fg font-medium text-sm">Clothing</span>
 						</button>
 						<template v-if="expanded.clothing">
 							<!-- Outfit color -->
 							<div class="flex items-center gap-2 px-4 py-1.5">
 								<span class="text-sm shrink-0">👕</span>
 								<div class="flex flex-col flex-1 min-w-0">
-									<span class="text-t1 font-medium leading-tight">Outfit Color</span>
-									<span class="text-tm/50 text-xs">Primary / accent color</span>
+									<span class="text-fg font-medium leading-tight">Outfit Color</span>
+									<span class="text-fg-muted/50 text-xs">Primary / accent color</span>
 								</div>
 								<input
 									v-model="editColor"
 									type="color"
-									class="w-7 h-6 rounded-sm border border-brd cursor-pointer bg-transparent"
+									class="w-7 h-6 rounded-sm border border-edge cursor-pointer bg-transparent"
 									title="Outfit primary color"
 								/>
 							</div>
@@ -421,31 +421,31 @@ const outfitFolders = [
 					</div>
 
 					<!-- Attachments -->
-					<div class="border-b border-brd/40">
+					<div class="border-b border-edge/40">
 						<button
 							class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
 							@click="expanded.attachments = !expanded.attachments"
 						>
-							<component :is="expanded.attachments ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-white/40 shrink-0" />
-							<span class="text-t1 font-medium text-sm">Attachments</span>
-							<span class="ml-auto text-tm/40 text-xs">0</span>
+							<component :is="expanded.attachments ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-fg/40 shrink-0" />
+							<span class="text-fg font-medium text-sm">Attachments</span>
+							<span class="ml-auto text-fg-muted/40 text-xs">0</span>
 						</button>
 						<template v-if="expanded.attachments">
-							<div class="px-6 py-2 text-tm/40 text-sm italic">No attachments worn.</div>
+							<div class="px-6 py-2 text-fg-muted/40 text-sm italic">No attachments worn.</div>
 						</template>
 					</div>
 
 					<!-- Add More (stub expand) -->
-					<div class="px-3 py-2 border-b border-brd/40">
+					<div class="px-3 py-2 border-b border-edge/40">
 						<button
-							class="flex items-center gap-1.5 px-2 py-1 border border-brd rounded-sm text-tm hover:bg-white/5 hover:text-t1 transition-colors text-sm"
+							class="flex items-center gap-1.5 px-2 py-1 border border-edge rounded-sm text-fg-muted hover:bg-white/5 hover:text-fg transition-colors text-sm"
 							title="Browse inventory to add wearables — Phase 3"
 							@click="showAddMore = !showAddMore"
 						>
 							<PlusIcon class="w-3 h-3" />
 							Add More…
 						</button>
-						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-card2 border border-brd rounded-sm text-center text-tm/40 text-sm italic">
+						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-panel-alt border border-edge rounded-sm text-center text-fg-muted/40 text-sm italic">
 							Inventory browser — Phase 3
 						</div>
 					</div>
@@ -453,28 +453,28 @@ const outfitFolders = [
 				</div>
 
 				<!-- Bottom bar: gear + complexity + shop -->
-				<div class="flex items-center px-2 py-1.5 border-t border-brd shrink-0 bg-card2 gap-1">
-					<button class="p-1 rounded-sm hover:bg-white/10 text-white/40" title="Options — Phase 3" disabled>
+				<div class="flex items-center px-2 py-1.5 border-t border-edge shrink-0 bg-panel-alt gap-1">
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<span class="flex-1 text-tm/40 text-xs text-center">Complexity: — (Phase 3)</span>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-white/40" title="Marketplace — Phase 3" disabled>
+					<span class="flex-1 text-fg-muted/40 text-xs text-center">Complexity: — (Phase 3)</span>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40" title="Marketplace — Phase 3" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
 
 				<!-- Save / Save As… / Undo Changes -->
-				<div class="flex gap-1 px-2 py-1.5 border-t border-brd shrink-0">
+				<div class="flex gap-1 px-2 py-1.5 border-t border-edge shrink-0">
 					<button
 						class="flex-1 py-1.5 bg-accent text-white rounded-sm text-xs font-semibold hover:opacity-80 transition-opacity"
 						@click="saveOutfit"
 					>Save</button>
 					<button
-						class="flex-1 py-1.5 bg-card2 border border-brd text-tm rounded-sm text-xs hover:bg-white/5 transition-colors opacity-50 cursor-not-allowed"
+						class="flex-1 py-1.5 bg-panel-alt border border-edge text-fg-muted rounded-sm text-xs hover:bg-white/5 transition-colors opacity-50 cursor-not-allowed"
 						disabled title="Save As — Phase 3"
 					>Save As…</button>
 					<button
-						class="flex-1 py-1.5 bg-card2 border border-brd text-t1 rounded-sm text-xs hover:bg-white/5 transition-colors"
+						class="flex-1 py-1.5 bg-panel-alt border border-edge text-fg rounded-sm text-xs hover:bg-white/5 transition-colors"
 						@click="undoChanges"
 					>Undo Changes</button>
 				</div>

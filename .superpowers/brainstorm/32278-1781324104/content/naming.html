@@ -1,0 +1,83 @@
+<style>
+.mapping-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px; }
+.col-head { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #666; margin-bottom: 8px; }
+.tok { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; margin-bottom: 3px; font-size: 12px; font-family: monospace; }
+.tok .arrow { color: #555; flex-shrink: 0; }
+.old { color: #ef4444; background: #1f0707; }
+.new { color: #86efac; background: #071f0f; }
+.swatch { width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0; }
+.section-label { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
+.note { font-size: 11px; color: #666; padding: 8px 10px; background: #111; border-radius: 5px; border-left: 2px solid #333; margin-top: 4px; }
+.usage { font-size: 11px; color: #94a3b8; }
+</style>
+
+<h2>Proposed token rename</h2>
+<p class="subtitle">Old names (left) → new names (right). Click rows you want to change, or just reply in terminal with any tweaks.</p>
+
+<div class="mapping-grid">
+<div>
+<div class="col-head">Before (opaque / inconsistent)</div>
+
+<div class="section-label">Surfaces</div>
+<div class="tok old"><div class="swatch" style="background:#200B05"></div> bg <span class="usage">— darkest bg</span></div>
+<div class="tok old"><div class="swatch" style="background:#40160B"></div> bg2 <span class="usage">— slightly lighter bg</span></div>
+<div class="tok old"><div class="swatch" style="background:#602010"></div> card <span class="usage">— panels, floaters</span></div>
+<div class="tok old"><div class="swatch" style="background:#1A3726"></div> card2 <span class="usage">— green alt panels</span></div>
+<div class="tok old"><div class="swatch" style="background:#081610;border:1px solid #333"></div> side <span class="usage">— sidebar (with alpha)</span></div>
+
+<div class="section-label">Borders</div>
+<div class="tok old"><div class="swatch" style="background:#802B16"></div> brd</div>
+<div class="tok old"><div class="swatch" style="background:#A0361B"></div> brd2 <span class="usage">— stronger border</span></div>
+
+<div class="section-label">Text</div>
+<div class="tok old"><div class="swatch" style="background:#F5EAE0;border:1px solid #333"></div> t1 <span class="usage">— primary text (173 uses)</span></div>
+<div class="tok old"><div class="swatch" style="background:#C68676;border:1px solid #333"></div> t2 <span class="usage">— secondary text (14 uses)</span></div>
+<div class="tok old"><div class="swatch" style="background:#B35E49;border:1px solid #333"></div> tm <span class="usage">— muted text (63 uses)</span></div>
+
+<div class="section-label">Accents</div>
+<div class="tok old"><div class="swatch" style="background:#E9972D"></div> accent</div>
+<div class="tok old"><div class="swatch" style="background:#C4501B"></div> accent2</div>
+<div class="tok old"><div class="swatch" style="background:#F2C181"></div> accent3</div>
+
+<div class="section-label">Hardcoded — needs to go</div>
+<div class="tok old" style="color:#fbbf24">text-white/50 <span class="usage">— 218 uses! invisible in light mode</span></div>
+<div class="tok old" style="color:#fbbf24">bg-white/5..10 <span class="usage">— 138 uses, hover surfaces</span></div>
+</div>
+
+<div>
+<div class="col-head">After (semantic / contrast-aware)</div>
+
+<div class="section-label">Surfaces</div>
+<div class="tok new"><div class="swatch" style="background:#200B05"></div> surface <span class="usage">— base canvas</span></div>
+<div class="tok new"><div class="swatch" style="background:#40160B"></div> surface-2 <span class="usage">— or just use surface/80?</span></div>
+<div class="tok new"><div class="swatch" style="background:#602010"></div> panel <span class="usage">— floaters, cards</span></div>
+<div class="tok new"><div class="swatch" style="background:#1A3726"></div> panel-alt <span class="usage">— green counterpoint</span></div>
+<div class="tok new"><div class="swatch" style="background:#081610;border:1px solid #222"></div> sidebar <span class="usage">— side nav</span></div>
+
+<div class="section-label">Borders</div>
+<div class="tok new"><div class="swatch" style="background:#802B16"></div> border</div>
+<div class="tok new"><div class="swatch" style="background:#A0361B"></div> border-strong</div>
+
+<div class="section-label">Text</div>
+<div class="tok new"><div class="swatch" style="background:#F5EAE0;border:1px solid #555"></div> text <span class="usage">— primary, full contrast</span></div>
+<div class="tok new"><div class="swatch" style="background:#C68676;border:1px solid #555"></div> text-subtle <span class="usage">— labels, secondary info</span></div>
+<div class="tok new"><div class="swatch" style="background:#B35E49;border:1px solid #555"></div> text-dim <span class="usage">— placeholders, inactive</span></div>
+
+<div class="section-label">Accents</div>
+<div class="tok new"><div class="swatch" style="background:#E9972D"></div> accent <span class="usage">— unchanged</span></div>
+<div class="tok new"><div class="swatch" style="background:#C4501B"></div> accent-dark</div>
+<div class="tok new"><div class="swatch" style="background:#F2C181"></div> accent-light</div>
+
+<div class="section-label">Replace hardcoded with:</div>
+<div class="tok new" style="color:#86efac">text/50 <span class="usage">— warm tinted, readable in both modes</span></div>
+<div class="tok new" style="color:#86efac">panel/5..10 <span class="usage">— or white/5 explicitly where truly needed</span></div>
+</div>
+</div>
+
+<div class="note" style="margin-top:16px;">
+  <strong>Palette block (top of index.css) — the only thing you change to swap themes:</strong><br>
+  <code style="font-size:11px;color:#7dd3fc;">--primary-1</code> through <code style="font-size:11px;color:#7dd3fc;">--primary-9</code> (rufous family today, yours to replace) +
+  <code style="font-size:11px;color:#86efac;">--accent</code> + <code style="font-size:11px;color:#86efac;">--accent-dark/light</code> +
+  <code style="font-size:11px;color:#fca5a5;">--green-1/3/5</code> (panel-alt family) +
+  <code style="font-size:11px;color:#d1d5db;">--neutral-1..9</code> (optional, or drop if primary is close enough)
+</div>

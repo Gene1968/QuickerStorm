@@ -78,7 +78,7 @@ onMounted(async () => {
 		/>
 		<div
 			v-else
-			class="absolute inset-0 bg-gradient-to-br from-slate-900 via-bg to-black"
+			class="absolute inset-0 bg-gradient-to-br from-slate-900 via-surface to-black"
 		/>
 
 		<!-- WHY: iframes steal wheel/click events even when a position:fixed element
@@ -88,7 +88,7 @@ onMounted(async () => {
 
 		<!-- ── Login strip — 1rem from all edges, rounded-sm, dark bg ───────── -->
 		<div
-			class="absolute inset-x-3 bottom-3 bg-forest/80 w-[18.75vw] rounded-2xl overflow-y-auto"
+			class="absolute inset-x-3 bottom-3 bg-panel-alt/80 w-[18.75vw] rounded-2xl overflow-y-auto"
 			style="backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08);"
 		>
 			<div class="flex flex-col items-start gap-5 px-5 py-4">
@@ -96,18 +96,18 @@ onMounted(async () => {
 				<!-- Brand + disclaimer -->
 				<div class="shrink-0 flex flex-col gap-1 w-full pt-0.5">
 					<div class="flex items-center justify-between gap-2">
-						<h1 class="text-3xl font-bold text-white tracking-tight ">
+						<h1 class="text-3xl font-bold text-fg tracking-tight ">
 							quicker<span class="font-black">STORM</span>
 						</h1>
 						<!-- Theme toggle -->
 						<button
-							class="rounded-full hover:bg-accent3 p-1 text-white/50 hover:text-white text-xl leading-none shrink-0 transition-colors aspect-square"
+							class="rounded-full hover:bg-accent-light p-1 text-fg/50 hover:text-fg text-xl leading-none shrink-0 transition-colors aspect-square"
 							@click="toggle"
 							:title="isDark ? 'Light mode' : 'Dark mode'"
 						>{{ isDark ? '☀' : '🌙' }}</button>
 					</div>
 
-					<p class="text-white/45 text-md leading-snug my-1">
+					<p class="text-fg/45 text-md leading-snug my-1">
 						Web-based metaverse viewer for OpenSimulator &amp; Second Life
 					</p>
 				</div>
@@ -116,7 +116,7 @@ onMounted(async () => {
 				<template v-if="reconnecting">
 					<div class="flex flex-col items-center gap-3 w-full py-4 text-center">
 						<div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-						<p class="text-t1 text-sm">Reconnecting to {{ gridStore.selectedGrid?.name ?? gridStore.selectedNick }}…</p>
+						<p class="text-fg text-sm">Reconnecting to {{ gridStore.selectedGrid?.name ?? gridStore.selectedNick }}…</p>
 					</div>
 				</template>
 
@@ -132,7 +132,7 @@ onMounted(async () => {
 					</div>
 
 					<!-- Disclaimer -->
-					<div class="w-full mt-2 text-t1 text-xs leading-relaxed">
+					<div class="w-full mt-2 text-fg text-xs leading-relaxed">
 						<p>
 							quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
 						</p>

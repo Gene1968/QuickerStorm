@@ -74,7 +74,7 @@ function onContextMenuItem(event, it) {
 <template>
 	<div v-if="folder && visible">
 		<div
-			class="flex items-center gap-1 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-t1 select-none"
+			class="flex items-center gap-1 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-fg select-none"
 			:class="selected ? 'bg-accent/30' : 'hover:bg-white/10'"
 			:style="{ paddingLeft: padLeft }"
 			@click="onSelect(folderId, $event)"
@@ -85,7 +85,7 @@ function onContextMenuItem(event, it) {
 			<span class="shrink-0">{{ fIcon }}</span>
 			<span class="truncate">{{ folder.name }}</span>
 			<!-- FS-style count shown only for the anchor (last individually clicked) folder, in parens. -->
-			<span v-if="isAnchor" class="shrink-0 ml-auto pl-1 text-2xs text-white/55 tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
+			<span v-if="isAnchor" class="shrink-0 ml-auto pl-1 text-2xs text-fg/55 tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
 		</div>
 
 		<template v-if="open">
@@ -99,7 +99,7 @@ function onContextMenuItem(event, it) {
 			<div
 				v-for="it in items"
 				:key="it.itemId"
-				class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-t1/90 select-none cursor-pointer"
+				class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer"
 				:class="invSel.isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'"
 				:style="{ paddingLeft: itemPad }"
 				:title="it.desc || it.name"
@@ -110,8 +110,8 @@ function onContextMenuItem(event, it) {
 				<span class="truncate">{{ it.name }}</span>
 				<span v-for="tag in permTags(it)" :key="tag" class="shrink-0 text-2xs text-amber-400/70">({{ tag }})</span>
 			</div>
-			<div v-if="loading" class="px-1 py-0.5 text-2xs italic text-white/40" :style="{ paddingLeft: itemPad }">Loading…</div>
-			<div v-else-if="empty" class="px-1 py-0.5 text-2xs italic text-white/30" :style="{ paddingLeft: itemPad }">(empty)</div>
+			<div v-if="loading" class="px-1 py-0.5 text-2xs italic text-fg/40" :style="{ paddingLeft: itemPad }">Loading…</div>
+			<div v-else-if="empty" class="px-1 py-0.5 text-2xs italic text-fg/30" :style="{ paddingLeft: itemPad }">(empty)</div>
 		</template>
 	</div>
 </template>

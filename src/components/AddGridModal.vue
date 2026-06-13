@@ -63,14 +63,14 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
 <template>
   <!-- Backdrop -->
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" @click.self="$emit('close')">
-    <div class="w-full max-w-md bg-card border border-brd rounded-xl shadow-2xl p-6 flex flex-col gap-4">
+    <div class="w-full max-w-md bg-panel border border-edge rounded-xl shadow-2xl p-6 flex flex-col gap-4">
 
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-t1">Add Grid</h2>
-        <button class="text-t2 hover:text-t1 text-xl leading-none" @click="$emit('close')">×</button>
+        <h2 class="text-lg font-semibold text-fg">Add Grid</h2>
+        <button class="text-fg-subtle hover:text-fg text-xl leading-none" @click="$emit('close')">×</button>
       </div>
 
-      <p class="text-xs text-t2">
+      <p class="text-xs text-fg-subtle">
         Grid is saved in your browser only. Want it added permanently?
         <a :href="REQUEST_URL" class="text-accent hover:underline">Send a request.</a>
       </p>
@@ -81,45 +81,45 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
       <form class="flex flex-col gap-3" @submit.prevent="submit">
 
         <div>
-          <label class="block text-t2 text-xs mb-1">Grid Name <span class="text-red-400">*</span></label>
+          <label class="block text-fg-subtle text-xs mb-1">Grid Name <span class="text-red-400">*</span></label>
           <input
             v-model="form.name"
             type="text"
             placeholder="My Awesome Grid"
-            class="w-full px-3 py-2 rounded-sm bg-bg border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
+            class="w-full px-3 py-2 rounded-sm bg-surface border border-edge text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
             required
           />
-          <p v-if="nick" class="text-t2 text-xs mt-0.5">Nick: <code class="text-accent">{{ nick }}</code></p>
+          <p v-if="nick" class="text-fg-subtle text-xs mt-0.5">Nick: <code class="text-accent">{{ nick }}</code></p>
         </div>
 
         <div>
-          <label class="block text-t2 text-xs mb-1">Login URI <span class="text-red-400">*</span></label>
+          <label class="block text-fg-subtle text-xs mb-1">Login URI <span class="text-red-400">*</span></label>
           <input
             v-model="form.loginURI"
             type="url"
             placeholder="http://mygrid.com:8002/"
-            class="w-full px-3 py-2 rounded-sm bg-bg border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
+            class="w-full px-3 py-2 rounded-sm bg-surface border border-edge text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
             required
           />
         </div>
 
         <div>
-          <label class="block text-t2 text-xs mb-1">SLURL / Hop Base <span class="text-t2">(optional — auto-derived)</span></label>
+          <label class="block text-fg-subtle text-xs mb-1">SLURL / Hop Base <span class="text-fg-subtle">(optional — auto-derived)</span></label>
           <input
             v-model="form.slurlBase"
             type="text"
             :placeholder="slurlBase || 'hop://mygrid.com:8002/'"
-            class="w-full px-3 py-2 rounded-sm bg-bg border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
+            class="w-full px-3 py-2 rounded-sm bg-surface border border-edge text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
           />
         </div>
 
         <div>
-          <label class="block text-t2 text-xs mb-1">Platform</label>
+          <label class="block text-fg-subtle text-xs mb-1">Platform</label>
           <div class="flex gap-4">
-            <label class="flex items-center gap-1.5 text-sm text-t1 cursor-pointer">
+            <label class="flex items-center gap-1.5 text-sm text-fg cursor-pointer">
               <input type="radio" v-model="form.platform" value="OpenSim" class="accent-accent" /> OpenSim
             </label>
-            <label class="flex items-center gap-1.5 text-sm text-t1 cursor-pointer">
+            <label class="flex items-center gap-1.5 text-sm text-fg cursor-pointer">
               <input type="radio" v-model="form.platform" value="SecondLife" class="accent-accent" /> Second Life
             </label>
           </div>
@@ -127,11 +127,11 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
 
         <!-- Optional links (collapsible) -->
         <details class="text-sm">
-          <summary class="text-t2 text-xs cursor-pointer hover:text-t1">Optional links (about, register, forgot password)</summary>
+          <summary class="text-fg-subtle text-xs cursor-pointer hover:text-fg">Optional links (about, register, forgot password)</summary>
           <div class="mt-2 flex flex-col gap-2">
-            <input v-model="form.about"    type="url" placeholder="About URL" class="w-full px-3 py-1.5 rounded-sm bg-bg border border-brd text-t1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
-            <input v-model="form.register" type="url" placeholder="Register URL" class="w-full px-3 py-1.5 rounded-sm bg-bg border border-brd text-t1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
-            <input v-model="form.password" type="url" placeholder="Forgot Password URL" class="w-full px-3 py-1.5 rounded-sm bg-bg border border-brd text-t1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
+            <input v-model="form.about"    type="url" placeholder="About URL" class="w-full px-3 py-1.5 rounded-sm bg-surface border border-edge text-fg text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
+            <input v-model="form.register" type="url" placeholder="Register URL" class="w-full px-3 py-1.5 rounded-sm bg-surface border border-edge text-fg text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
+            <input v-model="form.password" type="url" placeholder="Forgot Password URL" class="w-full px-3 py-1.5 rounded-sm bg-surface border border-edge text-fg text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
           </div>
         </details>
 
@@ -139,7 +139,7 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
           <button type="submit" class="flex-1 py-2 bg-accent text-white rounded-sm text-sm font-medium hover:opacity-80">
             Add Grid
           </button>
-          <button type="button" class="px-4 py-2 border border-brd text-t2 rounded-sm text-sm hover:text-t1" @click="$emit('close')">
+          <button type="button" class="px-4 py-2 border border-edge text-fg-subtle rounded-sm text-sm hover:text-fg" @click="$emit('close')">
             Cancel
           </button>
         </div>

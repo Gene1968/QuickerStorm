@@ -278,7 +278,13 @@
       "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\" /b)",
       "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\" /b /s)",
       "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\\\\plans\" /b)",
-      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\\\\specs\" /b)"
+      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\\\\specs\" /b)",
+      "Bash(bash *)",
+      "Bash(grep -rn 'text-t[12m]' src --include=\"*.vue\" --include=\"*.js\")",
+      "Bash(exit 1)",
+      "Bash(exit 0)",
+      "Bash(Select-String -Path \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\\\\components\\\\ProfileFloater.vue\" -Pattern 'placeholder')",
+      "Bash(Select-Object LineNumber, Line)"
     ]
   }
 }

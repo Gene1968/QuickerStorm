@@ -102,8 +102,8 @@ function selectMode(m) {
 					:key="btn.id"
 					class="custom flex flex-col items-center justify-center min-h-10 rounded-sm border text-base font-mono leading-none transition-colors"
 					:class="btn.wired
-						? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
-						: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
+						? 'bg-panel-alt border-edge/70 text-fg hover:bg-accent-dark hover:text-white hover:border-accent active:bg-accent/50 cursor-default'
+						: 'bg-white/3 border-edge/30 text-fg/25 cursor-not-allowed'"
 					:title="btn.title"
 					:disabled="!btn.wired"
 					@mousedown.prevent="onBtnDown(btn)"
@@ -124,8 +124,8 @@ function selectMode(m) {
 					:class="moveMode === mode.id && mode.wired
 						? 'active'
 						: mode.wired
-							? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent/50'
-							: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
+							? 'bg-panel-alt border-edge/70 text-fg hover:bg-accent-dark hover:text-white hover:border-accent/50'
+							: 'bg-white/3 border-edge/30 text-fg/25 cursor-not-allowed'"
 					:title="mode.title"
 					:disabled="!mode.wired"
 					@click="selectMode(mode)"

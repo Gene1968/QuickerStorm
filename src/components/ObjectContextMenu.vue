@@ -62,20 +62,20 @@ onUnmounted(() => {
 		v-if="menu"
 		data-object-context-menu
 		:style="style"
-		class="fixed z-[200] min-w-[10rem] bg-card border border-brd rounded-sm shadow-lg text-xs select-none"
+		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs select-none"
 		@contextmenu.prevent
 	>
-		<div class="px-3 py-1.5 text-accent font-medium border-b border-brd truncate">{{ menu.name }}</div>
+		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="edit">Edit…</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="inspect">{{ showInspect ? 'Hide Inspect' : 'Inspect' }}</button>
-		<div v-if="showInspect" class="px-3 py-1.5 border-b border-brd text-2xs text-white/70 font-mono">
+		<div v-if="showInspect" class="px-3 py-1.5 border-b border-edge text-2xs text-fg/70 font-mono">
 			<div>id: {{ menu.localId }}</div>
 			<div class="truncate">uuid: {{ menu.fullId }}</div>
 			<div v-if="menu.pos">pos: {{ menu.pos.map(v => v.toFixed(1)).join(', ') }}</div>
 		</div>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="touch">Touch</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="sit">Sit Here</button>
-		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Refresh textures (to do)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Take / Copy (to do: Phase 3)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Refresh textures (to do)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take / Copy (to do: Phase 3)</button>
 	</div>
 </template>

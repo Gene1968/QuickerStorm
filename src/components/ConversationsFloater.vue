@@ -134,7 +134,7 @@ const floaterTitle = computed(() =>
 
 const TYPE_CLASS = {
 	0: 'text-gray-800 italic',		// whisper
-	1: 'text-t1',					// normal
+	1: 'text-fg',					// normal
 	2: 'text-gold font-semibold',	// shout
 }
 
@@ -259,7 +259,7 @@ async function submitChat() {
 						title="Close conversation"
 						@click="closeImTab(tab.id, $event)"
 					>
-						<XIcon class="custom w-4 h-4 bg-red-900 text-white" />
+						<XIcon class="custom w-4 h-4 bg-red-900 text-fg" />
 					</button>
 				</div>
 			</nav>
@@ -273,39 +273,39 @@ async function submitChat() {
 					<!-- Begin Friends tab -->
 					<div class="flex flex-row">
 						<div class="flex-1 min-w-0">
-							<div class="px-2 py-1.5 border-b border-brd shrink-0 flex items-center gap-4">
+							<div class="px-2 py-1.5 border-b border-edge shrink-0 flex items-center gap-4">
 								<input
 									v-model="contactSearch"
 									type="text"
 									placeholder="Filter friends"
-									class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
+									class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 								/>
-								<span class="text-xs text-t1 shrink-0">{{ social.onlineCount }} / {{ social.friendCount }} friends online</span>
+								<span class="text-xs text-fg shrink-0">{{ social.onlineCount }} / {{ social.friendCount }} friends online</span>
 							</div>
 							<div v-if="social.friendCount === 0" class="flex-1 flex items-center justify-center text-gray-200 text-xs italic select-none">
 								No friends on this account
 							</div>
 							<div v-else class="flex-1 overflow-y-auto min-h-0">
-								<div class="flex items-center gap-1 px-2 py-1 text-2xs text-tm sticky top-0 bg-card border-b border-brd z-10 select-none">
+								<div class="flex items-center gap-1 px-2 py-1 text-2xs text-fg-muted sticky top-0 bg-panel border-b border-edge z-10 select-none">
 									<span class="w-2 shrink-0"></span>
-									<span class="flex-1 min-w-0 text-t1">Name</span>
-									<EyeIcon title="Friend can see when you're online" class="w-5 h-5 text-t1" />
-									<MapPinSearchIcon title="Friend can locate you on the map" class="w-5 h-5 text-t1" />
-									<BoxIcon title="Friend can edit, delete or take your objects" class="w-5 h-5 text-t1" />
+									<span class="flex-1 min-w-0 text-fg">Name</span>
+									<EyeIcon title="Friend can see when you're online" class="me-1 w-4 h-4 text-fg" />
+									<MapPinSearchIcon title="Friend can locate you on the map" class="me-1 w-4 h-4 text-fg" />
+									<BoxIcon title="Friend can edit, delete or take your objects" class="me-1 w-4 h-4 text-fg" />
 									<span class="w-1 shrink-0"></span>
-									<MapPinSearchIcon title="You can locate them on the map" class="w-5 h-5 text-t1" />
-									<BoxIcon title="You can edit this friend's objects" class="w-5 h-5 text-t1" />
+									<MapPinSearchIcon title="You can locate them on the map" class="me-1 w-4 h-4 text-fg" />
+									<BoxIcon title="You can edit this friend's objects" class="me-1 w-4 h-4 text-fg" />
 								</div>
 								<div
 									v-for="f in sortedFriends"
 									:key="f.id"
-									class="flex items-center gap-1 px-2 py-1 cursor-default border-b border-brd"
+									class="flex items-center gap-1 px-2 py-1 cursor-default border-b border-edge"
 									:class="selectedId === f.id ? 'bg-white/10' : 'hover:bg-white/5'"
 									@click="selectFriend(f)"
 									@dblclick="openIM(f)"
 								>
 									<span class="w-2 h-2 rounded-full shrink-0" :class="f.online ? 'bg-green-500' : 'bg-gray-500/50'" :title="f.online ? 'Online' : 'Offline'" />
-									<span class="flex-1 min-w-0 truncate text-xs" :class="f.online ? 'text-t1' : 'text-tm'">{{ friendLabel(f) }}</span>
+									<span class="flex-1 min-w-0 truncate text-xs" :class="f.online ? 'text-fg' : 'text-fg-muted'">{{ friendLabel(f) }}</span>
 									<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can see when you're online"
 										:checked="hasRight(f.rightsGiven, RIGHT_ONLINE)" @click.stop="toggleRight(f, RIGHT_ONLINE)" />
 									<input type="checkbox" class="w-5 accent-accent shrink-0 cursor-pointer" title="Friend can locate you on the map"
@@ -320,7 +320,7 @@ async function submitChat() {
 								</div>
 							</div>
 						</div>
-						<div class="flex flex-col gap-1 px-2 py-1.5 border-t border-brd shrink-0">
+						<div class="flex flex-col gap-1 px-2 py-1.5 border-t border-edge shrink-0">
 							<button class="ui-btn py-0 px-3" :disabled="!canIM"       title="Send IM (Call disabled until voice)" @click="actIM">IM</button>
 							<button class="ui-btn py-0 px-3" :disabled="!canProfile"  title="View profile" @click="actProfile">Profile</button>
 							<button class="ui-btn py-0 px-3" :disabled="!canTeleport" title="Offer teleport" @click="actTeleport">Teleport&#8230;</button>
@@ -329,20 +329,20 @@ async function submitChat() {
 							<button class="ui-btn py-0 px-3" :disabled="!canRemove"   title="Remove friend" @click="actRemove">Remove&#8230;</button>
 							<button class="ui-btn py-0 px-3" title="Add a friend by name" @click="openAdd">Add</button>
 						</div>
-						<div v-if="showAdd" class="px-2 py-2 border-t border-brd shrink-0 bg-card2">
+						<div v-if="showAdd" class="px-2 py-2 border-t border-edge shrink-0 bg-panel-alt">
 							<div class="flex gap-1.5">
 								<input v-model="addQuery" type="text" placeholder="Search by name…" maxlength="63"
-									class="flex-1 min-w-0 bg-card border border-brd rounded-sm text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
+									class="flex-1 min-w-0 bg-panel border border-edge rounded-sm text-fg placeholder-fg-muted px-1.5 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 									@keyup.enter="runAddSearch" />
 								<button class="qs-btn-mini" :disabled="addBusy || addQuery.trim().length < 2" @click="runAddSearch">{{ addBusy ? '…' : 'Search' }}</button>
 								<button class="qs-btn-mini" @click="showAdd = false">Cancel</button>
 							</div>
 							<div v-if="addResults.length" class="mt-1.5 max-h-32 overflow-y-auto">
 								<button v-for="r in addResults" :key="r.id"
-									class="block w-full text-left px-2 py-1 text-xs text-t1 hover:bg-white/10 rounded-sm"
+									class="block w-full text-left px-2 py-1 text-xs text-fg hover:bg-white/10 rounded-sm"
 									@click="addFriendFromResult(r)">{{ r.name }}</button>
 							</div>
-							<div v-else-if="!addBusy && addQuery.trim().length >= 2" class="mt-1.5 text-2xs text-tm italic">No matches.</div>
+							<div v-else-if="!addBusy && addQuery.trim().length >= 2" class="mt-1.5 text-2xs text-fg-muted italic">No matches.</div>
 						</div>
 					</div>
 				</template>
@@ -357,10 +357,10 @@ async function submitChat() {
 						<div
 							v-for="m in [...messages].reverse().slice(0, 60)"
 							:key="m.id"
-							:class="['text-xs leading-snug', TYPE_CLASS[m.chatType] ?? 'text-t1']"
+							:class="['text-xs leading-snug', TYPE_CLASS[m.chatType] ?? 'text-fg']"
 						>
-							<span class="text-tm text-2xs me-1 select-none">{{ formatTime(m.timestamp) }}</span>
-							<button v-if="m.sourceId" class="inline bg-card p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.sourceId)">{{ m.fromName }}</button>
+							<span class="text-fg-muted text-2xs me-1 select-none">{{ formatTime(m.timestamp) }}</span>
+							<button v-if="m.sourceId" class="inline bg-panel p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.sourceId)">{{ m.fromName }}</button>
 							<span v-else class="text-accent font-medium">{{ m.fromName }}</span>:
 							{{ m.message }}
 						</div>
@@ -369,7 +369,7 @@ async function submitChat() {
 						</div>
 					</div>
 					<form
-						class="flex gap-1.5 px-2 py-1.5 border-t border-brd shrink-0"
+						class="flex gap-1.5 px-2 py-1.5 border-t border-edge shrink-0"
 						@submit.prevent="submitChat"
 					>
 						<input
@@ -377,7 +377,7 @@ async function submitChat() {
 							v-model="chatInput"
 							type="text"
 							placeholder="To nearby chat"
-							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
+							class="flex-1 bg-white/10 border border-t1 text-fg placeholder-white/30 rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 							@input="onInput"
 						/>
@@ -385,7 +385,7 @@ async function submitChat() {
 							<button
 								type="button"
 								title="Show emoji panel"
-								class="flex items-center px-2 py-1 bg-accent2 text-white rounded-sm text-base hover:opacity-80"
+								class="flex items-center px-2 py-1 bg-accent-dark text-white rounded-sm text-base hover:opacity-80"
 								@click="toggleEmoji"
 							>
 								<span class="text-base leading-none">🙂</span>
@@ -409,7 +409,7 @@ async function submitChat() {
 				<!-- IM tab (per avatar) ──────────────────────────────── -->
 				<template v-else-if="activeConv">
 					<!-- IM action bar (FS-style; several disabled until those systems exist) -->
-					<div class="flex flex-wrap gap-1 px-2 py-1.5 border-b border-brd shrink-0">
+					<div class="flex flex-wrap gap-1 px-2 py-1.5 border-b border-edge shrink-0">
 						<button class="qs-btn-mini" title="Show this resident's profile" @click="imProfile"><ShieldUserIcon class="w-4 h-4" /></button>
 						<button :disabled="imIsFriend" class="qs-btn-mini" title="Add this resident as a friend" @click="imAddFriend"><HandshakeIcon class="w-4 h-4" /></button>
 						<!-- <button v-else class="qs-btn-mini" title="Remove friend" @click="imRemove">Remove</button> -->
@@ -435,10 +435,10 @@ async function submitChat() {
 						<div
 							v-for="(m, i) in [...activeConv.messages].reverse().slice(0, 200)"
 							:key="i"
-							class="text-xs leading-snug text-t1"
+							class="text-xs leading-snug text-fg"
 						>
-							<span class="text-t1 text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
-							<button v-if="m.fromId" class="inline bg-card p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
+							<span class="text-fg text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
+							<button v-if="m.fromId" class="inline bg-panel p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
 							<span v-else class="text-accent font-medium">{{ m.from }}</span>:
 							{{ m.text }}
 						</div>
@@ -447,7 +447,7 @@ async function submitChat() {
 						</div>
 					</div>
 					<form
-						class="flex gap-1.5 px-2 py-1.5 border-t border-brd shrink-0"
+						class="flex gap-1.5 px-2 py-1.5 border-t border-edge shrink-0"
 						@submit.prevent="submitIM"
 					>
 						<input
@@ -455,7 +455,7 @@ async function submitChat() {
 							v-model="imInput"
 							type="text"
 							:placeholder="`To ${activeConv.agentName}`"
-							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
+							class="flex-1 bg-white/10 border border-t1 text-fg placeholder-white/30 rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 							@input="onImInput"
 						/>
@@ -463,7 +463,7 @@ async function submitChat() {
 							<button
 								type="button"
 								title="Show emoji panel"
-								class="flex items-center px-2 py-1 bg-accent2 text-white rounded-sm text-base hover:opacity-80"
+								class="flex items-center px-2 py-1 bg-accent-dark text-white rounded-sm text-base hover:opacity-80"
 								@click="toggleEmoji"
 							>
 								<span class="text-base leading-none">🙂</span>
@@ -500,7 +500,7 @@ async function submitChat() {
 emoji-picker {
 	--background:               #16161e;
 	--border-color:             rgba(255,255,255,0.12);
-	--indicator-color:          var(--color-accent, #7c3aed);
+	--indicator-color:          var(--accent, #7c3aed);
 	--input-border-color:       rgba(255,255,255,0.2);
 	--input-font-color:         #e2e2e2;
 	--input-placeholder-color:  rgba(255,255,255,0.35);

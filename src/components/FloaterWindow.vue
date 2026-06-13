@@ -195,21 +195,21 @@ const panelStyle = computed(() => ({
 		<!-- Panel: border/bg/rounding/overflow + the resizable size live here -->
 		<div
 			ref="panel"
-			class="flex flex-col border border-brd rounded-lg bg-card shadow-2xl overflow-hidden"
+			class="flex flex-col border border-edge rounded-lg bg-panel shadow-2xl overflow-hidden"
 			:style="panelStyle"
 		>
 			<!-- Titlebar / drag handle -->
 			<div
-				class="flex items-center justify-between p-1 ps-3 bg-card2 border-b border-brd shrink-0 select-none cursor-grab active:cursor-grabbing"
+				class="flex items-center justify-between p-1 ps-3 bg-panel-alt border-b border-edge shrink-0 select-none cursor-grab active:cursor-grabbing"
 				@mousedown.stop="onTitlebarMousedown"
 			>
-				<span class="text-sm font-semibold text-t1">{{ title }}</span>
+				<span class="text-sm font-semibold text-fg">{{ title }}</span>
 				<div class="flex items-center gap-0.5">
 					<!-- Dock: return to default position + size; only shown once moved/resized -->
 					<button
 						v-if="moved"
 						@click.stop="dock"
-						class="p-1 px-2 rounded-sm text-tm hover:text-t1 hover:bg-white/10 transition-colors"
+						class="p-1 px-2 rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
 						title="Dock — return to default position"
 						aria-label="Dock"
 					>
@@ -217,7 +217,7 @@ const panelStyle = computed(() => ({
 					</button>
 					<button
 						@click.stop="$emit('close')"
-						class="p-1 px-2 rounded-sm text-tm hover:text-t1 hover:bg-white/10 transition-colors"
+						class="p-1 px-2 rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
 						aria-label="Close"
 					>
 						<XIcon :size="14" />
@@ -258,9 +258,9 @@ const panelStyle = computed(() => ({
 	border-right: 0.5625rem solid transparent;
 }
 /* up → points up: colored bottom border */
-.fw-caret.up::before { top: -1px; border-bottom: 8px solid var(--color-brd); }
-.fw-caret.up::after  { top: 0;    border-bottom: 7px solid var(--color-card); }
+.fw-caret.up::before { top: -1px; border-bottom: 8px solid var(--edge); }
+.fw-caret.up::after  { top: 0;    border-bottom: 7px solid var(--panel); }
 /* down → points down: colored top border */
-.fw-caret.down::before { bottom: -1px; border-top: 8px solid var(--color-brd); }
-.fw-caret.down::after  { bottom: 0;    border-top: 7px solid var(--color-card); }
+.fw-caret.down::before { bottom: -1px; border-top: 8px solid var(--edge); }
+.fw-caret.down::after  { bottom: 0;    border-top: 7px solid var(--panel); }
 </style>

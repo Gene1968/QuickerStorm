@@ -76,7 +76,7 @@ function initials(name) {
 </template>
 
 <style scoped>
-/* Consistent, theme-aware, partially-transparent button bg. WHY color-mix instead of `bg-card/50`:
+/* Consistent, theme-aware, partially-transparent button bg. WHY color-mix instead of `bg-panel/50`:
    Tailwind opacity modifiers don't apply to CSS-var colors (see CLAUDE.md), so we mix the var with
    transparent here to get a real translucent fill that still follows the light/dark theme. */
 .tray-btn {
@@ -86,16 +86,16 @@ function initials(name) {
 	width: 2rem;
 	height: 2rem;
 	border-radius: 0.375rem;
-	border: 1px solid var(--color-brd);
-	background: color-mix(in srgb, var(--color-card) 55%, transparent);
-	color: var(--color-t1);
+	border: 1px solid var(--edge);
+	background: color-mix(in srgb, var(--panel) 55%, transparent);
+	color: var(--fg);
 	transition: background 0.15s, border-color 0.15s;
 }
-.tray-btn:hover { background: color-mix(in srgb, var(--color-card) 85%, transparent); }
+.tray-btn:hover { background: color-mix(in srgb, var(--panel) 85%, transparent); }
 .tray-btn--active {
-	background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
 	color: #fff;
-	border-color: var(--color-accent);
+	border-color: var(--accent);
 }
 
 /* Corner badge (Conversations) */

@@ -53,7 +53,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-	<div class="flex flex-row items-center justify-evenly gap-1 px-1 h-10 bg-black/80 border-t border-brd shrink-0 select-none">
+	<div class="flex flex-row items-center justify-evenly gap-1 px-1 h-10 bg-black/80 border-t border-edge shrink-0 select-none">
 
 		<!-- Tool buttons -->
 		<button
@@ -61,10 +61,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 			:key="t.id"
 			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
 			:class="t.disabled
-				? 'opacity-40 cursor-not-allowed text-white/50'
+				? 'opacity-40 cursor-not-allowed text-fg/50'
 				: t.active()
-					? 'bg-white/5 text-accent3'
-					: 'text-white/70 hover:bg-white/10 hover:text-white'"
+					? 'bg-white/5 text-accent-light'
+					: 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			:disabled="t.disabled"
 			:title="t.title"
 			@click="t.action()"
@@ -75,7 +75,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 		<!-- 2D / 3D toggle -->
 		<button
-			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors text-white/70 hover:bg-white/10 hover:text-white"
+			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors text-fg/70 hover:bg-white/10 hover:text-fg"
 			:title="ui.mode === '3d' ? 'Switch to 2D view' : 'Switch to 3D view'"
 			@click="ui.toggleMode()"
 		>
@@ -86,7 +86,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<!-- Debug panel toggle (Ctrl+Shift+4) -->
 		<button
 			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
-			:class="ui.showDebug ? 'bg-white/5 text-accent3' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+			:class="ui.showDebug ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Debug Panel (Ctrl+Shift+4)"
 			@click="ui.toggleDebug()"
 		>
@@ -96,7 +96,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 		<!-- Logout -->
 		<!-- <button
-			class="px-2 h-7 rounded-sm border border-white/20 text-white/60 text-2xs hover:border-red-500/60 hover:text-red-400 transition-colors"
+			class="px-2 h-7 rounded-sm border border-white/20 text-fg/60 text-2xs hover:border-red-500/60 hover:text-red-400 transition-colors"
 			title="Log out and return to login screen"
 			@click="logout"
 		>
@@ -107,13 +107,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		     entry removed per design — notifications open from the top-right envelope button. -->
 		<!-- <button
 			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
-			:class="ui.showNotifications ? 'bg-white/5 text-accent3' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+			:class="ui.showNotifications ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Notifications"
 			@click="ui.toggleNotifications()"
 		>
 			<span class="relative text-base leading-none">
 				🔔
-				<span v-if="notif.totalUnread" class="absolute -top-1 -right-2 bg-red-600 text-white rounded-full text-2xs leading-none px-1 py-0.5 min-w-[1rem] text-center">{{ notif.totalUnread }}</span>
+				<span v-if="notif.totalUnread" class="absolute -top-1 -right-2 bg-red-600 text-fg rounded-full text-2xs leading-none px-1 py-0.5 min-w-[1rem] text-center">{{ notif.totalUnread }}</span>
 			</span>
 			<span class="leading-none my-0.5 hidden sm:block">Notifs</span>
 		</button> -->
@@ -122,7 +122,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<button
 			data-quick-prefs-trigger
 			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
-			:class="ui.showQuickPrefs ? 'bg-white/5 text-accent3' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+			:class="ui.showQuickPrefs ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Quick Preferences"
 			@click="ui.toggleQuickPrefs()"
 		>
