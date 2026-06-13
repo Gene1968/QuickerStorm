@@ -56,19 +56,21 @@ Phase 2 (shipped May 2026):
 17. **Map 2D** — pannable/zoomable world map, snapshot tiles, dbl-click TP ✓
 - Deferred from Phase 2: neighboring-sim terrain (ocean horizon accepted as substitute), voice (Phase 2.5/3)
 
-Phase 3 (HTTP capability layer — in progress, May 2026):
+Phase 3 (HTTP capability layer — in progress, June 2026, ~70% complete):
 
 18. **HTTP-cap foundation** — LLSD-XML parser, full cap dictionary, server-side proxy ✓
-19. **Inventory browse** — folder tree + `FetchInventoryDescendents2` items, search/filter/sort ✓ (~70%)
-20. **Social layer** — friends list from login, online/offline status, friend-request toasts, add-by-name, rights ✓ (~45%); Friends floater UI TODO
+18b. **Asset pipeline** — `GetTexture`/`GetMesh` cap proxy + server-side J2C→WebP transcode (openjpeg-wasm worker pool), IndexedDB LRU caches for textures and geometry bakes, worker-thread mesh bake (off main thread), instant-load warm reload ✓
+18c. **Persistent CRC object cache** — qs-objects IDB per-object store, CRC probes suppress sim re-feed on reload; full scene restores from disk ✓
+19. **Inventory browse** — folder tree + `FetchInventoryDescendents2` items, search/filter/sort ✓ (~70%); management (move/rename/wear/attach) TODO
+20. **Social layer** — friends list from login, online/offline status, friend-request toasts, add-by-name, rights toggles ✓ (~70%); not live-tested
 21. **Saved accounts** — multi-account login dropdown, persist/remove ✓
 22. **Appearance / Outfits floater** — color/skin/hair editor, Wearing tab (~35%); no baked textures yet
 23. **Notifications floater** + TopRightTray IM/Notification cluster ✓
-24. **Texture pipeline** — `GetTexture` cap + J2C (JPEG2000) decode in browser (TODO — next major lever)
-25. **Mesh export/import** via `GetMesh2` cap (TODO)
-26. **Object Edit floater** + Take/Copy/Delete/Export (perms + caps) (~30%)
-27. **Profile floater** (~60%) + (carefully) appearance editing
-28. **Groups + Group IM** (TODO)
+24. **Mesh geometry** — `GetMesh` → LLVolumeFaces decode → real geometry (worker bake), legacy sculpts, per-submesh materials ✓ (~70%); LOD selection + rigged mesh TODO
+25. **Object Edit floater** + Take/Copy/Delete/Export (perms + caps) (~40%)
+26. **Profile floater** (~60%) — not live-tested
+27. **Groups + Group IM** (TODO)
+28. **Mesh export** via `GetMesh2` cap (TODO — lower priority than viewing)
 29. **Web-on-prim** via `ObjectMedia` cap (TODO)
 
 ## Out of Scope

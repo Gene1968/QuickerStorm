@@ -273,7 +273,12 @@
       "Bash(npx @tailwindcss/upgrade@next --dry-run)",
       "PowerShell($f = \"node_modules\\\\.vite\\\\deps\\\\chunk-NCBKGOGC.js\"; \\(Get-Content $f -TotalCount 40262 | Select-Object -Skip 40249\\) -join \"`n\")",
       "PowerShell(git log --all --oneline -5 --follow -- src/composables/useWorldEngine.js; ''; git grep -c 'quarantined localId' HEAD -- src/composables/useWorldEngine.js; git grep -c 'NoToneMapping' HEAD -- src/composables/useWorldEngine.js; git grep -c '_placeholder && !primMulti' HEAD -- src/composables/useWorldEngine.js)",
-      "Bash(Test-Path *)"
+      "Bash(Test-Path *)",
+      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\")",
+      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\" /b)",
+      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\" /b /s)",
+      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\\\\plans\" /b)",
+      "Bash(dir \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\docs\\\\superpowers\\\\specs\" /b)"
     ]
   }
 }

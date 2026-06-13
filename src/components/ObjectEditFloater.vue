@@ -7,7 +7,7 @@ import { setObjectAlphaMode } from '@/composables/useWorldEngine.js'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { C } from '@shared/protocol.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
-import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, XIcon, CopyIcon } from '@lucide/vue'
+import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
@@ -565,6 +565,12 @@ function close() {
 					prim-shape params + the building-block / mesh / sculpt type. The type row is how
 					you tell a mesh from a sculpt from a plain prim. -->
 				<template v-else-if="activeTab === 'object'">
+					[ ] Locked
+					[ ] Physical
+					[ ] Temporary
+					[ ] Phantom
+					<button title="Copy Object Parameters to Clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
+					<button title="Paste Object Parameters from Clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
 					<!-- Identity / linkset -->
 					<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-white/50">Building Block</div>
@@ -573,7 +579,7 @@ function close() {
 							<div class="text-white/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
 							<div class="flex items-center gap-1.5 min-w-0">
 								<button
-									class="w-9 h-9 shrink-0 bg-white/5 border border-brd rounded-sm flex items-center justify-center text-white/30 text-2xs overflow-hidden hover:border-accent"
+									class="w-10 h-10 shrink-0 bg-white/5 border border-brd rounded-sm flex items-center justify-center text-white/30 text-2xl overflow-hidden hover:border-accent"
 									:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
 									@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
 								>
@@ -581,6 +587,11 @@ function close() {
 								</button>
 								<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-white/5 border border-brd rounded-sm px-1.5 py-0.5 text-t1 font-mono text-2xs" />
 							</div>
+							LOD: Num Triangles
+							High: ####
+							Medium: ###
+							Low: ##
+							Lowest: ##
 						</template>
 						<div class="text-white/50">LocalID</div>
 						<div class="text-t1 font-mono">{{ obj.localId }}</div>

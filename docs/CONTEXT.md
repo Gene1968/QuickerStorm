@@ -128,7 +128,7 @@ function slQuatToThree(x, y, z, w) { return new THREE.Quaternion(x, z, -y, w) }
 
 1. Read **`docs/PROJECT_BRIEF.md`**, **`docs/CONVENTIONS.md`**, and **`docs/CONTEXT.md`** (this file).
 2. Read **`docs/superpowers/specs/`** for the canonical spec before implementing anything (per `memory/read-specs-first.md`).
-3. Check **`README.md`** for the current Phase 3 roadmap and completion percentages.
+3. Check **`docs/FEATURE-GAPS.md`** for the current priority queue and the specific gaps in whatever feature area you're working on.
 4. For terrain bugs: `server/lib/terrain-codec.ts` + `memory/terrain-rendering-next.md`.
 5. For LLUDP decode bugs: `server/lib/lludp-codec.ts` + `memory/lludp-decode-gotchas.md`.
 6. For circuit/login bugs: `server/handlers/lludp.ts` + `server/lib/circuit.ts` + `memory/opensim-circuit-lifecycle.md`.
