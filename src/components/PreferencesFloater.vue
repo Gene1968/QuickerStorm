@@ -154,12 +154,12 @@ onUnmounted(() => {
 	>
 		<!-- ── Search ─────────────────────────────────────────────────── -->
 			<div class="pf-searchbar">
-				<SearchIcon class="pf-search-icon" style="width:0.85rem;height:0.85rem" />
+				<SearchIcon class="shrink-0 pf-search-icon w-4 h-4 text-fg-muted" />
 				<input
 					v-model="search"
-					class="pf-search-input"
+					class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 					type="text"
-					placeholder="Search settings…"
+					placeholder="Search settings&#8230;"
 					autocomplete="off"
 					spellcheck="false"
 				/>
@@ -712,17 +712,7 @@ onUnmounted(() => {
 	flex-shrink: 0;
 }
 
-.pf-search-icon { color: var(--fg-muted); flex-shrink: 0; }
 
-.pf-search-input {
-	flex: 1;
-	background: none;
-	border: none;
-	outline: none;
-	color: var(--fg);
-	font-size: 0.8125rem;
-}
-.pf-search-input::placeholder { color: var(--fg-muted); }
 
 /* ── Body ────────────────────────────────────────────────────────────────── */
 .pf-body {

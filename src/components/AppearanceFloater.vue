@@ -124,8 +124,8 @@ const outfitFolders = [
 		<div class="flex flex-col flex-1 min-h-0 text-xs text-fg">
 
 			<!-- ── Current Look header (always visible) ──────────────── -->
-			<div class="flex items-center gap-2 px-2.5 py-2 border-b border-edge shrink-0 bg-panel-alt">
-				<span class="text-2xl leading-none shrink-0 -mt-2">👕</span>
+			<div class="flex items-center gap-1 px-2.5 py-2 border-b border-edge shrink-0 bg-panel-alt">
+				<span class="text-3xl leading-none shrink-0 -mt-2">👕</span>
 				<div class="flex flex-col flex-1 min-w-0">
 					<span class="text-xs text-fg/50 uppercase tracking-wide leading-none mb-0.5">
 						{{ editMode ? 'Now editing…' : 'Now wearing…' }}
@@ -141,7 +141,7 @@ const outfitFolders = [
 					:title="editMode ? 'Exit Edit' : 'Edit this outfit'"
 					@click="editMode ? exitEdit() : openEdit()"
 				>
-					<WrenchIcon class="w-4 h-4" />
+					<WrenchIcon class="w-5 h-5" />
 				</button>
 			</div>
 
@@ -155,8 +155,8 @@ const outfitFolders = [
 					<input
 						v-model="filterText"
 						type="search"
-						placeholder="Filter Outfits…"
-						class="flex-1 min-w-0 bg-panel-alt border border-edge text-fg placeholder-fg-muted rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
+						placeholder="Filter Outfits&#8230;"
+						class="flex-1 bg-fg/10 rounded-xl w-full me-1 px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 					/>
 					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
@@ -170,7 +170,7 @@ const outfitFolders = [
 				</div>
 
 				<!-- Tab bar -->
-				<div class="flex border-b border-edge shrink-0">
+				<div class="flex shrink-0 border-b border-edge pt-3">
 					<button
 						v-for="tab in [
 							{ id: 'gallery', label: 'Outfit Gallery' },
@@ -178,7 +178,7 @@ const outfitFolders = [
 							{ id: 'wearing', label: `Wearing (${totalWorn}/38 Att.)` },
 						]"
 						:key="tab.id"
-						class="flex-1 py-1.5 text-sm font-medium border-b-2 transition-colors"
+						class="flex py-1 px-3 text-xs font-medium border-b-2 transition-colors"
 						:class="ui.appearanceActiveTab === tab.id
 							? 'border-accent text-accent bg-white/5'
 							: 'border-transparent text-fg/50 hover:text-fg hover:border-white/30'"

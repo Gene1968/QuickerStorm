@@ -102,7 +102,7 @@ onUnmounted(() => clearInterval(clockTimer))
 // WS bytes — all sim traffic arrives over that socket). Lag-meter colors: green = comfortable,
 // amber = strained, red = struggling (lit shading auto-disables below 20, see useWorldEngine).
 const fpsText  = computed(() => ui.fps > 0 ? String(ui.fps) : '--')
-const fpsColor = computed(() => ui.fps <= 0 ? 'text-fg/40'
+const fpsColor = computed(() => ui.fps <= 0 ? 'text-white/80'
 	: ui.fps >= 40 ? 'text-green-500' : ui.fps >= 20 ? 'text-yellow-500' : 'text-red-500')
 // Bandwidth bar height: 0 → 1 Mbps maps to 0.1 → 0.75rem (container is 1rem; FS-style mini bar).
 const kbpsBarStyle = computed(() => {
@@ -124,40 +124,40 @@ const stubChannels = [
 	<div
 		class="relative flex items-center pe-2"
 	>
-		<div class="flex items-center gap-2 ms-1.5">
+		<div class="flex items-center gap-2 ms-1.5 whitespace-nowrap">
 			<div
 				title="Click to refresh your X$ balance (TO-DO)"
-				class="mx-1 text-xs text-fg/40"
+				class="mx-1 text-xs text-white/80"
 			>
 				?$ 0
 			</div>
 			<div
 				title="Users want this? (TO-DO)"
-				class="mx-2 text-xs text-fg/40"
+				class="mx-2 text-xs text-white/80"
 			>
 				BUY ?$
 			</div>
 			<div
 				:title="gridDate"
-				class="me-7 ms-2 text-xs text-fg/80"
+				class="me-7 ms-2 text-xs text-white"
 			>
 				{{ gridTime }}
 			</div>
 			<VideoIcon
 				title="Camera presets (TO-DO)"
-				class="w-4 h-4 text-fg/20"
+				class="w-4 h-4 text-white/50"
 			/>
 			<MonitorIcon
 				title="Graphics presets (TO-DO)"
-				class="w-4 h-4 text-fg/20"
+				class="w-4 h-4 text-white/50"
 			/>
 			<MusicIcon
 				title="Start/stop parcel audio stream (TO-DO)"
-				class="w-4 h-4 text-fg/20"
+				class="w-4 h-4 text-white/50"
 			/>
 			<TvIcon
 				title="Start/stop all media (music, video, Web pages) (TO-DO)"
-				class="w-4 h-4 text-fg/20"
+				class="w-4 h-4 text-white/50"
 			/>
 		</div>
 

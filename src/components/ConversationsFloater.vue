@@ -277,8 +277,8 @@ async function submitChat() {
 								<input
 									v-model="contactSearch"
 									type="text"
-									placeholder="Filter friends"
-									class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
+									placeholder="Filter friends&#8230;"
+									class="flex-1 bg-fg/10 rounded-xl w-full me-1 px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 								/>
 								<span class="text-xs text-fg shrink-0">{{ social.onlineCount }} / {{ social.friendCount }} friends online</span>
 							</div>

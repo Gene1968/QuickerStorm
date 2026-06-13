@@ -112,7 +112,7 @@ watch(
 		<!-- 3D world -->
 		<template v-else>
 			<!-- Top row: menu bar + location bar -->
-			<div v-show="ui.uiVisible" class="flex shrink-0 items-center justify-between h-8 bg-black/70 border-b border-edge">
+			<div v-show="ui.uiVisible" class="toprow relative flex shrink-0 items-center justify-between h-8 bg-black/70 border-b border-edge">
 				<MenuBar />
 				<LocationBar />
 				<AudioControlsWidget class="hidden md:flex" />

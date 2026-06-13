@@ -14,15 +14,15 @@
 	color-scheme: dark;
 
 	/* primary scale */
-	--primary-1: #200B05;   --primary-1-ch: 32 11 5;
-	--primary-2: #40160B;   --primary-2-ch: 64 22 11;
-	--primary-3: #602010;   --primary-3-ch: 96 32 16;
-	--primary-4: #802B16;   --primary-4-ch: 128 43 22;
-	--primary-5: #A0361B;   --primary-5-ch: 160 54 27;
-	--primary-6: #B35E49;   --primary-6-ch: 179 94 73;
-	--primary-7: #C68676;   --primary-7-ch: 198 134 118;
-	--primary-8: #D9AFA4;   --primary-8-ch: 217 175 164;
-	--primary-9: #ECD7D1;   --primary-9-ch: 236 215 209;
+	--primary-1: #321501;   --primary-1-ch: 50 21 1;
+	--primary-2: #642b02;   --primary-2-ch: 100 43 2;
+	--primary-3: #974002;   --primary-3-ch: 151 64 2;
+	--primary-4: #c95603;   --primary-4-ch: 201 86 3;
+	--primary-5: #fb6b04;   --primary-5-ch: 251 107 4;
+	--primary-6: #fc8936;   --primary-6-ch: 252 137 54;
+	--primary-7: #fda668;   --primary-7-ch: 253 166 104;
+	--primary-8: #fdc49b;   --primary-8-ch: 253 196 155;
+	--primary-9: #fee1cd;   --primary-9-ch: 254 225 205;
 
 	/* accent: interactive / highlight */
 	--accent:       #E9972D;   --accent-ch:       233 151 45;
@@ -33,7 +33,7 @@
 	--green-deep:   #081610;   --green-deep-ch:   8 22 16;
 	--green-dark:   #1A3726;   --green-dark-ch:   26 55 38;
 	--green-mid:    #2B5B3F;   --green-mid-ch:    43 91 63;
-	--green-light:  #D5DED9;   --green-light-ch:  213 222 217;
+	--green-light:  #d2d4c4;   --green-light-ch:  210 212 196;
 
 	/* functional (not palette-derived) */
 	--color-blue: #2979ff;
@@ -41,7 +41,7 @@
 
 	/* ── SEMANTIC TOKENS (don't edit — edit the palette above) ──────── */
 	--surface:      var(--primary-1);   --surface-ch:      var(--primary-1-ch);
-	--panel:        var(--primary-3);   --panel-ch:        var(--primary-3-ch);
+	--panel:        var(--primary-2);   --panel-ch:        var(--primary-2-ch);
 	--panel-alt:    var(--green-dark);  --panel-alt-ch:    var(--green-dark-ch);
 	--sidebar:      rgb(var(--green-deep-ch) / 0.93);
 	--sidebar-ch:   var(--green-deep-ch);
@@ -66,7 +66,7 @@
 html.light {
 	color-scheme: light;
 	--surface:      var(--primary-9);   --surface-ch:      var(--primary-9-ch);
-	--panel:        var(--primary-8);   --panel-ch:        var(--primary-8-ch);
+	--panel:        var(--primary-9);   --panel-ch:        var(--primary-9-ch);
 	--panel-alt:    var(--green-light); --panel-alt-ch:    var(--green-light-ch);
 	--sidebar:      rgb(var(--accent-ch) / 0.88);
 	--sidebar-ch:   var(--accent-ch);

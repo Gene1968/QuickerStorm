@@ -61,7 +61,7 @@ const filteredHistory = computed(() => {
 					v-model="filter"
 					type="search"
 					placeholder="Filter My Places"
-					class="flex-1 bg-brd2 rounded-xl m-1 px-2 py-1 text-xs text-fg placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
+					class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 				/>
 				<button class="tb-btn" title="Show options (TO-DO)"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 				<button class="tb-btn" title="Show sorting options (TO-DO)"><ArrowUpDownIcon /><ChevronDownIcon class="w-3" /></button>

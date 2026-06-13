@@ -265,7 +265,7 @@ onUnmounted(() => {
 		class="min-w-[16.5rem]"
 	>
 		<div class="relative flex p-1">
-				<input v-model="rawFilter" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" />
+				<input v-model="rawFilter" class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory&#8230;" type="search" />
 				<Loader2Icon v-if="searching" class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-accent animate-spin pointer-events-none" />
 			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-fg">
@@ -403,7 +403,7 @@ onUnmounted(() => {
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
-				class="grow border-2 border-edge-strong p-1 text-2xs text-fg truncate user-select-none flex items-center gap-1"
+				class="grow border border-edge-strong p-1 text-2xs text-fg truncate user-select-none flex items-center gap-1"
 			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 text-green-400" :size="10" /><Loader2Icon v-else class="shrink-0 animate-spin opacity-60" :size="10" />{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
 			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon /></button>
 		</div>

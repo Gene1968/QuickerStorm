@@ -75,7 +75,7 @@ function onContextMenuItem(event, it) {
 	<div v-if="folder && visible">
 		<div
 			class="flex items-center gap-1 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-fg select-none"
-			:class="selected ? 'bg-accent/30' : 'hover:bg-white/10'"
+			:class="selected ? 'bg-accent/50' : 'hover:bg-accent/20'"
 			:style="{ paddingLeft: padLeft }"
 			@click="onSelect(folderId, $event)"
 			@dblclick="toggleExpand"
