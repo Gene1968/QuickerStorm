@@ -169,20 +169,6 @@ export default {
 					10: '#271900',
 				},
 
-				airglow: {
-					5: '#FBFEFE',
-					10: '#EEFAFC',
-					20: '#D6F2F5',
-					30: '#BEEBEF',
-					40: '#9ADDE5',
-					50: '#72D1DA',
-					60: '#36BDC9',
-					70: '#25939D',
-					80: '#1B767E',
-					90: '#124954',
-					95: '#0D373F',
-				},
-
 				neutral: {
 					10: '#F8F9FA',
 					20: '#EDEFF2',
@@ -196,27 +182,7 @@ export default {
 					95: '#14191F',
 				},
 
-				various: {
-					1: '#63637E',
-					2: '#495672',
-					3: '#383330',
-					4: '#04316c',
-					5: '#B9C6D7',
-					6: '#004986',
-					7: '#1C1F35',
-					8: '#666C89',
-					9: '#667079',
-					10: '#F8F9FB',
-					red: '#A43F4A',
-					blue: '#3C80D2',
-					green: '#289B80',
-					primarylight: '#00263a',
-					light: '#c4ccd0',
-					light2nd: '#d4e3ff',
-					gold: '#febe3f',
-					'gold-dk': '#dc9c1d',
-					opd: '#00344d',
-				},
+
 			},
 			containers: {
 				lg: '20px',
@@ -228,7 +194,6 @@ export default {
 		},
 	},
 	plugins: [
-		'@tailwindcss/container-queries',
 		plugin(({ addBase, theme }) => {
 			const baseFs = theme('fontSize.base')
 			const baseSize = Array.isArray(baseFs) ? baseFs[0] : baseFs

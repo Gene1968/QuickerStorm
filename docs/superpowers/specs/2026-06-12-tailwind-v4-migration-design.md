@@ -27,10 +27,14 @@ npm uninstall tailwindcss autoprefixer postcss postcss-nesting
 
 | Package removed | Reason |
 |-----------------|--------|
-| `tailwindcss` | Engine is bundled in `@tailwindcss/vite` |
 | `autoprefixer` | v4 uses Lightning CSS for vendor prefixing internally |
 | `postcss` | Not needed for Vite-native Tailwind |
 | `postcss-nesting` | CSS nesting is built-in in v4 |
+
+> **Note:** `tailwindcss` must remain as a direct `devDependency` at v4 (same version as
+> `@tailwindcss/vite`). `tailwind.config.js` imports `from "tailwindcss/defaultTheme"` and
+> `from "tailwindcss/plugin"`. Node resolves these from the project root, not from inside
+> `@tailwindcss/vite/node_modules`, so the package must be present at the root level.
 
 ### 2. `vite.config.js`
 

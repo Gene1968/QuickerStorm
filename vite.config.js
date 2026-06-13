@@ -3,6 +3,7 @@ import { fileURLToPath, URL } from "node:url"
 import { defineConfig, loadEnv } from "vite"
 import path from "path"
 import vue from "@vitejs/plugin-vue"
+import tailwindcss from '@tailwindcss/vite'
 
 // main config export
 export default ({ mode }) => {
@@ -19,15 +20,18 @@ export default ({ mode }) => {
 		},
 	}
 
-	const plugins = [vue({
-		template: {
-			compilerOptions: {
-				// WHY: emoji-picker is a web component (emoji-picker-element package),
-				// not a Vue component — suppress "Failed to resolve component" warning.
-				isCustomElement: (tag) => tag === 'emoji-picker',
+	const plugins = [
+		vue({
+			template: {
+				compilerOptions: {
+					// WHY: emoji-picker is a web component (emoji-picker-element package),
+					// not a Vue component — suppress "Failed to resolve component" warning.
+					isCustomElement: (tag) => tag === 'emoji-picker',
+				},
 			},
-		},
-	})]
+		}),
+		tailwindcss(),
+	]
 	console.log("Mode: ", mode)
 	if (mode !== "development") {
 		plugins.push(versionPlugin)
