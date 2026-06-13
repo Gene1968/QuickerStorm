@@ -284,7 +284,9 @@
       "Bash(exit 1)",
       "Bash(exit 0)",
       "Bash(Select-String -Path \"C:\\\\Users\\\\gene1\\\\Downloads\\\\Pages\\\\git\\\\QuickerStorm\\\\src\\\\components\\\\ProfileFloater.vue\" -Pattern 'placeholder')",
-      "Bash(Select-Object LineNumber, Line)"
+      "Bash(Select-Object LineNumber, Line)",
+      "Bash(jq -r .[].text /c/Users/gene1/.claude/projects/C--Users-gene1-Downloads-Pages-git-QuickerStorm/07bdde75-330c-4bee-82c4-90fcbc0d04c6/tool-results/mcp-claude-in-chrome-read_console_messages-1781371422465.txt)",
+      "Bash(tr '\\\\\\\\n' '\\\\n')"
     ]
   }
 }

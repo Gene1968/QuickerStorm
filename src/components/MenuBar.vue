@@ -263,7 +263,7 @@ const MENUS = [
 
 <template>
 	<div class="menubar flex items-stretch shrink-0 h-full">
-		<img src="/favicon.svg" alt="quickerSTORM" class="h-full aspect-square me-3 text-black/70" />
+		<img src="/favicon.svg" alt="quickerSTORM" class="h-full aspect-square me-2 text-black/70" />
 		<!--
 			Each menu is wrapped in a relative container so its dropdown
 			anchors directly below its own label, not the root's left edge.
