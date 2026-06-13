@@ -5,6 +5,8 @@ import {
 	resolveGeomCap, geomCacheStore, geomMemGet, geomCacheGetMany, bytesOfArrays,
 	getGeomCacheStats, clearGeomCache, geomMemClear, getGeomMemBytes,
 	setGeomCapBytes, __flushGeomWritesNow, __flushGeomTouchesNow, geomCacheEvict,
+	setGeomCacheLoading, setGeomDeferLimits, setGeomMemBudget, getGeomMemBudget,
+	geomManifestRecord, geomManifestPrefetch,
 } from '@/lib/geomCache.js'
 
 const GB = 1024 ** 3
@@ -257,5 +259,91 @@ describe('geomCacheEvict', () => {
 		await geomCacheEvict('not-there')
 		expect((await getGeomCacheStats()).count).toBe(1)
 		expect(geomMemGet('keep').position[0]).toBe(3)
+	})
+})
+
+describe('write-deferral (warm-read decouple)', () => {
+	const small = () => ({
+		position: new Float32Array(3).fill(1), normal: new Float32Array(3).fill(1),
+		uv: new Float32Array(2).fill(1), index: new Uint32Array(1).fill(1), groups: [],
+	})
+
+	it('while loading, exceeding FLUSH_MAX does NOT flush to IDB', async () => {
+		geomMemClear(); await clearGeomCache()
+		setGeomCapBytes(1 * GB)
+		setGeomDeferLimits({ ceilingBytes: 1 * GB, maxDeferMs: 60000 })   // ceilings won't fire
+		setGeomCacheLoading(true)
+		for (let i = 0; i < 250; i++) geomCacheStore(`d${i}`, small())     // > FLUSH_MAX (200)
+		await new Promise(r => setTimeout(r, 400))                         // past FLUSH_MS
+		expect((await getGeomCacheStats()).count).toBe(0)                  // nothing persisted
+		setGeomCacheLoading(false)                                         // debounced exit flushes
+		await new Promise(r => setTimeout(r, 900))                         // past exit debounce (750ms)
+		expect((await getGeomCacheStats()).count).toBe(250)
+		setGeomDeferLimits({ ceilingBytes: 256 * 1024 * 1024, maxDeferMs: 30000 })
+	})
+
+	it('byte ceiling forces a flush even while loading', async () => {
+		geomMemClear(); await clearGeomCache()
+		setGeomCapBytes(1 * GB)
+		const oneBytes = bytesOfArrays(small())
+		setGeomDeferLimits({ ceilingBytes: oneBytes * 3, maxDeferMs: 60000 })  // flush after ~3 stores
+		setGeomCacheLoading(true)
+		for (let i = 0; i < 10; i++) geomCacheStore(`b${i}`, small())
+		await new Promise(r => setTimeout(r, 100))
+		expect((await getGeomCacheStats()).count).toBeGreaterThan(0)           // ceiling flushed mid-load
+		setGeomCacheLoading(false)
+		await new Promise(r => setTimeout(r, 900))
+		setGeomDeferLimits({ ceilingBytes: 256 * 1024 * 1024, maxDeferMs: 30000 })
+	})
+
+	it('time ceiling forces a flush even while loading', async () => {
+		geomMemClear(); await clearGeomCache()
+		setGeomCapBytes(1 * GB)
+		setGeomDeferLimits({ ceilingBytes: 1 * GB, maxDeferMs: 0 })            // time ceiling fires asap
+		setGeomCacheLoading(true)
+		geomCacheStore('t1', small())
+		await new Promise(r => setTimeout(r, 400))                            // past FLUSH_MS check tick
+		expect((await getGeomCacheStats()).count).toBe(1)
+		setGeomCacheLoading(false)
+		await new Promise(r => setTimeout(r, 900))
+		setGeomDeferLimits({ ceilingBytes: 256 * 1024 * 1024, maxDeferMs: 30000 })
+	})
+})
+
+describe('mem-tier budget setter', () => {
+	it('round-trips a realistic budget and applies the 16MB floor', () => {
+		setGeomMemBudget(200 * 1024 * 1024)
+		expect(getGeomMemBudget()).toBe(200 * 1024 * 1024)        // honored as-is
+		setGeomMemBudget(1080)                                    // below the floor
+		expect(getGeomMemBudget()).toBe(16 * 1024 * 1024)         // clamped up to 16MB
+		setGeomMemBudget(0)                                       // falsy → default
+		expect(getGeomMemBudget()).toBe(128 * 1024 * 1024)        // GEOM_MEM_BUDGET fallback
+		setGeomMemBudget(128 * 1024 * 1024)                       // restore default for later tests
+	})
+	it('propagates the budget to the byteLRU mem tier (no error on resize)', () => {
+		geomMemClear()
+		for (let i = 0; i < 5; i++) geomCacheStore(`mb${i}`, mkArrays())
+		setGeomMemBudget(64 * 1024 * 1024)                        // ample → nothing evicted
+		expect(getGeomMemBytes()).toBe(5 * bytesOfArrays(mkArrays()))
+		setGeomMemBudget(128 * 1024 * 1024)
+	})
+})
+
+describe('per-region manifest prefetch', () => {
+	it('records keys for a region and prefetches them into the mem tier on re-entry', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('mk1', mkArrays(3)); geomCacheStore('mk2', mkArrays(4))
+		await __flushGeomWritesNow()
+		await geomManifestRecord('region-A', ['mk1', 'mk2'])
+		geomMemClear()                                          // simulate fresh region entry
+		expect(geomMemGet('mk1')).toBeNull()                   // cold mem tier
+		await geomManifestPrefetch('region-A')                 // warms the mem tier from IDB
+		expect(geomMemGet('mk1').position[0]).toBe(3)          // now a sync hit
+		expect(geomMemGet('mk2').position[0]).toBe(4)
+	})
+	it('prefetch on an unknown region is a no-op (no throw)', async () => {
+		geomMemClear(); await clearGeomCache()
+		await geomManifestPrefetch('never-visited')            // must resolve, not throw
+		expect(geomMemGet('anything')).toBeNull()
 	})
 })

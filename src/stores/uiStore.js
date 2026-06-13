@@ -97,6 +97,23 @@ export const useUiStore = defineStore('ui', () => {
 	const effectiveDrawDistance = ref(96)   // governor-managed current radius; not persisted (runtime)
 	function setEffectiveDrawDistance(v) { effectiveDrawDistance.value = Math.round(v) }
 
+	// Geometry-cache CPU-RAM budget (MB). This pool (mem tier + write buffer) lives only in tab RAM
+	// and never uploads to the GPU, so it is sized separately from the 1536MB VRAM governor. RAM has
+	// no precise web API: navigator.deviceMemory is coarse (capped at 8), so the default is a tier
+	// off it and a persisted user override wins (high-end boxes report only "8"). A Prefs slider binds
+	// to `geomCacheRamMb`; useWorldEngine applies it via geomCache.setGeomMemBudget on init + on change.
+	function _autoGeomCacheMb() {
+		const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined
+		if (dm === undefined) return 1024     // API absent (e.g. Firefox/Safari) → assume capable
+		if (dm < 4) return 256
+		if (dm < 8) return 512
+		return 1024                            // deviceMemory caps at 8; override goes higher
+	}
+	const _gcSaved = Number(localStorage.getItem('qs-geom-cache-mb'))
+	const geomCacheRamMb = ref(Number.isFinite(_gcSaved) && _gcSaved >= 128 && _gcSaved <= 8192 ? _gcSaved : _autoGeomCacheMb())
+	watch(geomCacheRamMb, (v) => localStorage.setItem('qs-geom-cache-mb', String(v)))
+	function setGeomCacheRamMb(v) { geomCacheRamMb.value = Math.max(128, Math.min(8192, Math.round(Number(v) || _autoGeomCacheMb()))) }
+
 	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
 	function toggleMinimap()     { showMinimap.value     = !showMinimap.value }
@@ -307,6 +324,7 @@ export const useUiStore = defineStore('ui', () => {
 		sceneRebuildTick, requestSceneRebuild,
 		litShading, showFps, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
+		geomCacheRamMb, setGeomCacheRamMb,
 		openProfile, closeProfile, toggleProfile,
 		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,

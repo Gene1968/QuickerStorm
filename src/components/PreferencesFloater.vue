@@ -335,12 +335,30 @@ onUnmounted(() => {
 							</button>
 						</div>
 
-						<div class="pf-row pf-row--disabled">
+						<div class="pf-row pf-row--slider">
 							<div class="pf-row-info">
-								<span class="pf-row-label">Draw Distance</span>
-								<span class="pf-row-hint">How far objects stay visible.</span>
+								<span class="pf-row-label">Draw Distance: {{ ui.drawDistance }} m</span>
+								<span class="pf-row-hint">How far objects stay visible (32–512 m).</span>
 							</div>
-							<span class="pf-chip-soon">Coming soon</span>
+							<input
+								type="range" min="32" max="512" step="16"
+								:value="ui.drawDistance"
+								@input="e => ui.setDrawDistance(e.target.value)"
+								class="w-32 accent-accent"
+							/>
+						</div>
+
+						<div class="pf-row pf-row--slider">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Geometry Cache RAM: {{ ui.geomCacheRamMb }} MB</span>
+								<span class="pf-row-hint">Larger = more warm-cache hits on revisit (uses tab RAM, not VRAM).</span>
+							</div>
+							<input
+								type="range" min="128" max="8192" step="128"
+								:value="ui.geomCacheRamMb"
+								@input="e => ui.setGeomCacheRamMb(e.target.value)"
+								class="w-32 accent-accent"
+							/>
 						</div>
 
 						<div class="pf-row pf-row--disabled">
@@ -806,6 +824,7 @@ onUnmounted(() => {
 }
 .pf-row:last-child { border-bottom: none; }
 .pf-row--disabled  { opacity: 0.4; }
+.pf-row--slider    { align-items: center; gap: 1rem; }
 
 .pf-row-info  { display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
 .pf-row-label { font-size: 0.8125rem; font-weight: 500; color: var(--fg); }

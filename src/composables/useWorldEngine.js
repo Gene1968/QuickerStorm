@@ -34,7 +34,7 @@ import {
 	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
 	geometryFromArrays,       // worker-baked/cached arrays → BufferGeometry (applySwap + tier-1 sync cache hits)
 } from '@/lib/primGeometry.js'
-import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap } from '@/lib/geomCache.js'
+import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch } from '@/lib/geomCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 
@@ -260,6 +260,7 @@ export function useWorldEngine(canvasRef) {
 			simSelectedId = desired
 		},
 	)
+	let stopGeomCacheRamWatch = null
 	const { playSound } = useAudio()
 	const { requestTeleport } = useTeleport()
 
@@ -343,6 +344,13 @@ export function useWorldEngine(canvasRef) {
 	// on the disposed baker and mutate orphaned meshes.
 	let _engineDead = false
 
+	// Per-region geomKey set for the manifest (warm-read front-load, FEATURE-GAPS #10). cullTick
+	// detects region changes (login / TP / cross-region) by sessionStore region coords, resets the
+	// set + prefetches that region's manifest, and records the set when the load settles.
+	let _regionGeomKeys = new Set()
+	let _currentRegionKey = null
+	let _manifestRecordedFor = null   // avoid re-recording the same region every settle tick
+
 	// WHY microtask batching: every requestGeometry() call within one synchronous burst (one
 	// drainMeshQueue tick, one evict re-stream pass…) coalesces into ONE qs-geom readonly txn —
 	// the per-prim-transaction storm is the exact pattern that starved texCacheGet. Same trick
@@ -360,6 +368,7 @@ export function useWorldEngine(canvasRef) {
 	const GEOM_LOOKUP_WATCHDOG_MS = 4000
 	let _geomLookupWatchdogN = 0   // lookup batches that timed out → degraded to bake (telemetry)
 	function requestGeometry(key, jobThunk, applySwap) {
+		_regionGeomKeys.add(key)
 		_geomPending++
 		_geomLookupBatch.push({ key, jobThunk, applySwap })
 		if (_geomLookupBatch.length === 1) queueMicrotask(_flushGeomLookups)
@@ -3137,10 +3146,32 @@ export function useWorldEngine(canvasRef) {
 	function cullTick() {
 		if (!camera) return
 		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
-		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan) +
-		// geometry-cache memory tier (O(1)) — must match the 3s stats-timer sum or the governor
-		// signal oscillates by up to the tier's 128MB budget between the two call sites.
-		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB + getGeomMemBytes())
+		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan).
+		// WHY no getGeomMemBytes(): the geom mem cache tier is CPU-RAM-only (never uploaded to the GPU),
+		// so it does not belong in the VRAM budget. Counting it here stole ~128MB+ from live geometry
+		// and worsened the cull-spiral (FEATURE-GAPS #13). It has its own RAM budget (setGeomMemBudget).
+		// Must match the 3s stats-timer sum or the governor signal oscillates between the two sites.
+		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB)
+		// Warm-read decouple (FEATURE-GAPS #10): detect region entry (login/TP/walk) by coords, reset
+		// per-region key tracking, and prefetch that region's manifest into the mem tier before its
+		// ObjectUpdate storm. Uniform across all entry paths — no per-handler wiring needed.
+		const regionKey = `${sessionStore.regionX}-${sessionStore.regionY}`
+		if (regionKey !== _currentRegionKey) {
+			_currentRegionKey = regionKey
+			_regionGeomKeys = new Set()
+			_manifestRecordedFor = null
+			geomManifestPrefetch(regionKey)   // fire-and-forget; warms the mem tier
+		}
+		// Drive geomCache write-deferral from the same load signal the lit/badge logic uses. While
+		// loading, geomCache suspends IDB flushes so warm getMany reads aren't starved.
+		const tStat = getTextureStats(), mStat = getMeshStats()
+		const loading = pendingMeshIds.size > 50 || tStat.queued > 0 || tStat.inflight > 0 || mStat.queued > 0 || _geomPending > 25
+		setGeomCacheLoading(loading)
+		// On settle, persist this region's key manifest once for fast warm re-entry.
+		if (!loading && _currentRegionKey && _currentRegionKey !== _manifestRecordedFor && _regionGeomKeys.size) {
+			_manifestRecordedFor = _currentRegionKey
+			geomManifestRecord(_currentRegionKey, [..._regionGeomKeys])
+		}
 		const r = appRatio()
 		const heapR = memRatio()
 		const over = r > CULL_TARGET || emergencyHeap()
@@ -3912,6 +3943,9 @@ export function useWorldEngine(canvasRef) {
 		// Reparent sweep is cheaper; run it every 4th tick.
 		let _drainTick = 0
 		initGeomCacheCap()   // size the qs-geom IDB cap from the storage estimate before bakes start persisting
+		// Apply the persisted geom-cache RAM budget and keep it live as the user adjusts the Prefs slider.
+		setGeomMemBudget(uiStore.geomCacheRamMb * 1024 * 1024)
+		stopGeomCacheRamWatch = watch(() => uiStore.geomCacheRamMb, (mbVal) => setGeomMemBudget(mbVal * 1024 * 1024))
 		_meshDrainTimer = setInterval(() => {
 			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
 			drainMeshQueue()
@@ -3945,14 +3979,15 @@ export function useWorldEngine(canvasRef) {
 			}
 			_lastGeomB = geomB
 			const texB = getTextureBytes(), meshB = getMeshBytes(), geomCacheB = getGeomMemBytes()
-			setAppBytes(texB + meshB + geomB + geomCacheB)
+			// WHY no geomCacheB: CPU-RAM-only tier, excluded from VRAM budget (see cull-tick comment).
+			setAppBytes(texB + meshB + geomB)
 			{
 				const mg = memStats()
 				const pressure = memUnderPressure()
 				const mb = (b) => (b / 1048576).toFixed(0)
 				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
-				const line = `[Mem] app ${mb(texB + meshB + geomB + geomCacheB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}` +
+				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())}` +
 					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
@@ -4041,6 +4076,7 @@ export function useWorldEngine(canvasRef) {
 		stopWaterHeightWatch()
 		stopTerrainTexWatch()
 		stopRegionSizeWatch()
+		stopGeomCacheRamWatch?.()
 		terrainShaderMaterial?.dispose()
 		terrainShaderMaterial = null
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.

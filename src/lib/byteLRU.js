@@ -9,13 +9,14 @@
 // The just-inserted entry is never evicted by its own insert — a single over-budget asset still
 // caches (it is needed RIGHT NOW); it becomes evictable on the next insert.
 export function createByteLRU({ budgetBytes, sizeOf }) {
-	const map = new Map()        // key → { v, b } in recency order (oldest first)
+	let _budget = budgetBytes          // mutable so setBudget can resize at runtime
+	const map = new Map()
 	let bytes = 0
 	let evictions = 0
 
 	function _evictUntilFit(protectedKey) {
 		for (const [k, e] of map) {
-			if (bytes <= budgetBytes) break
+			if (bytes <= _budget) break
 			if (k === protectedKey) continue
 			map.delete(k)
 			bytes -= e.b
@@ -27,7 +28,7 @@ export function createByteLRU({ budgetBytes, sizeOf }) {
 		get(key) {
 			const e = map.get(key)
 			if (!e) return undefined
-			map.delete(key)          // re-insert → most recent
+			map.delete(key)
 			map.set(key, e)
 			return e.v
 		},
@@ -38,7 +39,7 @@ export function createByteLRU({ budgetBytes, sizeOf }) {
 			const b = sizeOf(value) || 0
 			map.set(key, { v: value, b })
 			bytes += b
-			if (bytes > budgetBytes) _evictUntilFit(key)
+			if (bytes > _budget) _evictUntilFit(key)
 		},
 		delete(key) {
 			const e = map.get(key)
@@ -48,6 +49,9 @@ export function createByteLRU({ budgetBytes, sizeOf }) {
 			return true
 		},
 		clear() { map.clear(); bytes = 0 },
+		// Resize the budget at runtime; shrinking evicts oldest-first until it fits (no protected key).
+		setBudget(n) { _budget = n; if (bytes > _budget) _evictUntilFit(null) },
+		budget: () => _budget,
 		size: () => map.size,
 		bytes: () => bytes,
 		evictions: () => evictions,
