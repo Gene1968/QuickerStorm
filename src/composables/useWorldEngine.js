@@ -330,6 +330,17 @@ export function useWorldEngine(canvasRef) {
 	// the per-prim-transaction storm is the exact pattern that starved texCacheGet. Same trick
 	// as useMeshBaker's flush.
 	let _geomLookupBatch = []
+	// WHY watchdog: geomCacheGetMany resolves on tx.oncomplete, but during a heavy region-load write
+	// storm the readonly lookup txn can be starved for many seconds and effectively never settle — so
+	// its .then never runs and _geomPending never decrements for that batch. Once the leak pushes
+	// _geomPending past BAKE_INFLIGHT_CAP (300), drainMeshQueue's backpressure breaks EVERY tick and
+	// mesh building halts (measured live: scene wedged at ~609/13,338 meshes ≈ 3%, pend frozen at
+	// 301). Racing a timeout that degrades the batch to an all-miss bake guarantees _geomPending
+	// always drains, so a slow/starved cache read can never brick the drain. Mirrors the texCacheGet
+	// watchdog (commit 4b9155c). Healthy warm reads resolve in well under 1s; only genuinely starved
+	// batches trip this.
+	const GEOM_LOOKUP_WATCHDOG_MS = 4000
+	let _geomLookupWatchdogN = 0   // lookup batches that timed out → degraded to bake (telemetry)
 	function requestGeometry(key, jobThunk, applySwap) {
 		_geomPending++
 		_geomLookupBatch.push({ key, jobThunk, applySwap })
@@ -350,7 +361,13 @@ export function useWorldEngine(canvasRef) {
 			if (list) list.push(b)
 			else byKey.set(b.key, [b])
 		}
-		geomCacheGetMany([...byKey.keys()]).then(hits => {
+		// settled guard: the watchdog and the real getMany race; whichever lands first processes the
+		// batch, the loser is ignored. A late getMany resolve after a watchdog bake is harmless — its
+		// keys are already baking and its mem-tier promotion is idempotent (keys are content hashes).
+		let settled = false
+		const processHits = (hits) => {
+			if (settled) return
+			settled = true
 			// WHY: post-unmount batches would sync-bake on the disposed baker + mutate orphaned meshes.
 			if (_engineDead) { _geomPending -= batch.length; return }
 			for (const [key, entries] of byKey) {
@@ -369,22 +386,41 @@ export function useWorldEngine(canvasRef) {
 				}
 				if (evictedSiblings) _bakeGeomGroup(key, evictedSiblings)
 			}
-		})
+		}
+		const wd = setTimeout(() => {
+			if (settled) return
+			_geomLookupWatchdogN++
+			processHits(new Map())   // degrade to all-miss: bake everything so _geomPending drains
+		}, GEOM_LOOKUP_WATCHDOG_MS)
+		geomCacheGetMany([...byKey.keys()]).then(hits => { clearTimeout(wd); processHits(hits) })
 	}
 	// Miss path for one key's entries: ONE real bake (entries[0]'s thunk), siblings served as fresh
 	// clones from the just-stored memory-tier entry. Siblings must NEVER receive the raw worker
 	// `out` — geomCacheStore takes ownership of those buffers, so handing them out would alias
 	// cache-owned arrays into a mesh that mutates them in place.
+	//
+	// LEAK-PROOF accounting: release the WHOLE group from _geomPending up front (here), not inside the
+	// bake's .then. WHY: _geomPending feeds drainMeshQueue's backpressure cap; the old code decremented
+	// the siblings only after the bake resolved, so a worker job that never reported back (region churn,
+	// localId removed mid-flight) stranded those entries in _geomPending forever — a slow creep that
+	// kept the counter stuck (measured ~162 at idle) and risked re-tripping BAKE_INFLIGHT_CAP on dense
+	// regions. Once released, the single real bake is tracked by meshBaker.outstanding(); the siblings
+	// are cheap mem-tier clones, not worker load, so the cap shouldn't count them anyway.
 	function _bakeGeomGroup(key, entries) {
+		_geomPending -= entries.length
+		_dispatchBake(key, entries)
+	}
+	// Dispatches the worker bake and serves the group. Pending is ALREADY released by the caller —
+	// this function never touches _geomPending (so the recursive evicted-sibling re-bake below can't
+	// double-count). Safe to call directly only when the entries' pending has been accounted.
+	function _dispatchBake(key, entries) {
 		_geomMiss++
-		_geomPending--   // entries[0]'s bake dispatches now → meshBaker.outstanding() takes over
 		entries[0].jobThunk().then(out => {
 			// WHY: engine unmounted while the bake was in flight — drop the remaining entries.
-			if (_engineDead) { _geomPending -= entries.length - 1; return }
+			if (_engineDead) return
 			if (!out || out.bad) {
 				// Bad/null bake: every entry keeps its placeholder (applySwap bails on bad input).
 				for (const e of entries) e.applySwap(out)
-				_geomPending -= entries.length - 1
 				return
 			}
 			// Store FIRST (cache takes ownership of the worker-transferred buffers), swap the
@@ -394,9 +430,9 @@ export function useWorldEngine(canvasRef) {
 				const clone = geomMemGet(key)
 				// Siblings ARE memory-tier serves (the store just populated tier 1) — count them as
 				// mem hits so the hit/miss telemetry stays meaningful (one real bake per key).
-				if (clone) { _geomHitMem++; _geomPending--; entries[i].applySwap(clone) }
+				if (clone) { _geomHitMem++; entries[i].applySwap(clone) }
 				// Store entry already evicted (rare) → this sibling runs its OWN bake (never raw `out`).
-				else _bakeGeomGroup(key, [entries[i]])
+				else _dispatchBake(key, [entries[i]])
 			}
 		})
 	}
@@ -3892,7 +3928,7 @@ export function useWorldEngine(canvasRef) {
 			const bs = meshBaker.takeStats()
 			if (bs.jobs || _applyN || _geomHitMem || _geomHitIdb || _geomMiss) {
 				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}` +
-					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending}`
+					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending} wdog=${_geomLookupWatchdogN}`
 				debugStore.push('info', bline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
 				_applyN = 0; _applyMs = 0; _applyMaxMs = 0

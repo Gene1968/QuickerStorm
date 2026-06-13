@@ -100,6 +100,11 @@ export function geomMemClear() { _mem.clear() }
 // ── Tier 2: IndexedDB ────────────────────────────────────────────────────────
 let _db = null
 let _lastStats = null  // { count, bytes } served from memory (Prefs-starvation lesson)
+// Read-priority gate: count of in-flight geomCacheGetMany lookups. A readwrite flush txn queued
+// ahead of these readonly lookups blocks them at the IDB level (overlapping [STORE,META] scope),
+// which starved warm cache reads during region load (measured: idb hits → 0, the engine's lookup
+// watchdog firing 600×, everything re-baked). _flushNow defers while this is > 0. See _flushNow.
+let _readsInFlight = 0
 
 function openDb() {
 	if (_db) return Promise.resolve(_db)
@@ -147,8 +152,16 @@ function _scheduleFlush() {
 	_flushTimer = setTimeout(() => { _flushTimer = null; _flushNow() }, FLUSH_MS)
 }
 
-async function _flushNow() {
+async function _flushNow(force = false) {
 	if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
+	// Read-priority: defer the readwrite flush while a getMany lookup is in flight so cache reads
+	// aren't starved during load. Writes are re-derivable and cheap to delay. The hard cap
+	// (_writeBuf.size >= FLUSH_MAX) and `force` (pagehide / explicit flush) both bypass this, so
+	// buffered geometry can never grow unbounded and shutdown persistence still works.
+	if (!force && _readsInFlight > 0 && _writeBuf.size < FLUSH_MAX) {
+		if (!_flushTimer) _flushTimer = setTimeout(() => { _flushTimer = null; _flushNow() }, FLUSH_MS)
+		return
+	}
 	if (_flushing) await _flushing
 	if (!_writeBuf.size) return
 	const batch = [..._writeBuf.values()]
@@ -213,8 +226,8 @@ async function _flushNow() {
 	_flushing = null
 }
 
-/** Test hook: force the write buffer to disk now. */
-export async function __flushGeomWritesNow() { await _flushNow() }
+/** Test hook: force the write buffer to disk now (bypasses the read-priority gate). */
+export async function __flushGeomWritesNow() { await _flushNow(true) }
 
 // Batched LRU touches (textureCache flushTouches pattern, 10s cadence — reads stay readonly).
 const _touchQueue = new Map()
@@ -255,6 +268,7 @@ export async function __flushGeomTouchesNow() { await _flushTouches() }
 export async function geomCacheGetMany(keys, now = Date.now()) {
 	const out = new Map()
 	if (!keys.length) return out
+	_readsInFlight++   // read-priority gate (see _flushNow); always paired with the finally below
 	try {
 		const db = await openDb()
 		await new Promise((resolve) => {
@@ -287,6 +301,7 @@ export async function geomCacheGetMany(keys, now = Date.now()) {
 			tx.onabort = resolve   // aborted read = all-miss for unresolved keys; never hang the drain
 		})
 	} catch (e) { console.warn('[GeomCache] getMany failed:', e) }
+	finally { _readsInFlight-- }
 	return out
 }
 
@@ -363,5 +378,5 @@ export async function clearGeomCache() {
 // Flush pending writes when the tab is hidden/closed (parity with objectCache) — bakes from
 // the last ≤300ms window would otherwise be lost; cheap insurance for re-derivable data.
 if (typeof window !== 'undefined') {
-	window.addEventListener('pagehide', () => { _flushNow() })
+	window.addEventListener('pagehide', () => { _flushNow(true) })
 }

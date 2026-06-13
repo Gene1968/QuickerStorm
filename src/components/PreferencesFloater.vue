@@ -548,7 +548,7 @@ onUnmounted(() => {
 								</span>
 								<span class="pf-cache-sep">·</span>
 								<span class="pf-cache-stat">
-									<span class="pf-cache-label">Evicted (memory)</span>
+									<span class="pf-cache-label italic">Evicted for memory safety</span>
 									<span class="pf-cache-val">{{ world.cullStats.evicted.toLocaleString() }}</span>
 								</span>
 							</div>
@@ -893,6 +893,7 @@ onUnmounted(() => {
 
 /* ── Cache cards (Network tab) ──────────────────────────────────────────── */
 .pf-cache-card {
+	position: relative;
 	border: 1px solid var(--edge);
 	border-radius: 0.5rem;
 	padding: 0.75rem 1rem;
@@ -900,17 +901,20 @@ onUnmounted(() => {
 	flex-direction: column;
 	gap: 0.5rem;
 }
-
 .pf-cache-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 }
-
 .pf-cache-title {
 	font-size: 0.8125rem;
 	font-weight: 600;
 	color: var(--fg);
+}
+.pf-cache-card button {
+	position: absolute;
+	top: 0.75rem;
+	right: 0.75rem;
 }
 
 .pf-cache-stats {
