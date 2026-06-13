@@ -255,7 +255,7 @@ async function submitChat() {
 					</button>
 					<button
 						v-if="tab.closable"
-						class="absolute block top-0 right-0.5 border opacity-20 hover:opacity-100"
+						class="absolute block top-2 right-2 border p-0 opacity-20 hover:opacity-100"
 						title="Close conversation"
 						@click="closeImTab(tab.id, $event)"
 					>
@@ -360,7 +360,7 @@ async function submitChat() {
 							:class="['text-xs leading-snug', TYPE_CLASS[m.chatType] ?? 'text-t1']"
 						>
 							<span class="text-tm text-2xs me-1 select-none">{{ formatTime(m.timestamp) }}</span>
-							<button v-if="m.sourceId" class="inline text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.sourceId)">{{ m.fromName }}</button>
+							<button v-if="m.sourceId" class="inline bg-card p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.sourceId)">{{ m.fromName }}</button>
 							<span v-else class="text-accent font-medium">{{ m.fromName }}</span>:
 							{{ m.message }}
 						</div>
@@ -438,7 +438,7 @@ async function submitChat() {
 							class="text-xs leading-snug text-t1"
 						>
 							<span class="text-t1 text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
-							<button v-if="m.fromId" class="inline text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
+							<button v-if="m.fromId" class="inline bg-card p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
 							<span v-else class="text-accent font-medium">{{ m.from }}</span>:
 							{{ m.text }}
 						</div>

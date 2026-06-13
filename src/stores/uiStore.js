@@ -117,7 +117,7 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleDebug()       { showDebug.value       = !showDebug.value }
 	function togglePreferences()    { showPreferences.value    = !showPreferences.value; showQuickPrefs.value = false }
 	function openPreferences()      { showPreferences.value    = true;  showQuickPrefs.value = false }
-	function toggleQuickPrefs()     { showQuickPrefs.value     = !showQuickPrefs.value; showPreferences.value = false }
+	function toggleQuickPrefs()     { showQuickPrefs.value     = !showQuickPrefs.value; }
 	function toggleVoiceControls()  { showVoiceControls.value  = !showVoiceControls.value }
 	function toggleMoveControls()   { showMoveControls.value   = !showMoveControls.value }
 	function toggleCameraControls() { showCameraControls.value = !showCameraControls.value }

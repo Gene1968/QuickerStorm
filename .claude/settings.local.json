@@ -271,7 +271,9 @@
       "PowerShell(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\66fcaf7a-8fef-4769-95cc-05a7f6a9825d\\\\tasks\\\\b0fho6rvl.output\" -Tail 120 | Select-String -Pattern 'resume|RegionHandshake:|login|circuit|hold|teardown|destroy|expired' | Select-Object -Last 8 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(200, $_.Line.Length\\)\\) })",
       "Bash(npx tailwindcss *)",
       "Bash(npx @tailwindcss/upgrade@next --dry-run)",
-      "PowerShell($f = \"node_modules\\\\.vite\\\\deps\\\\chunk-NCBKGOGC.js\"; \\(Get-Content $f -TotalCount 40262 | Select-Object -Skip 40249\\) -join \"`n\")"
+      "PowerShell($f = \"node_modules\\\\.vite\\\\deps\\\\chunk-NCBKGOGC.js\"; \\(Get-Content $f -TotalCount 40262 | Select-Object -Skip 40249\\) -join \"`n\")",
+      "PowerShell(git log --all --oneline -5 --follow -- src/composables/useWorldEngine.js; ''; git grep -c 'quarantined localId' HEAD -- src/composables/useWorldEngine.js; git grep -c 'NoToneMapping' HEAD -- src/composables/useWorldEngine.js; git grep -c '_placeholder && !primMulti' HEAD -- src/composables/useWorldEngine.js)",
+      "Bash(Test-Path *)"
     ]
   }
 }

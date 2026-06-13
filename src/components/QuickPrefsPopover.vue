@@ -129,7 +129,7 @@ function openPreferences() {
 	background: var(--color-card2);
 	border: 1px solid var(--color-brd2);
 	border-radius: 2rem;
-	padding: 0.25rem 0.625rem 0.25rem 0.25rem;
+	padding: 0.25rem 0.65rem 0.25rem 0.5rem;
 	cursor: pointer;
 	transition: background 0.2s, border-color 0.2s;
 	flex-shrink: 0;

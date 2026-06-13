@@ -182,7 +182,6 @@ export default {
 					95: '#14191F',
 				},
 
-
 			},
 			containers: {
 				lg: '20px',

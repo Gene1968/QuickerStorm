@@ -848,7 +848,7 @@ onUnmounted(() => {
 	background: var(--color-card2);
 	border: 1px solid var(--color-brd2);
 	border-radius: 2rem;
-	padding: 0.3125rem 0.75rem 0.3125rem 0.3125rem;
+	padding: 0.25rem 0.65rem 0.25rem 0.5rem;
 	cursor: pointer;
 	transition: background 0.2s, border-color 0.2s;
 	flex-shrink: 0;
