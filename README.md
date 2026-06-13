@@ -13,6 +13,7 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 **✨ Standouts:**
 - Session resumes on network blip (15-second circuit hold); clean logout that actually works
 - Persistent CRC object cache — full scene from IDB on reload, zero sim re-fetch
+- Scenery loading badge gives better insight into redraws as you navigate new areas
 - Warm reload: geometry and textures load from disk in seconds, not minutes
 - Multi-floater inventory browsing with accurate counts, search, and filter
 

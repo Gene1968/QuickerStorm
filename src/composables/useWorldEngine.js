@@ -295,10 +295,28 @@ export function useWorldEngine(canvasRef) {
 	const CULL_TARGET = 1.0      // evict while resident assets exceed the budget
 	const CULL_RESUME = 0.85     // below this, stream evicted objects back at ANY distance (nearest first).
 	// WHY: a transient over-budget spike can trip CULL_TARGET for a few ticks and evict thousands of
-	// roots; with reload capped to R_NEAR the scene would stay gutted once pressure clears.
+	// roots; with reload capped to _effNear the scene would stay gutted once pressure clears.
 	// With real headroom, distance is no reason to keep anything evicted.
-	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
-	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
+	//
+	// DYNAMIC draw distance (was a fixed R_NEAR=96): the effective residency/stream radius the culler
+	// protects + rebuilds within. WHY dynamic — a FIXED never-evict radius WEDGES on dense regions:
+	// when geometry WITHIN the radius alone exceeds the budget, eviction (which only touches objects
+	// BEYOND the radius) runs out of candidates while still over budget → permanent ⚠THROTTLING with
+	// textures pruned to zero (measured 2026-06-13: app 131%, geomMB 1630, texMB 0, scene wedged).
+	// Fix: the governor STEPS _effNear DOWN when over budget and nothing is evictable (so eviction
+	// always regains candidates), and STEPS it UP toward the user target with headroom (FS progressive-
+	// stepping equivalent; FS shrinks mDrawDistance the same way off frame-time/VRAM — a browser has
+	// no VRAM query, so we drive it off the self-accounted byte budget). Light regions never hit
+	// pressure → _effNear stays at target = the old fixed-96 behavior, no regression.
+	const DRAW_DIST_DEFAULT = 96 // fallback target when uiStore is unset
+	const DRAW_DIST_MIN = 32     // metres — emergency floor; immediate surroundings always stay resident
+	const DRAW_DIST_STEP = 16    // metres per governor step (down under pressure / up with headroom)
+	let _effNear = DRAW_DIST_DEFAULT   // governor-managed effective radius (replaces the old fixed R_NEAR)
+	// "Major load" badge preface is triggered by DURATION, not object count — a dense but already-cached
+	// area reloads in 1-2s as you move and must NOT warn. Only a load still streaming after this long
+	// (a genuinely big/uncached scene) prepends "Major new scenery to cache". Tunable.
+	const MAJOR_LOAD_MS = 6000
+	let _loadEpisodeStart = 0    // ms timestamp the current continuous load (pct<100) began; 0 = idle
 	// WHY small caps: evicting/freeing hundreds of meshes in one tick caused a GC + main-thread stall
 	// that delayed the 10Hz AgentUpdate + PacketAcks → the sim's view of the agent lagged → position
 	// snap-backs and stalled ObjectSelect→ObjectProperties. Small per-tick work keeps the churn smooth
@@ -3045,24 +3063,39 @@ export function useWorldEngine(canvasRef) {
 		return camera.position.distanceTo(t)
 	}
 
-	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY in-range: with culling the
-	// whole region is NEVER fully resident (it's memory-bounded), so "resident / all-known" sinks toward
-	// 0 as data streams and never recovers — meaningless. Measure instead "of the non-avatar objects
-	// within render range (R_RANGE), how many are built" — this sits near 100% when streaming keeps up
-	// and dips→recovers as you move into fresh area. `evicted` is the total culled-for-memory count.
+	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY %-within-_effNear: with the
+	// dynamic draw distance the culler deliberately won't load past _effNear, so measuring against a
+	// fixed 192m span would peg the badge below 100% forever (nothing beyond _effNear will ever build).
+	// Instead measure "of the non-avatar roots within the CURRENT draw distance, how many are built" —
+	// reaches 100% when the current radius is fully streamed, dips→recovers as _effNear grows or you
+	// move. `rangeKnown` (within the full 192m span) is the scene-size signal for the "massive" warning;
+	// `atTarget` (_effNear at the user's target) flips the badge from "nearby" to "complete". `evicted`
+	// is the total culled-for-memory count.
 	function updateCullStats() {
+		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
 		let known = 0, resident = 0
 		for (const [id, o] of worldStore.objects) {
 			if (o.pcode === PCODE_AVATAR) continue
 			// Roots only: child pos is PARENT-RELATIVE, so camDistToObj on a child is garbage — and
 			// children evict/reload with their root anyway, so root counts represent the linkset.
 			if ((o.parentId ?? 0) !== 0) continue
-			if (camDistToObj(o) > R_RANGE) continue
+			if (camDistToObj(o) > _effNear) continue   // % is relative to the CURRENT (dynamic) draw distance
 			known++
 			if (meshMap.has(id)) resident++
 		}
 		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
-		worldStore.setCullStats({ resident, known, evicted: evicted.size, pct })
+		// "Major" preface = this load has been continuously streaming long enough to be a big/slow one.
+		// A quick cull-reload from moving a few metres finishes well under MAJOR_LOAD_MS and never trips
+		// it; pct reaching 100 resets the episode so the next short reload starts fresh.
+		const now = Date.now()
+		if (pct < 100 && known > 0) { if (!_loadEpisodeStart) _loadEpisodeStart = now }
+		else _loadEpisodeStart = 0
+		worldStore.setCullStats({
+			resident, known, evicted: evicted.size, pct,
+			atTarget: _effNear >= ddTarget,            // at full target radius → "complete scene", else "nearby"
+			massive: _loadEpisodeStart > 0 && (now - _loadEpisodeStart) >= MAJOR_LOAD_MS,
+			effNear: Math.round(_effNear),
+		})
 		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
 		// R_NEAR-guard fixes; this recovers users anyway instead of asking them to hard-reload).
@@ -3123,8 +3156,8 @@ export function useWorldEngine(canvasRef) {
 				if (!obj) { evicted.delete(id); continue }   // object gone (KillObject) → forget it
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			// Plenty of headroom → recover everything nearest-first; otherwise only within R_NEAR.
-			const ids = selectReloads(cands, r < CULL_RESUME ? Infinity : R_NEAR, MAX_RELOAD_PER_TICK)
+			// Plenty of headroom → recover everything nearest-first; otherwise only within _effNear.
+			const ids = selectReloads(cands, r < CULL_RESUME ? Infinity : _effNear, MAX_RELOAD_PER_TICK)
 			for (const id of ids) {
 				evicted.delete(id)
 				pendingMeshIds.add(id)
@@ -3151,9 +3184,10 @@ export function useWorldEngine(canvasRef) {
 				if (id === ownAvatarLocalId || id === editId) continue
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			// R_NEAR guard: never evict the player's immediate surroundings — eviction stops once
-			// only near objects remain instead of emptying the scene (see selectEvictions).
-			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK, R_NEAR)
+			// Draw-distance guard: never evict the player's immediate surroundings — eviction stops once
+			// only objects within _effNear remain (see selectEvictions). When even that can't free
+			// enough, the step-down below shrinks _effNear so eviction regains candidates next tick.
+			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK, _effNear)
 			let _evRoots = 0, _evKids = 0
 			for (const id of ids) {
 				const childIds = kids.get(id) ?? []
@@ -3181,7 +3215,30 @@ export function useWorldEngine(canvasRef) {
 			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
 			// backfillTextures. Only runs here (over budget), so the steady state never churns.
 			pruneTexturesLRU(96)
+			// Draw-distance down-step (controller): we've been over budget for EVICT_AFTER_TICKS+ ticks.
+			// Shrink _effNear so eviction can reach the heavy geometry sitting WITHIN the current radius.
+			// WHY NOT gated on "evicted nothing" (the original bug, caught 2026-06-13 pre-commit): eviction
+			// usually makes PARTIAL progress (a few far roots/tick) yet never catches up when the bulk of
+			// geomMB is inside _effNear — measured live with app pinned ~100% ⚠THROTTLING, dd frozen at 96m,
+			// drain paused by the governor (gov=403), and warm IDB reads timing out → everything re-baked
+			// (idb=0, wdog climbing). Stepping down on sustained pressure shrinks the resident set until it
+			// fits; the headroom up-step below grows it back. Throttled to every other over-tick so the
+			// 32-root/tick eviction can catch up between steps (limits draw-distance overshoot). Floors at
+			// DRAW_DIST_MIN so the immediate surroundings always stay resident.
+			if (_effNear > DRAW_DIST_MIN && (_overTicks % 2) === 0) {
+				_effNear = Math.max(DRAW_DIST_MIN, _effNear - DRAW_DIST_STEP)
+				const dline = `[Cull] over budget (${(r * 100).toFixed(0)}%) for ${_overTicks} ticks → draw distance ↓ ${_effNear}m (was ${_effNear + DRAW_DIST_STEP}m)`
+				debugStore.push('warn', dline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: dline, stack: '' }) } catch { /* ignore */ }
+			}
 		}
+		// Draw-distance recovery (FS progressive-stepping equivalent): grow _effNear back toward the
+		// user's target when there's real headroom; snap down at once if the user lowered the target.
+		// Hysteresis (shrink at >CULL_TARGET, grow at <CULL_RESUME) prevents boundary oscillation.
+		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
+		if (_effNear > ddTarget) _effNear = ddTarget
+		else if (r < CULL_RESUME && _effNear < ddTarget) _effNear = Math.min(ddTarget, _effNear + DRAW_DIST_STEP)
+		uiStore.setEffectiveDrawDistance?.(_effNear)
 		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
 		if ((_cullStatTick++ % 3) === 0) updateCullStats()
 	}
@@ -3896,7 +3953,7 @@ export function useWorldEngine(canvasRef) {
 				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
 				const line = `[Mem] app ${mb(texB + meshB + geomB + geomCacheB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
 					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size}`
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
 					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }

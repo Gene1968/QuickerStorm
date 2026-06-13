@@ -83,6 +83,20 @@ export const useUiStore = defineStore('ui', () => {
 	function setFps(v) { fps.value = v }
 	function setNetKbps(v) { netKbps.value = v }
 
+	// FS-parity draw distance (metres): the TARGET object residency / stream radius. The memory
+	// governor (useWorldEngine cullTick) auto-steps the EFFECTIVE radius DOWN under budget pressure
+	// and back UP toward this target with headroom — the browser equivalent of FS progressive draw-
+	// distance stepping + auto-lower-on-low-VRAM. WHY budget-driven not VRAM: a browser cannot query
+	// VRAM; the self-accounted asset-byte budget (memGovernor) is the only truthful pressure signal,
+	// and FS itself only reads VRAM once at startup. A QuickPrefs/Prefs slider binds to `drawDistance`.
+	// Persisted (mirrors litShading). `effectiveDrawDistance` is the governor's current value for UI.
+	const _ddSaved = Number(localStorage.getItem('qs-draw-distance'))
+	const drawDistance = ref(Number.isFinite(_ddSaved) && _ddSaved >= 32 && _ddSaved <= 512 ? _ddSaved : 96)
+	watch(drawDistance, (v) => localStorage.setItem('qs-draw-distance', String(v)))
+	function setDrawDistance(v) { drawDistance.value = Math.max(32, Math.min(512, Math.round(Number(v) || 96))) }
+	const effectiveDrawDistance = ref(96)   // governor-managed current radius; not persisted (runtime)
+	function setEffectiveDrawDistance(v) { effectiveDrawDistance.value = Math.round(v) }
+
 	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
 	function toggleMinimap()     { showMinimap.value     = !showMinimap.value }
@@ -292,6 +306,7 @@ export const useUiStore = defineStore('ui', () => {
 		flying, setFlying,
 		sceneRebuildTick, requestSceneRebuild,
 		litShading, showFps, fps, setFps, netKbps, setNetKbps,
+		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		openProfile, closeProfile, toggleProfile,
 		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,

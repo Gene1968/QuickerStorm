@@ -9,8 +9,11 @@ export const useWorldStore = defineStore('world', () => {
 	// Map<localId (number), object>
 	const objects = ref(new Map())
 
-	// Culling telemetry for the % -loaded badge + Prefs. resident/known are non-avatar mesh counts.
-	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100 })
+	// Culling telemetry for the % -loaded badge + Prefs. resident/known are non-avatar mesh counts
+	// WITHIN the current draw distance; atTarget = at the full target radius (badge says "complete"
+	// vs "nearby"); massive = this load has run long enough (duration, not count) to be slow → badge
+	// prepends the "Major new scenery to cache" preface; effNear = current draw distance (m).
+	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100, atTarget: true, massive: false, effNear: 0 })
 	function setCullStats(s) { cullStats.value = s }
 
 	// WHY: ObjectUpdate nameValue is the raw SL NameValue string, e.g.:
