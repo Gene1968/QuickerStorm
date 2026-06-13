@@ -209,7 +209,7 @@ const panelStyle = computed(() => ({
 					<button
 						v-if="moved"
 						@click.stop="dock"
-						class="p-1 px-2 rounded text-tm hover:text-t1 hover:bg-white/10 transition-colors"
+						class="p-1 px-2 rounded-sm text-tm hover:text-t1 hover:bg-white/10 transition-colors"
 						title="Dock — return to default position"
 						aria-label="Dock"
 					>
@@ -217,7 +217,7 @@ const panelStyle = computed(() => ({
 					</button>
 					<button
 						@click.stop="$emit('close')"
-						class="p-1 px-2 rounded text-tm hover:text-t1 hover:bg-white/10 transition-colors"
+						class="p-1 px-2 rounded-sm text-tm hover:text-t1 hover:bg-white/10 transition-colors"
 						aria-label="Close"
 					>
 						<XIcon :size="14" />

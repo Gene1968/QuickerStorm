@@ -66,7 +66,7 @@ function copyLog() {
 			<span class="text-tm">{{ debug.lines.length }} lines</span>
 			<button
 				v-if="userScrolled"
-				class="text-yellow-300 hover:text-yellow-100 ml-1 px-1.5 py-0.5 border border-yellow-600 rounded text-2xs leading-none"
+				class="text-yellow-300 hover:text-yellow-100 ml-1 px-1.5 py-0.5 border border-yellow-600 rounded-sm text-2xs leading-none"
 				title="Scroll paused — click to resume auto-scroll"
 				@click="resumeScroll"
 			>▼ paused</button>

@@ -14,7 +14,7 @@ const { invFavorites, teleportToLandmark } = usePlaces()
 		<button
 			v-for="lm in invFavorites"
 			:key="`favbar-${lm.itemId}`"
-			class="shrink-0 max-w-[7rem] truncate rounded bg-black/30 hover:bg-black/80 text-white text-2xs leading-none px-1.5 py-1 transition-colors"
+			class="shrink-0 max-w-[7rem] truncate rounded-sm bg-black/30 hover:bg-black/80 text-white text-2xs leading-none px-1.5 py-1 transition-colors"
 			:title="`Teleport to ${lm.name}`"
 			@click="teleportToLandmark(lm)"
 		>{{ lm.name }}</button>

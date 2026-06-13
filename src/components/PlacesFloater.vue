@@ -61,7 +61,7 @@ const filteredHistory = computed(() => {
 					v-model="filter"
 					type="search"
 					placeholder="Filter My Places"
-					class="flex-1 bg-brd2 rounded-xl m-1 px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
+					class="flex-1 bg-brd2 rounded-xl m-1 px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 				/>
 				<button class="tb-btn" title="Show options (TO-DO)"><CogIcon /><ChevronDownIcon class="w-3" /></button>
 				<button class="tb-btn" title="Show sorting options (TO-DO)"><ArrowUpDownIcon /><ChevronDownIcon class="w-3" /></button>
@@ -88,7 +88,7 @@ const filteredHistory = computed(() => {
 						<li
 							v-for="lm in filteredFavorites"
 							:key="`fav-${lm.itemId}`"
-							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
+							class="flex items-center justify-between gap-2 py-1 px-1 rounded-sm hover:bg-white/10 cursor-pointer group"
 							@dblclick="teleportToLandmark(lm)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
@@ -114,7 +114,7 @@ const filteredHistory = computed(() => {
 						<li
 							v-for="(p, i) in filteredLandmarks"
 							:key="`anchor-${i}`"
-							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
+							class="flex items-center justify-between gap-2 py-1 px-1 rounded-sm hover:bg-white/10 cursor-pointer group"
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
@@ -134,7 +134,7 @@ const filteredHistory = computed(() => {
 						<li
 							v-for="lm in filteredInvLandmarks"
 							:key="`lm-${lm.itemId}`"
-							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
+							class="flex items-center justify-between gap-2 py-1 px-1 rounded-sm hover:bg-white/10 cursor-pointer group"
 							@dblclick="teleportToLandmark(lm)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
@@ -155,7 +155,7 @@ const filteredHistory = computed(() => {
 						<li
 							v-for="(p, i) in filteredHistory"
 							:key="`hist-${i}`"
-							class="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-white/10 cursor-pointer group"
+							class="flex items-center justify-between gap-2 py-1 px-1 rounded-sm hover:bg-white/10 cursor-pointer group"
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">

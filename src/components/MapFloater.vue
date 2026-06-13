@@ -755,7 +755,7 @@ onUnmounted(() => {
 						class="absolute -translate-x-1/2 translate-y-12 pointer-events-none text-sm font-mono whitespace-nowrap z-10"
 						:style="{ left: (selectedDot.px + 10) + 'px', top: (selectedDot.py - 22) + 'px' }"
 					>
-						<div class="bg-black/85 text-red-200 px-1.5 py-0.5 rounded shadow"
+						<div class="bg-black/85 text-red-200 px-1.5 py-0.5 rounded-sm shadow-sm"
 							style="paint-order: stroke; stroke: #000; stroke-width: 2;">
 							<span v-if="selectedSpot.block" class="font-semibold">{{ selectedSpot.block.name }}</span>
 							<span v-else class="text-white/50 italic">no region</span>
@@ -766,7 +766,7 @@ onUnmounted(() => {
 					<!-- Hover tooltip — follows cursor at any zoom -->
 					<div
 						v-if="hoverBlock"
-						class="absolute pointer-events-none bg-black/85 text-white text-xs font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap z-10"
+						class="absolute pointer-events-none bg-black/85 text-white text-xs font-mono px-2 py-1 rounded-sm shadow-lg whitespace-nowrap z-10"
 						:style="{ left: (hoverPx.x + 12) + 'px', top: (hoverPx.y + 12) + 'px' }"
 					>
 						<div class="font-semibold">{{ hoverBlock.name }}</div>
@@ -815,7 +815,7 @@ onUnmounted(() => {
 							title="Center map on avatar"
 							@click="centerOnMe"
 						>
-							<span class="inline-block w-3 h-3 rounded-full bg-[#7c3aed] border-2 border-white shadow"/>
+							<span class="inline-block w-3 h-3 rounded-full bg-[#7c3aed] border-2 border-white shadow-sm"/>
 							<span>Me</span>
 						</button>
 						<button
@@ -871,13 +871,13 @@ onUnmounted(() => {
 				</div>
 				<div class="px-1 py-1 border-b border-brd flex flex-col gap-1.5 shrink-0">
 					<select
-						class="w-full bg-card2 border border-brd text-tm rounded px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
+						class="w-full bg-card2 border border-brd text-tm rounded-sm px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
 						disabled title="Online Friends — TO-DO"
 					>
 						<option>👥 Online Friends</option>
 					</select>
 					<select
-						class="w-full bg-card2 border border-brd text-tm rounded px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
+						class="w-full bg-card2 border border-brd text-tm rounded-sm px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
 						disabled title="My Landmarks — TO-DO"
 					>
 						<option>🏁 My Landmarks</option>
@@ -889,7 +889,7 @@ onUnmounted(() => {
 								v-model="searchQuery"
 								type="text"
 								placeholder="Regions by name…"
-								class="w-full bg-card2 border border-brd rounded-xl text-t1 placeholder-tm pl-1.5 pr-6 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+								class="w-full bg-card2 border border-brd rounded-xl text-t1 placeholder-tm pl-1.5 pr-6 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 								@keydown.enter="onSearchEnter"
 							/>
 							<button
@@ -901,12 +901,12 @@ onUnmounted(() => {
 							>×</button>
 						</div>
 						<button
-							class="bg-accent text-white rounded text-xs hover:opacity-80 shrink-0 min-w-[3.25rem]"
+							class="bg-accent text-white rounded-sm text-xs hover:opacity-80 shrink-0 min-w-[3.25rem]"
 							@click="doSearch"
 						>Find</button>
 					</div>
 					<div
-						class="bg-card2 border border-brd rounded overflow-y-auto"
+						class="bg-card2 border border-brd rounded-sm overflow-y-auto"
 						style="min-height:9.5rem;max-height:14rem"
 					>
 						<div
@@ -924,7 +924,7 @@ onUnmounted(() => {
 							@dblclick.stop="teleportToResult(r)"
 						>
 							<span
-								:class="['inline-flex items-center justify-center shrink-0 rounded-sm font-bold text-2xs w-4 h-4 leading-none', accessBadge(r.access).cls]"
+								:class="['inline-flex items-center justify-center shrink-0 rounded-xs font-bold text-2xs w-4 h-4 leading-none', accessBadge(r.access).cls]"
 								:title="`access ${accessBadge(r.access).text}`"
 							>{{ accessBadge(r.access).label }}</span>
 							<span class="truncate">{{ r.name }}</span>
@@ -942,43 +942,43 @@ onUnmounted(() => {
 						<input
 							v-model.number="coordX"
 							type="number" id="coordX" min="1" :max="coordMaxX" step="1"
-							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
+							class="bg-card2 border border-brd text-t1 rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordY"
 							type="number" id="coordY" min="1" :max="coordMaxY" step="1"
-							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
+							class="bg-card2 border border-brd text-t1 rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordZ"
 							type="number" id="coordZ" min="0" max="4096" step="1"
-							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
+							class="bg-card2 border border-brd text-t1 rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 					</div>
 					<div class="flex gap-1">
 						<button
-							class="flex-1 py-1 bg-accent border border-brd text-white rounded text-xs font-semibold hover:opacity-60 transition-opacity"
+							class="flex-1 py-1 bg-accent border border-brd text-white rounded-sm text-xs font-semibold hover:opacity-60 transition-opacity"
 							@click="doTeleport"
 						>
 							Teleport
 						</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors text-nowrap"
+							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded-sm text-xs hover:bg-white/5 transition-colors text-nowrap"
 							title="Copy SLurl to clipboard"
 							@click="copySlurl"
 						>Copy SLurl</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors"
+							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded-sm text-xs hover:bg-white/5 transition-colors"
 							@click="clearMap"
 						>Clear</button>
 					</div>
 					<div class="flex gap-1 opacity-40">
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-tm rounded text-xs cursor-not-allowed"
+							class="flex-1 py-1 bg-card2 border border-brd text-tm rounded-sm text-xs cursor-not-allowed"
 							disabled title="TO-DO"
 						>Show Selection</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-tm rounded text-xs cursor-not-allowed"
+							class="flex-1 py-1 bg-card2 border border-brd text-tm rounded-sm text-xs cursor-not-allowed"
 							disabled title="TO-DO"
 						>Track Region</button>
 					</div>

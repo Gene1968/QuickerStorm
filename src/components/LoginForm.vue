@@ -138,7 +138,7 @@ async function submit() {
 				type="text"
 				placeholder="Username: First Last"
 				autocomplete="new-password"
-				class="reset-input w-full px-3 py-2 pr-8 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+				class="reset-input w-full px-3 py-2 pr-8 rounded-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
 				required
 				@focus="openAccountSuggestions"
 				@input="openAccountSuggestions"
@@ -155,7 +155,7 @@ async function submit() {
 			><ChevronDownIcon class="w-4 h-4 transition-transform" :class="showAccountSuggestions ? 'rotate-180' : ''" /></button>
 			<ul
 				v-if="showAccountSuggestions"
-				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
+				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded-sm border border-brd bg-card shadow-lg"
 				@mousedown.prevent
 			>
 				<template v-if="accountsStore.accounts.length">
@@ -175,7 +175,7 @@ async function submit() {
 			type="password"
 			placeholder="Password"
 			autocomplete="new-password"
-			class="reset-input px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+			class="reset-input px-3 py-2 rounded-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
 			required
 			@keydown.enter="submit"
 		/>
@@ -192,7 +192,7 @@ async function submit() {
 			<div class="flex gap-2">
 				<select
 					v-model="destType"
-					class="flex-1 py-1.5 px-2 border border-brd rounded bg-card2 text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+					class="flex-1 py-1.5 px-2 border border-brd rounded-sm bg-card2 text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
 				>
 					<option value="last">Last Location</option>
 					<option value="home">Home</option>
@@ -209,7 +209,7 @@ async function submit() {
 						type="text"
 						placeholder="Region name"
 						autocomplete="off"
-						class="w-full px-3 py-1.5 rounded bg-card border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+						class="w-full px-3 py-1.5 rounded-sm bg-card border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
 						@focus="openRegionSuggestions"
 						@input="openRegionSuggestions"
 						@blur="closeRegionSuggestions"
@@ -217,7 +217,7 @@ async function submit() {
 					/>
 					<ul
 						v-if="showRegionSuggestions && filteredRegions.length"
-						class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
+						class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded-sm border border-brd bg-card shadow-lg"
 						@mousedown.prevent
 					>
 						<li
@@ -242,7 +242,7 @@ async function submit() {
 
 		<button
 			type="button"
-			class="px-4 py-2 rounded bg-accent2 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
+			class="px-4 py-2 rounded-sm bg-accent2 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
 			:disabled="submitting"
 			@click="submit"
 		>

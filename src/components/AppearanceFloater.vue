@@ -136,7 +136,7 @@ const outfitFolders = [
 				</div>
 				<!-- Wrench / edit toggle -->
 				<button
-					class="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
+					class="p-1.5 rounded-sm hover:bg-white/10 transition-colors shrink-0"
 					:class="editMode ? 'text-accent' : 'text-white/50 hover:text-white'"
 					:title="editMode ? 'Exit Edit' : 'Edit this outfit'"
 					@click="editMode ? exitEdit() : openEdit()"
@@ -156,15 +156,15 @@ const outfitFolders = [
 						v-model="filterText"
 						type="search"
 						placeholder="Filter Outfits…"
-						class="flex-1 min-w-0 bg-card2 border border-brd text-t1 placeholder-tm rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+						class="flex-1 min-w-0 bg-card2 border border-brd text-t1 placeholder-tm rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 					/>
-					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Options — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Sort — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Sort — Phase 3" disabled>
 						<ArrowUpDownIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Delete Outfit — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-white/50 hover:text-white shrink-0" title="Delete Outfit — Phase 3" disabled>
 						<Trash2Icon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -201,7 +201,7 @@ const outfitFolders = [
 								title="Outfit Gallery — Phase 3"
 							>
 								<div
-									class="w-full aspect-square rounded border-2 border-brd group-hover:border-accent transition-colors"
+									class="w-full aspect-square rounded-sm border-2 border-brd group-hover:border-accent transition-colors"
 									:style="{ background: `linear-gradient(135deg, ${item.color}55, ${item.color}22)` }"
 								>
 									<div class="flex items-center justify-center h-full text-2xl">👕</div>
@@ -288,7 +288,7 @@ const outfitFolders = [
 									<!-- Color swatch -->
 									<div
 										v-if="item.color"
-										class="w-4 h-4 rounded border border-white/20 shrink-0"
+										class="w-4 h-4 rounded-sm border border-white/20 shrink-0"
 										:style="{ background: item.color }"
 										:title="item.color"
 									/>
@@ -302,7 +302,7 @@ const outfitFolders = [
 				<!-- Bottom status bar -->
 				<div class="flex items-center px-2.5 py-1.5 border-t border-brd shrink-0 bg-card2 gap-2">
 					<span class="text-tm/50 text-xs flex-1">Complexity: — (Phase 3)</span>
-					<button class="p-1 rounded hover:bg-white/10 text-white/40 hover:text-white" title="Marketplace — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-white/40 hover:text-white" title="Marketplace — Phase 3" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -317,7 +317,7 @@ const outfitFolders = [
 				<!-- Back + title row -->
 				<div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-brd shrink-0">
 					<button
-						class="p-1 rounded hover:bg-white/10 text-white/60 hover:text-white transition-colors shrink-0"
+						class="p-1 rounded-sm hover:bg-white/10 text-white/60 hover:text-white transition-colors shrink-0"
 						title="Back to outfits"
 						@click="exitEdit"
 					>
@@ -356,7 +356,7 @@ const outfitFolders = [
 								<input
 									v-model="editSkinTone"
 									type="color"
-									class="w-7 h-6 rounded border border-brd cursor-pointer bg-transparent"
+									class="w-7 h-6 rounded-sm border border-brd cursor-pointer bg-transparent"
 									title="Skin tone color"
 								/>
 							</div>
@@ -367,7 +367,7 @@ const outfitFolders = [
 									<span class="text-t1 font-medium leading-tight">Hair</span>
 									<select
 										v-model="editHairStyle"
-										class="bg-card2 border border-brd text-t1 rounded px-1 py-0.5 text-xs mt-0.5 focus:outline-none focus:ring-1 focus:ring-accent"
+										class="bg-card2 border border-brd text-t1 rounded-sm px-1 py-0.5 text-xs mt-0.5 focus:outline-hidden focus:ring-1 focus:ring-accent"
 									>
 										<option value="none">None</option>
 										<option value="short">Short</option>
@@ -378,7 +378,7 @@ const outfitFolders = [
 								<input
 									v-model="editHairColor"
 									type="color"
-									class="w-7 h-6 rounded border border-brd cursor-pointer bg-transparent"
+									class="w-7 h-6 rounded-sm border border-brd cursor-pointer bg-transparent"
 									title="Hair color"
 								/>
 							</div>
@@ -413,7 +413,7 @@ const outfitFolders = [
 								<input
 									v-model="editColor"
 									type="color"
-									class="w-7 h-6 rounded border border-brd cursor-pointer bg-transparent"
+									class="w-7 h-6 rounded-sm border border-brd cursor-pointer bg-transparent"
 									title="Outfit primary color"
 								/>
 							</div>
@@ -438,14 +438,14 @@ const outfitFolders = [
 					<!-- Add More (stub expand) -->
 					<div class="px-3 py-2 border-b border-brd/40">
 						<button
-							class="flex items-center gap-1.5 px-2 py-1 border border-brd rounded text-tm hover:bg-white/5 hover:text-t1 transition-colors text-sm"
+							class="flex items-center gap-1.5 px-2 py-1 border border-brd rounded-sm text-tm hover:bg-white/5 hover:text-t1 transition-colors text-sm"
 							title="Browse inventory to add wearables — Phase 3"
 							@click="showAddMore = !showAddMore"
 						>
 							<PlusIcon class="w-3 h-3" />
 							Add More…
 						</button>
-						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-card2 border border-brd rounded text-center text-tm/40 text-sm italic">
+						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-card2 border border-brd rounded-sm text-center text-tm/40 text-sm italic">
 							Inventory browser — Phase 3
 						</div>
 					</div>
@@ -454,11 +454,11 @@ const outfitFolders = [
 
 				<!-- Bottom bar: gear + complexity + shop -->
 				<div class="flex items-center px-2 py-1.5 border-t border-brd shrink-0 bg-card2 gap-1">
-					<button class="p-1 rounded hover:bg-white/10 text-white/40" title="Options — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-white/40" title="Options — Phase 3" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
 					<span class="flex-1 text-tm/40 text-xs text-center">Complexity: — (Phase 3)</span>
-					<button class="p-1 rounded hover:bg-white/10 text-white/40" title="Marketplace — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-white/40" title="Marketplace — Phase 3" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -466,15 +466,15 @@ const outfitFolders = [
 				<!-- Save / Save As… / Undo Changes -->
 				<div class="flex gap-1 px-2 py-1.5 border-t border-brd shrink-0">
 					<button
-						class="flex-1 py-1.5 bg-accent text-white rounded text-xs font-semibold hover:opacity-80 transition-opacity"
+						class="flex-1 py-1.5 bg-accent text-white rounded-sm text-xs font-semibold hover:opacity-80 transition-opacity"
 						@click="saveOutfit"
 					>Save</button>
 					<button
-						class="flex-1 py-1.5 bg-card2 border border-brd text-tm rounded text-xs hover:bg-white/5 transition-colors opacity-50 cursor-not-allowed"
+						class="flex-1 py-1.5 bg-card2 border border-brd text-tm rounded-sm text-xs hover:bg-white/5 transition-colors opacity-50 cursor-not-allowed"
 						disabled title="Save As — Phase 3"
 					>Save As…</button>
 					<button
-						class="flex-1 py-1.5 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors"
+						class="flex-1 py-1.5 bg-card2 border border-brd text-t1 rounded-sm text-xs hover:bg-white/5 transition-colors"
 						@click="undoChanges"
 					>Undo Changes</button>
 				</div>

@@ -74,7 +74,7 @@ function onContextMenuItem(event, it) {
 <template>
 	<div v-if="folder && visible">
 		<div
-			class="flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer text-xs text-t1 select-none"
+			class="flex items-center gap-1 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-t1 select-none"
 			:class="selected ? 'bg-accent/30' : 'hover:bg-white/10'"
 			:style="{ paddingLeft: padLeft }"
 			@click="onSelect(folderId, $event)"
@@ -99,7 +99,7 @@ function onContextMenuItem(event, it) {
 			<div
 				v-for="it in items"
 				:key="it.itemId"
-				class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer"
+				class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-t1/90 select-none cursor-pointer"
 				:class="invSel.isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'"
 				:style="{ paddingLeft: itemPad }"
 				:title="it.desc || it.name"

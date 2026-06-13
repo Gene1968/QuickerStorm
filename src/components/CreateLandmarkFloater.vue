@@ -78,14 +78,14 @@ function cancel() { ui.showCreateLandmark = false }
 				<input
 					v-model="name"
 					type="text"
-					class="qs-input px-2 py-1 rounded bg-card border border-brd text-t1"
+					class="qs-input px-2 py-1 rounded-sm bg-card border border-brd text-t1"
 					@keydown.enter.prevent="save"
 				/>
 			</label>
 
 			<label class="flex flex-col gap-1">
 				<span class="text-t2">Save this landmark in:</span>
-				<select v-model="selectedFolder" class="qs-input px-2 py-1 rounded bg-card border border-brd text-t1">
+				<select v-model="selectedFolder" class="qs-input px-2 py-1 rounded-sm bg-card border border-brd text-t1">
 					<option v-if="!folderOptions.length" value="">Loading folders…</option>
 					<option v-for="o in folderOptions" :key="o.folderId" :value="o.folderId">
 						{{ indent(o.depth) }}{{ o.favorite ? '★ ' : '' }}{{ o.name }}
@@ -103,12 +103,12 @@ function cancel() { ui.showCreateLandmark = false }
 					v-model="newFolderName"
 					type="text"
 					placeholder="New folder name"
-					class="qs-input flex-1 px-2 py-1 rounded bg-card border border-brd text-t1"
+					class="qs-input flex-1 px-2 py-1 rounded-sm bg-card border border-brd text-t1"
 					@keydown.enter.prevent="confirmNewFolder"
 					@keydown.esc.prevent="creatingFolder = false"
 				/>
-				<button class="qs-btn px-2 py-1 rounded bg-accent text-white" @click="confirmNewFolder">Add</button>
-				<button class="qs-btn px-2 py-1 rounded border border-brd" @click="creatingFolder = false">✕</button>
+				<button class="qs-btn px-2 py-1 rounded-sm bg-accent text-white" @click="confirmNewFolder">Add</button>
+				<button class="qs-btn px-2 py-1 rounded-sm border border-brd" @click="creatingFolder = false">✕</button>
 			</div>
 
 			<label class="flex flex-col gap-1">
@@ -116,14 +116,14 @@ function cancel() { ui.showCreateLandmark = false }
 				<textarea
 					v-model="notes"
 					rows="4"
-					class="qs-input px-2 py-1 rounded bg-card border border-brd text-t1 resize-none"
+					class="qs-input px-2 py-1 rounded-sm bg-card border border-brd text-t1 resize-none"
 				></textarea>
 			</label>
 
 			<div class="flex justify-end gap-2 mb-1 pt-1">
-				<button class="qs-btn px-3 py-1 rounded border border-brd hover:bg-white/10" @click="cancel">Cancel</button>
+				<button class="qs-btn px-3 py-1 rounded-sm border border-brd hover:bg-white/10" @click="cancel">Cancel</button>
 				<button
-					class="qs-btn px-3 py-1 rounded bg-accent text-white disabled:opacity-40"
+					class="qs-btn px-3 py-1 rounded-sm bg-accent text-white disabled:opacity-40"
 					:disabled="!canSave"
 					@click="save"
 				>OK</button>

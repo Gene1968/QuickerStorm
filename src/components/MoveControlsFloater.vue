@@ -100,7 +100,7 @@ function selectMode(m) {
 				<button
 					v-for="btn in BTNS"
 					:key="btn.id"
-					class="custom flex flex-col items-center justify-center min-h-10 rounded border text-base font-mono leading-none transition-colors"
+					class="custom flex flex-col items-center justify-center min-h-10 rounded-sm border text-base font-mono leading-none transition-colors"
 					:class="btn.wired
 						? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
 						: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
@@ -120,7 +120,7 @@ function selectMode(m) {
 				<button
 					v-for="mode in MODES"
 					:key="mode.id"
-					class="custom flex-1 flex flex-col items-center justify-center py-1 rounded border text-xs leading-none transition-colors"
+					class="custom flex-1 flex flex-col items-center justify-center py-1 rounded-sm border text-xs leading-none transition-colors"
 					:class="moveMode === mode.id && mode.wired
 						? 'active'
 						: mode.wired

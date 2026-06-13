@@ -62,7 +62,7 @@ onUnmounted(() => {
 		v-if="menu"
 		data-object-context-menu
 		:style="style"
-		class="fixed z-[200] min-w-[10rem] bg-card border border-brd rounded shadow-lg text-xs select-none"
+		class="fixed z-[200] min-w-[10rem] bg-card border border-brd rounded-sm shadow-lg text-xs select-none"
 		@contextmenu.prevent
 	>
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-brd truncate">{{ menu.name }}</div>

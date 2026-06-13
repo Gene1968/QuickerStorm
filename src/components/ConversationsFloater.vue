@@ -278,7 +278,7 @@ async function submitChat() {
 									v-model="contactSearch"
 									type="text"
 									placeholder="Filter friends"
-									class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
+									class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 								/>
 								<span class="text-xs text-t1 shrink-0">{{ social.onlineCount }} / {{ social.friendCount }} friends online</span>
 							</div>
@@ -332,14 +332,14 @@ async function submitChat() {
 						<div v-if="showAdd" class="px-2 py-2 border-t border-brd shrink-0 bg-card2">
 							<div class="flex gap-1.5">
 								<input v-model="addQuery" type="text" placeholder="Search by name…" maxlength="63"
-									class="flex-1 min-w-0 bg-card border border-brd rounded text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+									class="flex-1 min-w-0 bg-card border border-brd rounded-sm text-t1 placeholder-tm px-1.5 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 									@keyup.enter="runAddSearch" />
 								<button class="qs-btn-mini" :disabled="addBusy || addQuery.trim().length < 2" @click="runAddSearch">{{ addBusy ? '…' : 'Search' }}</button>
 								<button class="qs-btn-mini" @click="showAdd = false">Cancel</button>
 							</div>
 							<div v-if="addResults.length" class="mt-1.5 max-h-32 overflow-y-auto">
 								<button v-for="r in addResults" :key="r.id"
-									class="block w-full text-left px-2 py-1 text-xs text-t1 hover:bg-white/10 rounded"
+									class="block w-full text-left px-2 py-1 text-xs text-t1 hover:bg-white/10 rounded-sm"
 									@click="addFriendFromResult(r)">{{ r.name }}</button>
 							</div>
 							<div v-else-if="!addBusy && addQuery.trim().length >= 2" class="mt-1.5 text-2xs text-tm italic">No matches.</div>
@@ -377,7 +377,7 @@ async function submitChat() {
 							v-model="chatInput"
 							type="text"
 							placeholder="To nearby chat"
-							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 							@input="onInput"
 						/>
@@ -385,7 +385,7 @@ async function submitChat() {
 							<button
 								type="button"
 								title="Show emoji panel"
-								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
+								class="flex items-center px-2 py-1 bg-accent2 text-white rounded-sm text-base hover:opacity-80"
 								@click="toggleEmoji"
 							>
 								<span class="text-base leading-none">🙂</span>
@@ -401,7 +401,7 @@ async function submitChat() {
 						</div>
 						<button
 							type="submit"
-							class="px-2 py-1 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="px-2 py-1 bg-accent text-white rounded-sm text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>
@@ -455,7 +455,7 @@ async function submitChat() {
 							v-model="imInput"
 							type="text"
 							:placeholder="`To ${activeConv.agentName}`"
-							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+							class="flex-1 bg-white/10 border border-t1 text-t1 placeholder-white/30 rounded-sm px-2 py-0.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 							maxlength="1023"
 							@input="onImInput"
 						/>
@@ -463,7 +463,7 @@ async function submitChat() {
 							<button
 								type="button"
 								title="Show emoji panel"
-								class="flex items-center px-2 py-1 bg-accent2 text-white rounded text-base hover:opacity-80"
+								class="flex items-center px-2 py-1 bg-accent2 text-white rounded-sm text-base hover:opacity-80"
 								@click="toggleEmoji"
 							>
 								<span class="text-base leading-none">🙂</span>
@@ -479,7 +479,7 @@ async function submitChat() {
 						</div>
 						<button
 							type="submit"
-							class="px-2 py-0.5 bg-accent text-white rounded text-xs hover:opacity-80 shrink-0"
+							class="px-2 py-0.5 bg-accent text-white rounded-sm text-xs hover:opacity-80 shrink-0"
 						>Send</button>
 					</form>
 				</template>

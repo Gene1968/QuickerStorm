@@ -265,7 +265,7 @@ onUnmounted(() => {
 		class="min-w-[16.5rem]"
 	>
 		<div class="relative flex p-1">
-				<input v-model="rawFilter" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" />
+				<input v-model="rawFilter" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" />
 				<Loader2Icon v-if="searching" class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-accent animate-spin pointer-events-none" />
 			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-white">
@@ -276,7 +276,7 @@ onUnmounted(() => {
 				<!-- Type-filter dropdown (FS "Filter: All Types ▾") -->
 				<div class="relative grow me-1">
 					<button class="ui-btn flex w-full items-center justify-between py-0 whitespace-nowrap" @click.stop="showTypeMenu = !showTypeMenu">{{ typeLabel }}<ChevronDownIcon class="w-3" /></button>
-					<div v-if="showTypeMenu" class="absolute z-[60] mt-0.5 left-0 min-w-[9rem] max-h-60 overflow-y-auto bg-card border border-brd rounded shadow-lg" @click.stop>
+					<div v-if="showTypeMenu" class="absolute z-[60] mt-0.5 left-0 min-w-[9rem] max-h-60 overflow-y-auto bg-card border border-brd rounded-sm shadow-lg" @click.stop>
 						<button
 							v-for="t in TYPE_FILTERS"
 							:key="t.id"
@@ -323,7 +323,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'recent'">
 			<div v-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, recentIds, $event)">
+				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, recentIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
@@ -335,7 +335,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'worn'">
 			<div v-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, wornIds, $event)">
+				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, wornIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
@@ -346,7 +346,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'favorites'">
 			<div v-if="favItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, favIds, $event)">
+				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, favIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
@@ -362,7 +362,7 @@ onUnmounted(() => {
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-white">
 			<div class="relative">
 				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon /><ChevronDownIcon class="w-3" /></button>
-				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-card border border-brd rounded shadow-lg" @click.stop>
+				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-card border border-brd rounded-sm shadow-lg" @click.stop>
 					<div class="px-2 py-1 text-2xs text-tm border-b border-brd">Sort</div>
 					<button
 						v-for="o in SORT_OPTIONS"
@@ -375,7 +375,7 @@ onUnmounted(() => {
 			</div>
 			<div class="relative">
 				<button class="ui-btn px-1" title="Add new item" @click.stop="showAddMenu = !showAddMenu"><PlusIcon /></button>
-				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-card border border-brd rounded shadow-lg text-xs" @click.stop>
+				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-card border border-brd rounded-sm shadow-lg text-xs" @click.stop>
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-t1" @click="newFolderHere">New Folder</button>
 					<div class="border-t border-brd"></div>
 					<!-- red = recognised but not yet implemented -->

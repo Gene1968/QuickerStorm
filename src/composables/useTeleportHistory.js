@@ -31,7 +31,7 @@ export function useTeleportHistory() {
 	if (loadedFor !== session.agentId) load(session.agentId)
 
 	// WHY: dedup against the most-recent entry — re-TPing the same spot just refreshes its
-	// timestamp instead of spamming the list. Coordinates rounded so sub-metre jitter still dedups.
+	// timestamp instead of spamming the list. Coordinates rounded-sm so sub-metre jitter still dedups.
 	function record(place) {
 		if (loadedFor !== session.agentId) load(session.agentId)
 		const entry = {

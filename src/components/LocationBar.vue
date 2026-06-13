@@ -142,7 +142,7 @@ function onEditKeydown(e) {
 </script>
 
 <template>
-	<div class="flex items-center gap-2 bg-white/10 rounded ps-3 text-xs text-white select-none min-w-0">
+	<div class="flex items-center gap-2 bg-white/10 rounded-sm ps-3 text-xs text-white select-none min-w-0">
 
 		<span @click="showLocationInfo" title="See more info about the current location (TO-DO)" class="me-2 text-base">ℹ️</span>
 
@@ -154,7 +154,7 @@ function onEditKeydown(e) {
 		<!-- Location display / edit toggle -->
 		<template v-if="!editing">
 			<button
-				class="flex items-center gap-1 min-w-0 text-left hover:bg-white/10 rounded px-1 -mx-1 transition-colors"
+				class="flex items-center gap-1 min-w-0 text-left hover:bg-white/10 rounded-sm px-1 -mx-1 transition-colors"
 				title="Click to edit / teleport"
 				@click="startEdit"
 			>
@@ -173,7 +173,7 @@ function onEditKeydown(e) {
 			<input
 				ref="editInput"
 				v-model="editVal"
-				class="flex-1 bg-white/10 border border-accent/50 rounded px-2 py-0.5 min-w-[35rem] text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-accent"
+				class="flex-1 bg-white/10 border border-accent/50 rounded-sm px-2 py-0.5 min-w-[35rem] text-xs font-mono text-white focus:outline-hidden focus:ring-1 focus:ring-accent"
 				@keydown="onEditKeydown"
 				@blur="cancelEdit"
 			/>

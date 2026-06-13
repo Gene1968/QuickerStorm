@@ -128,7 +128,7 @@ watch(
 				<Transition name="fade">
 					<div
 						v-if="ui.teleportStatus"
-						class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm"
+						class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/75 backdrop-blur-xs"
 					>
 						<div class="flex flex-col items-center gap-3 px-6 py-5 bg-card/80 border border-brd rounded-xl shadow-xl text-center max-w-xs">
 							<div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />

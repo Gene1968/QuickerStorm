@@ -208,7 +208,7 @@ onUnmounted(() => {
 									<span class="pf-row-hint">Last used: {{ formatLastUsed(acct.lastUsed) }}</span>
 								</div>
 								<button
-									class="px-3 py-1 text-sm rounded border border-red-500/40 text-red-400 hover:bg-red-500/15 transition-colors"
+									class="px-3 py-1 text-sm rounded-sm border border-red-500/40 text-red-400 hover:bg-red-500/15 transition-colors"
 									@click="accountsStore.remove(acct.username, acct.gridNick)"
 								>Remove</button>
 							</div>
@@ -395,7 +395,7 @@ onUnmounted(() => {
 											@input="fromSlider($event, masterVolume)"
 											class="w-28 accent-accent" />
 										<button
-											class="text-xs w-6 h-6 flex items-center justify-center rounded hover:bg-white/10"
+											class="text-xs w-6 h-6 flex items-center justify-center rounded-sm hover:bg-white/10"
 											:class="isAllAudioMuted ? 'text-red-400' : 'text-t2'"
 											@click="toggleAllAudioMute"
 											:title="isAllAudioMuted ? 'Unmute' : 'Mute'"
@@ -415,7 +415,7 @@ onUnmounted(() => {
 											@input="fromSlider($event, interfaceVolume)"
 											class="w-28 accent-accent" />
 										<button
-											class="text-xs w-6 h-6 flex items-center justify-center rounded hover:bg-white/10"
+											class="text-xs w-6 h-6 flex items-center justify-center rounded-sm hover:bg-white/10"
 											:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
 											@click="interfaceMuted = !interfaceMuted"
 											:title="interfaceMuted ? 'Unmute' : 'Mute'"
@@ -450,7 +450,7 @@ onUnmounted(() => {
 										<span class="pf-row-hint">Input device for voice chat.</span>
 									</div>
 									<select
-										class="bg-card2 border border-brd2 rounded text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-none focus:border-accent"
+										class="bg-card2 border border-brd2 rounded-sm text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-hidden focus:border-accent"
 										:value="voice.selectedMicId.value"
 										@change="voice.setMicDevice?.($event.target.value)"
 									>
@@ -469,7 +469,7 @@ onUnmounted(() => {
 										</span>
 									</div>
 									<select
-										class="bg-card2 border border-brd2 rounded text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-none focus:border-accent"
+										class="bg-card2 border border-brd2 rounded-sm text-xs text-t1 px-2 py-1 cursor-pointer focus:outline-hidden focus:border-accent"
 										:value="voice.selectedSpkId.value"
 										@change="voice.setSpeakerDevice?.($event.target.value)"
 										:disabled="!canSetSink"

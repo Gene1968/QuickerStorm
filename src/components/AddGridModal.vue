@@ -76,7 +76,7 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
       </p>
 
       <!-- Error banner -->
-      <p v-if="error" class="text-xs text-red-400 bg-red-400/10 rounded px-3 py-2">{{ error }}</p>
+      <p v-if="error" class="text-xs text-red-400 bg-red-400/10 rounded-sm px-3 py-2">{{ error }}</p>
 
       <form class="flex flex-col gap-3" @submit.prevent="submit">
 
@@ -86,7 +86,7 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
             v-model="form.name"
             type="text"
             placeholder="My Awesome Grid"
-            class="w-full px-3 py-2 rounded bg-bg border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+            class="w-full px-3 py-2 rounded-sm bg-bg border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
             required
           />
           <p v-if="nick" class="text-t2 text-xs mt-0.5">Nick: <code class="text-accent">{{ nick }}</code></p>
@@ -98,7 +98,7 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
             v-model="form.loginURI"
             type="url"
             placeholder="http://mygrid.com:8002/"
-            class="w-full px-3 py-2 rounded bg-bg border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+            class="w-full px-3 py-2 rounded-sm bg-bg border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
             required
           />
         </div>
@@ -109,7 +109,7 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
             v-model="form.slurlBase"
             type="text"
             :placeholder="slurlBase || 'hop://mygrid.com:8002/'"
-            class="w-full px-3 py-2 rounded bg-bg border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+            class="w-full px-3 py-2 rounded-sm bg-bg border border-brd text-t1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
           />
         </div>
 
@@ -129,17 +129,17 @@ const REQUEST_URL = 'mailto:gene@unforgettable.com?subject=QuickerSTORM%20Grid%2
         <details class="text-sm">
           <summary class="text-t2 text-xs cursor-pointer hover:text-t1">Optional links (about, register, forgot password)</summary>
           <div class="mt-2 flex flex-col gap-2">
-            <input v-model="form.about"    type="url" placeholder="About URL" class="w-full px-3 py-1.5 rounded bg-bg border border-brd text-t1 text-xs focus:outline-none focus:ring-1 focus:ring-accent" />
-            <input v-model="form.register" type="url" placeholder="Register URL" class="w-full px-3 py-1.5 rounded bg-bg border border-brd text-t1 text-xs focus:outline-none focus:ring-1 focus:ring-accent" />
-            <input v-model="form.password" type="url" placeholder="Forgot Password URL" class="w-full px-3 py-1.5 rounded bg-bg border border-brd text-t1 text-xs focus:outline-none focus:ring-1 focus:ring-accent" />
+            <input v-model="form.about"    type="url" placeholder="About URL" class="w-full px-3 py-1.5 rounded-sm bg-bg border border-brd text-t1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
+            <input v-model="form.register" type="url" placeholder="Register URL" class="w-full px-3 py-1.5 rounded-sm bg-bg border border-brd text-t1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
+            <input v-model="form.password" type="url" placeholder="Forgot Password URL" class="w-full px-3 py-1.5 rounded-sm bg-bg border border-brd text-t1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
           </div>
         </details>
 
         <div class="flex gap-2 pt-1">
-          <button type="submit" class="flex-1 py-2 bg-accent text-white rounded text-sm font-medium hover:opacity-80">
+          <button type="submit" class="flex-1 py-2 bg-accent text-white rounded-sm text-sm font-medium hover:opacity-80">
             Add Grid
           </button>
-          <button type="button" class="px-4 py-2 border border-brd text-t2 rounded text-sm hover:text-t1" @click="$emit('close')">
+          <button type="button" class="px-4 py-2 border border-brd text-t2 rounded-sm text-sm hover:text-t1" @click="$emit('close')">
             Cancel
           </button>
         </div>

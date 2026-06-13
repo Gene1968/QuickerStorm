@@ -163,7 +163,7 @@ const stubChannels = [
 
 		<!-- Mic mute button -->
 		<button
-			class="h-7 w-7 flex items-center justify-center rounded hover:bg-white/15 transition-colors"
+			class="h-7 w-7 flex items-center justify-center rounded-sm hover:bg-white/15 transition-colors"
 			:class="voice.isMuted.value ? 'text-red-400' : 'text-white/80'"
 			:disabled="!voice.isEnabled.value"
 			:style="
@@ -184,7 +184,7 @@ const stubChannels = [
 
 		<!-- Sound mute button + chevron -->
 		<button
-			class="h-7 flex items-center me-2 px-1 rounded hover:bg-white/15 transition-colors"
+			class="h-7 flex items-center me-2 px-1 rounded-sm hover:bg-white/15 transition-colors"
 			:class="isAllAudioMuted ? 'text-red-400' : 'text-white/80'"
 			:title="
 				isAllAudioMuted ? 'Unmute sound' : 'Mute sound / Sound settings'
@@ -221,7 +221,7 @@ const stubChannels = [
 							class="flex-1 accent-accent h-1"
 						/>
 						<button
-							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded hover:bg-white/10 transition-colors"
+							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
 							:class="
 								isAllAudioMuted ? 'text-red-400' : 'text-t2'
 							"
@@ -248,7 +248,7 @@ const stubChannels = [
 							class="flex-1 accent-accent h-1"
 						/>
 						<button
-							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded hover:bg-white/10 transition-colors"
+							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
 							:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
 							@click="interfaceMuted = !interfaceMuted"
 						>

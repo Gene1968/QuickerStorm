@@ -86,7 +86,7 @@ onMounted(async () => {
 		     absorbs those events while any floater is open. -->
 		<div v-if="ui.floaterStack.length > 0" class="absolute inset-0" style="z-index: 49" />
 
-		<!-- ── Login strip — 1rem from all edges, rounded, dark bg ───────── -->
+		<!-- ── Login strip — 1rem from all edges, rounded-sm, dark bg ───────── -->
 		<div
 			class="absolute inset-x-3 bottom-3 bg-forest/80 w-[18.75vw] rounded-2xl overflow-y-auto"
 			style="backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08);"

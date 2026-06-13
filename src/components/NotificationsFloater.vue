@@ -64,7 +64,7 @@ function runAction(a) { try { a.run?.() } catch (e) { console.error('[notif acti
 						<button
 							v-for="(a, i) in it.actions"
 							:key="i"
-							class="px-2 py-0.5 rounded text-2xs"
+							class="px-2 py-0.5 rounded-sm text-2xs"
 							:class="a.variant === 'primary' ? 'bg-accent text-white hover:opacity-80' : 'border border-brd text-t1 hover:bg-white/10'"
 							@click.stop="runAction(a)"
 						>{{ a.label }}</button>
@@ -77,7 +77,7 @@ function runAction(a) { try { a.run?.() } catch (e) { console.error('[notif acti
 			</div>
 
 			<div v-if="activeTab === 'system' && items.length" class="px-2 py-1.5 border-t border-brd shrink-0 flex justify-end">
-				<button class="px-2 py-0.5 text-2xs rounded border border-brd text-t1 hover:bg-white/10" @click="notif.clearTab('system')">Clear all</button>
+				<button class="px-2 py-0.5 text-2xs rounded-sm border border-brd text-t1 hover:bg-white/10" @click="notif.clearTab('system')">Clear all</button>
 			</div>
 		</div>
 	</FloaterWindow>

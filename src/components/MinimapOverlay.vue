@@ -136,7 +136,7 @@ function onMinimapDblClick(e) {
 <template>
 	<!-- Default: ~20% from right edge, 0.75% from top. Eventually draggable + persisted. -->
 	<div
-		class="absolute bg-black/60 rounded overflow-hidden"
+		class="absolute bg-black/60 rounded-sm overflow-hidden"
 		style="width: clamp(8rem, 10vw, 20rem); aspect-ratio: 1/1; right: 20%; top: 0.75%;"
 	>
 		<svg

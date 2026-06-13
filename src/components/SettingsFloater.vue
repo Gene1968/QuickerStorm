@@ -24,7 +24,7 @@ const viewLabel = computed(() => ui.mode === '3d' ? '3D (Three.js)' : '2D (Simpl
     <div class="p-3 flex flex-col gap-3 text-sm">
 
       <!-- Session info -->
-      <div v-if="session.agentId" class="text-white/50 text-xs font-mono break-all bg-white/5 rounded px-2 py-1">
+      <div v-if="session.agentId" class="text-white/50 text-xs font-mono break-all bg-white/5 rounded-sm px-2 py-1">
         {{ session.agentId }}
       </div>
 
@@ -32,7 +32,7 @@ const viewLabel = computed(() => ui.mode === '3d' ? '3D (Three.js)' : '2D (Simpl
       <div class="flex items-center justify-between">
         <span class="text-white/80">Render mode</span>
         <button
-          class="px-2 py-1 bg-accent/20 border border-accent/40 text-accent rounded text-xs hover:bg-accent/30 transition-colors"
+          class="px-2 py-1 bg-accent/20 border border-accent/40 text-accent rounded-sm text-xs hover:bg-accent/30 transition-colors"
           @click="ui.toggleMode()"
         >
           {{ viewLabel }} — switch

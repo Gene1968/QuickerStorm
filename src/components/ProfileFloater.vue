@@ -235,7 +235,7 @@ function saveNotes() {
 				<!-- Name + Key above photo -->
 				<div>
 					<div class="flex items-center justify-between gap-4">
-						<p class="border border-brd rounded bg-white/5 w-full p-1 px-2 text-sm font-bold text-t1 truncate">{{ displayName || 'loading...' }}</p>
+						<p class="border border-brd rounded-sm bg-white/5 w-full p-1 px-2 text-sm font-bold text-t1 truncate">{{ displayName || 'loading...' }}</p>
 						<div class="flex items-center gap-3">
 							<EyeIcon title="Friend can see my online status" class="w-5 h-5 text-t1" />
 							<MapPinSearchIcon title="Friend can see me on map" class="w-5 h-5 text-t1" />
@@ -255,11 +255,11 @@ function saveNotes() {
 
 				<!-- Photo + remaining fields -->
 				<div class="flex gap-4">
-					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-t1 select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
+					<div class="w-28 h-28 shrink-0 rounded-sm bg-white/10 border border-brd flex items-center justify-center text-t1 select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
 					<div class="flex flex-col gap-1 pt-0.5 min-w-0">
 						<div class="flex items-baseline gap-2">
 							<span class="text-end text-2xs text-t1 w-14 shrink-0">Birthdate: </span>
-							<div class="border border-brd rounded bg-white/5 p-1 px-2 text-2xs text-t1 font-mono break-words min-w-0 flex flex-col">
+							<div class="border border-brd rounded-sm bg-white/5 p-1 px-2 text-2xs text-t1 font-mono break-words min-w-0 flex flex-col">
 								<span>{{ bornDisplay.date }}</span>
 								<span v-if="bornDisplay.age">{{ bornDisplay.age }}</span>
 							</div>
@@ -270,7 +270,7 @@ function saveNotes() {
 							class="flex items-baseline gap-2"
 						>
 							<span class="text-end text-2xs text-t1 w-14 shrink-0">{{ field.label }}</span>
-							<span class="border border-brd rounded bg-white/5 p-1 px-2 text-2xs text-t1 font-mono">{{ field.value }}</span>
+							<span class="border border-brd rounded-sm bg-white/5 p-1 px-2 text-2xs text-t1 font-mono">{{ field.value }}</span>
 						</div>
 						<div v-if="isSelf && social.groupTitle" class="flex items-baseline gap-2">
 							<span class="text-2xs text-t1 w-14 shrink-0">Title</span>
@@ -286,19 +286,19 @@ function saveNotes() {
 						v-model="bioEdit"
 						rows="4"
 						placeholder="Write something about yourself…"
-						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+						class="w-full rounded-sm bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-hidden focus:border-accent/60 transition-colors"
 					/>
 					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">{{ aboutValue || '(no about text)' }}</div>
 				</div>
 
 				<div v-if="isSelf && bioDirty" class="flex justify-end gap-2 mt-1">
-					<button @click="discardBio" class="px-3 py-1 text-xs rounded border border-brd text-t1 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
-					<button @click="saveBio"    class="px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
+					<button @click="discardBio" class="px-3 py-1 text-xs rounded-sm border border-brd text-t1 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
+					<button @click="saveBio"    class="px-3 py-1 text-xs rounded-sm bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
 				</div>
 
 				<div>
 					<p class="text-2xs text-t1 mb-1">Groups:</p>
-					<div class="border border-brd rounded bg-white/5 px-2 py-1.5 text-xs min-h-[2rem]">
+					<div class="border border-brd rounded-sm bg-white/5 px-2 py-1.5 text-xs min-h-[2rem]">
 						<div v-if="shownGroups.length === 0" class="text-t1 italic">(none)</div>
 						<ul v-else class="flex flex-col gap-0.5">
 							<li
@@ -322,7 +322,7 @@ function saveNotes() {
 					@input="saveNotes"
 					rows="14"
 					placeholder="Notes about this person…"
-					class="w-full flex-1 rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+					class="w-full flex-1 rounded-sm bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-hidden focus:border-accent/60 transition-colors"
 				/>
 			</div>
 
@@ -354,7 +354,7 @@ function saveNotes() {
 			<p class="text-2xs text-t1">Share:</p>
 				<button
 					disabled
-					class="px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+					class="px-2.5 py-1 text-xs rounded-sm border border-brd text-t1 cursor-not-allowed opacity-50"
 				>Drop inventory item here.</button>
 		</div>
 
@@ -365,20 +365,20 @@ function saveNotes() {
 				v-for="btn in ['Find on Map', 'Offer Teleport','Pay', 'Block']"
 				:key="btn"
 				disabled
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-brd text-t1 cursor-not-allowed opacity-50"
 			>{{ btn }}</button>
 			<button
 				v-if="!isFriend"
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
 				@click="actOfferFriend"
 			>Add Friend</button>
 			<button
 				v-else
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
 				@click="actRemoveFriend"
 			>Remove Friend</button>
 			<button
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-brd text-t1 hover:bg-white/5 transition-colors"
 				@click="actIM"
 			>Instant Message</button>
 		</div>

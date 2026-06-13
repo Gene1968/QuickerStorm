@@ -58,11 +58,11 @@ function submit() {
     <form class="flex gap-2 p-2 bg-black/60 border-t border-brd" @submit.prevent="submit">
       <input
         v-model="input"
-        class="flex-1 bg-card border border-brd rounded px-2 py-1 text-sm text-t1"
+        class="flex-1 bg-card border border-brd rounded-sm px-2 py-1 text-sm text-t1"
         placeholder="Say something…"
         maxlength="1023"
       />
-      <button class="px-3 py-1 bg-accent text-white rounded text-sm hover:opacity-80">Send</button>
+      <button class="px-3 py-1 bg-accent text-white rounded-sm text-sm hover:opacity-80">Send</button>
     </form>
   </div>
 </template>

@@ -40,7 +40,7 @@ onBeforeUnmount(() => { for (const t of timers.values()) clearTimeout(t); timers
 				<button
 					v-for="(a, i) in t.actions"
 					:key="i"
-					class="px-2 py-0.5 rounded text-2xs"
+					class="px-2 py-0.5 rounded-sm text-2xs"
 					:class="a.variant === 'primary' ? 'bg-accent text-white hover:opacity-80' : 'border border-brd text-t1 hover:bg-white/10'"
 					@click="runAction(a)"
 				>{{ a.label }}</button>
