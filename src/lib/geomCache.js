@@ -118,6 +118,26 @@ export function setGeomMemPressureCap(bytes) {
 }
 export function getGeomMemBudget() { return _memBudget }
 
+/**
+ * Auto-default for the CPU-RAM mem-tier budget (MB), used by uiStore when the user has no saved
+ * override. WHY heap-based: the mem tier is tab-heap ArrayBuffers, so sizing it off device RAM (which
+ * ignores the ~4GB tab cap) OOM'd dense regions (FEATURE-GAPS #13). Take 30% of the heap headroom
+ * ABOVE the ~1536MB resident-asset budget (geometry CPU copies + texture bitmaps + worldStore share
+ * the heap), clamped 128..1024MB. A 4GB tab heap → ~768MB, enough to hold a heavy region's working
+ * set so warm re-entry serves from the SYNC mem tier and bypasses the saturated IDB read path. The
+ * runtime heap-pressure cap (setGeomMemPressureCap, driven from cullTick) is the hard safety net on
+ * top of this. No heap API (Firefox/Safari, where that cap can't run either) → conservative tiers.
+ */
+export function computeAutoGeomCacheMb({ heapLimitBytes, deviceMemory } = {}) {
+	if (heapLimitBytes) {
+		const headroomMb = Math.max(0, heapLimitBytes / 1048576 - 1536)
+		return Math.max(128, Math.min(1024, Math.round(headroomMb * 0.30)))
+	}
+	if (deviceMemory === undefined) return 256
+	if (deviceMemory < 4) return 256
+	return 384
+}
+
 /** Sync lookup. Returns a fresh COPY of the arrays, or null. */
 export function geomMemGet(key) {
 	const e = _mem.get(key)
@@ -429,15 +449,24 @@ export async function geomManifestRecord(regionKey, keys, now = Date.now()) {
 		await new Promise((resolve) => {
 			const tx = db.transaction(META, 'readwrite')
 			const mt = tx.objectStore(META)
-			mt.put({ k: `manifest:${regionKey}`, keys: list, savedAt: now })
-			// Recency prune: collect manifest:* records, delete all but the newest MANIFEST_MAX_REGIONS.
-			const seen = []
-			const cur = mt.openCursor()
-			cur.onsuccess = () => {
-				const c = cur.result
-				if (c) { if (typeof c.key === 'string' && c.key.startsWith('manifest:')) seen.push({ k: c.key, savedAt: c.value.savedAt || 0 }); c.continue(); return }
-				seen.sort((a, b) => b.savedAt - a.savedAt)
-				for (const m of seen.slice(MANIFEST_MAX_REGIONS)) mt.delete(m.k)
+			// No-shrink: the engine re-records on every settle EDGE (it dropped its one-shot guard), so a
+			// fresh re-entry whose working set hasn't fully reloaded would otherwise overwrite a larger
+			// persisted manifest with its smaller early slice — losing warm coverage. Only overwrite when
+			// this visit's key set is strictly larger, so the manifest converges UP to the fullest working
+			// set ever seen for the region and never oscillates down. Recency-prune still runs every call.
+			const exReq = mt.get(`manifest:${regionKey}`)
+			exReq.onsuccess = () => {
+				const existing = exReq.result?.keys?.length || 0
+				if (list.length > existing) mt.put({ k: `manifest:${regionKey}`, keys: list, savedAt: now })
+				// Recency prune: collect manifest:* records, delete all but the newest MANIFEST_MAX_REGIONS.
+				const seen = []
+				const cur = mt.openCursor()
+				cur.onsuccess = () => {
+					const c = cur.result
+					if (c) { if (typeof c.key === 'string' && c.key.startsWith('manifest:')) seen.push({ k: c.key, savedAt: c.value.savedAt || 0 }); c.continue(); return }
+					seen.sort((a, b) => b.savedAt - a.savedAt)
+					for (const m of seen.slice(MANIFEST_MAX_REGIONS)) mt.delete(m.k)
+				}
 			}
 			tx.oncomplete = resolve
 			tx.onerror = resolve

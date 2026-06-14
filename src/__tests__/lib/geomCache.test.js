@@ -6,7 +6,7 @@ import {
 	getGeomCacheStats, clearGeomCache, geomMemClear, getGeomMemBytes,
 	setGeomCapBytes, __flushGeomWritesNow, __flushGeomTouchesNow, geomCacheEvict,
 	setGeomCacheLoading, setGeomDeferLimits, setGeomMemBudget, getGeomMemBudget,
-	geomManifestRecord, geomManifestPrefetch,
+	geomManifestRecord, geomManifestPrefetch, computeAutoGeomCacheMb,
 } from '@/lib/geomCache.js'
 
 const GB = 1024 ** 3
@@ -329,6 +329,20 @@ describe('mem-tier budget setter', () => {
 	})
 })
 
+describe('computeAutoGeomCacheMb (RAM mem-tier auto default)', () => {
+	const MB = 1024 * 1024
+	it('takes 30% of heap headroom above the 1536MB resident budget, clamped 128..1024', () => {
+		expect(computeAutoGeomCacheMb({ heapLimitBytes: 4096 * MB })).toBe(768)    // (4096-1536)*0.30
+		expect(computeAutoGeomCacheMb({ heapLimitBytes: 16384 * MB })).toBe(1024)  // clamps at ceiling
+		expect(computeAutoGeomCacheMb({ heapLimitBytes: 1600 * MB })).toBe(128)    // clamps at floor
+	})
+	it('falls back to conservative device-RAM tiers when no heap API is available', () => {
+		expect(computeAutoGeomCacheMb({ deviceMemory: undefined })).toBe(256)
+		expect(computeAutoGeomCacheMb({ deviceMemory: 2 })).toBe(256)
+		expect(computeAutoGeomCacheMb({ deviceMemory: 8 })).toBe(384)
+	})
+})
+
 describe('per-region manifest prefetch', () => {
 	it('records keys for a region and prefetches them into the mem tier on re-entry', async () => {
 		geomMemClear(); await clearGeomCache()
@@ -345,5 +359,33 @@ describe('per-region manifest prefetch', () => {
 		geomMemClear(); await clearGeomCache()
 		await geomManifestPrefetch('never-visited')            // must resolve, not throw
 		expect(geomMemGet('anything')).toBeNull()
+	})
+
+	// WHY: re-recording on every settle edge (engine drops its one-shot guard) means a fresh
+	// re-entry whose working set hasn't fully reloaded would otherwise OVERWRITE a larger persisted
+	// manifest with its smaller early slice — shrinking warm coverage. The manifest must only grow.
+	it('does not shrink an existing manifest when re-recorded with fewer keys', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('shrk1', mkArrays(1)); geomCacheStore('shrk2', mkArrays(2)); geomCacheStore('shrk3', mkArrays(3))
+		await __flushGeomWritesNow()
+		await geomManifestRecord('region-shrink', ['shrk1', 'shrk2', 'shrk3'])  // 3 keys
+		await geomManifestRecord('region-shrink', ['shrk1'])                    // fewer → must NOT overwrite
+		geomMemClear()
+		await geomManifestPrefetch('region-shrink')
+		expect(geomMemGet('shrk1')).not.toBeNull()
+		expect(geomMemGet('shrk2')).not.toBeNull()   // still present → manifest was not shrunk
+		expect(geomMemGet('shrk3')).not.toBeNull()
+	})
+
+	it('grows an existing manifest when re-recorded with more keys', async () => {
+		geomMemClear(); await clearGeomCache()
+		geomCacheStore('grw1', mkArrays(1)); geomCacheStore('grw2', mkArrays(2))
+		await __flushGeomWritesNow()
+		await geomManifestRecord('region-grow', ['grw1'])          // 1 key
+		await geomManifestRecord('region-grow', ['grw1', 'grw2'])  // grew → overwrite with the larger set
+		geomMemClear()
+		await geomManifestPrefetch('region-grow')
+		expect(geomMemGet('grw1')).not.toBeNull()
+		expect(geomMemGet('grw2')).not.toBeNull()   // the grown key is now prefetched
 	})
 })

@@ -380,7 +380,7 @@ export function useWorldEngine(canvasRef) {
 	// set + prefetches that region's manifest, and records the set when the load settles.
 	let _regionGeomKeys = new Set()
 	let _currentRegionKey = null
-	let _manifestRecordedFor = null   // avoid re-recording the same region every settle tick
+	let _wasLoading = false   // settle-edge detector: re-record the manifest on each loading true→false
 
 	// WHY microtask batching: every requestGeometry() call within one synchronous burst (one
 	// drainMeshQueue tick, one evict re-stream pass…) coalesces into ONE qs-geom readonly txn —
@@ -3362,7 +3362,7 @@ export function useWorldEngine(canvasRef) {
 		if (regionKey !== _currentRegionKey) {
 			_currentRegionKey = regionKey
 			_regionGeomKeys = new Set()
-			_manifestRecordedFor = null
+			_wasLoading = true   // entering a region = loading; the next loading→false is its first settle edge
 			geomManifestPrefetch(regionKey)   // fire-and-forget; warms the mem tier
 		}
 		// Drive geomCache write-deferral from the same load signal the lit/badge logic uses. While
@@ -3370,11 +3370,14 @@ export function useWorldEngine(canvasRef) {
 		const tStat = getTextureStats(), mStat = getMeshStats()
 		const loading = pendingMeshIds.size > 50 || tStat.queued > 0 || tStat.inflight > 0 || mStat.queued > 0 || _geomPending > 25
 		setGeomCacheLoading(loading)
-		// On settle, persist this region's key manifest once for fast warm re-entry.
-		if (!loading && _currentRegionKey && _currentRegionKey !== _manifestRecordedFor && _regionGeomKeys.size) {
-			_manifestRecordedFor = _currentRegionKey
+		// Re-record this region's key manifest on every settle EDGE (loading true→false). geomManifestRecord
+		// no-ops unless the key set grew, so the manifest converges UP to the full working set across the
+		// settle dips of a heavy load and across revisits — fixing the early, draw-distance-limited snapshot
+		// that froze warm coverage at a small slice (the partial-manifest cause of warm idb=0 re-bakes).
+		if (_wasLoading && !loading && _currentRegionKey && _regionGeomKeys.size) {
 			geomManifestRecord(_currentRegionKey, [..._regionGeomKeys])
 		}
+		_wasLoading = loading
 		const r = appRatio()
 		const heapR = memRatio()
 		// Heap-pressure cap on the geom RAM cache (FEATURE-GAPS #13): the mem tier is plain tab-heap

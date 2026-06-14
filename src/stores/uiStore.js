@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, shallowRef, watch } from 'vue'
 import { useChatStore } from './chatStore'
+import { computeAutoGeomCacheMb } from '@/lib/geomCache.js'
 
 // WHY: Inventory supports up to 6 simultaneous floaters (per-bag, multi-view).
 // Default positions are arranged in a brick pattern so opening many at once
@@ -106,22 +107,14 @@ export const useUiStore = defineStore('ui', () => {
 	// off it and a persisted user override wins (high-end boxes report only "8"). A Prefs slider binds
 	// to `geomCacheRamMb`; useWorldEngine applies it via geomCache.setGeomMemBudget on init + on change.
 	function _autoGeomCacheMb() {
-		// Prefer the real per-TAB heap ceiling: the mem tier is tab-heap ArrayBuffers, so sizing it off
-		// device RAM (which ignores the ~4GB tab cap) OOM'd dense regions and crashed the tab
-		// (FEATURE-GAPS #13). The cache shares the heap with resident geometry (~1536MB app budget) +
-		// the worldStore + JS, so take a modest slice of the headroom ABOVE that budget. A runtime
-		// heap-pressure cap (geomCache.setGeomMemPressureCap, driven from cullTick) is the hard safety
-		// net on top of this default.
+		// Heap-headroom-based auto default (see geomCache.computeAutoGeomCacheMb). The mem tier is
+		// tab-heap ArrayBuffers; sizing it off the per-tab heap (not device RAM) keeps dense regions
+		// OOM-safe (FEATURE-GAPS #13), and a runtime heap-pressure cap backstops it. Raised to ~768MB on
+		// a 4GB tab heap so a heavy region's working set fits in RAM and warm re-entry serves from the
+		// synchronous mem tier instead of the saturation-starved IDB read path (FEATURE-GAPS #10/#11).
 		const hl = typeof performance !== 'undefined' && performance.memory && performance.memory.jsHeapSizeLimit
-		if (hl) {
-			const headroomMb = Math.max(0, hl / 1048576 - 1536)   // heap minus the resident-asset budget
-			return Math.max(128, Math.min(384, Math.round(headroomMb * 0.20)))
-		}
-		// No heap API (Firefox/Safari) → coarse device-RAM tiers, kept conservative.
 		const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined
-		if (dm === undefined) return 256
-		if (dm < 4) return 256
-		return 384
+		return computeAutoGeomCacheMb({ heapLimitBytes: hl || undefined, deviceMemory: dm })
 	}
 	const _gcSaved = Number(localStorage.getItem('qs-geom-cache-mb'))
 	const geomCacheRamMb = ref(Number.isFinite(_gcSaved) && _gcSaved >= 128 && _gcSaved <= 8192 ? _gcSaved : _autoGeomCacheMb())

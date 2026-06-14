@@ -292,7 +292,13 @@
       "PowerShell(npx vitest run 2>&1 | Select-String -Pattern \"FAIL\" | Where-Object { $_ -notmatch \"bun:test\" })",
       "PowerShell(npx vitest run src/__tests__/lib/instancePool.test.js)",
       "PowerShell(npx vitest run 2>&1 | Select-Object -Last 40)",
-      "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $p = Get-Process -Id $c.OwningProcess; \"8787 LISTENING — pid=$\\($p.Id\\) $\\($p.ProcessName\\), started $\\($p.StartTime\\)\" } else { \"Nothing listening on 8787 — Bun WS server is DOWN\" }; $v = Get-NetTCPConnection -LocalPort 5174 -State Listen -ErrorAction SilentlyContinue; if \\($v\\) { \"5174 \\(Vite\\) LISTENING\" } else { \"5174 not listening\" })"
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $p = Get-Process -Id $c.OwningProcess; \"8787 LISTENING — pid=$\\($p.Id\\) $\\($p.ProcessName\\), started $\\($p.StartTime\\)\" } else { \"Nothing listening on 8787 — Bun WS server is DOWN\" }; $v = Get-NetTCPConnection -LocalPort 5174 -State Listen -ErrorAction SilentlyContinue; if \\($v\\) { \"5174 \\(Vite\\) LISTENING\" } else { \"5174 not listening\" })",
+      "Bash(Sort-Object LastWriteTime -Descending)",
+      "Bash(Select-Object -First 5 Name,LastWriteTime,Length)",
+      "Bash(Select-Object Name,LastWriteTime)",
+      "Bash(Select-Object -First 8)",
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\bf720664-3040-4781-8e14-e47d5d6fee19\\\\tasks\\\\bg1dkvl3t.output\" | Measure-Object -Line\\).Lines)",
+      "PowerShell($f=\"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\bf720664-3040-4781-8e14-e47d5d6fee19\\\\tasks\\\\bg1dkvl3t.output\"; \\(Get-Content $f | Measure-Object -Line\\).Lines)"
     ]
   }
 }
