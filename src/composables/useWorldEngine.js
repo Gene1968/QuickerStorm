@@ -3293,6 +3293,22 @@ export function useWorldEngine(canvasRef) {
 		if (obj) upsertMesh(obj)   // rebuild through the normal path
 	}
 
+	// ── #11 main-thread-saturation probe (DEV; DISPOSABLE) ── time a synchronous callback and relay
+	// to the server log when it blocks the main thread > threshold, so we can attribute the multi-second
+	// longtasks (which [Main]'s WS-only breakdown can't see) to a specific function. Remove once #11 is
+	// root-caused. WHY direct timing not the PerformanceObserver: the observer fires in a LATER task, by
+	// which point any "current op" marker is already cleared — synchronous timing attributes correctly.
+	function timed(name, fn) {
+		const t0 = performance.now()
+		try { return fn() }
+		finally {
+			const dt = performance.now() - t0
+			if (dt > 250) {
+				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Slow] ${name} ${Math.round(dt)}ms (objs=${worldStore.objects.size} meshMap=${meshMap.size} buildQ=${pendingMeshIds.size} inst=${_instancePool?.count() ?? 0})`, stack: '' }) } catch { /* not connected */ }
+			}
+		}
+	}
+
 	function cullTick() {
 		if (!camera) return
 		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
@@ -4038,8 +4054,7 @@ export function useWorldEngine(canvasRef) {
 		// material (a new program usually clears it). Second strike: hide the mesh. Either way the
 		// NEXT frame renders past it and the session self-heals.
 		try {
-			renderer.render(scene, camera)
-			labelRenderer.render(scene, camera)
+			timed('render', () => { renderer.render(scene, camera); labelRenderer.render(scene, camera) })
 		} catch (err) {
 			const bad = _lastDrawMesh
 			_renderFailN++
@@ -4124,11 +4139,11 @@ export function useWorldEngine(canvasRef) {
 		stopGeomCacheRamWatch = watch(() => uiStore.geomCacheRamMb, (mbVal) => setGeomMemBudget(mbVal * 1024 * 1024))
 		_meshDrainTimer = setInterval(() => {
 			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
-			drainMeshQueue()
-			pumpTextures()   // resume governor-paused texture fetches once heap pressure clears
-			if ((_drainTick++ & 3) === 0) reparentOrphans()
+			timed('drain', drainMeshQueue)
+			timed('pumpTex', pumpTextures)   // resume governor-paused texture fetches once heap pressure clears
+			if ((_drainTick++ & 3) === 0) timed('reparent', reparentOrphans)
 		}, 30)
-		_cullTimer = setInterval(cullTick, 1000)
+		_cullTimer = setInterval(() => timed('cull', cullTick), 1000)
 		// ── DEV-only draw-call census (FEATURE-GAPS #6 instrumentation; DISPOSABLE, uncommitted) ──
 		// Run `qsCensus()` in the console on a heavy region AFTER it settles (objs/buildQ stable) to
 		// size the instancing vs merge-by-texture opportunity. Reads worldStore.objects (data model)
@@ -4233,7 +4248,7 @@ export function useWorldEngine(canvasRef) {
 		}
 		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
 		// scene keeps filling and the IDB cache completes (persists across reloads). 3s cadence.
-		_texBackfillTimer = setInterval(backfillTextures, 3000)
+		_texBackfillTimer = setInterval(() => timed('backfill', backfillTextures), 3000)
 		// Asset-loading telemetry: log tex+mesh fetch progress every 3s so we can watch the queues
 		// drain steadily (vs flooding) and spot stuck/timed-out assets. Quiet once fully idle.
 		let _relayTick = 0
