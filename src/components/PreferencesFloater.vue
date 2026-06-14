@@ -321,6 +321,22 @@ onUnmounted(() => {
 
 						<div class="pf-row">
 							<div class="pf-row-info">
+								<span class="pf-row-label">Draw-call instancing (experimental)</span>
+								<span class="pf-row-hint">Merges identical prims into GPU instances to cut draw calls. Off by default until live-verified.</span>
+							</div>
+							<button
+								class="theme-toggle"
+								:class="{ dark: ui.instancing }"
+								:title="ui.instancing ? 'Disable instancing' : 'Enable instancing'"
+								@click="ui.instancing = !ui.instancing"
+							>
+								<span class="theme-knob" />
+								<span class="theme-label">{{ ui.instancing ? 'On' : 'Off' }}</span>
+							</button>
+						</div>
+
+						<div class="pf-row">
+							<div class="pf-row-info">
 								<span class="pf-row-label">Show FPS Meter</span>
 								<span class="pf-row-hint">FPS + bandwidth meters in the top bar. Green ≥ 40 FPS, amber ≥ 20, red below.</span>
 							</div>

@@ -72,9 +72,12 @@ export const useUiStore = defineStore('ui', () => {
 	// swaps materials live, and auto-disables it (once per session, with a notification) if FPS stays
 	// below its floor — the weak-GPU mitigation. Persisted so the choice survives reload.
 	const litShading         = ref(localStorage.getItem('qs-lit-shading') !== '0')
+	// FEATURE-GAPS #6 draw-call instancing — default OFF until live-verified.
+	const instancing         = ref(localStorage.getItem('qs-instancing') === '1')
 	// FPS readout in the top-right tray (FS lag-meter stand-in). Persisted, default ON.
 	const showFps            = ref(localStorage.getItem('qs-show-fps') !== '0')
 	watch(litShading, (v) => localStorage.setItem('qs-lit-shading', v ? '1' : '0'))
+	watch(instancing, (v) => localStorage.setItem('qs-instancing',  v ? '1' : '0'))
 	watch(showFps,    (v) => localStorage.setItem('qs-show-fps',    v ? '1' : '0'))
 	// Live FPS + inbound WS bandwidth (kbps) — written by useWorldEngine's animate loop at ~1 Hz
 	// (not every frame). Displayed in the AudioControlsWidget top-bar stats cluster.
@@ -322,7 +325,7 @@ export const useUiStore = defineStore('ui', () => {
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
 		sceneRebuildTick, requestSceneRebuild,
-		litShading, showFps, fps, setFps, netKbps, setNetKbps,
+		litShading, instancing, showFps, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		geomCacheRamMb, setGeomCacheRamMb,
 		openProfile, closeProfile, toggleProfile,
