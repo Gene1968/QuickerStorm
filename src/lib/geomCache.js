@@ -172,6 +172,21 @@ const LOADING_EXIT_DEBOUNCE_MS = 750
 // the tab heap and tipped it to OOM (108%, frozen). The read-blocking is fixed elsewhere, not here.
 let _ceilingBytes = 128 * 1024 * 1024
 let _maxDeferMs = 30000                  // time ceiling: never defer a flush longer than this
+// Hard cap on the buffered-write HEAP footprint. Under main-thread saturation the byte ceiling's
+// forced flushes can't drain fast enough, so the buffer ballooned to ~1GB and blew the tab heap to
+// 147% (FEATURE-GAPS #13). Past this cap, geomCacheStore stops buffering NEW keys for IDB (they stay
+// in the mem tier this session and re-persist on a calmer later visit) so the buffer can never OOM.
+let _writeBufHardCap = 256 * 1024 * 1024
+let _writeBufDropped = 0                  // count of persists skipped at the hard cap (telemetry)
+// Throttle the forced-flush debug line: it fired per-store while over the ceiling → thousands of
+// identical console lines per second on a cold load. Once/second is enough to see the condition.
+let _lastForcedLogAt = 0
+function _logForcedFlush(reason) {
+	const t = Date.now()
+	if (t - _lastForcedLogAt < 1000) return
+	_lastForcedLogAt = t
+	console.debug('[GeomCache] deferred flush forced:', reason, Math.round(_writeBufBytes / 1048576) + 'MB buffered')
+}
 
 /** Engine signal: true during a region-load burst (suspend flushes), false when the build settles. */
 export function setGeomCacheLoading(v) {
@@ -186,10 +201,17 @@ export function setGeomCacheLoading(v) {
 }
 
 /** Test/governor hook: tune the deferral safety ceilings. */
-export function setGeomDeferLimits({ ceilingBytes, maxDeferMs } = {}) {
+export function setGeomDeferLimits({ ceilingBytes, maxDeferMs, hardCapBytes } = {}) {
 	if (typeof ceilingBytes === 'number') _ceilingBytes = ceilingBytes
 	if (typeof maxDeferMs === 'number') _maxDeferMs = maxDeferMs
+	if (typeof hardCapBytes === 'number') _writeBufHardCap = hardCapBytes
 }
+
+/** Test/telemetry hook: current buffered-write heap footprint in bytes. */
+export function __getWriteBufBytes() { return _writeBufBytes }
+
+/** Write-buffer telemetry: { bytes, dropped } — surfaces the hard-cap drops (no silent caps). */
+export function getGeomWriteBufStats() { return { bytes: _writeBufBytes, dropped: _writeBufDropped } }
 
 // Force a flush if a deferred buffer has hit a ceiling, otherwise stay deferred and re-arm.
 function _checkDeferCeilings() {
@@ -198,8 +220,7 @@ function _checkDeferCeilings() {
 	const overBytes = _writeBufBytes >= _ceilingBytes
 	const overTime = _deferStartedAt && (Date.now() - _deferStartedAt) >= _maxDeferMs
 	if (overBytes || overTime) {
-		console.debug('[GeomCache] deferred flush forced:', overBytes ? 'byte-ceiling' : 'time-ceiling',
-			Math.round(_writeBufBytes / 1048576) + 'MB buffered')
+		_logForcedFlush(overBytes ? 'byte-ceiling' : 'time-ceiling')
 		_deferStartedAt = 0
 		_flushNow(true)        // accept contention: a buffer this large means we are genuinely cold
 		return
@@ -243,10 +264,18 @@ export function geomCacheStore(key, arrays, now = Date.now()) {
 	try {
 		const bytes = bytesOfArrays(owned)
 		const prev = _writeBuf.get(key)
-		if (prev) _writeBufBytes -= prev.bytes        // overwrite: drop the stale record's bytes
-		_writeBuf.set(key, { key, ...owned, bytes, savedAt: now, lastUsed: now })
-		_writeBufBytes += bytes
-		_scheduleFlush()
+		// Hard bound (see _writeBufHardCap): once the buffer is over cap, skip buffering NEW keys for IDB
+		// — the mem tier already holds them this session, and they re-bake+persist on a later, calmer
+		// visit. Overwrites of already-buffered keys still proceed (they don't grow the net buffer). This
+		// is what keeps the buffer from ballooning to ~1GB under saturation and blowing the tab heap.
+		if (prev || _writeBufBytes < _writeBufHardCap) {
+			if (prev) _writeBufBytes -= prev.bytes        // overwrite: drop the stale record's bytes
+			_writeBuf.set(key, { key, ...owned, bytes, savedAt: now, lastUsed: now })
+			_writeBufBytes += bytes
+			_scheduleFlush()
+		} else {
+			_writeBufDropped++
+		}
 	} catch { /* best-effort persistence; memory tier still works */ }
 	return cloneArrays(owned)
 }
@@ -259,8 +288,7 @@ function _scheduleFlush() {
 		// Byte ceiling: force an immediate flush if the buffer is already over budget. This avoids
 		// waiting the full FLUSH_MS tick and keeps RAM bounded on high-volume bake bursts.
 		if (_writeBufBytes >= _ceilingBytes) {
-			console.debug('[GeomCache] deferred flush forced: byte-ceiling',
-				Math.round(_writeBufBytes / 1048576) + 'MB buffered')
+			_logForcedFlush('byte-ceiling')
 			_deferStartedAt = 0
 			_flushNow(true)
 			return

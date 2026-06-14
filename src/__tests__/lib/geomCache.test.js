@@ -6,7 +6,7 @@ import {
 	getGeomCacheStats, clearGeomCache, geomMemClear, getGeomMemBytes,
 	setGeomCapBytes, __flushGeomWritesNow, __flushGeomTouchesNow, geomCacheEvict,
 	setGeomCacheLoading, setGeomDeferLimits, setGeomMemBudget, getGeomMemBudget,
-	geomManifestRecord, geomManifestPrefetch, computeAutoGeomCacheMb,
+	geomManifestRecord, geomManifestPrefetch, computeAutoGeomCacheMb, __getWriteBufBytes,
 } from '@/lib/geomCache.js'
 
 const GB = 1024 ** 3
@@ -307,6 +307,21 @@ describe('write-deferral (warm-read decouple)', () => {
 		setGeomCacheLoading(false)
 		await new Promise(r => setTimeout(r, 900))
 		setGeomDeferLimits({ ceilingBytes: 256 * 1024 * 1024, maxDeferMs: 30000 })
+	})
+
+	it('hard-bounds the write buffer: new keys past the hard cap skip IDB buffering but stay in the mem tier', async () => {
+		geomMemClear(); await clearGeomCache()
+		setGeomCapBytes(1 * GB)
+		const one = bytesOfArrays(small())
+		// Suspend flushes (loading + ceilings won't fire) so the buffer accumulates; hard cap ≈ 5 records.
+		setGeomDeferLimits({ ceilingBytes: 1 * GB, maxDeferMs: 60000, hardCapBytes: one * 5 })
+		setGeomCacheLoading(true)
+		for (let i = 0; i < 20; i++) geomCacheStore(`hb${i}`, small())
+		expect(__getWriteBufBytes()).toBeLessThanOrEqual(one * 5)   // bounded — did NOT balloon to 20 records
+		for (let i = 0; i < 20; i++) expect(geomMemGet(`hb${i}`)).not.toBeNull()  // all still served from RAM
+		setGeomCacheLoading(false)
+		await new Promise(r => setTimeout(r, 900))
+		setGeomDeferLimits({ ceilingBytes: 256 * 1024 * 1024, maxDeferMs: 30000, hardCapBytes: 256 * 1024 * 1024 })
 	})
 })
 
