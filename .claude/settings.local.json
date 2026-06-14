@@ -287,7 +287,12 @@
       "Bash(Select-Object LineNumber, Line)",
       "Bash(jq -r .[].text /c/Users/gene1/.claude/projects/C--Users-gene1-Downloads-Pages-git-QuickerStorm/07bdde75-330c-4bee-82c4-90fcbc0d04c6/tool-results/mcp-claude-in-chrome-read_console_messages-1781371422465.txt)",
       "Bash(tr '\\\\\\\\n' '\\\\n')",
-      "Bash(timeout 5 true)"
+      "Bash(timeout 5 true)",
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 35)",
+      "PowerShell(npx vitest run 2>&1 | Select-String -Pattern \"FAIL\" | Where-Object { $_ -notmatch \"bun:test\" })",
+      "PowerShell(npx vitest run src/__tests__/lib/instancePool.test.js)",
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 40)",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $p = Get-Process -Id $c.OwningProcess; \"8787 LISTENING — pid=$\\($p.Id\\) $\\($p.ProcessName\\), started $\\($p.StartTime\\)\" } else { \"Nothing listening on 8787 — Bun WS server is DOWN\" }; $v = Get-NetTCPConnection -LocalPort 5174 -State Listen -ErrorAction SilentlyContinue; if \\($v\\) { \"5174 \\(Vite\\) LISTENING\" } else { \"5174 not listening\" })"
     ]
   }
 }
