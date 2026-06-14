@@ -18,7 +18,7 @@ import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
-import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
+import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
@@ -1425,6 +1425,9 @@ export function useWorldEngine(canvasRef) {
 		camera.rotation.set(pitch, yaw, 0, 'YXZ')
 
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
+		// Give the texture build pump the renderer so it can upload deterministically (initTexture),
+		// keeping GPU uploads off the render() critical path (FEATURE-GAPS #11).
+		setTextureRenderer(renderer)
 		// WHY: Shadow maps disabled for Phase 1 (see prior WHY on shadow frustum mismatch).
 		renderer.shadowMap.enabled = false
 		// WHY NoToneMapping (was ACESFilmic): ACES darkens mid-tones and desaturates/hue-shifts
@@ -3853,6 +3856,11 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
+		// Spread texture build+upload across frames (FEATURE-GAPS #11): drain a budgeted slice of
+		// the build queue here so freshly-uploaded textures are GPU-resident before render() and
+		// the per-frame upload count is bounded (no burst spike).
+		pumpTextureBuilds()
+
 		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
 		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
 		// refreshUniformsCommon) makes renderer.render THROW EVERY FRAME. Measured live 2026-06-12:
@@ -3997,7 +4005,7 @@ export function useWorldEngine(canvasRef) {
 			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
 			if (_drainBuilt) {
 				const dline = `[Drain] built=${_drainBuilt} (${(_drainBuilt / 5).toFixed(0)}/s) avg=${(_drainMs / _drainBuilt).toFixed(1)}ms max=${_drainMaxMs.toFixed(1)}ms queued=${pendingMeshIds.size} hidden=${typeof document !== 'undefined' && document.hidden ? 1 : 0}` +
-					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget}`
+					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget} texBuildQ=${getTextureStats().buildQueued}`
 				debugStore.push('info', dline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: dline, stack: '' }) } catch { /* ignore */ }
 				_drainBuilt = 0; _drainMs = 0; _drainMaxMs = 0
