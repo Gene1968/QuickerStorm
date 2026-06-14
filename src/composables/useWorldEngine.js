@@ -13,7 +13,7 @@ import { useRealtimeSocket, takeWsStats, takeWsBytes } from './useRealtimeSocket
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
-import { getTexture, clearTextureCache, peekTexture } from './useTextureFetch.js'
+import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
@@ -274,6 +274,8 @@ export function useWorldEngine(canvasRef) {
 	const _partsCache = new Map()   // geomKey → splitParts() templates (multi-material only)
 	let _instancePool = null        // createInstancePool(scene), created lazily on first use
 	const SETTLE_MS = 3000          // no-update dwell before an object may be instanced (tunable)
+	const INSTANCE_MIGRATE_PER_TICK = 64       // max migrations per cull tick (trickle, don't hitch)
+	const INSTANCE_MIGRATE_BACKLOG_MAX = 256   // skip migration while a build backlog this large drains
 
 	function ensureInstancePool() {
 		if (!_instancePool) _instancePool = createInstancePool(scene)
@@ -3205,31 +3207,49 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	// Describe an object's instance pools, or null if it is not yet instanceable
-	// (placeholder, geometry not baked, or texture not loaded → retry a later tick).
+	// (placeholder, geometry not baked, or texture not applied yet → retry a later tick).
+	// WHY clone the LIVE material (not a fresh MeshBasic): the individual mesh's material has
+	// already been through applyTexAlpha + colour + lit/PBR + UV-transform in upsertMesh. Cloning
+	// it carries transparency/blend/alphaTest/lit/PBR/side and the exact texture+UV — a bare
+	// MeshBasic dropped all that (alpha textures rendered black where transparent). Per-object tint
+	// rides InstancedMesh.instanceColor (= the live material's colour), so the pool material's base
+	// colour is whited out and same-geometry/same-material objects pool across tints.
 	function describeForPool(localId, mesh, obj) {
 		if (obj._placeholder) return null
 		const geom = mesh.geometry
 		if (!geom) return null
 		const gk = geomKeyFor(obj)
 		if (!geomMemGet(gk)) return null   // geometry not baked into the RAM cache yet → wait
-		const lit = uiStore.litShading && !obj.defaultFullbright
-		const alpha = !!(obj.defaultColor && obj.defaultColor[3] < 0.99)
 		const multi = hasMultiFaceMesh(obj) || hasMultiFacePrim(obj)
+		const matArr = Array.isArray(mesh.material) ? mesh.material : null
+		if (multi && !matArr) return null   // per-face material swap not applied yet → wait
 		// Only decompose genuinely multi-material objects. A single-textured box prim can
 		// carry 6 geometry groups (one per face) — those must stay ONE pool, not six.
 		const parts = multi ? splitPartsCached(gk, geom) : [{ materialIndex: 0, geometry: geom }]
 		const out = []
 		for (const part of parts) {
+			const srcMat = matArr ? matArr[part.materialIndex] : mesh.material
+			if (!srcMat) return null
 			const faceTex = multi
 				? ((obj.faceTextures && obj.faceTextures[part.materialIndex]) || obj.defaultTexture)
 				: pickPrimTexture(obj)
 			const texId = isRealTex(faceTex) ? faceTex : (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
-			// peekTexture: SYNCHRONOUS readiness gate. getTexture() is async (always returns a truthy
-			// Promise) so it can't tell ready from not-ready; peekTexture returns the resident texture
-			// or null without kicking off a fetch.
-			if (texId && !peekTexture(texId)) return null   // texture not loaded yet → wait, retry next tick
-			const mk = materialKey({ texId, uvKey: '', fullbright: !!obj.defaultFullbright, lit, alpha })
-			out.push({ poolKey: `${gk}::${part.materialIndex}::${mk}`, part, texId })
+			// Readiness: an object that SHOULD be textured but whose LIVE material has no map yet
+			// hasn't finished texturing — wait (avoids baking a bare/black instance into the pool).
+			if (texId && !srcMat.map) return null
+			const map = srcMat.map
+			const uvk = map ? `${map.repeat.x},${map.repeat.y},${map.offset.x},${map.offset.y},${map.rotation}` : ''
+			const mk = materialKey({
+				texId, uvKey: uvk,
+				alpha: !!srcMat.transparent,
+				blend: srcMat.blending !== THREE.NormalBlending,
+				fullbright: !!obj.defaultFullbright,
+				lit: !!(srcMat.isMeshLambertMaterial || srcMat.isMeshStandardMaterial),
+				pbr: !!srcMat.isMeshStandardMaterial,
+			})
+			// side + alphaTest also gate interchangeability; append them so they don't wrongly pool.
+			const poolKey = `${gk}::${part.materialIndex}::${mk}::${srcMat.side}:${srcMat.alphaTest || 0}`
+			out.push({ poolKey, part, srcMat })
 		}
 		return out
 	}
@@ -3240,18 +3260,20 @@ export function useWorldEngine(canvasRef) {
 		if (!desc) return false
 		mesh.updateWorldMatrix(true, false)
 		const matrix = mesh.matrixWorld.clone()
-		const dc = obj.defaultColor
-		const color = new THREE.Color(dc ? dc[0] : 1, dc ? dc[1] : 1, dc ? dc[2] : 1)
 		// Remove the individual mesh BEFORE adding to the pool, so the pool-aware removeMesh
-		// branch (which now short-circuits on pooled ids) does normal individual removal here.
+		// branch (which short-circuits on pooled ids) does normal individual removal here.
 		// Cloning in the factory still works after dispose(): dispose frees GPU buffers, not the
-		// JS-side attribute arrays that .clone() copies.
+		// JS-side attribute arrays / material props that .clone() copies (the map texture is
+		// cache-owned and not disposed by material.dispose()).
 		removeMesh(localId)
 		const pool = ensureInstancePool()
 		for (const d of desc) {
+			// instanceColor = the live material's actual colour (TE tint, hashed fallback, etc.) so
+			// the pooled white-based material × instanceColor reproduces the individual mesh exactly.
+			const color = d.srcMat.color ? d.srcMat.color.clone() : new THREE.Color(1, 1, 1)
 			const factory = () => {
-				const mat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-				if (d.texId) { const t = peekTexture(d.texId); if (t) mat.map = t }
+				const mat = d.srcMat.clone()
+				mat.color.set(0xffffff)   // tint rides instanceColor; keeps pooling across tints
 				mat.needsUpdate = true
 				return { geometry: d.part.geometry.clone(), material: mat }
 			}
@@ -3398,9 +3420,13 @@ export function useWorldEngine(canvasRef) {
 		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
 		if ((_cullStatTick++ % 3) === 0) updateCullStats()
 		// FEATURE-GAPS #6: fold settled meshes into the instance pool (gated; no-op when OFF).
-		if (uiStore.instancing) {
+		// WHY throttled + backlog-gated: each migrateIn clones geometry+material on the main thread.
+		// Running it hard DURING a heavy cold load competes with the build/drain + texture pipeline
+		// (already main-thread-bound, see #11) and worsens the load. So skip migration while a large
+		// build backlog is still draining, and cap it low so it trickles in once the scene calms.
+		if (uiStore.instancing && pendingMeshIds.size <= INSTANCE_MIGRATE_BACKLOG_MAX) {
 			const now = performance.now()
-			let budget = 256   // cap migrations per tick to avoid a hitch
+			let budget = INSTANCE_MIGRATE_PER_TICK   // cap migrations per tick to avoid a hitch
 			const ids = [...meshMap.keys()]   // snapshot — migrateIn mutates meshMap
 			for (const id of ids) {
 				if (budget <= 0) break
