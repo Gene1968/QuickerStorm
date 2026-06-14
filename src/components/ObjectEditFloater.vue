@@ -398,7 +398,7 @@ function close() {
 	<FloaterWindow
 		id="object-edit"
 		title="Build Tools"
-		:wrap-style="{ width: '22rem', height: '38rem', resize: 'both' }"
+		:wrap-style="{ width: '22rem', height: '42rem', resize: 'both' }"
 		:default-pos="{ right: '0.0625vw', bottom: '2.65rem' }"
 		@close="close"
 	>

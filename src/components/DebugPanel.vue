@@ -58,7 +58,7 @@ function copyLog() {
 
 <template>
 	<div
-		class="absolute right-[20vw] bottom-2 w-[30vw] max-h-[70vh] bg-panel border border-edge rounded-lg shadow-2xl z-50 flex flex-col overflow-hidden text-xs font-mono"
+		class="absolute right-[20vw] bottom-2 w-[30vw] max-h-[70vh] bg-black/70 border border-edge rounded-lg shadow-2xl z-50 flex flex-col overflow-hidden text-xs font-mono"
 	>
 		<!-- Header -->
 		<div class="flex items-center gap-2 px-3 py-1.5 bg-panel-alt border-b border-edge shrink-0">

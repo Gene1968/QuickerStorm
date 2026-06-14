@@ -22,7 +22,7 @@ const title = computed(() => {
 <template>
 	<div
 		v-if="show"
-		class="absolute top-14 right-2 z-20 -mt-1 px-3 py-1 max-w-[11.5rem] rounded-sm bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
+		class="absolute top-14 right-2 z-20 -mt-1 py-1 px-3 max-w-[11.1rem] rounded-sm bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
 		:title="title"
 	>
 		{{ label }}

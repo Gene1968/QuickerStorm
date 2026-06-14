@@ -125,8 +125,9 @@ const shownGroups  = computed(() => isSelf.value ? social.groups : (profile.valu
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
 	{ id: 'profile',    label: 'Profile',   soon: false },
-	{ id: 'interests',  label: 'Interests', soon: false },
+	{ id: 'feed',    label: 'Feed',   soon: false },
 	{ id: 'picks',      label: 'Picks',     soon: true  },
+	{ id: 'classifieds',  label: 'Classifieds', soon: false },
 	{ id: 'first_life', label: '1st Life',  soon: true  },
 	{ id: 'notes',      label: 'Notes',     soon: false },
 ]
@@ -312,6 +313,39 @@ function saveNotes() {
 					</div>
 				</div>
 
+				<!-- <div class="flex flex-col gap-1">
+					<p class="text-2xs text-fg">Wants to</p>
+					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.wantToText || '—' }}</div>
+				</div>
+				<div class="flex flex-col gap-1">
+					<p class="text-2xs text-fg">Skills</p>
+					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.skillsText || '—' }}</div>
+				</div>
+				<div class="flex flex-col gap-1">
+					<p class="text-2xs text-fg">Languages</p>
+					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.languagesText || '—' }}</div>
+				</div> -->
+
+			</div>
+
+			<!-- Feed tab -->
+			<div v-else-if="activeTab === 'feed'" class="flex flex-col gap-3">
+				<div v-if="isSelf" class="text-xs text-fg italic">Feed (to-do)</div>
+			</div>
+
+			<!-- Picks tab -->
+			<div v-else-if="activeTab === 'picks'" class="flex flex-col gap-3">
+				<div v-if="isSelf" class="text-xs text-fg italic">Picks (to-do)</div>
+			</div>
+
+			<!-- Classifieds tab -->
+			<div v-else-if="activeTab === 'classifieds'" class="flex flex-col gap-3">
+				<div v-if="isSelf" class="text-xs text-fg italic">This person has no Classifieds (to-do)</div>
+			</div>
+
+			<!-- 1st Life tab -->
+			<div v-else-if="activeTab === 'first_life'" class="flex flex-col gap-3">
+				<div v-if="isSelf" class="text-xs text-fg italic">1st Life (to-do)</div>
 			</div>
 
 			<!-- Notes tab -->
@@ -324,23 +358,6 @@ function saveNotes() {
 					placeholder="Notes about this person…"
 					class="w-full flex-1 rounded-sm bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle resize-none focus:outline-hidden focus:border-accent/60 transition-colors"
 				/>
-			</div>
-
-			<!-- Interests tab -->
-			<div v-else-if="activeTab === 'interests'" class="flex flex-col gap-3">
-				<div v-if="isSelf" class="text-xs text-fg italic">Interests shown here come from the grid profile.</div>
-				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-fg">Wants to</p>
-					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.wantToText || '—' }}</div>
-				</div>
-				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-fg">Skills</p>
-					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.skillsText || '—' }}</div>
-				</div>
-				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-fg">Languages</p>
-					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.languagesText || '—' }}</div>
-				</div>
 			</div>
 
 			<!-- Coming soon -->

@@ -28,11 +28,36 @@ function openSession(c) {
 	ui.showChat = true
 }
 
-// Two initials from "First Last" → "FL"; single-word → one letter; empty → 💬.
+// Display initials for tray buttons. "First Last" → "FL"; SL grid names like
+// "Gene.Freenote @hg.gbg-world.com:8002" → "GF@G" (name initials + @ + domain hint).
 function initials(name) {
-	const parts = (name || '').trim().split(/\s+/).filter(Boolean)
-	if (!parts.length) return '💬'
-	if (parts.length === 1) return parts[0].charAt(0).toUpperCase()
+	const trimmed = (name || '').trim()
+	if (!trimmed) return '💬'
+
+	const gridMatch = trimmed.match(/^(.+?)\s+@(.+)$/)
+	if (gridMatch) {
+		const displayPart = gridMatch[1].trim()
+		const hostPart = gridMatch[2].trim()
+		const displaySegments = displayPart.split(/[.\s]+/).filter(Boolean)
+		const displayInitials = displaySegments.length > 1
+			? displaySegments[0].charAt(0) + displaySegments[displaySegments.length - 1].charAt(0)
+			: displaySegments[0]?.charAt(0) ?? ''
+		const hostname = hostPart.split(':')[0]
+		const hostSegments = hostname.split('.').filter(Boolean)
+		const domainLetter = hostSegments.length > 1
+			? hostSegments[1].charAt(0)
+			: hostSegments[0]?.charAt(0) ?? ''
+		return (displayInitials + '@' + domainLetter).toUpperCase()
+	}
+
+	const parts = trimmed.split(/\s+/).filter(Boolean)
+	if (parts.length === 1) {
+		const dotParts = parts[0].split('.').filter(Boolean)
+		if (dotParts.length > 1) {
+			return (dotParts[0].charAt(0) + dotParts[dotParts.length - 1].charAt(0)).toUpperCase()
+		}
+		return parts[0].charAt(0).toUpperCase()
+	}
 	return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
 }
 </script>
@@ -58,7 +83,8 @@ function initials(name) {
 			@click="ui.toggleChat()"
 		>
 			<MessageCircleIcon class="w-5 h-5" />
-			<span v-if="im.unreadCount.value" class="tray-badge">{{ im.unreadCount.value }}</span>
+			<span v-if="im.unreadCount.value" class="tray-alert-badge">x{{ im.unreadCount.value }}</span>
+			<span v-else class="tray-count-badge">{{ [...im.conversations.value.values()].length }}</span>
 		</button>
 
 		<!-- Notifications: envelope with the unread count superimposed; opens floater directly below -->
@@ -83,11 +109,12 @@ function initials(name) {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 2rem;
-	height: 2rem;
 	border-radius: 0.375rem;
 	border: 1px solid var(--edge);
 	background: color-mix(in srgb, var(--panel) 55%, transparent);
+	padding: 0 0.25rem;
+	min-width: 2rem;
+	height: 2rem;
 	color: var(--fg);
 	transition: background 0.15s, border-color 0.15s;
 }
@@ -99,18 +126,33 @@ function initials(name) {
 }
 
 /* Corner badge (Conversations) */
-.tray-badge {
+.tray-alert-badge {
 	position: absolute;
 	top: -0.25rem;
 	right: -0.25rem;
-	min-width: 0.95rem;
-	padding: 0.05rem 0.2rem;
+	border-radius: 50%;
 	background: #dc2626;
-	color: #fff;
-	border-radius: 9999px;
+	padding: 0.05rem 0.2rem;
+	min-height: 0.95rem;
+	min-width: 0.95rem;
 	font-size: 0.6rem;
-	line-height: 1;
+	font-weight: 700;
+	line-height: 1.2;
 	text-align: center;
+	color: #fff;
+}
+.tray-count-badge {
+	position: absolute;
+	border-radius: 50%;
+	background: #fff;
+	margin-top: 0.01rem;
+	min-height: 0.95rem;
+	min-width: 0.95rem;
+	font-size: 0.55rem;
+	font-weight: 700;
+	line-height: 1.5;
+	text-align: center;
+	color: #666;
 }
 
 /* Count superimposed directly on the envelope glyph (white with a dark outline so it reads on the
