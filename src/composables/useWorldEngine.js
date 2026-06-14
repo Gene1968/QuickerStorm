@@ -3138,7 +3138,10 @@ export function useWorldEngine(canvasRef) {
 			if ((o.parentId ?? 0) !== 0) continue
 			if (camDistToObj(o) > _effNear) continue   // % is relative to the CURRENT (dynamic) draw distance
 			known++
-			if (meshMap.has(id)) resident++
+			// A root counts as resident whether it's an individual mesh OR folded into an instance
+			// pool — otherwise instancing (which drains meshMap into pools) makes pct stall below 100
+			// on a fully-loaded scene.
+			if (meshMap.has(id) || (_instancePool && _instancePool.has(id))) resident++
 		}
 		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
 		// "Major" preface = this load has been continuously streaming long enough to be a big/slow one.
@@ -4144,6 +4147,12 @@ export function useWorldEngine(canvasRef) {
 				// actual draw calls — a per-face material array issues one call per group
 				let drawCalls = 0, multiMat = 0
 				for (const id of meshMap.keys()) { const mat = meshMap.get(id)?.material; const n = Array.isArray(mat) ? mat.length : 1; drawCalls += n; if (n > 1) multiMat++ }
+				// Pooled objects LEFT meshMap — the loop above misses their InstancedMesh draw calls.
+				// Count one call per pool, and read Three's real GL counter for ground truth.
+				const poolMeshes = _instancePool ? _instancePool.meshes().length : 0
+				const poolObjs = _instancePool ? _instancePool.count() : 0
+				const sceneDrawCalls = drawCalls + poolMeshes
+				const glCalls = renderer?.info?.render?.calls ?? -1
 
 				const byType = new Map(), keyMul = new Map(), keyMulNS = new Map(), texMul = new Map(), linkSize = new Map()
 				let perFaceBlockers = 0
@@ -4162,7 +4171,9 @@ export function useWorldEngine(canvasRef) {
 				const text = [
 					`── QS DRAW-CALL CENSUS ──`,
 					`objects(worldStore): ${all.length}   rendered(meshMap): ${rendered.length}   effNear: ${_effNear}m`,
-					`DRAW CALLS (incl per-face arrays): ${drawCalls}   multi-material meshes: ${multiMat}`,
+					`DRAW CALLS — meshMap individual: ${drawCalls} (multi-material: ${multiMat})`,
+					`POOLS: ${poolMeshes} instanced draw calls for ${poolObjs} pooled objs`,
+					`SCENE TOTAL ≈ ${sceneDrawCalls} (individual ${drawCalls} + pools ${poolMeshes})   |   renderer.info GL calls (last frame, incl terrain/water/etc): ${glCalls}`,
 					`rendered type split: ${[...byType].map(([k, c]) => `${k}=${c}`).join('  ')}`,
 					`per-face blockers (material array → not directly batchable): ${perFaceBlockers}`,
 					``,
@@ -4183,7 +4194,7 @@ export function useWorldEngine(canvasRef) {
 					`  largest: ${linkSizes.slice(0, 15).join(', ')}`,
 				].join('\n')
 				console.log(text)
-				return { drawCalls, multiMat, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, _text: text }
+				return { drawCalls, multiMat, poolMeshes, poolObjs, sceneDrawCalls, glCalls, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, _text: text }
 			}
 			dev.log('[Census] qsCensus() ready — run it in the console on a heavy region once it settles')
 		}
