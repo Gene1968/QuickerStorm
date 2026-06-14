@@ -279,6 +279,11 @@ export function useWorldEngine(canvasRef) {
 		if (!_instancePool) _instancePool = createInstancePool(scene)
 		return _instancePool
 	}
+	function disposeInstancing() {
+		if (_instancePool) { _instancePool.dispose(); _instancePool = null }
+		_partsCache.clear()
+		_lastMoveAt.clear()
+	}
 	const hoverTextMeshes = new Set()  // meshes that currently have hover text
 	const _htVec3 = new THREE.Vector3()  // reused for hover-text distance calc
 	// WHY (perf): prim mesh builds are deferred off the WS message handler into a paced per-frame
@@ -2686,6 +2691,7 @@ export function useWorldEngine(canvasRef) {
 			mesh.parent?.remove(mesh)
 		})
 		meshMap.clear()
+		disposeInstancing()  // drop pooled InstancedMeshes/caches so they don't leak across regions
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
 		evicted.clear()
@@ -3673,6 +3679,7 @@ export function useWorldEngine(canvasRef) {
 	// texture fetches guarded by `mesh.material !== mat` drop on swap; the 3s backfill sweep
 	// re-applies those, so the scene converges. Avatars/placeholders keep their current materials.
 	function relightScene(on) {
+		disposeInstancing()
 		let swapped = 0
 		for (const [localId, mesh] of meshMap) {
 			const obj = worldStore.objects.get(localId)
@@ -4178,6 +4185,7 @@ export function useWorldEngine(canvasRef) {
 				for (const a of Object.values(g.attributes || {})) geomB += a.array?.byteLength || 0
 				geomB += g.index?.array?.byteLength || 0
 			}
+			if (_instancePool) geomB += _instancePool.bytes()
 			_lastGeomB = geomB
 			const texB = getTextureBytes(), meshB = getMeshBytes(), geomCacheB = getGeomMemBytes()
 			// WHY no geomCacheB: CPU-RAM-only tier, excluded from VRAM budget (see cull-tick comment).
@@ -4189,7 +4197,7 @@ export function useWorldEngine(canvasRef) {
 				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
 				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
 					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size + (_instancePool?.count() ?? 0)} inst=${_instancePool?.count() ?? 0} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
 					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
@@ -4321,6 +4329,7 @@ export function useWorldEngine(canvasRef) {
 		labelRenderer?.domElement.remove()
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
+		disposeInstancing()  // tear down pooled InstancedMeshes/caches on unmount
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
 		evicted.clear()

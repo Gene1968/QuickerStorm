@@ -112,6 +112,7 @@ export function createInstancePool(scene, opts = {}) {
 	}
 
 	function has(localId) { return objPools.has(localId) }
+	function count() { return objPools.size }
 	function meshes() { return [...pools.values()].map(p => p.im) }
 
 	function bytes() {
@@ -138,5 +139,5 @@ export function createInstancePool(scene, opts = {}) {
 		objPools.clear()
 	}
 
-	return { add, remove, pick, has, meshes, bytes, dispose }
+	return { add, remove, pick, has, count, meshes, bytes, dispose }
 }

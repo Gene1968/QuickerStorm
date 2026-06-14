@@ -72,6 +72,15 @@ describe('instancePool', () => {
 		expect(pool.has(100)).toBe(false)
 	})
 
+	it('count reflects distinct objects', () => {
+		const scene = new THREE.Scene()
+		const pool = createInstancePool(scene)
+		pool.add('A', factory, m4(0), null, 100)
+		pool.add('B', factory, m4(0), null, 100)   // same object, two pools
+		pool.add('A', factory, m4(1), null, 101)
+		expect(pool.count()).toBe(2)
+	})
+
 	it('bytes counts geometry once per pool', () => {
 		const scene = new THREE.Scene()
 		const pool = createInstancePool(scene)
