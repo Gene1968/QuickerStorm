@@ -440,6 +440,10 @@ function close() {
 						/>
 						<span class="truncate">{{ g.label }}</span>
 					</label>
+					<label title="Select Face" class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-fg cursor-pointer select-none">
+						<input type="radio" name="select-face" class="accent-accent shrink-0" value="face" />
+						<span class="truncate">Select Face (to-do)</span>
+					</label>
 				</div>
 			</div>
 			<div class="shrink-0 px-2 py-1 flex items-center gap-2 border-b border-edge">

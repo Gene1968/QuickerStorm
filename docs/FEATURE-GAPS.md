@@ -17,7 +17,7 @@
 | 3 | Texture bulletproofing (watchdog + onabort everywhere) | ✅ done 2026-06-12 |
 | 4 | Lit shading viability + render quarantine | ✅ done 2026-06-12 |
 | 5 | OOM heap creep | ✅ suspect fixed; long-soak still needed |
-| 6 | Draw-call instancing / merging | 🔜 NEXT — ~9k draw calls, 30-43ms frames |
+| 6 | Draw-call instancing / merging | 🔜 **NOW #1 BOTTLENECK** — ~9k draw calls. 🔬 PROFILE 2026-06-13 (after #10 + #11-pass1 + avatars-index all landed): `WebGLRenderer.render` is the dominant frame cost — **~1540–3462ms self-time (12–22%)**, uncontested at the top of Bottom-Up once the avatars O(n²) was fixed. Per-prim meshes + MeshBasicMaterial (+ per-face material arrays). Needs brainstorm→spec: merge static prims by material into shared BufferGeometry and/or InstancedMesh for repeated shapes; interplay with per-prim culling (cullTick evict/reload), the geom cache, and per-face textures. Bigger structural project, not a patch. |
 | 7 | Watch items / small debts | 🔜 planar-repeat striping, IDB version handlers, log spam |
 | 8 | Prim geometry: ONE batched GEOM_VERSION bump | 🔜 hollow + path/profile cut + dimple + shear + revolutions, all at once |
 | 9 | qs-geom pending-leak bricked scene build at ~3% (2026-06-13) | [~] Part A (leak-proof `_geomPending`, getMany watchdog) = live-verified win, builds clean, **uncommitted**. Part B (read-priority flush gate) = partial: writes land, no wedge, but warm `idb` hits still starved under burst. See mem: geom-pending-leak-bricks-drain |

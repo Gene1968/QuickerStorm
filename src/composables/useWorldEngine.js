@@ -3961,6 +3961,67 @@ export function useWorldEngine(canvasRef) {
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
 		}, 30)
 		_cullTimer = setInterval(cullTick, 1000)
+		// ── DEV-only draw-call census (FEATURE-GAPS #6 instrumentation; DISPOSABLE, uncommitted) ──
+		// Run `qsCensus()` in the console on a heavy region AFTER it settles (objs/buildQ stable) to
+		// size the instancing vs merge-by-texture opportunity. Reads worldStore.objects (data model)
+		// + meshMap (what's actually rendered). Remove this block once #6's approach is chosen.
+		if (import.meta.env.DEV) {
+			globalThis.qsCensus = () => {
+				const objs = worldStore.objects
+				const all = [...objs.values()]
+				const inScene = (o) => meshMap.has(o.localId)
+				const rendered = all.filter(inScene)
+				const bump = (m, k, n = 1) => m.set(k, (m.get(k) || 0) + n)
+				const sorted = (m) => [...m.entries()].sort((a, b) => b[1] - a[1])
+				const coverage = (m, min) => { let groups = 0, covered = 0; for (const [, c] of m) if (c >= min) { groups++; covered += c } return { groups, covered } }
+				const top = (m, n) => sorted(m).slice(0, n).map(([k, c]) => `    ${c}× ${String(k).slice(0, 46)}`).join('\n')
+
+				// actual draw calls — a per-face material array issues one call per group
+				let drawCalls = 0, multiMat = 0
+				for (const id of meshMap.keys()) { const mat = meshMap.get(id)?.material; const n = Array.isArray(mat) ? mat.length : 1; drawCalls += n; if (n > 1) multiMat++ }
+
+				const byType = new Map(), keyMul = new Map(), keyMulNS = new Map(), texMul = new Map(), linkSize = new Map()
+				let perFaceBlockers = 0
+				for (const o of rendered) {
+					bump(byType, o.meshId ? 'mesh' : o.sculptId ? 'sculpt' : 'prim')
+					const bakeScale = (o.meshId || o.sculptId) ? [1, 1, 1] : (o.scale || [1, 1, 1])
+					bump(keyMul, o.meshId ? meshGeomKey(o.meshId) : o.sculptId ? sculptGeomKey(o.sculptId, o.sculptType ?? 1) : primGeomKey(o.shape, bakeScale))
+					bump(keyMulNS, o.meshId ? meshGeomKey(o.meshId) : o.sculptId ? sculptGeomKey(o.sculptId, o.sculptType ?? 1) : primGeomKey(o.shape, [1, 1, 1]))
+					bump(texMul, pickPrimTexture(o) || (isRealTex(o.defaultTexture) ? o.defaultTexture : 'none'))
+					bump(linkSize, (o.parentId && o.parentId !== 0) ? o.parentId : o.localId)
+					if (hasMultiFaceMesh(o) || hasMultiFacePrim(o)) perFaceBlockers++
+				}
+				const i2 = coverage(keyMul, 2), i4 = coverage(keyMul, 4), ns2 = coverage(keyMulNS, 2), ns4 = coverage(keyMulNS, 4)
+				const t2 = coverage(texMul, 2), l2 = coverage(linkSize, 2)
+				const linkSizes = [...linkSize.values()].sort((a, b) => b - a)
+				const text = [
+					`── QS DRAW-CALL CENSUS ──`,
+					`objects(worldStore): ${all.length}   rendered(meshMap): ${rendered.length}   effNear: ${_effNear}m`,
+					`DRAW CALLS (incl per-face arrays): ${drawCalls}   multi-material meshes: ${multiMat}`,
+					`rendered type split: ${[...byType].map(([k, c]) => `${k}=${c}`).join('  ')}`,
+					`per-face blockers (material array → not directly batchable): ${perFaceBlockers}`,
+					``,
+					`INSTANCING — shape+scale (current keying):`,
+					`  distinct keys: ${keyMul.size}   ≥2: ${i2.groups} keys / ${i2.covered} objs   ≥4: ${i4.groups} keys / ${i4.covered} objs`,
+					top(keyMul, 15),
+					``,
+					`INSTANCING — shape only (if scale moved to instance matrix):`,
+					`  distinct keys: ${keyMulNS.size}   ≥2: ${ns2.groups} keys / ${ns2.covered} objs   ≥4: ${ns4.groups} keys / ${ns4.covered} objs`,
+					top(keyMulNS, 15),
+					``,
+					`MERGE-BY-TEXTURE:`,
+					`  distinct textures: ${texMul.size}   ≥2: ${t2.groups} textures / ${t2.covered} objs`,
+					top(texMul, 15),
+					``,
+					`LINKSETS:`,
+					`  roots: ${linkSize.size}   ≥2 prims: ${l2.groups} linksets / ${l2.covered} objs`,
+					`  largest: ${linkSizes.slice(0, 15).join(', ')}`,
+				].join('\n')
+				console.log(text)
+				return { drawCalls, multiMat, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, _text: text }
+			}
+			dev.log('[Census] qsCensus() ready — run it in the console on a heavy region once it settles')
+		}
 		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
 		// scene keeps filling and the IDB cache completes (persists across reloads). 3s cadence.
 		_texBackfillTimer = setInterval(backfillTextures, 3000)
