@@ -4168,6 +4168,33 @@ export function useWorldEngine(canvasRef) {
 				const i2 = coverage(keyMul, 2), i4 = coverage(keyMul, 4), ns2 = coverage(keyMulNS, 2), ns4 = coverage(keyMulNS, 4)
 				const t2 = coverage(texMul, 2), l2 = coverage(linkSize, 2)
 				const linkSizes = [...linkSize.values()].sort((a, b) => b - a)
+
+				// ── POOL-KEY FRAGMENTATION (why instancing dedups poorly) — run with the flag OFF so all
+				// objects are individual meshes carrying their real materials. Shows what splits pools:
+				// geom-only (best case) → +texId → +material flags → +UV (the current pool key). If the
+				// full count >> the +flags count, per-object UV transform is the fragmenter and moving UV
+				// to a per-instance shader attribute will recover the dedup. Mirrors describeForPool's key.
+				const fGeom = new Set(), fTex = new Set(), fFlags = new Set(), fFull = new Set()
+				for (const [id, mesh] of meshMap) {
+					const o = objs.get(id)
+					if (!o || o.pcode === PCODE_AVATAR || o._placeholder) continue
+					const gk = geomKeyFor(o)
+					const multi = hasMultiFaceMesh(o) || hasMultiFacePrim(o)
+					const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+					mats.forEach((m, idx) => {
+						if (!m) return
+						const faceTex = multi ? ((o.faceTextures && o.faceTextures[idx]) || o.defaultTexture) : pickPrimTexture(o)
+						const texId = isRealTex(faceTex) ? faceTex : (isRealTex(o.defaultTexture) ? o.defaultTexture : 'none')
+						const map = m.map
+						const uvk = map ? `${map.repeat.x},${map.repeat.y},${map.offset.x},${map.offset.y},${map.rotation}` : ''
+						const flags = `${!!m.transparent}|${m.blending !== THREE.NormalBlending}|${m.alphaTest || 0}|${m.side}|${!!(m.isMeshLambertMaterial || m.isMeshStandardMaterial)}|${!!m.isMeshStandardMaterial}|${!!o.defaultFullbright}`
+						const base = `${gk}::${idx}`
+						fGeom.add(base)
+						fTex.add(`${base}::${texId}`)
+						fFlags.add(`${base}::${texId}::${flags}`)
+						fFull.add(`${base}::${texId}::${flags}::${uvk}`)
+					})
+				}
 				const text = [
 					`── QS DRAW-CALL CENSUS ──`,
 					`objects(worldStore): ${all.length}   rendered(meshMap): ${rendered.length}   effNear: ${_effNear}m`,
@@ -4192,8 +4219,14 @@ export function useWorldEngine(canvasRef) {
 					`LINKSETS:`,
 					`  roots: ${linkSize.size}   ≥2 prims: ${l2.groups} linksets / ${l2.covered} objs`,
 					`  largest: ${linkSizes.slice(0, 15).join(', ')}`,
+					``,
+					`POOL FRAGMENTATION (distinct pool keys — run with flag OFF):`,
+					`  geom-only: ${fGeom.size}  →  +texId: ${fTex.size}  →  +flags: ${fFlags.size}  →  +UV (current key): ${fFull.size}`,
+					`  UV split: ${fFlags.size} → ${fFull.size}  (per-instance UV collapses this back to +flags)`,
 				].join('\n')
 				console.log(text)
+				// Relay to the Bun server log ([ClientLog]) so it's readable without the browser console.
+				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: text.slice(0, 4000), stack: '' }) } catch { /* not connected */ }
 				return { drawCalls, multiMat, poolMeshes, poolObjs, sceneDrawCalls, glCalls, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, _text: text }
 			}
 			dev.log('[Census] qsCensus() ready — run it in the console on a heavy region once it settles')
