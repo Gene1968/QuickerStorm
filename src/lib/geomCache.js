@@ -90,6 +90,9 @@ const GEOM_MEM_BUDGET = 128 * 1024 * 1024
 const _mem = createByteLRU({ budgetBytes: GEOM_MEM_BUDGET, sizeOf: bytesOfArrays })
 
 let _memBudget = GEOM_MEM_BUDGET
+let _pressureCap = Infinity   // heap-pressure cap (bytes); Infinity = no cap. See setGeomMemPressureCap.
+// Effective mem-tier budget = min(configured budget, heap-pressure cap). byteLRU evicts to fit now.
+function _applyEffectiveBudget() { _mem.setBudget(Math.min(_memBudget, _pressureCap)) }
 /**
  * Resize the CPU-RAM mem tier (and scale the write-deferral byte ceiling with it). These pools live
  * only in tab RAM — they never upload to the GPU — so they are budgeted separately from the VRAM
@@ -97,8 +100,21 @@ let _memBudget = GEOM_MEM_BUDGET
  */
 export function setGeomMemBudget(bytes) {
 	_memBudget = Math.max(16 * 1024 * 1024, Math.floor(bytes) || GEOM_MEM_BUDGET)
-	_mem.setBudget(_memBudget)
-	_ceilingBytes = Math.min(512 * 1024 * 1024, Math.max(128 * 1024 * 1024, Math.floor(_memBudget * 0.25)))
+	_applyEffectiveBudget()
+	// NOTE: the write-deferral byte ceiling (_ceilingBytes) is intentionally NOT derived from the
+	// read-cache budget — coupling them made a smaller RAM cache force write-flushes more often, and
+	// those readwrite flushes block the readonly getMany reads (idb=0 / wdog re-bake spiral). The
+	// ceiling is about write-buffer HEAP headroom during load, not read-cache size. See _ceilingBytes.
+}
+/**
+ * Heap-pressure cap (FEATURE-GAPS #13): the mem tier lives in the tab heap, so when the process heap
+ * nears OOM the engine clamps it hard here so the RAM cache can never crash the tab. Pass null to
+ * clear (restore the configured budget). Effective budget = min(configured, cap); the byteLRU evicts
+ * down immediately. Survival over warm-cache speed — the IDB tier still serves once the thread frees.
+ */
+export function setGeomMemPressureCap(bytes) {
+	_pressureCap = (bytes == null) ? Infinity : Math.max(16 * 1024 * 1024, Math.floor(bytes))
+	_applyEffectiveBudget()
 }
 export function getGeomMemBudget() { return _memBudget }
 
@@ -129,7 +145,12 @@ let _deferStartedAt = 0          // wall-clock of the first deferred write since
 let _writeBufBytes = 0           // running sum of buffered record bytes (byte ceiling, O(1))
 let _exitTimer = null            // trailing debounce so brief load dips don't thrash the flush mode
 const LOADING_EXIT_DEBOUNCE_MS = 750
-let _ceilingBytes = 256 * 1024 * 1024   // byte ceiling: force a flush past this much buffered geometry
+// Byte ceiling: force a flush past this much buffered geometry. Decoupled from the read-cache budget
+// (see setGeomMemBudget) — that coupling was a bug. Kept LOW on purpose: a forced flush writes the
+// buffer to disk and RELIEVES heap, so a low ceiling is what keeps a dense cold load heap-safe.
+// Raising it to defer writes (to stop flushes blocking reads) backfired — the buffer ballooned in
+// the tab heap and tipped it to OOM (108%, frozen). The read-blocking is fixed elsewhere, not here.
+let _ceilingBytes = 128 * 1024 * 1024
 let _maxDeferMs = 30000                  // time ceiling: never defer a flush longer than this
 
 /** Engine signal: true during a region-load burst (suspend flushes), false when the build settles. */

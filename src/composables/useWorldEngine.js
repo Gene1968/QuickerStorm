@@ -22,6 +22,7 @@ import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpT
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
+import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
@@ -34,7 +35,7 @@ import {
 	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
 	geometryFromArrays,       // worker-baked/cached arrays → BufferGeometry (applySwap + tier-1 sync cache hits)
 } from '@/lib/primGeometry.js'
-import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch } from '@/lib/geomCache.js'
+import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomMemPressureCap, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch } from '@/lib/geomCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 import { createInstancePool } from '@/lib/instancePool.js'
@@ -294,6 +295,10 @@ export function useWorldEngine(canvasRef) {
 	// violations). pendingMeshIds holds prim localIds awaiting a mesh; drainMeshQueue() builds them
 	// under a per-frame time budget. Dedupe is automatic (Set + fetch latest obj from worldStore).
 	const pendingMeshIds = new Set()  // localId → awaiting mesh build (prims only; avatars build inline)
+	// Region entry / TP floods ObjectUpdates faster than the main thread can upsert+persist them
+	// synchronously (FEATURE-GAPS #11 / TP-into-heavy wedge). Raw prim objects land here and are
+	// drained by pumpIngest() on the paced drain interval so the WS handler never blocks rAF.
+	const _ingestQueue = []  // { o, persist } — persist:false for preseed (already cached)
 	// Orphan index: parentLocalId → Set(childLocalId) waiting for that root to build. Replaces an
 	// O(n) meshMap scan per build (was O(n²) overall — the dominant mesh-build cost on big regions).
 	const orphansByParent = new Map()
@@ -332,6 +337,12 @@ export function useWorldEngine(canvasRef) {
 	const DRAW_DIST_DEFAULT = 96 // fallback target when uiStore is unset
 	const DRAW_DIST_MIN = 32     // metres — emergency floor; immediate surroundings always stay resident
 	const DRAW_DIST_STEP = 16    // metres per governor step (down under pressure / up with headroom)
+	// Geom RAM-cache heap-pressure cap (FEATURE-GAPS #13) — see cullTick. The mem tier shares the tab
+	// heap, so clamp it when the process heap is tight. Hysteresis (cap above CAP_AT, release below
+	// RELEASE_AT) avoids thrashing; FLOOR is both the shrink target and the "worth shedding" gate.
+	const GEOM_MEM_HEAP_CAP_AT     = 0.82            // process-heap ratio that triggers the cap
+	const GEOM_MEM_HEAP_RELEASE_AT = 0.68            // ...and the ratio that releases it
+	const GEOM_MEM_CAP_FLOOR       = 96 * 1024 * 1024 // bytes: shrink the mem tier to this under pressure
 	let _effNear = DRAW_DIST_DEFAULT   // governor-managed effective radius (replaces the old fixed R_NEAR)
 	// "Major load" badge preface is triggered by DURATION, not object count — a dense but already-cached
 	// area reloads in 1-2s as you move and must NOT warn. Only a load still streaming after this long
@@ -543,8 +554,9 @@ export function useWorldEngine(canvasRef) {
 			for (const o of (cached ?? [])) {
 				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
 				if (worldStore.objects.has(o.localId)) continue
-				worldStore.upsertObject(o)
-				pendingMeshIds.add(o.localId)
+				// Paced through pumpIngest like live updates — a warm region's full cache (~28k) must
+				// not upsert in one synchronous loop. persist:false: these came FROM the cache.
+				_ingestQueue.push({ o, persist: false })
 				n++
 			}
 			// Seed the probe crcMap from this read — it already holds every record, so the partition
@@ -569,22 +581,6 @@ export function useWorldEngine(canvasRef) {
 		function requestProbeResync() {
 			try { wsEmit(C.OBJ_PROBE_RESYNC, {}) } catch { /* not connected yet — live probes still flow */ }
 			debugStore.push('info', '[ObjCache] requested probe-backlog resync (engine ready)')
-		}
-		// WHY: persist each non-avatar object as it arrives/updates. Per-object upsert (no
-		// whole-region overwrite) so a session that re-sees fewer objects cannot shrink the
-		// cache. Avatars are transient (not cached).
-		function persistObjects(objs) {
-			const key = regionCacheKey()
-			if (!key) return
-			for (const o of objs) {
-				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
-				// Persist the MERGED record, never the raw update. A partial update (e.g. compressed
-				// without ExtraParams) carries no meshId/sculptId; putting it raw overwrites a complete
-				// cached record with a gutted one, and the CRC probe-hit then replays the gutted version
-				// forever (the sim thinks we have it — a mesh roof came back as a torus). Mirrors the
-				// {...existing, ...incoming} merge worldStore.upsertObject does right after.
-				objCachePut(key, { ...(worldStore.objects.get(o.localId) ?? {}), ...o })
-			}
 		}
 		// WHY: sim's ObjectUpdateCached, forwarded by the server. CRC-match against our
 		// persistent cache → hit (already pre-seeded/rendered, no request). Miss → ask the
@@ -646,6 +642,33 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 	let _tpSceneCleared = false  // true after onTeleportFinish clears scene; cleared by first AgentSpawnPos
+	// Arriving-overlay gate: the avatar is placed on the first AgentSpawnPos, but the overlay
+	// historically waited for a 2nd packet that can be starved (flood) or never sent (some grids).
+	// _tpSettleTimer clears the overlay shortly after the avatar is placed; _tpArrivalTimer is the
+	// hard failsafe so it can never hang. Region membership is unchanged (TeleportFinish = committed).
+	let _tpSpawnApplied = false   // a non-zero destination spawn pos applied since TeleportFinish
+	let _tpSettleTimer = null
+	let _tpArrivalTimer = null
+	const TP_SETTLE_MS = 2500
+	const TP_ARRIVAL_MS = 12000
+	function clearTpTimers() {
+		if (_tpSettleTimer) { clearTimeout(_tpSettleTimer); _tpSettleTimer = null }
+		if (_tpArrivalTimer) { clearTimeout(_tpArrivalTimer); _tpArrivalTimer = null }
+	}
+	function onTpArrivalTimeout() {
+		_tpArrivalTimer = null
+		if (uiStore.teleportStatus !== 'arriving') return
+		clearTpTimers()
+		uiStore.teleportStatus = ''
+		if (_tpSpawnApplied) {
+			debugStore.push('warn', '[3D] TP arrival: spawn applied but no confirming AgentSpawnPos within 12s — clearing overlay')
+		} else {
+			// Option (b): committed to the destination (TeleportFinish swapped the socket) but it
+			// never spoke. Tell the user why the screen cleared into a sparse scene; we can't undo it.
+			notificationStore.notify({ title: 'Teleport', body: 'Teleport is taking longer than expected…', icon: '⏳', toast: true })
+			debugStore.push('warn', '[3D] TP arrival timeout: no destination spawn pos within 12s — clearing overlay')
+		}
+	}
 	let terrainMesh = null  // THREE.Mesh with 257×257 vertex PlaneGeometry
 	let waterMesh   = null  // animated water plane
 	let waterMaterial = null  // ShaderMaterial — uTime updated each frame for ripple
@@ -2332,7 +2355,6 @@ export function useWorldEngine(canvasRef) {
 		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers, not the full {t,d} envelope.
 		// So payload = { objects: [...] } — access as payload.objects, not payload.d.objects.
 		const objs = payload?.objects ?? []
-		persistObjects(objs)
 		objUpdateCount++
 		objsReceivedTotal += objs.length
 		preseedRegionCache()   // once per region (guarded): instant repaint from IndexedDB before live fills
@@ -2414,19 +2436,15 @@ export function useWorldEngine(canvasRef) {
 			})
 		}
 		for (const obj of objs) {
-			worldStore.upsertObject(obj)
-			// WHY (perf): defer prim mesh creation to the paced per-frame drain so a big
-			// ObjectUpdate batch doesn't block the WS message handler. Avatars are few and the
-			// own-avatar logic below drives the camera, so build those inline immediately.
+			// WHY (perf): prims are deferred to the paced ingest pump so a big ObjectUpdate batch
+			// can't block the WS handler / rAF (FEATURE-GAPS #11 / TP-into-heavy wedge). The pump
+			// does upsertObject + persist + mesh-queue-add. Avatars stay inline — own-avatar
+			// attribution + the follow camera below depend on the object existing immediately.
 			if (obj.pcode !== PCODE_AVATAR) {
-				// Memory-evicted linksets stay evicted on inbound updates: the data is persisted above
-				// (worldStore + IDB) but the mesh is NOT queued — otherwise a moving far object rebuilds
-				// every update and the culler re-evicts it next tick (churn), and a root resurrected here
-				// would come back WITHOUT its children. cullTick reloads the whole linkset when near.
-				if (evicted.has(obj.localId) || evicted.has(obj.parentId ?? 0)) continue
-				pendingMeshIds.add(obj.localId)
+				_ingestQueue.push({ o: obj, persist: true })
 				continue
 			}
+			worldStore.upsertObject(obj)
 			try {
 				upsertMesh(obj)
 			} catch (e) {
@@ -2607,8 +2625,10 @@ export function useWorldEngine(canvasRef) {
 			_tpSceneCleared = false   // consumed: source sim responded, still waiting for destination
 		} else if (uiStore.teleportStatus === 'arriving') {
 			uiStore.teleportStatus = ''  // second SpawnPos = destination confirmed
+			clearTpTimers()
 		} else {
 			uiStore.teleportStatus = ''
+			clearTpTimers()
 		}
 		// WHY: AgentMovementComplete fires once after login — sim's authoritative spawn position.
 		// Also fires on TeleportLocal (same-region TP). Arrives before ObjectUpdate/TerseUpdate
@@ -2630,6 +2650,17 @@ export function useWorldEngine(canvasRef) {
 		avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates in-place
 		worldStore.setAvatarPos(x, y, z)
 		worldStore.setSpawnPos(x, y, z)  // also update persistent store for future remounts
+		// Overlay: the avatar is now placed in the destination. Clear shortly even if the confirming
+		// 2nd AgentSpawnPos never arrives (single-spawn-pos grids). Only engages during a cross-region
+		// TP (onTeleportFinish set 'arriving' + the hard timer); same-region/local TP is untouched.
+		if (uiStore.teleportStatus === 'arriving') {
+			_tpSpawnApplied = true
+			if (_tpSettleTimer) clearTimeout(_tpSettleTimer)
+			_tpSettleTimer = setTimeout(() => {
+				_tpSettleTimer = null
+				if (uiStore.teleportStatus === 'arriving') { clearTpTimers(); uiStore.teleportStatus = '' }
+			}, TP_SETTLE_MS)
+		}
 		// WHY: Exit alt-orbit on teleport — otherwise animate() short-circuits the avatar-follow
 		// camera update and the view stays stuck at the pre-TP orbit position.
 		isAltOrbit = false
@@ -2679,6 +2710,9 @@ export function useWorldEngine(canvasRef) {
 	function onTeleportFinish(d) {
 		uiStore.teleportStatus = 'arriving'
 		_tpSceneCleared = true
+		_tpSpawnApplied = false
+		clearTpTimers()
+		_tpArrivalTimer = setTimeout(onTpArrivalTimeout, TP_ARRIVAL_MS)
 		_objCacheLoadedKey = null  // let the destination region's cache load fresh
 		debugStore.push('info', `[3D] Cross-region TP → ${d?.simIp}:${d?.simPort} (regionHandle=${d?.regionHandle}) — clearing scene`)
 		meshMap.forEach((mesh) => {
@@ -2696,6 +2730,7 @@ export function useWorldEngine(canvasRef) {
 		disposeInstancing()  // drop pooled InstancedMeshes/caches so they don't leak across regions
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
+		_ingestQueue.length = 0  // drop the old region's un-ingested prim backlog
 		evicted.clear()
 		orphansByParent.clear()
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
@@ -2755,6 +2790,8 @@ export function useWorldEngine(canvasRef) {
 	function onTeleportFailed(d) {
 		uiStore.teleportStatus = ''
 		_tpSceneCleared = false
+		_tpSpawnApplied = false
+		clearTpTimers()
 		const reason = d?.reason || 'Teleport failed.'
 		notificationStore.notify({ title: 'Teleport Failed', body: reason, icon: '✗', toast: true })
 		debugStore.push('warn', `[3D] TeleportFailed: ${reason}`)
@@ -3340,6 +3377,16 @@ export function useWorldEngine(canvasRef) {
 		}
 		const r = appRatio()
 		const heapR = memRatio()
+		// Heap-pressure cap on the geom RAM cache (FEATURE-GAPS #13): the mem tier is plain tab-heap
+		// ArrayBuffers, so on a dense region it can push the process heap to OOM and crash the tab
+		// (observed: heap 107%, ~800MB geom cache on top of resident geometry). Clamp it HARD when the
+		// heap is genuinely tight AND the cache is actually holding enough to be worth shedding — guard
+		// against over-reacting to GC-able garbage (memGovernor's lesson). Hysteresis band 0.68–0.82.
+		if (heapR != null && heapR > GEOM_MEM_HEAP_CAP_AT && getGeomMemBytes() > GEOM_MEM_CAP_FLOOR) {
+			setGeomMemPressureCap(GEOM_MEM_CAP_FLOOR)   // shrink to the floor; survival over warm-cache speed
+		} else if (heapR == null || heapR < GEOM_MEM_HEAP_RELEASE_AT) {
+			setGeomMemPressureCap(null)                 // clear: restore the configured RAM budget
+		}
 		const over = r > CULL_TARGET || emergencyHeap()
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
@@ -3458,6 +3505,41 @@ export function useWorldEngine(canvasRef) {
 				if (migrateIn(id, mesh, obj)) budget--
 			}
 		}
+	}
+
+	// Frame-budgeted ingestion: pull prim objects off _ingestQueue and do the upsert + (optional)
+	// persist + mesh-queue-add that onObjectUpdate used to do synchronously. Runs on the 30ms drain
+	// interval (CPU work, focus-independent). Builds are still gated separately in drainMeshQueue.
+	const INGEST_BUDGET_MS = 6
+	const INGEST_MAX = 512
+	function pumpIngest() {
+		if (!_ingestQueue.length) return
+		const hidden = (typeof document !== 'undefined' && document.hidden)
+		drainWithinBudget({
+			queue: _ingestQueue,
+			maxItems: hidden ? 4096 : INGEST_MAX,
+			budgetMs: hidden ? 250 : INGEST_BUDGET_MS,
+			processOne: ({ o, persist }) => {
+				worldStore.upsertObject(o)
+				if (persist) {
+					// Persist the MERGED record (never the raw update) — same semantics as the old
+					// persistObjects: a partial update must not overwrite a complete cached record.
+					const key = regionCacheKey()
+					if (key) objCachePut(key, { ...(worldStore.objects.get(o.localId) ?? {}), ...o })
+				}
+				// Evicted linksets stay evicted on inbound updates (data persisted, mesh not queued —
+				// cullTick reloads the whole linkset when near). Same guard as the old inline path.
+				if (!(evicted.has(o.localId) || evicted.has(o.parentId ?? 0))) {
+					pendingMeshIds.add(o.localId)
+				}
+			},
+			onError: (e, item) => {
+				upsertMeshFailures++
+				if (upsertMeshFailures <= 5 || upsertMeshFailures % 25 === 0) {
+					debugStore.push('warn', `[3D] ingest fail #${upsertMeshFailures} localId=${item?.o?.localId}: ${e.message}`)
+				}
+			},
+		})
 	}
 
 	function drainMeshQueue() {
@@ -4139,6 +4221,7 @@ export function useWorldEngine(canvasRef) {
 		stopGeomCacheRamWatch = watch(() => uiStore.geomCacheRamMb, (mbVal) => setGeomMemBudget(mbVal * 1024 * 1024))
 		_meshDrainTimer = setInterval(() => {
 			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
+			timed('ingest', pumpIngest)   // paced upsert/persist/queue (TP-flood backpressure, #11)
 			timed('drain', drainMeshQueue)
 			timed('pumpTex', pumpTextures)   // resume governor-paused texture fetches once heap pressure clears
 			if ((_drainTick++ & 3) === 0) timed('reparent', reparentOrphans)
@@ -4417,6 +4500,8 @@ export function useWorldEngine(canvasRef) {
 		disposeInstancing()  // tear down pooled InstancedMeshes/caches on unmount
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
+		_ingestQueue.length = 0
+		clearTpTimers()
 		evicted.clear()
 		orphansByParent.clear()
 		meshBaker.dispose()     // terminate the off-thread geometry-bake worker

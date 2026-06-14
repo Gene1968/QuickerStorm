@@ -106,11 +106,22 @@ export const useUiStore = defineStore('ui', () => {
 	// off it and a persisted user override wins (high-end boxes report only "8"). A Prefs slider binds
 	// to `geomCacheRamMb`; useWorldEngine applies it via geomCache.setGeomMemBudget on init + on change.
 	function _autoGeomCacheMb() {
+		// Prefer the real per-TAB heap ceiling: the mem tier is tab-heap ArrayBuffers, so sizing it off
+		// device RAM (which ignores the ~4GB tab cap) OOM'd dense regions and crashed the tab
+		// (FEATURE-GAPS #13). The cache shares the heap with resident geometry (~1536MB app budget) +
+		// the worldStore + JS, so take a modest slice of the headroom ABOVE that budget. A runtime
+		// heap-pressure cap (geomCache.setGeomMemPressureCap, driven from cullTick) is the hard safety
+		// net on top of this default.
+		const hl = typeof performance !== 'undefined' && performance.memory && performance.memory.jsHeapSizeLimit
+		if (hl) {
+			const headroomMb = Math.max(0, hl / 1048576 - 1536)   // heap minus the resident-asset budget
+			return Math.max(128, Math.min(384, Math.round(headroomMb * 0.20)))
+		}
+		// No heap API (Firefox/Safari) → coarse device-RAM tiers, kept conservative.
 		const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined
-		if (dm === undefined) return 1024     // API absent (e.g. Firefox/Safari) → assume capable
+		if (dm === undefined) return 256
 		if (dm < 4) return 256
-		if (dm < 8) return 512
-		return 1024                            // deviceMemory caps at 8; override goes higher
+		return 384
 	}
 	const _gcSaved = Number(localStorage.getItem('qs-geom-cache-mb'))
 	const geomCacheRamMb = ref(Number.isFinite(_gcSaved) && _gcSaved >= 128 && _gcSaved <= 8192 ? _gcSaved : _autoGeomCacheMb())
