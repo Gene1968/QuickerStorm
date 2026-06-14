@@ -17,7 +17,8 @@
 const APP_BUDGET_CAP      = 1536 * 1048576  // hard cap on the resident-asset budget (bytes)
 const APP_BUDGET_FRACTION = 0.40            // ...or this fraction of the heap limit, when known
 const APP_BUDGET_FALLBACK = 1024 * 1048576  // budget when the heap limit is unmeasurable
-const EMERGENCY_HEAP_RATIO = 0.92           // process-heap fraction that always means pressure
+const EMERGENCY_HEAP_RATIO = 0.92           // process-heap fraction that means pressure WHEN corroborated
+const CRITICAL_HEAP_RATIO  = 0.95           // process-heap fraction that ALWAYS means pressure (no corroboration)
 
 let _appBytes = 0
 
@@ -65,7 +66,17 @@ export function appRatio() {
 // the ones holding the memory is near-limit heap a real stop signal.
 export function emergencyHeap() {
 	const r = memRatio()
-	return r != null && r > EMERGENCY_HEAP_RATIO && appRatio() > 0.5
+	if (r == null) return false
+	// Critically over the limit → real pressure that GC could not relieve, so throttle REGARDLESS of
+	// appRatio. WHY no corroboration here: a full cold load blew the heap to 147% while appRatio was
+	// only 0.48 — the ~5GB of real heap (geom write buffer + bake garbage + texture queue) is not in
+	// _appBytes, so it slipped under the 0.5 corroboration and the drain/intake never throttled. Above
+	// CRITICAL the inherited-garbage false-positive can't apply: V8 force-GCs collectable garbage long
+	// before the ratio reaches here, so a reading this high is memory we genuinely cannot shed yet.
+	if (r > CRITICAL_HEAP_RATIO) return true
+	// Below critical, keep the corroboration (appRatio>0.5) that guards the hard-reload startup-blank
+	// bug (page inherits ~0.92 heap with ~zero app content; blocking intake then would re-blank it).
+	return r > EMERGENCY_HEAP_RATIO && appRatio() > 0.5
 }
 
 // True when intake (texture fetches, mesh bakes) should pause: over the self-accounted budget,
@@ -74,4 +85,4 @@ export function memUnderPressure() {
 	return appRatio() > 1 || emergencyHeap()
 }
 
-export { APP_BUDGET_CAP, APP_BUDGET_FRACTION, APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO }
+export { APP_BUDGET_CAP, APP_BUDGET_FRACTION, APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, CRITICAL_HEAP_RATIO }
