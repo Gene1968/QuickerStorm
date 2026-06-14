@@ -6,6 +6,7 @@ import { useGridStore } from '@/stores/gridStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useTeleport } from '@/composables/useTeleport.js'
+import { useTeleportHistory } from '@/composables/useTeleportHistory.js'
 import { useAudio }			from '@/composables/useAudio.js'
 import { MicVocalIcon, BirdIcon, SwordIcon, CuboidIcon, ScrollTextIcon, StarIcon, ChevronDownIcon } from '@lucide/vue'
 
@@ -17,7 +18,18 @@ const { connected } = useRealtimeSocket()
 const { requestTeleport, requestRegionTeleport } = useTeleport()
 
 const { playSound } = useAudio()
+const { history: tpHistory } = useTeleportHistory()
 const showLocationHistory = ref(false)
+
+function teleportFromHistory(place) {
+	showLocationHistory.value = false
+	const sameRegion = !place.regionName || place.regionName.toLowerCase() === (session.regionName ?? '').toLowerCase()
+	if (sameRegion) {
+		requestTeleport({ x: place.x, y: place.y, z: place.z, name: place.name, regionName: place.regionName })
+	} else {
+		requestRegionTeleport({ regionName: place.regionName, x: place.x, y: place.y, z: place.z })
+	}
+}
 
 
 // ── Region maturity rating (SL access codes from RegionHandshake) ─────────
@@ -187,12 +199,20 @@ function onEditKeydown(e) {
 		<CuboidIcon title="Building (TO-DO)" class="w-4 h-4 me-1 text-gray-400" />
 		<ScrollTextIcon title="Scripts (TO-DO)" class="w-4 h-4 me-1 text-gray-400" />
 		<button title="Create landmark of this place" class="me-2" @click="playSound('tick.mp3', 0.6); ui.openCreateLandmark({ name: session.regionName })"><StarIcon class="w-4 h-4 text-gray-400 hover:text-yellow-500" /></button>
-		<button @click="playSound('tick.mp3', 0.6); showLocationHistory = !showLocationHistory" title="Location history (TO-DO)" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-fg" /></button>
-		<div v-if="showLocationHistory" class="absolute top-7 right-0 bg-black/50 w-full p-1 text-sm text-fg z-10">
-			<button class="hover:bg-panel-alt/30 px-1 w-full text-start" title="hop://login.osgrid.org/Lazarus%20Taxon%206/137/44/24">Lazarus Taxon 6 (137, 44, 24)</button>
-			<button class="hover:bg-panel-alt/30 px-1 w-full text-start" title="hop://login.osgrid.org/Lazarus%20Taxon%207/140/140/25">Lazarus Taxon 7 (140, 140, 25)</button>
-			<button class="hover:bg-panel-alt/30 px-1 w-full text-start" title="hop://login.osgrid.org/Lazarus%20Taxon%207/140/140/25">Parcel, Region (140, 140, 25)</button>
-			<button class="hover:bg-panel-alt/30 px-1 w-full text-start">Location history (TO-DO)</button>
+		<button @click="playSound('tick.mp3', 0.6); showLocationHistory = !showLocationHistory" title="Location history" class="bg-gray-700/20 border border-white/30 rounded-r"><ChevronDownIcon class="w-5 h-5 text-fg" /></button>
+		<div v-if="showLocationHistory" class="absolute top-7 right-0 bg-black/90 border border-white/20 rounded-sm shadow-lg w-full max-h-64 overflow-y-auto text-xs text-fg z-10">
+			<template v-if="tpHistory.length">
+				<button
+					v-for="(p, i) in tpHistory"
+					:key="`lochist-${i}`"
+					class="flex flex-col px-3 py-1.5 hover:bg-white/10 w-full text-start"
+					@click="teleportFromHistory(p)"
+				>
+					<span class="truncate">{{ p.name }}</span>
+					<span class="text-fg/50 text-2xs">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</span>
+				</button>
+			</template>
+			<div v-else class="px-3 py-2 text-fg/40 italic">No teleport history yet.</div>
 		</div>
 	</div>
 </template>
