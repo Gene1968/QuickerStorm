@@ -8,6 +8,7 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
 import { emergencyHeap } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
+import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 
 // Decode a base64 payload (as delivered over WS) into a typed Blob for IDB storage + createImageBitmap.
 // WHY: storing the Blob (not a data-URL string) drops the +33% base64 inflation and lets the GPU
@@ -30,6 +31,14 @@ const FETCH_TIMEOUT_MS = 30_000
 // 12: live telemetry showed 0 timeouts at 6 and ~1.3 fetches/s (grid round-trip bound, parallelizable)
 // → headroom to roughly double throughput. Raise further only if timeouts stay 0.
 const MAX_INFLIGHT = 12
+
+// Per-frame texture build/upload pump (FEATURE-GAPS #11). Blob-ready enqueues a build job; the
+// engine drains buildQueue once per frame via pumpTextureBuilds(), spreading the decode/downscale/
+// upload cost instead of bursting it (which jams the main thread and starves IDB read callbacks).
+const TEX_BUILD_MAX_PER_FRAME = 32   // cap builds STARTED per frame (the real throttle)
+const TEX_BUILD_BUDGET_MS     = 4    // wall-clock cap on the synchronous dispatch loop
+const buildQueue = []                // { uuid, blob, resolve }
+let _renderer = null                 // injected by the engine; if null, uploads stay lazy
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
 const texInflight = new Map()  // uuid → Promise<THREE.Texture|null>
@@ -96,6 +105,10 @@ function _pump() {
 // Re-pump from a periodic caller (the world-engine drain tick) so queued fetches resume after the
 // governor pauses them — _pump is otherwise only re-triggered when a slot frees.
 export function pumpTextures() { _pump() }
+
+/** Engine injects the THREE renderer so the build pump can upload deterministically (initTexture).
+ *  If never set (e.g. tests, pre-init), textures fall back to lazy upload at render() — no hard dep. */
+export function setTextureRenderer(r) { _renderer = r }
 
 // S.ASSET_DATA → resolve the pending WS request with a WebP Blob (or null on error/missing).
 function _onAssetData(d) {
@@ -180,7 +193,7 @@ export function getTextureStats() {
 	// server time; srv is the server handler's own measure — (net − srv) ≈ loop/transit overhead.
 	const f = (t) => ({ n: t.n, avg: t.n ? Math.round(t.ms / t.n) : 0, max: Math.round(t.max) })
 	return {
-		...stats, inflight: active, queued: netQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size,
+		...stats, inflight: active, queued: netQueue.length, buildQueued: buildQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size,
 		timing: { qWait: f(timing.qWait), idb: f(timing.idb), net: f(timing.net), srv: f(timing.srv) },
 	}
 }
@@ -267,24 +280,46 @@ function getBaseTexture(uuid) {
 	if (cache.has(uuid))       { lastUsed.set(uuid, Date.now()); return Promise.resolve(cache.get(uuid)) }
 	if (texInflight.has(uuid)) return texInflight.get(uuid)
 
-	const p = getBlob(uuid)
-		.then(blob => (blob ? buildTexture(blob) : null))
-		.then(tex => {
-			texInflight.delete(uuid)
-			if (tex) {
-				tex.userData.hasAlpha = alphaCache.get(uuid) || false
-				cache.set(uuid, tex)
-				lastUsed.set(uuid, Date.now())
-				// Free the in-memory Blob mirror now the GPU texture exists — thousands of resident
-				// Blobs would be their own heap hog. Previews re-read IndexedDB on demand via
-				// getTextureUrl; the GPU texture is what rendering needs.
-				blobCache.delete(uuid)
-			}
-			return tex
-		})
+	// Blob-ready is cheap; defer the expensive buildTexture+upload to the per-frame budgeted pump.
+	const p = getBlob(uuid).then(blob => {
+		if (!blob) { texInflight.delete(uuid); return null }
+		return new Promise((resolve) => { buildQueue.push({ uuid, blob, resolve }) })
+	})
 
 	texInflight.set(uuid, p)
 	return p
+}
+
+// One build job: decode+downscale (buildTexture), upload now (initTexture, off the render() critical
+// path), then run the post-build bookkeeping getBaseTexture used to do and resolve the awaiting
+// promise. Async — the pump dispatches these at a bounded rate; continuations land as decode
+// completes. A failed decode resolves null (consumer keeps its placeholder).
+async function _processBuild({ uuid, blob, resolve }) {
+	let tex = null
+	try { tex = await buildTexture(blob) } catch { /* buildTexture currently returns null on failure; guard future changes */ }
+	texInflight.delete(uuid)
+	if (tex) {
+		try { _renderer?.initTexture(tex) } catch { /* lazy upload at render() remains the fallback */ }
+		tex.userData.hasAlpha = alphaCache.get(uuid) || false
+		cache.set(uuid, tex)
+		lastUsed.set(uuid, Date.now())
+		// Free the in-memory Blob mirror now the GPU texture exists — thousands of resident
+		// Blobs would be their own heap hog. Previews re-read IndexedDB on demand via
+		// getTextureUrl; the GPU texture is what rendering needs.
+		blobCache.delete(uuid)
+	}
+	resolve(tex)
+}
+
+/** Drain the texture build queue within this frame's budget. Driven once per frame by the engine. */
+export function pumpTextureBuilds() {
+	return drainWithinBudget({
+		queue: buildQueue,
+		maxItems: TEX_BUILD_MAX_PER_FRAME,
+		budgetMs: TEX_BUILD_BUDGET_MS,
+		processOne: _processBuild,
+		onError: (e) => console.warn('[Tex] build pump error:', e),
+	})
 }
 
 /**

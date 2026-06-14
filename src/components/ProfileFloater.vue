@@ -207,7 +207,7 @@ function saveNotes() {
 		@close="ui.closeProfile(targetId)"
 	>
 		<!-- Tab strip -->
-		<div class="flex flex-row border-b border-brd shrink-0 px-2 pt-2 gap-0.5">
+		<div class="flex flex-row border-b border-edge shrink-0 px-2 pt-2 gap-0.5">
 			<button
 				v-for="tab in TABS"
 				:key="tab.id"
@@ -215,14 +215,14 @@ function saveNotes() {
 				:class="[
 					'relative px-3 py-1.5 text-xs font-medium rounded-t transition-colors',
 					tab.soon
-						? 'text-t1 cursor-default'
+						? 'text-fg cursor-default'
 						: activeTab === tab.id
 							? 'text-accent border-b-2 border-accent -mb-px bg-accent/10'
-							: 'text-t1 hover:text-t1 hover:bg-white/5',
+							: 'text-fg hover:text-fg hover:bg-white/5',
 				]"
 			>
 				{{ tab.label }}
-				<span v-if="tab.soon" class="absolute -top-1 -right-1 text-2xs font-bold text-t1 leading-none">soon</span>
+				<span v-if="tab.soon" class="absolute -top-1 -right-1 text-2xs font-bold text-fg leading-none">soon</span>
 			</button>
 		</div>
 
@@ -235,17 +235,17 @@ function saveNotes() {
 				<!-- Name + Key above photo -->
 				<div>
 					<div class="flex items-center justify-between gap-4">
-						<p class="border border-brd rounded bg-white/5 w-full p-1 px-2 text-sm font-bold text-t1 truncate">{{ displayName || 'loading...' }}</p>
+						<p class="border border-edge rounded-sm bg-white/5 w-full p-1 px-2 text-sm font-bold text-fg truncate">{{ displayName || 'loading...' }}</p>
 						<div class="flex items-center gap-3">
-							<EyeIcon title="Friend can see my online status" class="w-5 h-5 text-t1" />
-							<MapPinSearchIcon title="Friend can see me on map" class="w-5 h-5 text-t1" />
-							<BoxIcon title="Friend can edit my objects" class="w-5 h-5 text-t1" />
+							<EyeIcon title="Friend can see my online status" class="w-5 h-5 text-fg" />
+							<MapPinSearchIcon title="Friend can see me on map" class="w-5 h-5 text-fg" />
+							<BoxIcon title="Friend can edit my objects" class="w-5 h-5 text-fg" />
 						</div>
 					</div>
 					<div class="flex items-baseline justify-between gap-2 mt-1">
 						<div>
-							<span class="inline-block shrink-0 w-10 me-4 text-end text-2xs text-t1">Key: </span>
-							<span class="text-xs text-t1 font-mono select-all break-all">{{ profileUUID }}</span>
+							<span class="inline-block shrink-0 w-10 me-4 text-end text-2xs text-fg">Key: </span>
+							<span class="text-xs text-fg font-mono select-all break-all">{{ profileUUID }}</span>
 						</div>
 						<p v-if="!isSelf" :class="onlineStatus === 'online' ? 'text-green-400 font-bold text-xs mt-0.5' : 'text-red-400 font-bold text-xs mt-0.5'">
 							{{ onlineStatus === 'online' ? 'Online' : 'Offline' }}
@@ -255,11 +255,11 @@ function saveNotes() {
 
 				<!-- Photo + remaining fields -->
 				<div class="flex gap-4">
-					<div class="w-28 h-28 shrink-0 rounded bg-white/10 border border-brd flex items-center justify-center text-t1 select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
+					<div class="w-28 h-28 shrink-0 rounded-sm bg-white/10 border border-edge flex items-center justify-center text-fg select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
 					<div class="flex flex-col gap-1 pt-0.5 min-w-0">
 						<div class="flex items-baseline gap-2">
-							<span class="text-end text-2xs text-t1 w-14 shrink-0">Birthdate: </span>
-							<div class="border border-brd rounded bg-white/5 p-1 px-2 text-2xs text-t1 font-mono break-words min-w-0 flex flex-col">
+							<span class="text-end text-2xs text-fg w-14 shrink-0">Birthdate: </span>
+							<div class="border border-edge rounded-sm bg-white/5 p-1 px-2 text-2xs text-fg font-mono break-words min-w-0 flex flex-col">
 								<span>{{ bornDisplay.date }}</span>
 								<span v-if="bornDisplay.age">{{ bornDisplay.age }}</span>
 							</div>
@@ -269,42 +269,42 @@ function saveNotes() {
 							:key="field.label"
 							class="flex items-baseline gap-2"
 						>
-							<span class="text-end text-2xs text-t1 w-14 shrink-0">{{ field.label }}</span>
-							<span class="border border-brd rounded bg-white/5 p-1 px-2 text-2xs text-t1 font-mono">{{ field.value }}</span>
+							<span class="text-end text-2xs text-fg w-14 shrink-0">{{ field.label }}</span>
+							<span class="border border-edge rounded-sm bg-white/5 p-1 px-2 text-2xs text-fg font-mono">{{ field.value }}</span>
 						</div>
 						<div v-if="isSelf && social.groupTitle" class="flex items-baseline gap-2">
-							<span class="text-2xs text-t1 w-14 shrink-0">Title</span>
+							<span class="text-2xs text-fg w-14 shrink-0">Title</span>
 							<span class="text-2xs text-accent font-mono">{{ social.groupTitle }}</span>
 						</div>
 					</div>
 				</div>
 
 				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-t1">About:</p>
+					<p class="text-2xs text-fg">About:</p>
 					<textarea
 						v-if="isSelf"
 						v-model="bioEdit"
 						rows="4"
 						placeholder="Write something about yourself…"
-						class="w-full rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+						class="w-full rounded-sm bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle resize-none focus:outline-hidden focus:border-accent/60 transition-colors"
 					/>
-					<div v-else class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[5rem] whitespace-pre-wrap">{{ aboutValue || '(no about text)' }}</div>
+					<div v-else class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[5rem] whitespace-pre-wrap">{{ aboutValue || '(no about text)' }}</div>
 				</div>
 
 				<div v-if="isSelf && bioDirty" class="flex justify-end gap-2 mt-1">
-					<button @click="discardBio" class="px-3 py-1 text-xs rounded border border-brd text-t1 hover:text-t1 hover:bg-white/5 transition-colors">Discard</button>
-					<button @click="saveBio"    class="px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
+					<button @click="discardBio" class="px-3 py-1 text-xs rounded-sm border border-edge text-fg hover:text-fg hover:bg-white/5 transition-colors">Discard</button>
+					<button @click="saveBio"    class="px-3 py-1 text-xs rounded-sm bg-accent text-white hover:bg-accent/80 transition-colors">Save</button>
 				</div>
 
 				<div>
-					<p class="text-2xs text-t1 mb-1">Groups:</p>
-					<div class="border border-brd rounded bg-white/5 px-2 py-1.5 text-xs min-h-[2rem]">
-						<div v-if="shownGroups.length === 0" class="text-t1 italic">(none)</div>
+					<p class="text-2xs text-fg mb-1">Groups:</p>
+					<div class="border border-edge rounded-sm bg-white/5 px-2 py-1.5 text-xs min-h-[2rem]">
+						<div v-if="shownGroups.length === 0" class="text-fg italic">(none)</div>
 						<ul v-else class="flex flex-col gap-0.5">
 							<li
 								v-for="g in shownGroups"
 								:key="g.id"
-								class="text-t1 truncate"
+								class="text-fg truncate"
 								:class="isSelf && g.id === social.activeGroupId ? 'text-accent font-semibold' : ''"
 								:title="g.title || g.name"
 							>{{ g.name }}</li>
@@ -316,69 +316,69 @@ function saveNotes() {
 
 			<!-- Notes tab -->
 			<div v-else-if="activeTab === 'notes'" class="flex flex-col gap-2 h-full">
-				<p class="text-2xs text-t1 shrink-0">Private notes — only visible to you</p>
+				<p class="text-2xs text-fg shrink-0">Private notes — only visible to you</p>
 				<textarea
 					v-model="notes"
 					@input="saveNotes"
 					rows="14"
 					placeholder="Notes about this person…"
-					class="w-full flex-1 rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 placehotext-t1 resize-none focus:outline-none focus:border-accent/60 transition-colors"
+					class="w-full flex-1 rounded-sm bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle resize-none focus:outline-hidden focus:border-accent/60 transition-colors"
 				/>
 			</div>
 
 			<!-- Interests tab -->
 			<div v-else-if="activeTab === 'interests'" class="flex flex-col gap-3">
-				<div v-if="isSelf" class="text-xs text-t1 italic">Interests shown here come from the grid profile.</div>
+				<div v-if="isSelf" class="text-xs text-fg italic">Interests shown here come from the grid profile.</div>
 				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-t1">Wants to</p>
-					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.wantToText || '—' }}</div>
+					<p class="text-2xs text-fg">Wants to</p>
+					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.wantToText || '—' }}</div>
 				</div>
 				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-t1">Skills</p>
-					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.skillsText || '—' }}</div>
+					<p class="text-2xs text-fg">Skills</p>
+					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.skillsText || '—' }}</div>
 				</div>
 				<div class="flex flex-col gap-1">
-					<p class="text-2xs text-t1">Languages</p>
-					<div class="rounded bg-white/5 border border-brd px-2 py-1.5 text-xs text-t1 min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.languagesText || '—' }}</div>
+					<p class="text-2xs text-fg">Languages</p>
+					<div class="rounded bg-white/5 border border-edge px-2 py-1.5 text-xs text-fg min-h-[2rem] whitespace-pre-wrap">{{ profile?.interests?.languagesText || '—' }}</div>
 				</div>
 			</div>
 
 			<!-- Coming soon -->
 			<div v-else class="flex flex-col items-center justify-center h-40 gap-2">
-				<span class="text-2xl text-t1">🚧</span>
-				<p class="text-sm text-t1">Coming soon</p>
+				<span class="text-2xl text-fg">🚧</span>
+				<p class="text-sm text-fg">Coming soon</p>
 			</div>
 		</div>
 
 		<div class="flex flex-col gap-1 px-4 py-2">
-			<p class="text-2xs text-t1">Share:</p>
+			<p class="text-2xs text-fg">Share:</p>
 				<button
 					disabled
-					class="px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+					class="px-2.5 py-1 text-xs rounded-sm border border-edge text-fg cursor-not-allowed opacity-50"
 				>Drop inventory item here.</button>
 		</div>
 
 			<!-- Other-user action buttons -->
-		<div v-if="!isSelf" class="flex flex-row flex-wrap gap-1 shrink-0 border-t border-brd px-4 py-2">
+		<div v-if="!isSelf" class="flex flex-row flex-wrap gap-1 shrink-0 border-t border-edge px-4 py-2">
 			<!-- Still gated on extra packets (Phase 3 later): Pay, Block, Find on Map, Offer TP -->
 			<button
 				v-for="btn in ['Find on Map', 'Offer Teleport','Pay', 'Block']"
 				:key="btn"
 				disabled
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-t1 cursor-not-allowed opacity-50"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-edge text-fg cursor-not-allowed opacity-50"
 			>{{ btn }}</button>
 			<button
 				v-if="!isFriend"
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-accent/60 text-accent hover:bg-accent/10 transition-colors"
 				@click="actOfferFriend"
 			>Add Friend</button>
 			<button
 				v-else
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-red-400 hover:bg-red-500/10 transition-colors"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-edge text-red-400 hover:bg-red-500/10 transition-colors"
 				@click="actRemoveFriend"
 			>Remove Friend</button>
 			<button
-				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded border border-brd text-t1 hover:bg-white/5 transition-colors"
+				class="ui-btn whitespace-nowrap flex-1 min-w-[32%] px-2.5 py-1 text-xs rounded-sm border border-edge text-fg hover:bg-white/5 transition-colors"
 				@click="actIM"
 			>Instant Message</button>
 		</div>

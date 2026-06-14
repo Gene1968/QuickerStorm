@@ -87,3 +87,23 @@ describe('createByteLRU', () => {
 		expect(c.bytes()).toBe(0)
 	})
 })
+
+describe('setBudget', () => {
+	it('lowering the budget evicts oldest-first until it fits', () => {
+		const c = lru(300)
+		c.set('a', 100); c.set('b', 100); c.set('c', 100)   // bytes = 300, fits
+		c.setBudget(150)                                      // must drop to <=150
+		expect(c.has('a')).toBe(false)                        // oldest evicted
+		expect(c.has('b')).toBe(false)
+		expect(c.has('c')).toBe(true)                         // newest kept
+		expect(c.bytes()).toBeLessThanOrEqual(150)
+	})
+	it('raising the budget evicts nothing', () => {
+		const c = lru(300)
+		c.set('a', 100); c.set('b', 100)
+		c.setBudget(1000)
+		expect(c.has('a')).toBe(true)
+		expect(c.has('b')).toBe(true)
+		expect(c.bytes()).toBe(200)
+	})
+})

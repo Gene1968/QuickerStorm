@@ -561,11 +561,11 @@ function flashStatus(msg) {
 // Map access code → small chip rendered before region name in result list.
 // Mirrors FS world-map: G/M/A/× badges by maturity rating.
 function accessBadge(access) {
-	if (access === 13)  return { label: 'G', text: 'General', cls: 'bg-green-500/80  text-white' }
+	if (access === 13)  return { label: 'G', text: 'General', cls: 'bg-green-500/80  text-fg' }
 	if (access === 21)  return { label: 'M', text: 'Moderate', cls: 'bg-yellow-500/80 text-black' }
-	if (access === 42)  return { label: 'A', text: 'Adult', cls: 'bg-red-500/80    text-white' }
-	if (access === 254 || access === 255) return { label: '×', text: 'Offline', cls: 'bg-gray-600/80 text-white' }
-	return { label: '?', text: 'unknown', cls: 'bg-gray-700/60 text-white/70' }
+	if (access === 42)  return { label: 'A', text: 'Adult', cls: 'bg-red-500/80    text-fg' }
+	if (access === 254 || access === 255) return { label: '×', text: 'Offline', cls: 'bg-gray-600/80 text-fg' }
+	return { label: '?', text: 'unknown', cls: 'bg-gray-700/60 text-fg/70' }
 }
 
 let _panRaf = null
@@ -642,7 +642,7 @@ onUnmounted(() => {
 		<div class="flex flex-1 min-h-0 overflow-hidden">
 
 			<!-- ══ MAP AREA ════════════════════════════════════════════ -->
-			<div class="flex flex-col flex-1 min-w-0 relative bg-[#163a5a] border-r border-brd">
+			<div class="flex flex-col flex-1 min-w-0 relative bg-[#163a5a] border-r border-edge">
 
 				<div
 					ref="mapEl"
@@ -755,38 +755,38 @@ onUnmounted(() => {
 						class="absolute -translate-x-1/2 translate-y-12 pointer-events-none text-sm font-mono whitespace-nowrap z-10"
 						:style="{ left: (selectedDot.px + 10) + 'px', top: (selectedDot.py - 22) + 'px' }"
 					>
-						<div class="bg-black/85 text-red-200 px-1.5 py-0.5 rounded shadow"
+						<div class="bg-black/85 text-red-200 px-1.5 py-0.5 rounded-sm shadow-sm"
 							style="paint-order: stroke; stroke: #000; stroke-width: 2;">
 							<span v-if="selectedSpot.block" class="font-semibold">{{ selectedSpot.block.name }}</span>
-							<span v-else class="text-white/50 italic">no region</span>
-							<span class="text-white/70 ml-1">({{ selectedSpot.lx }}, {{ selectedSpot.ly }}, {{ coordZ }})</span>
+							<span v-else class="text-fg/50 italic">no region</span>
+							<span class="text-fg/70 ml-1">({{ selectedSpot.lx }}, {{ selectedSpot.ly }}, {{ coordZ }})</span>
 						</div>
 					</div>
 
 					<!-- Hover tooltip — follows cursor at any zoom -->
 					<div
 						v-if="hoverBlock"
-						class="absolute pointer-events-none bg-black/85 text-white text-xs font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap z-10"
+						class="absolute pointer-events-none bg-black/85 text-fg text-xs font-mono px-2 py-1 rounded-sm shadow-lg whitespace-nowrap z-10"
 						:style="{ left: (hoverPx.x + 12) + 'px', top: (hoverPx.y + 12) + 'px' }"
 					>
 						<div class="font-semibold">{{ hoverBlock.name }}</div>
-						<div class="text-white/60">grid ({{ hoverBlock.regionX }}, {{ hoverBlock.regionY }}) · ({{ hoverPos.lx }}, {{ hoverPos.ly }})</div>
-						<div class="text-white/60">access={{ hoverBlock.access }} · agents={{ hoverBlock.agents }}</div>
+						<div class="text-fg/60">grid ({{ hoverBlock.regionX }}, {{ hoverBlock.regionY }}) · ({{ hoverPos.lx }}, {{ hoverPos.ly }})</div>
+						<div class="text-fg/60">access={{ hoverBlock.access }} · agents={{ hoverBlock.agents }}</div>
 					</div>
 
 					<!-- Status overlay -->
 					<div class="absolute bottom-2 left-3 pointer-events-none flex flex-col gap-0.5">
-						<span class="text-white/70 text-2xs font-mono">
+						<span class="text-fg/70 text-2xs font-mono">
 							center=({{ map.viewCenterX.toFixed(1) }},{{ map.viewCenterY.toFixed(1) }}) zoom={{ map.viewZoom }} regions={{ map.regions.size }}
 						</span>
-						<span class="text-white/40 text-2xs">Drag to pan · wheel to zoom · click to select · double-click to teleport</span>
+						<span class="text-fg/40 text-2xs">Drag to pan · wheel to zoom · click to select · double-click to teleport</span>
 					</div>
 				</div>
 
 				<!-- Zoom bar -->
-				<div class="flex items-center gap-2 px-3 py-1.5 border-t border-brd bg-card shrink-0">
+				<div class="flex items-center gap-2 px-3 py-1.5 border-t border-edge bg-panel shrink-0">
 					<button
-						class="text-tm text-xs px-1.5 hover:text-accent"
+						class="text-fg-muted text-xs px-1.5 hover:text-accent"
 						title="Zoom in" @click="map.setZoom(map.viewZoom - 1); queueQuery()"
 					>−</button>
 					<input
@@ -795,31 +795,31 @@ onUnmounted(() => {
 						@input="e => { map.setZoom(Number(e.target.value)); queueQuery() }"
 					/>
 					<button
-						class="text-tm text-xs px-1.5 hover:text-accent"
+						class="text-fg-muted text-xs px-1.5 hover:text-accent"
 						title="Zoom out" @click="map.setZoom(map.viewZoom + 1); queueQuery()"
 					>+</button>
-					<span class="text-tm/60 text-2xs ml-2">{{ regionsAcross }} regions across</span>
+					<span class="text-fg-muted/60 text-2xs ml-2">{{ regionsAcross }} regions across</span>
 				</div>
 			</div>
 
 			<!-- ══ RIGHT SIDEBAR ═════════ -->
 			<div class="flex flex-col w-64 shrink-0 overflow-y-auto text-xs">
 
-				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-2xs font-semibold text-white/60 uppercase tracking-widest shrink-0">
+				<div class="px-3 py-1.5 bg-panel-alt border-b border-edge text-2xs font-semibold text-fg/60 uppercase tracking-widest shrink-0">
 					Legend
 				</div>
-				<div class="px-3 py-2 border-b border-brd flex flex-col gap-1.5 shrink-0">
+				<div class="px-3 py-2 border-b border-edge flex flex-col gap-1.5 shrink-0">
 					<div class="flex items-center justify-between mb-0.5">
 						<button
-							class="flex items-center gap-1 text-t1 hover:text-accent transition-colors"
+							class="flex items-center gap-1 text-fg hover:text-accent transition-colors"
 							title="Center map on avatar"
 							@click="centerOnMe"
 						>
-							<span class="inline-block w-3 h-3 rounded-full bg-[#7c3aed] border-2 border-white shadow"/>
+							<span class="inline-block w-3 h-3 rounded-full bg-[#7c3aed] border-2 border-white shadow-sm"/>
 							<span>Me</span>
 						</button>
 						<button
-							class="flex items-center gap-1 text-t1 hover:text-accent transition-colors"
+							class="flex items-center gap-1 text-fg hover:text-accent transition-colors"
 							title="Teleport home — Phase 2"
 							@click="goHome"
 						>
@@ -829,35 +829,35 @@ onUnmounted(() => {
 
 					<div class="flex align-start justify-between">
 						<div>
-							<label class="flex items-center gap-1.5 cursor-pointer hover:text-accent text-t1">
+							<label class="flex items-center gap-1.5 cursor-pointer hover:text-accent text-fg">
 								<input v-model="showPeople" type="checkbox" class="accent-accent"/>
 								<span class="w-2 h-2 rounded-full bg-green-400 shrink-0"/>
 								<span>People</span>
 							</label>
-							<label class="flex items-center gap-1.5 text-tm/50 cursor-not-allowed" title="TO-DO">
+							<label class="flex items-center gap-1.5 text-fg-muted/50 cursor-not-allowed" title="TO-DO">
 								<input v-model="showInfohubs" type="checkbox" class="accent-accent" disabled/>
 								<span class="text-blue-400 shrink-0">ℹ</span>
 								<span>Infohub</span>
 							</label>
-							<label class="flex items-center gap-1.5 text-tm/50 cursor-not-allowed" title="TO-DO">
+							<label class="flex items-center gap-1.5 text-fg-muted/50 cursor-not-allowed" title="TO-DO">
 								<input v-model="showLandSale" type="checkbox" class="accent-accent" disabled/>
 								<span class="text-yellow-400 shrink-0">🏷</span>
 								<span>Land Sale</span>
 							</label>
 						</div>
 						<div>
-							<div class="mt-1 mb-0.5 text-2xs text-white/40 uppercase tracking-wide">Events</div>
-							<label class="flex items-center gap-1.5 text-tm/50 cursor-not-allowed" title="TO-DO">
+							<div class="mt-1 mb-0.5 text-2xs text-fg/40 uppercase tracking-wide">Events</div>
+							<label class="flex items-center gap-1.5 text-fg-muted/50 cursor-not-allowed" title="TO-DO">
 								<input v-model="showEventsG" type="checkbox" class="accent-accent" disabled/>
 								<span class="w-2 h-2 rounded-full bg-green-500 shrink-0"/>
 								<span>General</span>
 							</label>
-							<label class="flex items-center gap-1.5 text-tm/50 cursor-not-allowed" title="TO-DO">
+							<label class="flex items-center gap-1.5 text-fg-muted/50 cursor-not-allowed" title="TO-DO">
 								<input v-model="showEventsM" type="checkbox" class="accent-accent" disabled/>
 								<span class="w-2 h-2 rounded-full bg-yellow-500 shrink-0"/>
 								<span>Moderate</span>
 							</label>
-							<label class="flex items-center gap-1.5 text-tm/50 cursor-not-allowed" title="TO-DO">
+							<label class="flex items-center gap-1.5 text-fg-muted/50 cursor-not-allowed" title="TO-DO">
 								<input v-model="showEventsA" type="checkbox" class="accent-accent" disabled/>
 								<span class="w-2 h-2 rounded-full bg-red-500 shrink-0"/>
 								<span>Adult</span>
@@ -866,18 +866,18 @@ onUnmounted(() => {
 					</div>
 				</div>
 
-				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-2xs font-semibold text-white/60 uppercase tracking-widest shrink-0">
+				<div class="px-3 py-1.5 bg-panel-alt border-b border-edge text-2xs font-semibold text-fg/60 uppercase tracking-widest shrink-0">
 					Find on Map
 				</div>
-				<div class="px-1 py-1 border-b border-brd flex flex-col gap-1.5 shrink-0">
+				<div class="px-1 py-1 border-b border-edge flex flex-col gap-1.5 shrink-0">
 					<select
-						class="w-full bg-card2 border border-brd text-tm rounded px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
+						class="w-full bg-panel-alt border border-edge text-fg-muted rounded-sm px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
 						disabled title="Online Friends — TO-DO"
 					>
 						<option>👥 Online Friends</option>
 					</select>
 					<select
-						class="w-full bg-card2 border border-brd text-tm rounded px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
+						class="w-full bg-panel-alt border border-edge text-fg-muted rounded-sm px-1.5 py-1 text-xs opacity-50 cursor-not-allowed"
 						disabled title="My Landmarks — TO-DO"
 					>
 						<option>🏁 My Landmarks</option>
@@ -889,29 +889,29 @@ onUnmounted(() => {
 								v-model="searchQuery"
 								type="text"
 								placeholder="Regions by name…"
-								class="w-full bg-card2 border border-brd rounded-xl text-t1 placeholder-tm pl-1.5 pr-6 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+								class="w-full bg-panel-alt border border-edge rounded-xl text-fg placeholder-fg-muted pl-1.5 pr-6 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent"
 								@keydown.enter="onSearchEnter"
 							/>
 							<button
 								v-if="searchQuery"
-								class="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-tm hover:text-t1 hover:bg-white/10 leading-none"
+								class="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-fg-muted hover:text-fg hover:bg-white/10 leading-none"
 								title="Clear search"
 								aria-label="Clear search"
 								@click="clearSearch"
 							>×</button>
 						</div>
 						<button
-							class="bg-accent text-white rounded text-xs hover:opacity-80 shrink-0 min-w-[3.25rem]"
+							class="bg-accent text-white rounded-sm text-xs hover:opacity-80 shrink-0 min-w-[3.25rem]"
 							@click="doSearch"
 						>Find</button>
 					</div>
 					<div
-						class="bg-card2 border border-brd rounded overflow-y-auto"
+						class="bg-panel-alt border border-edge rounded-sm overflow-y-auto"
 						style="min-height:9.5rem;max-height:14rem"
 					>
 						<div
 							v-if="!searchResults.length"
-							class="flex items-center justify-center h-16 text-t1 italic text-xs"
+							class="flex items-center justify-center h-16 text-fg italic text-xs"
 						>
 							No results
 						</div>
@@ -919,66 +919,66 @@ onUnmounted(() => {
 							v-for="r in searchResults"
 							:key="`${r.regionX},${r.regionY}`"
 							class="w-full text-left px-2 py-1 text-xs truncate hover:bg-accent/20 transition-colors flex items-center gap-1.5"
-							:class="selectedResult?.name === r.name ? 'bg-accent/30 text-white' : 'text-t1'"
+							:class="selectedResult?.name === r.name ? 'bg-accent/30 text-fg' : 'text-fg'"
 							@click="selectResult(r)"
 							@dblclick.stop="teleportToResult(r)"
 						>
 							<span
-								:class="['inline-flex items-center justify-center shrink-0 rounded-sm font-bold text-2xs w-4 h-4 leading-none', accessBadge(r.access).cls]"
+								:class="['inline-flex items-center justify-center shrink-0 rounded-xs font-bold text-2xs w-4 h-4 leading-none', accessBadge(r.access).cls]"
 								:title="`access ${accessBadge(r.access).text}`"
 							>{{ accessBadge(r.access).label }}</span>
 							<span class="truncate">{{ r.name }}</span>
-							<span class="text-tm/50 text-2xs ml-auto shrink-0">({{ r.regionX }},{{ r.regionY }})</span>
+							<span class="text-fg-muted/50 text-2xs ml-auto shrink-0">({{ r.regionX }},{{ r.regionY }})</span>
 						</button>
 					</div>
 				</div>
 
-				<div class="px-3 py-1.5 bg-card2 border-b border-brd text-2xs font-semibold text-white/60 uppercase tracking-widest shrink-0">
+				<div class="px-3 py-1.5 bg-panel-alt border-b border-edge text-2xs font-semibold text-fg/60 uppercase tracking-widest shrink-0">
 					Location
 				</div>
 				<div class="flex flex-col gap-1.5 p-1">
 					<div class="flex items-center justify-evenly gap-x-1.5 gap-y-1">
-						<span class="text-tm font-mono text-2xs text-right">X/Y/Z:</span>
+						<span class="text-fg-muted font-mono text-2xs text-right">X/Y/Z:</span>
 						<input
 							v-model.number="coordX"
 							type="number" id="coordX" min="1" :max="coordMaxX" step="1"
-							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
+							class="bg-panel-alt border border-edge text-fg rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordY"
 							type="number" id="coordY" min="1" :max="coordMaxY" step="1"
-							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
+							class="bg-panel-alt border border-edge text-fg rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordZ"
 							type="number" id="coordZ" min="0" max="4096" step="1"
-							class="bg-card2 border border-brd text-t1 rounded px-1.5 py-1 text-xs text-center w-full focus:outline-none focus:ring-1 focus:ring-accent"
+							class="bg-panel-alt border border-edge text-fg rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 					</div>
 					<div class="flex gap-1">
 						<button
-							class="flex-1 py-1 bg-accent border border-brd text-white rounded text-xs font-semibold hover:opacity-60 transition-opacity"
+							class="flex-1 py-1 bg-accent border border-edge text-white rounded-sm text-xs font-semibold hover:opacity-60 transition-opacity"
 							@click="doTeleport"
 						>
 							Teleport
 						</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors text-nowrap"
+							class="flex-1 py-1 bg-panel-alt border border-edge text-fg rounded-sm text-xs hover:bg-white/5 transition-colors text-nowrap"
 							title="Copy SLurl to clipboard"
 							@click="copySlurl"
 						>Copy SLurl</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-t1 rounded text-xs hover:bg-white/5 transition-colors"
+							class="flex-1 py-1 bg-panel-alt border border-edge text-fg rounded-sm text-xs hover:bg-white/5 transition-colors"
 							@click="clearMap"
 						>Clear</button>
 					</div>
 					<div class="flex gap-1 opacity-40">
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-tm rounded text-xs cursor-not-allowed"
+							class="flex-1 py-1 bg-panel-alt border border-edge text-fg-muted rounded-sm text-xs cursor-not-allowed"
 							disabled title="TO-DO"
 						>Show Selection</button>
 						<button
-							class="flex-1 py-1 bg-card2 border border-brd text-tm rounded text-xs cursor-not-allowed"
+							class="flex-1 py-1 bg-panel-alt border border-edge text-fg-muted rounded-sm text-xs cursor-not-allowed"
 							disabled title="TO-DO"
 						>Track Region</button>
 					</div>

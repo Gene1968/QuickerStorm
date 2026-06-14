@@ -78,7 +78,7 @@ onMounted(async () => {
 		/>
 		<div
 			v-else
-			class="absolute inset-0 bg-gradient-to-br from-slate-900 via-bg to-black"
+			class="absolute inset-0 bg-gradient-to-br from-slate-900 via-surface to-black"
 		/>
 
 		<!-- WHY: iframes steal wheel/click events even when a position:fixed element
@@ -86,9 +86,9 @@ onMounted(async () => {
 		     absorbs those events while any floater is open. -->
 		<div v-if="ui.floaterStack.length > 0" class="absolute inset-0" style="z-index: 49" />
 
-		<!-- ── Login strip — 1rem from all edges, rounded, dark bg ───────── -->
+		<!-- ── Login strip — 1rem from all edges, rounded-sm, dark bg ───────── -->
 		<div
-			class="absolute inset-x-3 bottom-3 bg-forest/80 w-[18.75vw] rounded-2xl overflow-y-auto"
+			class="absolute inset-x-3 bottom-3 bg-panel-alt/80 w-[18.75vw] rounded-2xl overflow-y-auto"
 			style="backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08);"
 		>
 			<div class="flex flex-col items-start gap-5 px-5 py-4">
@@ -96,18 +96,22 @@ onMounted(async () => {
 				<!-- Brand + disclaimer -->
 				<div class="shrink-0 flex flex-col gap-1 w-full pt-0.5">
 					<div class="flex items-center justify-between gap-2">
-						<h1 class="text-3xl font-bold text-white tracking-tight ">
+						<h1 class="text-3xl font-bold text-fg tracking-tight">
+							<span title="quickerSTORM logo" class="inline-block w-7 h-7 text-transparent">
+								<!-- <img src="/favicon.svg" alt="quickerSTORM logo" class="h-full aspect-square me-2 text-transparent" /> -->
+								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 256 256"><g clip-path="url(#a)"><path fill="currentColor" d="M216 0H40C17.909 0 0 17.909 0 40v176c0 22.091 17.909 40 40 40h176c22.091 0 40-17.909 40-40V40c0-22.091-17.909-40-40-40"/><path fill="#fff" stroke="#4aa3ff" stroke-width="4" d="M128 248c66.274 0 120-53.726 120-120S194.274 8 128 8 8 61.726 8 128s53.726 120 120 120Z"/><path fill="#3b6fc4" d="M70 184.5c30.376 0 55-24.624 55-55s-24.624-55-55-55-55 24.624-55 55 24.624 55 55 55"/><path fill="#3b6fc4" d="M125 177c38.66 0 70-31.34 70-70s-31.34-70-70-70-70 31.34-70 70 31.34 70 70 70"/><path fill="#3b6fc4" d="M187.5 184.5c28.995 0 52.5-23.505 52.5-52.5s-23.505-52.5-52.5-52.5S135 103.005 135 132s23.505 52.5 52.5 52.5"/><path fill="#3b6fc4" d="M198.75 132H56.25C38.991 132 25 145.991 25 163.25s13.991 31.25 31.25 31.25h142.5c17.259 0 31.25-13.991 31.25-31.25S216.009 132 198.75 132"/><g stroke="#4aa3ff" stroke-width="4" opacity=".6"><path d="m40 40 176 176M216 40 40 216M128 24v208M24 128h208"/></g><path fill="#ffd23f" stroke="#ffb000" stroke-linejoin="round" stroke-width="4" d="M117.811 67 83 157.754h34.811L95.432 240 175 135.066h-37.297L160.081 67z"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h256v256H0z"/></clipPath></defs></svg>
+							</span>
 							quicker<span class="font-black">STORM</span>
 						</h1>
 						<!-- Theme toggle -->
 						<button
-							class="rounded-full hover:bg-accent3 p-1 text-white/50 hover:text-white text-xl leading-none shrink-0 transition-colors aspect-square"
+							class="rounded-full hover:bg-accent-light p-1 text-fg/50 hover:text-fg text-xl leading-none shrink-0 transition-colors aspect-square"
 							@click="toggle"
 							:title="isDark ? 'Light mode' : 'Dark mode'"
 						>{{ isDark ? '☀' : '🌙' }}</button>
 					</div>
 
-					<p class="text-white/45 text-md leading-snug my-1">
+					<p class="text-fg/45 text-md leading-snug my-1">
 						Web-based metaverse viewer for OpenSimulator &amp; Second Life
 					</p>
 				</div>
@@ -116,7 +120,7 @@ onMounted(async () => {
 				<template v-if="reconnecting">
 					<div class="flex flex-col items-center gap-3 w-full py-4 text-center">
 						<div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-						<p class="text-t1 text-sm">Reconnecting to {{ gridStore.selectedGrid?.name ?? gridStore.selectedNick }}…</p>
+						<p class="text-fg text-sm">Reconnecting to {{ gridStore.selectedGrid?.name ?? gridStore.selectedNick }}…</p>
 					</div>
 				</template>
 
@@ -132,7 +136,7 @@ onMounted(async () => {
 					</div>
 
 					<!-- Disclaimer -->
-					<div class="w-full mt-2 text-t1 text-xs leading-relaxed">
+					<div class="w-full mt-2 text-fg text-xs leading-relaxed">
 						<p>
 							quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
 						</p>

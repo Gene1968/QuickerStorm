@@ -145,10 +145,10 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 			<div class="flex gap-[3px]">
 				<button
 					v-for="p in PRESETS" :key="p.id"
-					class="custom flex-1 flex items-center justify-center rounded border leading-none transition-colors"
+					class="custom flex-1 flex items-center justify-center rounded-sm border leading-none transition-colors"
 					:class="p.wired
-						? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
-						: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
+						? 'bg-panel-alt border-edge/70 text-fg hover:bg-accent-dark hover:text-white hover:border-accent active:bg-accent/50 cursor-default'
+						: 'bg-white/3 border-edge/30 text-fg/25 cursor-not-allowed'"
 					:title="p.title"
 					:disabled="!p.wired"
 					@click="onPresetClick(p)"
@@ -160,14 +160,14 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 
 				<!-- Orbit 3×3 -->
 				<div class="flex flex-col flex-1 gap-[2px]">
-					<div class="text-te text-white/35 uppercase tracking-widest text-center">Orbit</div>
+					<div class="text-te text-fg/35 uppercase tracking-widest text-center">Orbit</div>
 					<div class="grid grid-cols-3 gap-[2px]">
 						<button
 							v-for="btn in ORBIT" :key="btn.id"
-							class="custom flex items-center justify-center rounded border leading-none transition-colors cam-btn"
+							class="custom flex items-center justify-center rounded-sm border leading-none transition-colors cam-btn"
 							:class="btn.wired
-								? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
-								: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
+								? 'bg-panel-alt border-edge/70 text-fg hover:bg-accent-dark hover:text-white hover:border-accent active:bg-accent/50 cursor-default'
+								: 'bg-white/3 border-edge/30 text-fg/25 cursor-not-allowed'"
 							:title="btn.title"
 							:disabled="!btn.wired"
 							@mousedown.prevent="onOrbitDown(btn)"
@@ -179,10 +179,10 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 
 				<!-- Zoom column -->
 				<div class="flex flex-col items-center gap-[2px] w-[9cqi] shrink-0">
-					<div class="text-te text-white/35 uppercase tracking-widest">Zoom</div>
+					<div class="text-te text-fg/35 uppercase tracking-widest">Zoom</div>
 					<!-- Zoom In -->
 					<button
-						class="custom sqtiny flex items-center justify-center bg-card2 hover:bg-accent2 active:bg-accent/50 border border-brd/70 hover:border-accent rounded w-full aspect-square font-bold text-t1 cursor-default transition-colors"
+						class="custom sqtiny flex items-center justify-center bg-panel-alt hover:bg-accent-dark hover:text-white active:bg-accent/50 border border-edge/70 hover:border-accent rounded-sm w-full aspect-square font-bold text-fg cursor-default transition-colors"
 						title="Zoom in (hold)"
 						@mousedown.prevent="startZoom(-1)"
 						@mouseup="stopZoom"
@@ -199,7 +199,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 					</div>
 					<!-- Zoom Out -->
 					<button
-						class="custom flex items-center justify-center bg-card2 hover:bg-accent2 active:bg-accent/50 border border-brd/70 sqtiny hover:border-accent rounded w-full aspect-square font-bold text-t1 cursor-default transition-colors"
+						class="custom flex items-center justify-center bg-panel-alt hover:bg-accent-dark hover:text-white active:bg-accent/50 border border-edge/70 sqtiny hover:border-accent rounded-sm w-full aspect-square font-bold text-fg cursor-default transition-colors"
 						title="Zoom out (hold)"
 						@mousedown.prevent="startZoom(1)"
 						@mouseup="stopZoom"
@@ -209,14 +209,14 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 
 				<!-- Track 3×3 (pan pivot in screen-relative axes) -->
 				<div class="flex flex-col flex-1 gap-[2px]">
-					<div class="text-te text-white/35 uppercase tracking-widest text-center">Track</div>
+					<div class="text-te text-fg/35 uppercase tracking-widest text-center">Track</div>
 					<div class="grid grid-cols-3 gap-[2px]">
 						<button
 							v-for="btn in TRACK" :key="btn.id"
-							class="custom flex items-center justify-center rounded border leading-none transition-colors cam-btn"
+							class="custom flex items-center justify-center rounded-sm border leading-none transition-colors cam-btn"
 							:class="btn.wired
-								? 'bg-card2 border-brd/70 text-t1 hover:bg-accent2 hover:border-accent active:bg-accent/50 cursor-default'
-								: 'bg-white/3 border-brd/30 text-white/25 cursor-not-allowed'"
+								? 'bg-panel-alt border-edge/70 text-fg hover:bg-accent-dark hover:text-white hover:border-accent active:bg-accent/50 cursor-default'
+								: 'bg-white/3 border-edge/30 text-fg/25 cursor-not-allowed'"
 							:title="btn.title"
 							:disabled="!btn.wired"
 							@mousedown.prevent="onTrackDown(btn)"
@@ -229,7 +229,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 			</div>
 
 			<!-- ── Tip ─────────────────────────────────────────────── -->
-			<div class="hidden text-[6cqi] text-white/25 text-center leading-none mt-0.5">
+			<div class="hidden text-[6cqi] text-fg/25 text-center leading-none mt-0.5">
 				Alt+drag/A/D/E/C → orbit · Alt+W/D/Scroll → zoom · Esc → reset
 			</div>
 

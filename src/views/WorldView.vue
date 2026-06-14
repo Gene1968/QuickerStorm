@@ -95,12 +95,12 @@ watch(
 </script>
 
 <template>
-	<div class="w-screen h-screen flex flex-col overflow-hidden bg-bg">
+	<div class="w-screen h-screen flex flex-col overflow-hidden bg-surface">
 
 		<!-- 2D fallback -->
 		<template v-if="show2D">
 			<!-- Top row: menu bar + location bar -->
-			<div v-show="ui.uiVisible" class="relative flex shrink-0 h-8 bg-black/70 border-b border-brd">
+			<div v-show="ui.uiVisible" class="relative flex shrink-0 h-8 bg-black/70 border-b border-edge">
 				<MenuBar />
 				<LocationBar />
 			</div>
@@ -112,7 +112,7 @@ watch(
 		<!-- 3D world -->
 		<template v-else>
 			<!-- Top row: menu bar + location bar -->
-			<div v-show="ui.uiVisible" class="flex shrink-0 items-center justify-between h-8 bg-black/70 border-b border-brd">
+			<div v-show="ui.uiVisible" class="toprow relative flex shrink-0 items-center justify-between h-8 bg-black/70 border-b border-edge">
 				<MenuBar />
 				<LocationBar />
 				<AudioControlsWidget class="hidden md:flex" />
@@ -128,11 +128,11 @@ watch(
 				<Transition name="fade">
 					<div
 						v-if="ui.teleportStatus"
-						class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm"
+						class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/75 backdrop-blur-xs"
 					>
-						<div class="flex flex-col items-center gap-3 px-6 py-5 bg-card/80 border border-brd rounded-xl shadow-xl text-center max-w-xs">
+						<div class="flex flex-col items-center gap-3 px-6 py-5 bg-panel/80 border border-edge rounded-xl shadow-xl text-center max-w-xs">
 							<div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-							<p class="text-t1 text-sm font-semibold">
+							<p class="text-fg text-sm font-semibold">
 								{{ { requesting: 'Requesting Teleport…', contacting: 'Contacting new region…', arriving: 'Arriving…' }[ui.teleportStatus] ?? 'Teleporting…' }}
 							</p>
 						</div>
@@ -202,17 +202,17 @@ watch(
 				<!-- Icon -->
 				<div class="text-4xl leading-none">⚠️</div>
 
-				<h2 class="text-white font-bold text-lg leading-snug">Disconnected from Grid</h2>
+				<h2 class="text-fg font-bold text-lg leading-snug">Disconnected from Grid</h2>
 
-				<p class="text-white/60 text-sm leading-relaxed">{{ grid.disconnectReason }}</p>
+				<p class="text-fg/60 text-sm leading-relaxed">{{ grid.disconnectReason }}</p>
 
 				<!-- WHY: Only promise auto-resume when the WS itself is down (will reconnect + probe).
 				     When WS is still up but the circuit died (S.DISCONNECTED path), the session is
 				     gone server-side and cannot resume — showing this text would be a false promise. -->
-				<p v-if="!wsConnected" class="text-white/35 text-xs leading-relaxed">Will resume automatically if the connection restores.</p>
+				<p v-if="!wsConnected" class="text-fg/35 text-xs leading-relaxed">Will resume automatically if the connection restores.</p>
 
 				<button
-					class="mt-1 px-6 py-2 rounded-lg bg-accent2 text-white text-sm font-semibold hover:opacity-80 transition-opacity"
+					class="mt-1 px-6 py-2 rounded-lg bg-accent-dark text-white text-sm font-semibold hover:opacity-80 transition-opacity"
 					@click="returnToLogin"
 				>Return to Login</button>
 			</div>

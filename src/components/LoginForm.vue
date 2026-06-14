@@ -138,7 +138,7 @@ async function submit() {
 				type="text"
 				placeholder="Username: First Last"
 				autocomplete="new-password"
-				class="reset-input w-full px-3 py-2 pr-8 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+				class="reset-input w-full px-3 py-2 pr-8 rounded-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
 				required
 				@focus="openAccountSuggestions"
 				@input="openAccountSuggestions"
@@ -149,24 +149,24 @@ async function submit() {
 			<button
 				type="button"
 				tabindex="-1"
-				class="absolute right-2 top-1/2 -translate-y-1/2 text-t2 hover:text-t1 transition-colors"
+				class="absolute right-2 top-1/2 -translate-y-1/2 text-fg-subtle hover:text-fg transition-colors"
 				@mousedown.prevent
 				@click="toggleAccountSuggestions"
 			><ChevronDownIcon class="w-4 h-4 transition-transform" :class="showAccountSuggestions ? 'rotate-180' : ''" /></button>
 			<ul
 				v-if="showAccountSuggestions"
-				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
+				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded-sm border border-edge bg-panel shadow-lg"
 				@mousedown.prevent
 			>
 				<template v-if="accountsStore.accounts.length">
 					<li
 						v-for="acct in accountsStore.accounts"
 						:key="acct.username + '@' + acct.gridNick"
-						class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
+						class="cursor-pointer px-3 py-1.5 text-sm text-fg hover:bg-accent/15"
 						@click="pickAccount(acct)"
-					>{{ acct.username }} <span class="text-t2">@ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}</span></li>
+					>{{ acct.username }} <span class="text-fg-subtle">@ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}</span></li>
 				</template>
-				<li v-else class="px-3 py-1.5 text-sm text-t2 italic select-none">None stored</li>
+				<li v-else class="px-3 py-1.5 text-sm text-fg-subtle italic select-none">None stored</li>
 			</ul>
 		</div>
 
@@ -175,24 +175,24 @@ async function submit() {
 			type="password"
 			placeholder="Password"
 			autocomplete="new-password"
-			class="reset-input px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+			class="reset-input px-3 py-2 rounded-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
 			required
 			@keydown.enter="submit"
 		/>
 
 		<!-- Grid -->
 		<div>
-			<label class="block text-t1 text-xs uppercase tracking-widest mb-1">Grid</label>
+			<label class="block text-fg text-xs uppercase tracking-widest mb-1">Grid</label>
 			<GridSelector />
 		</div>
 
 		<!-- Destination row -->
 		<div class="flex flex-col gap-1.5">
-			<label class="text-t1 text-xs uppercase tracking-wide">Start Location</label>
+			<label class="text-fg text-xs uppercase tracking-wide">Start Location</label>
 			<div class="flex gap-2">
 				<select
 					v-model="destType"
-					class="flex-1 py-1.5 px-2 border border-brd rounded bg-card2 text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+					class="flex-1 py-1.5 px-2 border border-edge rounded-sm bg-panel-alt text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
 				>
 					<option value="last">Last Location</option>
 					<option value="home">Home</option>
@@ -209,7 +209,7 @@ async function submit() {
 						type="text"
 						placeholder="Region name"
 						autocomplete="off"
-						class="w-full px-3 py-1.5 rounded bg-card border border-brd text-t1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+						class="w-full px-3 py-1.5 rounded-sm bg-panel border border-edge text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
 						@focus="openRegionSuggestions"
 						@input="openRegionSuggestions"
 						@blur="closeRegionSuggestions"
@@ -217,13 +217,13 @@ async function submit() {
 					/>
 					<ul
 						v-if="showRegionSuggestions && filteredRegions.length"
-						class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded border border-brd bg-card shadow-lg"
+						class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded-sm border border-edge bg-panel shadow-lg"
 						@mousedown.prevent
 					>
 						<li
 							v-for="r in filteredRegions"
 							:key="r"
-							class="cursor-pointer px-3 py-1.5 text-sm text-t1 hover:bg-accent/15"
+							class="cursor-pointer px-3 py-1.5 text-sm text-fg hover:bg-accent/15"
 							@click="pickRegion(r)"
 						>{{ r }}</li>
 					</ul>
@@ -233,7 +233,7 @@ async function submit() {
 		</div>
 
 		<!-- Remember me -->
-		<label class="flex items-center gap-2 text-t1 text-sm cursor-pointer select-none">
+		<label class="flex items-center gap-2 text-fg text-sm cursor-pointer select-none">
 			<input type="checkbox" v-model="rememberMe" class="rounded accent-accent" />
 			Remember me
 		</label>
@@ -242,7 +242,7 @@ async function submit() {
 
 		<button
 			type="button"
-			class="px-4 py-2 rounded bg-accent2 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
+			class="px-4 py-2 rounded-sm bg-accent-dark text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
 			:disabled="submitting"
 			@click="submit"
 		>

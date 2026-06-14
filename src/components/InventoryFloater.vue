@@ -265,10 +265,10 @@ onUnmounted(() => {
 		class="min-w-[16.5rem]"
 	>
 		<div class="relative flex p-1">
-				<input v-model="rawFilter" class="bg-brd2 rounded-xl w-full px-2 py-1 text-xs text-t1 placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory" type="search" />
+				<input v-model="rawFilter" class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory&#8230;" type="search" />
 				<Loader2Icon v-if="searching" class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-accent animate-spin pointer-events-none" />
 			</div>
-		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-white">
+		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-fg">
 			<div class="flex flex-row items-center justify-start w-full text-2xs">
 				<button class="ui-btn me-2 py-0" @click="inv.collapseAll()">Collapse</button>
 				<button class="ui-btn me-2 py-0" @click="inv.expandAll()">Expand</button>
@@ -276,12 +276,12 @@ onUnmounted(() => {
 				<!-- Type-filter dropdown (FS "Filter: All Types ▾") -->
 				<div class="relative grow me-1">
 					<button class="ui-btn flex w-full items-center justify-between py-0 whitespace-nowrap" @click.stop="showTypeMenu = !showTypeMenu">{{ typeLabel }}<ChevronDownIcon class="w-3" /></button>
-					<div v-if="showTypeMenu" class="absolute z-[60] mt-0.5 left-0 min-w-[9rem] max-h-60 overflow-y-auto bg-card border border-brd rounded shadow-lg" @click.stop>
+					<div v-if="showTypeMenu" class="absolute z-[60] mt-0.5 left-0 min-w-[9rem] max-h-60 overflow-y-auto bg-panel border border-edge rounded-sm shadow-lg" @click.stop>
 						<button
 							v-for="t in TYPE_FILTERS"
 							:key="t.id"
 							class="block w-full text-left px-2 py-1 hover:bg-white/10"
-							:class="localTypeFilter === t.id ? 'text-accent' : 'text-t1'"
+							:class="localTypeFilter === t.id ? 'text-accent' : 'text-fg'"
 							@click="setType(t.id)"
 						>{{ t.label }}</button>
 					</div>
@@ -290,7 +290,7 @@ onUnmounted(() => {
 			<button class="ui-btn py-0" title="Show search visibility options"><EyeIcon /><ChevronDownIcon class="w-3" /></button>
 		</div>
 		<!-- Tab strip: edge arrows appear only when overflowing; wheel scrolls horizontally. -->
-		<div class="flex flex-row items-start w-full text-2xs text-white">
+		<div class="flex flex-row items-start w-full text-2xs text-fg">
 			<button v-if="tabOverflow" class="arrowctrl" :disabled="!canLeft" :class="{ 'opacity-30 cursor-default': !canLeft }" title="Scroll to start" @click="scrollTabs('start')"><ChevronLastIcon class="rotate-180" /></button>
 			<button v-if="tabOverflow" class="arrowctrl" :disabled="!canLeft" :class="{ 'opacity-30 cursor-default': !canLeft }" title="Scroll left" @click="scrollTabs('left')"><ChevronRightIcon class="rotate-180" /></button>
 			<div ref="tabScrollEl" class="w-full overflow-x-auto scrollbar-none" @wheel="onTabWheel" @scroll="updateTabOverflow">
@@ -315,7 +315,7 @@ onUnmounted(() => {
 				<InventoryTreeNode :folder-id="inv.rootId" />
 				<InventoryTreeNode v-if="inv.libRootId" :folder-id="inv.libRootId" />
 			</div>
-			<div v-else class="p-4 text-center text-tm text-sm italic flex flex-col items-center gap-1 pt-12">
+			<div v-else class="p-4 text-center text-fg-muted text-sm italic flex flex-col items-center gap-1 pt-12">
 				<p class="mt-8 text-2xl">📦</p>
 				<p>No inventory loaded.</p>
 				<p class="text-xs mt-2 opacity-60">Folder tree loads at login. Folder contents (items) arrive with the Phase 3 cap layer.</p>
@@ -323,35 +323,35 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'recent'">
 			<div v-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, recentIds, $event)">
+				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, recentIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
 			</div>
-			<div v-else class="p-4 text-center text-tm text-sm italic pt-12">
+			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
 				<p>No recent items yet.</p>
 				<p class="text-xs mt-2 opacity-60">Expand folders in the Inventory tab to populate recent items.</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'worn'">
 			<div v-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, wornIds, $event)">
+				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, wornIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
 			</div>
-			<div v-else class="p-4 text-center text-tm text-sm italic pt-12">
+			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
 				<p>{{ cofFolderId ? 'Nothing worn (or still loading).' : 'No Current Outfit folder.' }}</p>
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'favorites'">
 			<div v-if="favItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded text-xs text-t1/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, favIds, $event)">
+				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, favIds, $event)">
 					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 					<span class="truncate">{{ it.name }}</span>
 				</div>
 			</div>
-			<div v-else class="p-4 text-center text-tm text-sm italic pt-12">
+			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
 				<p>No favorites.</p>
 				<p class="text-xs mt-2 opacity-60">Items in your Favorites folder appear here.</p>
 			</div>
@@ -359,25 +359,25 @@ onUnmounted(() => {
 
 		<!-- WHY: spacer only when the active tab isn't already filling the column (flex-1). -->
 		<div v-if="!tabFills" class="flex-1"/>
-		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-white">
+		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-fg">
 			<div class="relative">
 				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon /><ChevronDownIcon class="w-3" /></button>
-				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-card border border-brd rounded shadow-lg" @click.stop>
-					<div class="px-2 py-1 text-2xs text-tm border-b border-brd">Sort</div>
+				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-panel border border-edge rounded-sm shadow-lg" @click.stop>
+					<div class="px-2 py-1 text-2xs text-fg-muted border-b border-edge">Sort</div>
 					<button
 						v-for="o in SORT_OPTIONS"
 						:key="o.id"
 						class="block w-full text-left px-2 py-1 hover:bg-white/10"
-						:class="inv.sortMode === o.id ? 'text-accent' : 'text-t1'"
+						:class="inv.sortMode === o.id ? 'text-accent' : 'text-fg'"
 						@click="pickSort(o.id)"
 					>{{ inv.sortMode === o.id ? '✓ ' : '   ' }}{{ o.label }}</button>
 				</div>
 			</div>
 			<div class="relative">
 				<button class="ui-btn px-1" title="Add new item" @click.stop="showAddMenu = !showAddMenu"><PlusIcon /></button>
-				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-card border border-brd rounded shadow-lg text-xs" @click.stop>
-					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-t1" @click="newFolderHere">New Folder</button>
-					<div class="border-t border-brd"></div>
+				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs" @click.stop>
+					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newFolderHere">New Folder</button>
+					<div class="border-t border-edge"></div>
 					<!-- red = recognised but not yet implemented -->
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Script</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Notecard</button>
@@ -403,7 +403,7 @@ onUnmounted(() => {
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
-				class="grow border-2 border-brd2 p-1 text-2xs text-t1 truncate user-select-none flex items-center gap-1"
+				class="grow border border-edge-strong p-1 text-2xs text-fg truncate user-select-none flex items-center gap-1"
 			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 text-green-400" :size="10" /><Loader2Icon v-else class="shrink-0 animate-spin opacity-60" :size="10" />{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
 			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon /></button>
 		</div>

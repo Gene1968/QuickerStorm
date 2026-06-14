@@ -20,7 +20,7 @@ function onChange(e) {
 <template>
 	<div class="flex flex-row gap-3">
 		<select
-			class="flex-1 w-full px-3 py-2 rounded bg-card2 border border-brd text-t1 focus:outline-none focus:ring-2 focus:ring-accent"
+			class="flex-1 w-full px-3 py-2 rounded-sm bg-panel-alt border border-edge text-fg focus:outline-hidden focus:ring-2 focus:ring-accent"
 			:value="store.selectedNick"
 			@change="onChange"
 		>
@@ -51,7 +51,7 @@ function onChange(e) {
 		<!-- Delete user-added grid -->
 		<button
 			v-if="store.isUserGrid(store.selectedNick)"
-			class="px-2 py-2 rounded border border-brd hover:border-red-500 text-t2 hover:text-red-500 transition-colors"
+			class="px-2 py-2 rounded-sm border border-edge hover:border-red-500 text-fg-subtle hover:text-red-500 transition-colors"
 			title="Remove this grid"
 			@click="store.removeUserGrid(store.selectedNick)"
 		>×</button>
@@ -62,13 +62,13 @@ function onChange(e) {
 			:href="store.selectedGrid?.about ?? store.selectedGrid?.loginPage"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="px-2 py-2 rounded border border-brd bg-accent2 text-white hover:opacity-80 transition-colors text-sm"
+			class="px-2 py-2 rounded-sm border border-edge bg-accent-dark text-white hover:opacity-80 transition-colors text-sm"
 			title="Visit the grid's website"
 		>↗</a>
 	</div>
 
 	<!-- Grid detail hints (register / forgot password) -->
-	<div v-if="store.selectedGrid" class="flex gap-3 justify-end mt-1 pe-12 text-xs text-t1">
+	<div v-if="store.selectedGrid" class="flex gap-3 justify-end mt-1 pe-12 text-xs text-fg">
 		<a
 			v-if="store.selectedGrid.register"
 			:href="store.selectedGrid.register"

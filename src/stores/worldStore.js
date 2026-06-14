@@ -9,8 +9,28 @@ export const useWorldStore = defineStore('world', () => {
 	// Map<localId (number), object>
 	const objects = ref(new Map())
 
-	// Culling telemetry for the % -loaded badge + Prefs. resident/known are non-avatar mesh counts.
-	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100 })
+	// WHY incremental indexes: the `avatars`/`prims` computeds used to filter ALL objects
+	// (`[...objects.values()].filter(...)`) and re-ran on EVERY ObjectUpdate, since they depended on
+	// the whole `objects` map. On a dense region (~10k objects) the reactive UI (AvatarList, Minimap,
+	// MapFloater) re-read them thousands of times during load → O(n²), measured ~1.1s of frame time
+	// in a live profile (FEATURE-GAPS #11). These indexes track avatars/prims by localId so the
+	// computeds depend only on the small per-kind set; prim updates no longer invalidate `avatars`.
+	const _avatars = ref(new Map())   // localId → object (pcode === PCODE_AVATAR)
+	const _prims   = ref(new Map())   // localId → object (pcode === PCODE_PRIM)
+	// Keep the per-kind index in sync with a record. Holds the SAME merged reference stored in
+	// `objects`, so consumers see live data; reconciles if an object's pcode ever changes kind.
+	function _index(localId, rec) {
+		if (rec.pcode === PCODE_AVATAR) { _avatars.value.set(localId, rec); _prims.value.delete(localId) }
+		else if (rec.pcode === PCODE_PRIM) { _prims.value.set(localId, rec); _avatars.value.delete(localId) }
+		else { _avatars.value.delete(localId); _prims.value.delete(localId) }
+	}
+	function _unindex(localId) { _avatars.value.delete(localId); _prims.value.delete(localId) }
+
+	// Culling telemetry for the % -loaded badge + Prefs. resident/known are non-avatar mesh counts
+	// WITHIN the current draw distance; atTarget = at the full target radius (badge says "complete"
+	// vs "nearby"); massive = this load has run long enough (duration, not count) to be slow → badge
+	// prepends the "Major new scenery to cache" preface; effNear = current draw distance (m).
+	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100, atTarget: true, massive: false, effNear: 0 })
 	function setCullStats(s) { cullStats.value = s }
 
 	// WHY: ObjectUpdate nameValue is the raw SL NameValue string, e.g.:
@@ -27,15 +47,21 @@ export const useWorldStore = defineStore('world', () => {
 		// obj: { localId, fullId, pcode, pos, rot, scale, nameValue }
 		const existing = objects.value.get(obj.localId) ?? {}
 		const name = obj.nameValue ? parseNameValue(obj.nameValue) : (existing.name ?? '')
-		objects.value.set(obj.localId, { ...existing, ...obj, name })
+		const rec = { ...existing, ...obj, name }
+		objects.value.set(obj.localId, rec)
+		_index(obj.localId, rec)
 	}
 
 	function updateObjectPos(localId, pos) {
 		const existing = objects.value.get(localId)
-		if (existing) objects.value.set(localId, { ...existing, pos })
+		if (existing) {
+			const rec = { ...existing, pos }
+			objects.value.set(localId, rec)
+			_index(localId, rec)
+		}
 	}
 
-	function removeObject(localId) { objects.value.delete(localId) }
+	function removeObject(localId) { objects.value.delete(localId); _unindex(localId) }
 
 	// WHY: ObjectProperties arrives keyed by fullId (UUID), not localId. Walk values to match.
 	// Merges name/description/creator/owner/perms into the object so Edit floater + Inspect
@@ -43,21 +69,21 @@ export const useWorldStore = defineStore('world', () => {
 	function applyObjectProperties(props) {
 		for (const [id, obj] of objects.value) {
 			if (obj.fullId?.toLowerCase() === props.fullId?.toLowerCase()) {
-				objects.value.set(id, { ...obj, ...props, name: props.name || obj.name })
+				const rec = { ...obj, ...props, name: props.name || obj.name }
+				objects.value.set(id, rec)
+				_index(id, rec)
 				return true
 			}
 		}
 		return false
 	}
 
-	function clearAll() { objects.value.clear() }
+	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear() }
 
-	const avatars = computed(() =>
-		[...objects.value.values()].filter(o => o.pcode === PCODE_AVATAR)
-	)
-	const prims = computed(() =>
-		[...objects.value.values()].filter(o => o.pcode === PCODE_PRIM)
-	)
+	// Derived from the small per-kind indexes (NOT the full objects map), so they invalidate only
+	// when an avatar/prim is added/removed/updated — prim churn no longer re-runs the avatar list.
+	const avatars = computed(() => [..._avatars.value.values()])
+	const prims   = computed(() => [..._prims.value.values()])
 
 	// WHY: Sim-authoritative avatar position in SL coords (X=east, Y=north, Z=height).
 	// Updated from ObjectUpdate and TerseUpdate for own avatar in useWorldEngine.

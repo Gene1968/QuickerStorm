@@ -39,7 +39,7 @@ function close() {
 
 // Close on outside click
 function onMouseDown(e) {
-	if (!e.target.closest('.mb-root')) close()
+	if (!e.target.closest('.menubar')) close()
 }
 // Close on Escape; global shortcuts
 function onKey(e) {
@@ -262,8 +262,8 @@ const MENUS = [
 </script>
 
 <template>
-	<div class="mb-root flex items-stretch shrink-0 h-full">
-		<img src="/favicon.svg" alt="quickerSTORM" class="h-full aspect-square me-3" />
+	<div class="menubar flex items-stretch shrink-0 h-full">
+		<img src="/favicon.svg" alt="quickerSTORM" class="h-full aspect-square me-2 text-black/70" />
 		<!--
 			Each menu is wrapped in a relative container so its dropdown
 			anchors directly below its own label, not the root's left edge.
@@ -332,7 +332,7 @@ const MENUS = [
 
 <style scoped>
 /* ── Layout ──────────────────────────────────────────────────────────────── */
-.mb-root { }
+.menubar { }
 
 /* Each menu item + its dropdown anchored together */
 .mb-menu-wrap {
@@ -368,7 +368,7 @@ const MENUS = [
 .mb-dropdown {
 	position: absolute;
 	top: 100%;
-	left: 0;	 /* anchors to .mb-menu-wrap left edge = label left edge */
+	left: 0;/* anchors to .mb-menu-wrap left edge = label left edge */
 	min-width: 11rem;
 	background: rgba(14, 18, 28, 0.97);
 	border: 1px solid rgba(255, 255, 255, 0.12);

@@ -23,7 +23,7 @@ onBeforeUnmount(() => { for (const t of timers.values()) clearTimeout(t); timers
 		<div
 			v-for="t in notif.toasts"
 			:key="t.id"
-			class="qs-panel pointer-events-auto rounded-lg border border-brd bg-card shadow-lg p-3"
+			class="qs-panel pointer-events-auto rounded-lg border border-edge bg-panel shadow-lg p-3"
 			:class="t.kind === 'error' ? 'border-red-500' : t.kind === 'offer' ? 'border-accent' : ''"
 			@mouseenter="pause(t.id)"
 			@mouseleave="arm(t.id, t.sticky)"
@@ -31,17 +31,17 @@ onBeforeUnmount(() => { for (const t of timers.values()) clearTimeout(t); timers
 		>
 			<div class="flex items-start gap-2">
 				<div class="flex-1 min-w-0">
-					<div class="text-xs font-semibold text-t1 truncate">{{ t.title }}</div>
-					<div v-if="t.body" class="text-2xs text-tm mt-0.5 break-words">{{ t.body }}</div>
+					<div class="text-xs font-semibold text-fg truncate">{{ t.title }}</div>
+					<div v-if="t.body" class="text-2xs text-fg-muted mt-0.5 break-words">{{ t.body }}</div>
 				</div>
-				<button class="text-tm hover:text-t1 text-xs leading-none shrink-0" title="Dismiss" @click="notif.dismissToast(t.id)">✕</button>
+				<button class="text-fg-muted hover:text-fg text-xs leading-none shrink-0" title="Dismiss" @click="notif.dismissToast(t.id)">✕</button>
 			</div>
 			<div v-if="t.actions?.length" class="flex gap-2 mt-2 justify-end">
 				<button
 					v-for="(a, i) in t.actions"
 					:key="i"
-					class="px-2 py-0.5 rounded text-2xs"
-					:class="a.variant === 'primary' ? 'bg-accent text-white hover:opacity-80' : 'border border-brd text-t1 hover:bg-white/10'"
+					class="px-2 py-0.5 rounded-sm text-2xs"
+					:class="a.variant === 'primary' ? 'bg-accent text-white hover:opacity-80' : 'border border-edge text-fg hover:bg-white/10'"
 					@click="runAction(a)"
 				>{{ a.label }}</button>
 			</div>

@@ -102,7 +102,7 @@ onUnmounted(() => clearInterval(clockTimer))
 // WS bytes — all sim traffic arrives over that socket). Lag-meter colors: green = comfortable,
 // amber = strained, red = struggling (lit shading auto-disables below 20, see useWorldEngine).
 const fpsText  = computed(() => ui.fps > 0 ? String(ui.fps) : '--')
-const fpsColor = computed(() => ui.fps <= 0 ? 'text-white/40'
+const fpsColor = computed(() => ui.fps <= 0 ? 'text-white/80'
 	: ui.fps >= 40 ? 'text-green-500' : ui.fps >= 20 ? 'text-yellow-500' : 'text-red-500')
 // Bandwidth bar height: 0 → 1 Mbps maps to 0.1 → 0.75rem (container is 1rem; FS-style mini bar).
 const kbpsBarStyle = computed(() => {
@@ -124,47 +124,47 @@ const stubChannels = [
 	<div
 		class="relative flex items-center pe-2"
 	>
-		<div class="flex items-center gap-2 ms-1.5">
+		<div class="flex items-center gap-2 ms-1.5 whitespace-nowrap">
 			<div
 				title="Click to refresh your X$ balance (TO-DO)"
-				class="mx-1 text-xs text-white/40"
+				class="mx-1 text-xs text-white/80"
 			>
 				?$ 0
 			</div>
 			<div
 				title="Users want this? (TO-DO)"
-				class="mx-2 text-xs text-white/40"
+				class="mx-2 text-xs text-white/80"
 			>
 				BUY ?$
 			</div>
 			<div
 				:title="gridDate"
-				class="me-7 ms-2 text-xs text-white/80"
+				class="me-7 ms-2 text-xs text-white"
 			>
 				{{ gridTime }}
 			</div>
 			<VideoIcon
 				title="Camera presets (TO-DO)"
-				class="w-4 h-4 text-white/20"
+				class="w-4 h-4 text-white/50"
 			/>
 			<MonitorIcon
 				title="Graphics presets (TO-DO)"
-				class="w-4 h-4 text-white/20"
+				class="w-4 h-4 text-white/50"
 			/>
 			<MusicIcon
 				title="Start/stop parcel audio stream (TO-DO)"
-				class="w-4 h-4 text-white/20"
+				class="w-4 h-4 text-white/50"
 			/>
 			<TvIcon
 				title="Start/stop all media (music, video, Web pages) (TO-DO)"
-				class="w-4 h-4 text-white/20"
+				class="w-4 h-4 text-white/50"
 			/>
 		</div>
 
 		<!-- Mic mute button -->
 		<button
-			class="h-7 w-7 flex items-center justify-center rounded hover:bg-white/15 transition-colors"
-			:class="voice.isMuted.value ? 'text-red-400' : 'text-white/80'"
+			class="h-7 w-7 flex items-center justify-center rounded-sm hover:bg-white/15 transition-colors"
+			:class="voice.isMuted.value ? 'text-red-400' : 'text-fg/80'"
 			:disabled="!voice.isEnabled.value"
 			:style="
 				!voice.isEnabled.value
@@ -184,8 +184,8 @@ const stubChannels = [
 
 		<!-- Sound mute button + chevron -->
 		<button
-			class="h-7 flex items-center me-2 px-1 rounded hover:bg-white/15 transition-colors"
-			:class="isAllAudioMuted ? 'text-red-400' : 'text-white/80'"
+			class="h-7 flex items-center me-2 px-1 rounded-sm hover:bg-white/15 transition-colors"
+			:class="isAllAudioMuted ? 'text-red-400' : 'text-fg/80'"
 			:title="
 				isAllAudioMuted ? 'Unmute sound' : 'Mute sound / Sound settings'
 			"
@@ -195,21 +195,21 @@ const stubChannels = [
 		>
 			<VolumeX v-if="isAllAudioMuted" :size="15" />
 			<Volume2 v-else :size="15" />
-			<ChevronDown :size="10" class="text-white opacity-60" />
+			<ChevronDown :size="10" class="text-fg opacity-60" />
 		</button>
 
 		<!-- Hover dropdown mixer -->
 		<Transition name="dd">
 			<div
 				v-if="showDropdown"
-				class="absolute right-0 top-full mt-1 w-64 bg-card border border-brd rounded-lg shadow-2xl me-1 p-3 z-[600]"
+				class="absolute right-0 top-full mt-1 w-64 bg-panel border border-edge rounded-lg shadow-2xl me-1 p-3 z-[600]"
 				@mouseenter="onEnter"
 				@mouseleave="onLeave"
 			>
 				<div class="flex flex-col gap-2">
 					<!-- Master row -->
 					<div class="flex items-center gap-2">
-						<span class="text-xs text-t1 w-20 shrink-0">
+						<span class="text-xs text-fg w-20 shrink-0">
 							Master
 						</span>
 						<input
@@ -221,9 +221,9 @@ const stubChannels = [
 							class="flex-1 accent-accent h-1"
 						/>
 						<button
-							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded hover:bg-white/10 transition-colors"
+							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
 							:class="
-								isAllAudioMuted ? 'text-red-400' : 'text-t2'
+								isAllAudioMuted ? 'text-red-400' : 'text-fg-subtle'
 							"
 							@click="toggleAllAudioMute"
 						>
@@ -232,11 +232,11 @@ const stubChannels = [
 						</button>
 					</div>
 
-					<div class="border-t border-brd my-0.5" />
+					<div class="border-t border-edge my-0.5" />
 
 					<!-- Interface row (wired) -->
 					<div class="flex items-center gap-2">
-						<span class="text-xs text-t1 w-20 shrink-0">
+						<span class="text-xs text-fg w-20 shrink-0">
 							Interface
 						</span>
 						<input
@@ -248,8 +248,8 @@ const stubChannels = [
 							class="flex-1 accent-accent h-1"
 						/>
 						<button
-							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded hover:bg-white/10 transition-colors"
-							:class="interfaceMuted ? 'text-red-400' : 'text-t2'"
+							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
+							:class="interfaceMuted ? 'text-red-400' : 'text-fg-subtle'"
 							@click="interfaceMuted = !interfaceMuted"
 						>
 							<VolumeX v-if="interfaceMuted" :size="16" />
@@ -263,7 +263,7 @@ const stubChannels = [
 						:key="ch.label"
 						class="flex items-center gap-2 opacity-40"
 					>
-						<span class="text-xs text-t1 w-20 shrink-0">
+						<span class="text-xs text-fg w-20 shrink-0">
 							{{ ch.label }}
 						</span>
 						<input
@@ -279,9 +279,9 @@ const stubChannels = [
 				</div>
 
 				<!-- Gear → Preferences Sound & Media -->
-				<div class="flex justify-end mt-2 pt-2 border-t border-brd">
+				<div class="flex justify-end mt-2 pt-2 border-t border-edge">
 					<button
-						class="flex items-center gap-1 text-xs text-tm hover:text-t1 transition-colors"
+						class="flex items-center gap-1 text-xs text-fg-muted hover:text-fg transition-colors"
 						@click="openSoundPrefs"
 					>
 						<Settings :size="16" />

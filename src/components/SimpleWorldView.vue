@@ -46,23 +46,23 @@ function submit() {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-bg text-t1">
+  <div class="flex flex-col h-full bg-surface text-fg">
     <div class="flex-1 flex items-center justify-center">
-      <canvas ref="canvasRef" :width="SIZE" :height="SIZE" class="rounded border border-brd" />
+      <canvas ref="canvasRef" :width="SIZE" :height="SIZE" class="rounded border border-edge" />
     </div>
-    <div class="max-h-32 overflow-y-auto px-3 py-1 bg-black/40 border-t border-brd">
+    <div class="max-h-32 overflow-y-auto px-3 py-1 bg-black/40 border-t border-edge">
       <div v-for="m in [...messages].reverse().slice(0, 20)" :key="m.id" class="text-sm py-0.5">
         <span class="text-accent">{{ m.fromName }}:</span> {{ m.message }}
       </div>
     </div>
-    <form class="flex gap-2 p-2 bg-black/60 border-t border-brd" @submit.prevent="submit">
+    <form class="flex gap-2 p-2 bg-black/60 border-t border-edge" @submit.prevent="submit">
       <input
         v-model="input"
-        class="flex-1 bg-card border border-brd rounded px-2 py-1 text-sm text-t1"
+        class="flex-1 bg-panel border border-edge rounded-sm px-2 py-1 text-sm text-fg"
         placeholder="Say something…"
         maxlength="1023"
       />
-      <button class="px-3 py-1 bg-accent text-white rounded text-sm hover:opacity-80">Send</button>
+      <button class="px-3 py-1 bg-accent text-white rounded-sm text-sm hover:opacity-80">Send</button>
     </form>
   </div>
 </template>

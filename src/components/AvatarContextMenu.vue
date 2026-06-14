@@ -73,10 +73,10 @@ onUnmounted(() => {
 		v-if="menu"
 		data-avatar-context-menu
 		:style="style"
-		class="fixed z-[200] min-w-[10rem] bg-card border border-brd rounded shadow-lg text-xs select-none"
+		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs select-none"
 		@contextmenu.prevent
 	>
-		<div class="px-3 py-1.5 text-accent font-medium border-b border-brd truncate">{{ menu.name }}</div>
+		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="startIM">Send IM…</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="viewProfile">View Profile</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="faceToward">Face Toward</button>
@@ -85,7 +85,7 @@ onUnmounted(() => {
 			class="block w-full text-left px-3 py-1.5 hover:bg-white/10"
 			@click="addFriend"
 		>Add Friend</button>
-		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Mute (Phase 3)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-white/40 cursor-not-allowed" disabled>Follow (Phase 3)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Mute (Phase 3)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Follow (Phase 3)</button>
 	</div>
 </template>

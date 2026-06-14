@@ -47,34 +47,34 @@ const cameraRows = [
 		:default-pos="{ left: '28%', top: '5%' }"
 		@close="ui.showMovementHelp = false"
 	>
-		<div class="p-4 text-xs text-t2 space-y-5">
+		<div class="p-4 text-xs text-fg-subtle space-y-5">
 			<div class="flex justify-between gap-4">
 				<section>
-					<h3 class="text-xs font-bold uppercase tracking-widest text-tm mb-2">Movement</h3>
+					<h3 class="text-xs font-bold uppercase tracking-widest text-fg-muted mb-2">Movement</h3>
 					<table class="w-full border-collapse">
 						<tbody>
 							<tr
 								v-for="row in movementRows"
 								:key="row.keys"
-								class="border-b border-brd last:border-0"
+								class="border-b border-edge last:border-0"
 							>
 								<td class="py-1 pr-3 font-mono text-accent text-end whitespace-nowrap">{{ row.keys }}</td>
-								<td class="py-1 text-t2">{{ row.desc }}</td>
+								<td class="py-1 text-fg-subtle">{{ row.desc }}</td>
 							</tr>
 						</tbody>
 					</table>
 				</section>
 				<section>
-					<h3 class="text-xs font-bold uppercase tracking-widest text-tm mb-2">Other shortcuts</h3>
+					<h3 class="text-xs font-bold uppercase tracking-widest text-fg-muted mb-2">Other shortcuts</h3>
 					<table class="w-full border-collapse">
 						<tbody>
 							<tr
 								v-for="row in shortcutRows"
 								:key="row.keys"
-								class="border-b border-brd last:border-0"
+								class="border-b border-edge last:border-0"
 							>
 								<td class="py-1 pr-3 font-mono text-accent text-end whitespace-nowrap">{{ row.keys }}</td>
-								<td class="py-1 text-t2">{{ row.desc }}</td>
+								<td class="py-1 text-fg-subtle">{{ row.desc }}</td>
 							</tr>
 						</tbody>
 					</table>
@@ -82,16 +82,16 @@ const cameraRows = [
 			</div>
 
 			<section>
-				<h3 class="text-xs font-bold uppercase tracking-widest text-tm mb-2">Camera view</h3>
+				<h3 class="text-xs font-bold uppercase tracking-widest text-fg-muted mb-2">Camera view</h3>
 				<table class="w-full border-collapse">
 					<tbody>
 						<tr
 							v-for="row in cameraRows"
 							:key="row.keys"
-							class="border-b border-brd last:border-0"
+							class="border-b border-edge last:border-0"
 						>
 							<td class="py-1 pr-3 font-mono text-accent text-end whitespace-nowrap">{{ row.keys }}</td>
-							<td class="py-1 text-t2">{{ row.desc }}</td>
+							<td class="py-1 text-fg-subtle">{{ row.desc }}</td>
 						</tr>
 					</tbody>
 				</table>

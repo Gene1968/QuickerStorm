@@ -1,0 +1,97 @@
+<style>
+.swatch-row { display: flex; gap: 4px; margin: 6px 0; }
+.swatch { height: 32px; flex: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; }
+.palette-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2px; }
+.approach-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 16px; }
+.approach-card { border: 1px solid #333; border-radius: 8px; padding: 14px; }
+.approach-card h3 { margin: 0 0 6px; font-size: 14px; }
+.approach-card p { margin: 0 0 10px; font-size: 12px; color: #aaa; line-height: 1.4; }
+.token-example { font-family: monospace; font-size: 11px; background: #1a1a1a; border-radius: 4px; padding: 8px; line-height: 1.8; }
+.tok-name { color: #7dd3fc; }
+.tok-val { color: #86efac; }
+.tok-light { color: #fca5a5; }
+.pros { color: #86efac; font-size: 11px; margin-top: 8px; }
+.cons { color: #fca5a5; font-size: 11px; }
+</style>
+
+<h2>Color system structure — which approach fits?</h2>
+<p class="subtitle">The current palette (below) stays. This question is about how the token system is built and how dark→light flip works.</p>
+
+<div style="margin:16px 0 20px; padding:12px; background:#111; border-radius:8px;">
+  <div class="palette-label">Current palette (kept as-is)</div>
+  <div class="swatch-row">
+    <div class="swatch" style="background:#200B05;color:#fff9">10</div>
+    <div class="swatch" style="background:#40160B;color:#fff9">20</div>
+    <div class="swatch" style="background:#602010;color:#fff9">30</div>
+    <div class="swatch" style="background:#802B16;color:#fff9">40</div>
+    <div class="swatch" style="background:#A0361B;color:#fff9">50</div>
+    <div class="swatch" style="background:#B35E49;color:#0009">60</div>
+    <div class="swatch" style="background:#C68676;color:#0009">70</div>
+    <div class="swatch" style="background:#D9AFA4;color:#0009">80</div>
+    <div class="swatch" style="background:#ECD7D1;color:#0009">90</div>
+  </div>
+  <div class="palette-label" style="margin-top:8px;">Rufous (surface/brand) · Carrot accent (#E9972D) · Hunter green (#2B5B3F) · Neutral grays</div>
+</div>
+
+<div class="approach-grid">
+
+  <div class="approach-card option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Semantic steps (recommended)</h3>
+      <p>Name tokens by role. Dark mode uses low steps for surfaces, high steps for text. Light mode swaps them. Two explicit assignments — no math.</p>
+      <div class="token-example">
+        <span class="tok-name">--surface</span>: <span class="tok-val">rufous-10</span><br>
+        <span class="tok-name">--surface-raised</span>: <span class="tok-val">rufous-20</span><br>
+        <span class="tok-name">--text</span>: <span class="tok-val">rufous-90</span><br>
+        <span class="tok-name">--text-subtle</span>: <span class="tok-val">rufous-70</span><br>
+        <span class="tok-name">--border</span>: <span class="tok-val">rufous-30</span><br>
+        <span style="color:#555">/* light mode: */</span><br>
+        <span class="tok-light">--surface</span>: <span class="tok-light">rufous-90</span><br>
+        <span class="tok-light">--text</span>: <span class="tok-light">rufous-10</span>
+      </div>
+      <div class="pros">✓ Readable, predictable, easy to hand-edit<br>✓ Each step is a real swatch you can see<br>✓ Works with existing Tailwind channel-triplets</div>
+      <div class="cons">✗ Light mode requires re-stating each var<br>✗ ~12 vars in :root, ~12 in html.light</div>
+    </div>
+  </div>
+
+  <div class="approach-card option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Palette steps + single override</h3>
+      <p>Define the full 10-step palette in @theme. Semantic tokens pick a step number. Light mode only redefines the step assignments — not the palette itself.</p>
+      <div class="token-example">
+        <span style="color:#555">/* @theme (once) */</span><br>
+        <span class="tok-name">--color-primary-1</span>: <span class="tok-val">#200B05</span><br>
+        <span class="tok-name">--color-primary-9</span>: <span class="tok-val">#ECD7D1</span><br>
+        <span style="color:#555">/* semantic layer */</span><br>
+        <span class="tok-name">--surface</span>: <span class="tok-val">var(--color-primary-1)</span><br>
+        <span class="tok-name">--text</span>: <span class="tok-val">var(--color-primary-9)</span><br>
+        <span style="color:#555">/* light: swap refs only */</span><br>
+        <span class="tok-light">--surface</span>: <span class="tok-light">var(--color-primary-9)</span><br>
+        <span class="tok-light">--text</span>: <span class="tok-light">var(--color-primary-1)</span>
+      </div>
+      <div class="pros">✓ Palette defined once, themes swap references<br>✓ Easy to replace entire palette (one block)<br>✓ Radix UI / shadcn style — proven pattern</div>
+      <div class="cons">✗ Two layers of indirection (step → semantic)<br>✗ Slightly more vars total</div>
+    </div>
+  </div>
+
+  <div class="approach-card option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>oklch lightness inversion</h3>
+      <p>Store each color as oklch(L C H). Light mode auto-computes the complement: L → (1 - L). Pure math — no second theme block needed.</p>
+      <div class="token-example">
+        <span style="color:#555">/* single definition */</span><br>
+        <span class="tok-name">--surface</span>: oklch(<span class="tok-val">12% .08 30</span>)<br>
+        <span style="color:#555">/* light auto-flips to: */</span><br>
+        <span style="color:#999">--surface</span>: oklch(<span style="color:#fca5a5">88% .08 30</span>)<br><br>
+        <span class="tok-name">--text</span>: oklch(<span class="tok-val">92% .04 30</span>)<br>
+        <span style="color:#999">--text</span>: oklch(<span style="color:#fca5a5">8% .04 30</span>)
+      </div>
+      <div class="pros">✓ Minimal CSS — no html.light block at all<br>✓ Mathematically consistent contrast pairs</div>
+      <div class="cons">✗ Hardest to debug (can't see real hex values)<br>✗ Some hues don't perceptually invert cleanly<br>✗ Requires CSS custom property math support</div>
+    </div>
+  </div>
+
+</div>

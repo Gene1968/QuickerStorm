@@ -89,6 +89,19 @@ function validArrays(a) {
 const GEOM_MEM_BUDGET = 128 * 1024 * 1024
 const _mem = createByteLRU({ budgetBytes: GEOM_MEM_BUDGET, sizeOf: bytesOfArrays })
 
+let _memBudget = GEOM_MEM_BUDGET
+/**
+ * Resize the CPU-RAM mem tier (and scale the write-deferral byte ceiling with it). These pools live
+ * only in tab RAM — they never upload to the GPU — so they are budgeted separately from the VRAM
+ * memGovernor (see useWorldEngine setAppBytes). byteLRU.setBudget evicts down to fit immediately.
+ */
+export function setGeomMemBudget(bytes) {
+	_memBudget = Math.max(16 * 1024 * 1024, Math.floor(bytes) || GEOM_MEM_BUDGET)
+	_mem.setBudget(_memBudget)
+	_ceilingBytes = Math.min(512 * 1024 * 1024, Math.max(128 * 1024 * 1024, Math.floor(_memBudget * 0.25)))
+}
+export function getGeomMemBudget() { return _memBudget }
+
 /** Sync lookup. Returns a fresh COPY of the arrays, or null. */
 export function geomMemGet(key) {
 	const e = _mem.get(key)
@@ -100,6 +113,58 @@ export function geomMemClear() { _mem.clear() }
 // ── Tier 2: IndexedDB ────────────────────────────────────────────────────────
 let _db = null
 let _lastStats = null  // { count, bytes } served from memory (Prefs-starvation lesson)
+// Read-priority gate: count of in-flight geomCacheGetMany lookups. A readwrite flush txn queued
+// ahead of these readonly lookups blocks them at the IDB level (overlapping [STORE,META] scope),
+// which starved warm cache reads during region load (measured: idb hits → 0, the engine's lookup
+// watchdog firing 600×, everything re-baked). _flushNow defers while this is > 0. See _flushNow.
+let _readsInFlight = 0
+
+// ── Write-deferral (warm-read decouple, FEATURE-GAPS #10) ────────────────────
+// During a region-load burst the engine sets _loading; while it is true we suspend ALL flushes
+// (no FLUSH_MS timer flush, no FLUSH_MAX punch-through) so readwrite flush txns never interleave
+// with getMany readonly lookups. That is what breaks the bake→write→read-starvation cascade: a
+// buffered write can never block the next cache read. Two bounds keep RAM/deferral finite.
+let _loading = false
+let _deferStartedAt = 0          // wall-clock of the first deferred write since the last flush (time ceiling)
+let _writeBufBytes = 0           // running sum of buffered record bytes (byte ceiling, O(1))
+let _exitTimer = null            // trailing debounce so brief load dips don't thrash the flush mode
+const LOADING_EXIT_DEBOUNCE_MS = 750
+let _ceilingBytes = 256 * 1024 * 1024   // byte ceiling: force a flush past this much buffered geometry
+let _maxDeferMs = 30000                  // time ceiling: never defer a flush longer than this
+
+/** Engine signal: true during a region-load burst (suspend flushes), false when the build settles. */
+export function setGeomCacheLoading(v) {
+	if (v) {
+		if (_exitTimer) { clearTimeout(_exitTimer); _exitTimer = null }
+		_loading = true
+	} else if (_loading && !_exitTimer) {
+		_exitTimer = setTimeout(() => {
+			_exitTimer = null; _loading = false; _deferStartedAt = 0; _flushNow(true)
+		}, LOADING_EXIT_DEBOUNCE_MS)
+	}
+}
+
+/** Test/governor hook: tune the deferral safety ceilings. */
+export function setGeomDeferLimits({ ceilingBytes, maxDeferMs } = {}) {
+	if (typeof ceilingBytes === 'number') _ceilingBytes = ceilingBytes
+	if (typeof maxDeferMs === 'number') _maxDeferMs = maxDeferMs
+}
+
+// Force a flush if a deferred buffer has hit a ceiling, otherwise stay deferred and re-arm.
+function _checkDeferCeilings() {
+	_flushTimer = null
+	if (!_loading) { _flushNow(); return }
+	const overBytes = _writeBufBytes >= _ceilingBytes
+	const overTime = _deferStartedAt && (Date.now() - _deferStartedAt) >= _maxDeferMs
+	if (overBytes || overTime) {
+		console.debug('[GeomCache] deferred flush forced:', overBytes ? 'byte-ceiling' : 'time-ceiling',
+			Math.round(_writeBufBytes / 1048576) + 'MB buffered')
+		_deferStartedAt = 0
+		_flushNow(true)        // accept contention: a buffer this large means we are genuinely cold
+		return
+	}
+	if (_writeBuf.size) _flushTimer = setTimeout(_checkDeferCeilings, FLUSH_MS)   // re-arm
+}
 
 function openDb() {
 	if (_db) return Promise.resolve(_db)
@@ -135,24 +200,60 @@ export function geomCacheStore(key, arrays, now = Date.now()) {
 	const owned = { position: arrays.position, normal: arrays.normal, uv: arrays.uv, index: arrays.index, groups: arrays.groups || [] }
 	_mem.set(key, owned)
 	try {
-		_writeBuf.set(key, { key, ...owned, bytes: bytesOfArrays(owned), savedAt: now, lastUsed: now })
+		const bytes = bytesOfArrays(owned)
+		const prev = _writeBuf.get(key)
+		if (prev) _writeBufBytes -= prev.bytes        // overwrite: drop the stale record's bytes
+		_writeBuf.set(key, { key, ...owned, bytes, savedAt: now, lastUsed: now })
+		_writeBufBytes += bytes
 		_scheduleFlush()
 	} catch { /* best-effort persistence; memory tier still works */ }
 	return cloneArrays(owned)
 }
 
 function _scheduleFlush() {
+	// Region-load burst: suspend flushes (no FLUSH_MAX punch-through). _checkDeferCeilings is the
+	// only path that can force a flush while loading, and only at the byte/time ceilings.
+	if (_loading) {
+		if (!_deferStartedAt) _deferStartedAt = Date.now()
+		// Byte ceiling: force an immediate flush if the buffer is already over budget. This avoids
+		// waiting the full FLUSH_MS tick and keeps RAM bounded on high-volume bake bursts.
+		if (_writeBufBytes >= _ceilingBytes) {
+			console.debug('[GeomCache] deferred flush forced: byte-ceiling',
+				Math.round(_writeBufBytes / 1048576) + 'MB buffered')
+			_deferStartedAt = 0
+			_flushNow(true)
+			return
+		}
+		if (!_flushTimer) _flushTimer = setTimeout(_checkDeferCeilings, FLUSH_MS)
+		return
+	}
 	if (_writeBuf.size >= FLUSH_MAX) { _flushNow(); return }
 	if (_flushTimer) return
 	_flushTimer = setTimeout(() => { _flushTimer = null; _flushNow() }, FLUSH_MS)
 }
 
-async function _flushNow() {
+async function _flushNow(force = false) {
 	if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
+	// While loading, only forced flushes (ceilings / exit / pagehide) proceed; everything else stays
+	// deferred so reads aren't starved. Outside loading, the original _readsInFlight gate applies.
+	if (!force && _loading) {
+		if (!_flushTimer) _flushTimer = setTimeout(_checkDeferCeilings, FLUSH_MS)
+		return
+	}
+	// Read-priority: defer the readwrite flush while a getMany lookup is in flight so cache reads
+	// aren't starved during load. Writes are re-derivable and cheap to delay. The hard cap
+	// (_writeBuf.size >= FLUSH_MAX) and `force` (pagehide / explicit flush) both bypass this, so
+	// buffered geometry can never grow unbounded and shutdown persistence still works.
+	if (!force && _readsInFlight > 0 && _writeBuf.size < FLUSH_MAX) {
+		if (!_flushTimer) _flushTimer = setTimeout(() => { _flushTimer = null; _flushNow() }, FLUSH_MS)
+		return
+	}
 	if (_flushing) await _flushing
 	if (!_writeBuf.size) return
 	const batch = [..._writeBuf.values()]
 	_writeBuf.clear()
+	_writeBufBytes = 0
+	_deferStartedAt = 0
 	_flushing = (async () => {
 		try {
 			const db = await openDb()
@@ -213,8 +314,8 @@ async function _flushNow() {
 	_flushing = null
 }
 
-/** Test hook: force the write buffer to disk now. */
-export async function __flushGeomWritesNow() { await _flushNow() }
+/** Test hook: force the write buffer to disk now (bypasses the read-priority gate). */
+export async function __flushGeomWritesNow() { await _flushNow(true) }
 
 // Batched LRU touches (textureCache flushTouches pattern, 10s cadence — reads stay readonly).
 const _touchQueue = new Map()
@@ -255,6 +356,7 @@ export async function __flushGeomTouchesNow() { await _flushTouches() }
 export async function geomCacheGetMany(keys, now = Date.now()) {
 	const out = new Map()
 	if (!keys.length) return out
+	_readsInFlight++   // read-priority gate (see _flushNow); always paired with the finally below
 	try {
 		const db = await openDb()
 		await new Promise((resolve) => {
@@ -287,13 +389,64 @@ export async function geomCacheGetMany(keys, now = Date.now()) {
 			tx.onabort = resolve   // aborted read = all-miss for unresolved keys; never hang the drain
 		})
 	} catch (e) { console.warn('[GeomCache] getMany failed:', e) }
+	finally { _readsInFlight-- }
 	return out
+}
+
+// ── Per-region manifest (front-load): qs-geom META store, key "manifest:<regionKey>" ─────────
+// A visit's geomKeys are recorded on settle and bulk-read into the mem tier on re-entry, so a warm
+// revisit serves most prims from RAM before the ObjectUpdate storm. Hint only — missing/extra/
+// LRU-evicted keys are harmless; requestGeometry remains the source of truth. Reuses META (no bump).
+const MANIFEST_MAX_KEYS = 20000   // cap a single region's key list (densest regions ~13-24k prims)
+const MANIFEST_MAX_REGIONS = 8    // keep the N most-recent regions; prune older manifests
+
+export async function geomManifestRecord(regionKey, keys, now = Date.now()) {
+	if (!regionKey || !keys?.length) return
+	const list = keys.length > MANIFEST_MAX_KEYS ? keys.slice(0, MANIFEST_MAX_KEYS) : keys
+	try {
+		const db = await openDb()
+		await new Promise((resolve) => {
+			const tx = db.transaction(META, 'readwrite')
+			const mt = tx.objectStore(META)
+			mt.put({ k: `manifest:${regionKey}`, keys: list, savedAt: now })
+			// Recency prune: collect manifest:* records, delete all but the newest MANIFEST_MAX_REGIONS.
+			const seen = []
+			const cur = mt.openCursor()
+			cur.onsuccess = () => {
+				const c = cur.result
+				if (c) { if (typeof c.key === 'string' && c.key.startsWith('manifest:')) seen.push({ k: c.key, savedAt: c.value.savedAt || 0 }); c.continue(); return }
+				seen.sort((a, b) => b.savedAt - a.savedAt)
+				for (const m of seen.slice(MANIFEST_MAX_REGIONS)) mt.delete(m.k)
+			}
+			tx.oncomplete = resolve
+			tx.onerror = resolve
+			tx.onabort = resolve
+		})
+	} catch { /* best-effort: manifest is an optimization, never block load */ }
+}
+
+export async function geomManifestPrefetch(regionKey) {
+	if (!regionKey) return
+	let keys = null
+	try {
+		const db = await openDb()
+		keys = await new Promise((resolve) => {
+			const tx = db.transaction(META, 'readonly')
+			const g = tx.objectStore(META).get(`manifest:${regionKey}`)
+			g.onsuccess = () => resolve(g.result?.keys || null)
+			tx.onerror = () => resolve(null)
+			tx.onabort = () => resolve(null)
+		})
+	} catch { return }
+	// getMany promotes hits into the mem tier (the point); the returned Map is discarded.
+	if (keys?.length) await geomCacheGetMany(keys)
 }
 
 /** Remove one entry from both tiers (corrupt record, or external invalidation). Best-effort. */
 export async function geomCacheEvict(key) {
 	_mem.delete(key)
-	_writeBuf.delete(key)
+	const bufRec = _writeBuf.get(key)
+	if (bufRec) { _writeBufBytes -= bufRec.bytes; _writeBuf.delete(key) }
 	try {
 		const db = await openDb()
 		await new Promise((resolve) => {
@@ -346,6 +499,10 @@ export async function clearGeomCache() {
 	if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
 	if (_flushing) await _flushing
 	_writeBuf.clear()
+	_writeBufBytes = 0
+	_deferStartedAt = 0
+	if (_exitTimer) { clearTimeout(_exitTimer); _exitTimer = null }
+	_loading = false
 	_lastStats = null
 	try {
 		const db = await openDb()
@@ -363,5 +520,5 @@ export async function clearGeomCache() {
 // Flush pending writes when the tab is hidden/closed (parity with objectCache) — bakes from
 // the last ≤300ms window would otherwise be lost; cheap insurance for re-derivable data.
 if (typeof window !== 'undefined') {
-	window.addEventListener('pagehide', () => { _flushNow() })
+	window.addEventListener('pagehide', () => { _flushNow(true) })
 }

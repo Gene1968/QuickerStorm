@@ -18,7 +18,7 @@ import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
-import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU } from './useTextureFetch.js'
+import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
@@ -34,7 +34,7 @@ import {
 	geometryHasFiniteVerts,   // NaN-vertex guard on baked geometry
 	geometryFromArrays,       // worker-baked/cached arrays → BufferGeometry (applySwap + tier-1 sync cache hits)
 } from '@/lib/primGeometry.js'
-import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap } from '@/lib/geomCache.js'
+import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch } from '@/lib/geomCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 
@@ -260,6 +260,7 @@ export function useWorldEngine(canvasRef) {
 			simSelectedId = desired
 		},
 	)
+	let stopGeomCacheRamWatch = null
 	const { playSound } = useAudio()
 	const { requestTeleport } = useTeleport()
 
@@ -295,10 +296,28 @@ export function useWorldEngine(canvasRef) {
 	const CULL_TARGET = 1.0      // evict while resident assets exceed the budget
 	const CULL_RESUME = 0.85     // below this, stream evicted objects back at ANY distance (nearest first).
 	// WHY: a transient over-budget spike can trip CULL_TARGET for a few ticks and evict thousands of
-	// roots; with reload capped to R_NEAR the scene would stay gutted once pressure clears.
+	// roots; with reload capped to _effNear the scene would stay gutted once pressure clears.
 	// With real headroom, distance is no reason to keep anything evicted.
-	const R_NEAR = 96            // metres — rebuild evicted objects within this range (stream-in radius)
-	const R_RANGE = 192          // metres — "% loaded" denominator: objects within render range
+	//
+	// DYNAMIC draw distance (was a fixed R_NEAR=96): the effective residency/stream radius the culler
+	// protects + rebuilds within. WHY dynamic — a FIXED never-evict radius WEDGES on dense regions:
+	// when geometry WITHIN the radius alone exceeds the budget, eviction (which only touches objects
+	// BEYOND the radius) runs out of candidates while still over budget → permanent ⚠THROTTLING with
+	// textures pruned to zero (measured 2026-06-13: app 131%, geomMB 1630, texMB 0, scene wedged).
+	// Fix: the governor STEPS _effNear DOWN when over budget and nothing is evictable (so eviction
+	// always regains candidates), and STEPS it UP toward the user target with headroom (FS progressive-
+	// stepping equivalent; FS shrinks mDrawDistance the same way off frame-time/VRAM — a browser has
+	// no VRAM query, so we drive it off the self-accounted byte budget). Light regions never hit
+	// pressure → _effNear stays at target = the old fixed-96 behavior, no regression.
+	const DRAW_DIST_DEFAULT = 96 // fallback target when uiStore is unset
+	const DRAW_DIST_MIN = 32     // metres — emergency floor; immediate surroundings always stay resident
+	const DRAW_DIST_STEP = 16    // metres per governor step (down under pressure / up with headroom)
+	let _effNear = DRAW_DIST_DEFAULT   // governor-managed effective radius (replaces the old fixed R_NEAR)
+	// "Major load" badge preface is triggered by DURATION, not object count — a dense but already-cached
+	// area reloads in 1-2s as you move and must NOT warn. Only a load still streaming after this long
+	// (a genuinely big/uncached scene) prepends "Major new scenery to cache". Tunable.
+	const MAJOR_LOAD_MS = 6000
+	let _loadEpisodeStart = 0    // ms timestamp the current continuous load (pct<100) began; 0 = idle
 	// WHY small caps: evicting/freeing hundreds of meshes in one tick caused a GC + main-thread stall
 	// that delayed the 10Hz AgentUpdate + PacketAcks → the sim's view of the agent lagged → position
 	// snap-backs and stalled ObjectSelect→ObjectProperties. Small per-tick work keeps the churn smooth
@@ -325,12 +344,31 @@ export function useWorldEngine(canvasRef) {
 	// on the disposed baker and mutate orphaned meshes.
 	let _engineDead = false
 
+	// Per-region geomKey set for the manifest (warm-read front-load, FEATURE-GAPS #10). cullTick
+	// detects region changes (login / TP / cross-region) by sessionStore region coords, resets the
+	// set + prefetches that region's manifest, and records the set when the load settles.
+	let _regionGeomKeys = new Set()
+	let _currentRegionKey = null
+	let _manifestRecordedFor = null   // avoid re-recording the same region every settle tick
+
 	// WHY microtask batching: every requestGeometry() call within one synchronous burst (one
 	// drainMeshQueue tick, one evict re-stream pass…) coalesces into ONE qs-geom readonly txn —
 	// the per-prim-transaction storm is the exact pattern that starved texCacheGet. Same trick
 	// as useMeshBaker's flush.
 	let _geomLookupBatch = []
+	// WHY watchdog: geomCacheGetMany resolves on tx.oncomplete, but during a heavy region-load write
+	// storm the readonly lookup txn can be starved for many seconds and effectively never settle — so
+	// its .then never runs and _geomPending never decrements for that batch. Once the leak pushes
+	// _geomPending past BAKE_INFLIGHT_CAP (300), drainMeshQueue's backpressure breaks EVERY tick and
+	// mesh building halts (measured live: scene wedged at ~609/13,338 meshes ≈ 3%, pend frozen at
+	// 301). Racing a timeout that degrades the batch to an all-miss bake guarantees _geomPending
+	// always drains, so a slow/starved cache read can never brick the drain. Mirrors the texCacheGet
+	// watchdog (commit 4b9155c). Healthy warm reads resolve in well under 1s; only genuinely starved
+	// batches trip this.
+	const GEOM_LOOKUP_WATCHDOG_MS = 4000
+	let _geomLookupWatchdogN = 0   // lookup batches that timed out → degraded to bake (telemetry)
 	function requestGeometry(key, jobThunk, applySwap) {
+		_regionGeomKeys.add(key)
 		_geomPending++
 		_geomLookupBatch.push({ key, jobThunk, applySwap })
 		if (_geomLookupBatch.length === 1) queueMicrotask(_flushGeomLookups)
@@ -350,7 +388,13 @@ export function useWorldEngine(canvasRef) {
 			if (list) list.push(b)
 			else byKey.set(b.key, [b])
 		}
-		geomCacheGetMany([...byKey.keys()]).then(hits => {
+		// settled guard: the watchdog and the real getMany race; whichever lands first processes the
+		// batch, the loser is ignored. A late getMany resolve after a watchdog bake is harmless — its
+		// keys are already baking and its mem-tier promotion is idempotent (keys are content hashes).
+		let settled = false
+		const processHits = (hits) => {
+			if (settled) return
+			settled = true
 			// WHY: post-unmount batches would sync-bake on the disposed baker + mutate orphaned meshes.
 			if (_engineDead) { _geomPending -= batch.length; return }
 			for (const [key, entries] of byKey) {
@@ -369,22 +413,41 @@ export function useWorldEngine(canvasRef) {
 				}
 				if (evictedSiblings) _bakeGeomGroup(key, evictedSiblings)
 			}
-		})
+		}
+		const wd = setTimeout(() => {
+			if (settled) return
+			_geomLookupWatchdogN++
+			processHits(new Map())   // degrade to all-miss: bake everything so _geomPending drains
+		}, GEOM_LOOKUP_WATCHDOG_MS)
+		geomCacheGetMany([...byKey.keys()]).then(hits => { clearTimeout(wd); processHits(hits) })
 	}
 	// Miss path for one key's entries: ONE real bake (entries[0]'s thunk), siblings served as fresh
 	// clones from the just-stored memory-tier entry. Siblings must NEVER receive the raw worker
 	// `out` — geomCacheStore takes ownership of those buffers, so handing them out would alias
 	// cache-owned arrays into a mesh that mutates them in place.
+	//
+	// LEAK-PROOF accounting: release the WHOLE group from _geomPending up front (here), not inside the
+	// bake's .then. WHY: _geomPending feeds drainMeshQueue's backpressure cap; the old code decremented
+	// the siblings only after the bake resolved, so a worker job that never reported back (region churn,
+	// localId removed mid-flight) stranded those entries in _geomPending forever — a slow creep that
+	// kept the counter stuck (measured ~162 at idle) and risked re-tripping BAKE_INFLIGHT_CAP on dense
+	// regions. Once released, the single real bake is tracked by meshBaker.outstanding(); the siblings
+	// are cheap mem-tier clones, not worker load, so the cap shouldn't count them anyway.
 	function _bakeGeomGroup(key, entries) {
+		_geomPending -= entries.length
+		_dispatchBake(key, entries)
+	}
+	// Dispatches the worker bake and serves the group. Pending is ALREADY released by the caller —
+	// this function never touches _geomPending (so the recursive evicted-sibling re-bake below can't
+	// double-count). Safe to call directly only when the entries' pending has been accounted.
+	function _dispatchBake(key, entries) {
 		_geomMiss++
-		_geomPending--   // entries[0]'s bake dispatches now → meshBaker.outstanding() takes over
 		entries[0].jobThunk().then(out => {
 			// WHY: engine unmounted while the bake was in flight — drop the remaining entries.
-			if (_engineDead) { _geomPending -= entries.length - 1; return }
+			if (_engineDead) return
 			if (!out || out.bad) {
 				// Bad/null bake: every entry keeps its placeholder (applySwap bails on bad input).
 				for (const e of entries) e.applySwap(out)
-				_geomPending -= entries.length - 1
 				return
 			}
 			// Store FIRST (cache takes ownership of the worker-transferred buffers), swap the
@@ -394,9 +457,9 @@ export function useWorldEngine(canvasRef) {
 				const clone = geomMemGet(key)
 				// Siblings ARE memory-tier serves (the store just populated tier 1) — count them as
 				// mem hits so the hit/miss telemetry stays meaningful (one real bake per key).
-				if (clone) { _geomHitMem++; _geomPending--; entries[i].applySwap(clone) }
+				if (clone) { _geomHitMem++; entries[i].applySwap(clone) }
 				// Store entry already evicted (rare) → this sibling runs its OWN bake (never raw `out`).
-				else _bakeGeomGroup(key, [entries[i]])
+				else _dispatchBake(key, [entries[i]])
 			}
 		})
 	}
@@ -1362,6 +1425,9 @@ export function useWorldEngine(canvasRef) {
 		camera.rotation.set(pitch, yaw, 0, 'YXZ')
 
 		renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
+		// Give the texture build pump the renderer so it can upload deterministically (initTexture),
+		// keeping GPU uploads off the render() critical path (FEATURE-GAPS #11).
+		setTextureRenderer(renderer)
 		// WHY: Shadow maps disabled for Phase 1 (see prior WHY on shadow frustum mismatch).
 		renderer.shadowMap.enabled = false
 		// WHY NoToneMapping (was ACESFilmic): ACES darkens mid-tones and desaturates/hue-shifts
@@ -3009,24 +3075,39 @@ export function useWorldEngine(canvasRef) {
 		return camera.position.distanceTo(t)
 	}
 
-	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY in-range: with culling the
-	// whole region is NEVER fully resident (it's memory-bounded), so "resident / all-known" sinks toward
-	// 0 as data streams and never recovers — meaningless. Measure instead "of the non-avatar objects
-	// within render range (R_RANGE), how many are built" — this sits near 100% when streaming keeps up
-	// and dips→recovers as you move into fresh area. `evicted` is the total culled-for-memory count.
+	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY %-within-_effNear: with the
+	// dynamic draw distance the culler deliberately won't load past _effNear, so measuring against a
+	// fixed 192m span would peg the badge below 100% forever (nothing beyond _effNear will ever build).
+	// Instead measure "of the non-avatar roots within the CURRENT draw distance, how many are built" —
+	// reaches 100% when the current radius is fully streamed, dips→recovers as _effNear grows or you
+	// move. `rangeKnown` (within the full 192m span) is the scene-size signal for the "massive" warning;
+	// `atTarget` (_effNear at the user's target) flips the badge from "nearby" to "complete". `evicted`
+	// is the total culled-for-memory count.
 	function updateCullStats() {
+		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
 		let known = 0, resident = 0
 		for (const [id, o] of worldStore.objects) {
 			if (o.pcode === PCODE_AVATAR) continue
 			// Roots only: child pos is PARENT-RELATIVE, so camDistToObj on a child is garbage — and
 			// children evict/reload with their root anyway, so root counts represent the linkset.
 			if ((o.parentId ?? 0) !== 0) continue
-			if (camDistToObj(o) > R_RANGE) continue
+			if (camDistToObj(o) > _effNear) continue   // % is relative to the CURRENT (dynamic) draw distance
 			known++
 			if (meshMap.has(id)) resident++
 		}
 		const pct = known > 0 ? Math.round((resident / known) * 100) : 100
-		worldStore.setCullStats({ resident, known, evicted: evicted.size, pct })
+		// "Major" preface = this load has been continuously streaming long enough to be a big/slow one.
+		// A quick cull-reload from moving a few metres finishes well under MAJOR_LOAD_MS and never trips
+		// it; pct reaching 100 resets the episode so the next short reload starts fresh.
+		const now = Date.now()
+		if (pct < 100 && known > 0) { if (!_loadEpisodeStart) _loadEpisodeStart = now }
+		else _loadEpisodeStart = 0
+		worldStore.setCullStats({
+			resident, known, evicted: evicted.size, pct,
+			atTarget: _effNear >= ddTarget,            // at full target radius → "complete scene", else "nearby"
+			massive: _loadEpisodeStart > 0 && (now - _loadEpisodeStart) >= MAJOR_LOAD_MS,
+			effNear: Math.round(_effNear),
+		})
 		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
 		// R_NEAR-guard fixes; this recovers users anyway instead of asking them to hard-reload).
@@ -3068,10 +3149,32 @@ export function useWorldEngine(canvasRef) {
 	function cullTick() {
 		if (!camera) return
 		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
-		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan) +
-		// geometry-cache memory tier (O(1)) — must match the 3s stats-timer sum or the governor
-		// signal oscillates by up to the tier's 128MB budget between the two call sites.
-		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB + getGeomMemBytes())
+		// decoded mesh cache (O(1) running total) + live geometry (3s telemetry's last O(n) scan).
+		// WHY no getGeomMemBytes(): the geom mem cache tier is CPU-RAM-only (never uploaded to the GPU),
+		// so it does not belong in the VRAM budget. Counting it here stole ~128MB+ from live geometry
+		// and worsened the cull-spiral (FEATURE-GAPS #13). It has its own RAM budget (setGeomMemBudget).
+		// Must match the 3s stats-timer sum or the governor signal oscillates between the two sites.
+		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB)
+		// Warm-read decouple (FEATURE-GAPS #10): detect region entry (login/TP/walk) by coords, reset
+		// per-region key tracking, and prefetch that region's manifest into the mem tier before its
+		// ObjectUpdate storm. Uniform across all entry paths — no per-handler wiring needed.
+		const regionKey = `${sessionStore.regionX}-${sessionStore.regionY}`
+		if (regionKey !== _currentRegionKey) {
+			_currentRegionKey = regionKey
+			_regionGeomKeys = new Set()
+			_manifestRecordedFor = null
+			geomManifestPrefetch(regionKey)   // fire-and-forget; warms the mem tier
+		}
+		// Drive geomCache write-deferral from the same load signal the lit/badge logic uses. While
+		// loading, geomCache suspends IDB flushes so warm getMany reads aren't starved.
+		const tStat = getTextureStats(), mStat = getMeshStats()
+		const loading = pendingMeshIds.size > 50 || tStat.queued > 0 || tStat.inflight > 0 || mStat.queued > 0 || _geomPending > 25
+		setGeomCacheLoading(loading)
+		// On settle, persist this region's key manifest once for fast warm re-entry.
+		if (!loading && _currentRegionKey && _currentRegionKey !== _manifestRecordedFor && _regionGeomKeys.size) {
+			_manifestRecordedFor = _currentRegionKey
+			geomManifestRecord(_currentRegionKey, [..._regionGeomKeys])
+		}
 		const r = appRatio()
 		const heapR = memRatio()
 		const over = r > CULL_TARGET || emergencyHeap()
@@ -3087,8 +3190,8 @@ export function useWorldEngine(canvasRef) {
 				if (!obj) { evicted.delete(id); continue }   // object gone (KillObject) → forget it
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			// Plenty of headroom → recover everything nearest-first; otherwise only within R_NEAR.
-			const ids = selectReloads(cands, r < CULL_RESUME ? Infinity : R_NEAR, MAX_RELOAD_PER_TICK)
+			// Plenty of headroom → recover everything nearest-first; otherwise only within _effNear.
+			const ids = selectReloads(cands, r < CULL_RESUME ? Infinity : _effNear, MAX_RELOAD_PER_TICK)
 			for (const id of ids) {
 				evicted.delete(id)
 				pendingMeshIds.add(id)
@@ -3115,9 +3218,10 @@ export function useWorldEngine(canvasRef) {
 				if (id === ownAvatarLocalId || id === editId) continue
 				cands.push({ id, dist: camDistToObj(obj) })
 			}
-			// R_NEAR guard: never evict the player's immediate surroundings — eviction stops once
-			// only near objects remain instead of emptying the scene (see selectEvictions).
-			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK, R_NEAR)
+			// Draw-distance guard: never evict the player's immediate surroundings — eviction stops once
+			// only objects within _effNear remain (see selectEvictions). When even that can't free
+			// enough, the step-down below shrinks _effNear so eviction regains candidates next tick.
+			const ids = selectEvictions(cands, MAX_EVICT_PER_TICK, _effNear)
 			let _evRoots = 0, _evKids = 0
 			for (const id of ids) {
 				const childIds = kids.get(id) ?? []
@@ -3145,7 +3249,30 @@ export function useWorldEngine(canvasRef) {
 			// textures not applied in the last 20s, so near faces are unaffected; blanks self-heal via
 			// backfillTextures. Only runs here (over budget), so the steady state never churns.
 			pruneTexturesLRU(96)
+			// Draw-distance down-step (controller): we've been over budget for EVICT_AFTER_TICKS+ ticks.
+			// Shrink _effNear so eviction can reach the heavy geometry sitting WITHIN the current radius.
+			// WHY NOT gated on "evicted nothing" (the original bug, caught 2026-06-13 pre-commit): eviction
+			// usually makes PARTIAL progress (a few far roots/tick) yet never catches up when the bulk of
+			// geomMB is inside _effNear — measured live with app pinned ~100% ⚠THROTTLING, dd frozen at 96m,
+			// drain paused by the governor (gov=403), and warm IDB reads timing out → everything re-baked
+			// (idb=0, wdog climbing). Stepping down on sustained pressure shrinks the resident set until it
+			// fits; the headroom up-step below grows it back. Throttled to every other over-tick so the
+			// 32-root/tick eviction can catch up between steps (limits draw-distance overshoot). Floors at
+			// DRAW_DIST_MIN so the immediate surroundings always stay resident.
+			if (_effNear > DRAW_DIST_MIN && (_overTicks % 2) === 0) {
+				_effNear = Math.max(DRAW_DIST_MIN, _effNear - DRAW_DIST_STEP)
+				const dline = `[Cull] over budget (${(r * 100).toFixed(0)}%) for ${_overTicks} ticks → draw distance ↓ ${_effNear}m (was ${_effNear + DRAW_DIST_STEP}m)`
+				debugStore.push('warn', dline)
+				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: dline, stack: '' }) } catch { /* ignore */ }
+			}
 		}
+		// Draw-distance recovery (FS progressive-stepping equivalent): grow _effNear back toward the
+		// user's target when there's real headroom; snap down at once if the user lowered the target.
+		// Hysteresis (shrink at >CULL_TARGET, grow at <CULL_RESUME) prevents boundary oscillation.
+		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
+		if (_effNear > ddTarget) _effNear = ddTarget
+		else if (r < CULL_RESUME && _effNear < ddTarget) _effNear = Math.min(ddTarget, _effNear + DRAW_DIST_STEP)
+		uiStore.setEffectiveDrawDistance?.(_effNear)
 		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
 		if ((_cullStatTick++ % 3) === 0) updateCullStats()
 	}
@@ -3729,6 +3856,11 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 
+		// Spread texture build+upload across frames (FEATURE-GAPS #11): drain a budgeted slice of
+		// the build queue here so freshly-uploaded textures are GPU-resident before render() and
+		// the per-frame upload count is bounded (no burst spike).
+		pumpTextureBuilds()
+
 		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
 		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
 		// refreshUniformsCommon) makes renderer.render THROW EVERY FRAME. Measured live 2026-06-12:
@@ -3819,6 +3951,9 @@ export function useWorldEngine(canvasRef) {
 		// Reparent sweep is cheaper; run it every 4th tick.
 		let _drainTick = 0
 		initGeomCacheCap()   // size the qs-geom IDB cap from the storage estimate before bakes start persisting
+		// Apply the persisted geom-cache RAM budget and keep it live as the user adjusts the Prefs slider.
+		setGeomMemBudget(uiStore.geomCacheRamMb * 1024 * 1024)
+		stopGeomCacheRamWatch = watch(() => uiStore.geomCacheRamMb, (mbVal) => setGeomMemBudget(mbVal * 1024 * 1024))
 		_meshDrainTimer = setInterval(() => {
 			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
 			drainMeshQueue()
@@ -3826,6 +3961,67 @@ export function useWorldEngine(canvasRef) {
 			if ((_drainTick++ & 3) === 0) reparentOrphans()
 		}, 30)
 		_cullTimer = setInterval(cullTick, 1000)
+		// ── DEV-only draw-call census (FEATURE-GAPS #6 instrumentation; DISPOSABLE, uncommitted) ──
+		// Run `qsCensus()` in the console on a heavy region AFTER it settles (objs/buildQ stable) to
+		// size the instancing vs merge-by-texture opportunity. Reads worldStore.objects (data model)
+		// + meshMap (what's actually rendered). Remove this block once #6's approach is chosen.
+		if (import.meta.env.DEV) {
+			globalThis.qsCensus = () => {
+				const objs = worldStore.objects
+				const all = [...objs.values()]
+				const inScene = (o) => meshMap.has(o.localId)
+				const rendered = all.filter(inScene)
+				const bump = (m, k, n = 1) => m.set(k, (m.get(k) || 0) + n)
+				const sorted = (m) => [...m.entries()].sort((a, b) => b[1] - a[1])
+				const coverage = (m, min) => { let groups = 0, covered = 0; for (const [, c] of m) if (c >= min) { groups++; covered += c } return { groups, covered } }
+				const top = (m, n) => sorted(m).slice(0, n).map(([k, c]) => `    ${c}× ${String(k).slice(0, 46)}`).join('\n')
+
+				// actual draw calls — a per-face material array issues one call per group
+				let drawCalls = 0, multiMat = 0
+				for (const id of meshMap.keys()) { const mat = meshMap.get(id)?.material; const n = Array.isArray(mat) ? mat.length : 1; drawCalls += n; if (n > 1) multiMat++ }
+
+				const byType = new Map(), keyMul = new Map(), keyMulNS = new Map(), texMul = new Map(), linkSize = new Map()
+				let perFaceBlockers = 0
+				for (const o of rendered) {
+					bump(byType, o.meshId ? 'mesh' : o.sculptId ? 'sculpt' : 'prim')
+					const bakeScale = (o.meshId || o.sculptId) ? [1, 1, 1] : (o.scale || [1, 1, 1])
+					bump(keyMul, o.meshId ? meshGeomKey(o.meshId) : o.sculptId ? sculptGeomKey(o.sculptId, o.sculptType ?? 1) : primGeomKey(o.shape, bakeScale))
+					bump(keyMulNS, o.meshId ? meshGeomKey(o.meshId) : o.sculptId ? sculptGeomKey(o.sculptId, o.sculptType ?? 1) : primGeomKey(o.shape, [1, 1, 1]))
+					bump(texMul, pickPrimTexture(o) || (isRealTex(o.defaultTexture) ? o.defaultTexture : 'none'))
+					bump(linkSize, (o.parentId && o.parentId !== 0) ? o.parentId : o.localId)
+					if (hasMultiFaceMesh(o) || hasMultiFacePrim(o)) perFaceBlockers++
+				}
+				const i2 = coverage(keyMul, 2), i4 = coverage(keyMul, 4), ns2 = coverage(keyMulNS, 2), ns4 = coverage(keyMulNS, 4)
+				const t2 = coverage(texMul, 2), l2 = coverage(linkSize, 2)
+				const linkSizes = [...linkSize.values()].sort((a, b) => b - a)
+				const text = [
+					`── QS DRAW-CALL CENSUS ──`,
+					`objects(worldStore): ${all.length}   rendered(meshMap): ${rendered.length}   effNear: ${_effNear}m`,
+					`DRAW CALLS (incl per-face arrays): ${drawCalls}   multi-material meshes: ${multiMat}`,
+					`rendered type split: ${[...byType].map(([k, c]) => `${k}=${c}`).join('  ')}`,
+					`per-face blockers (material array → not directly batchable): ${perFaceBlockers}`,
+					``,
+					`INSTANCING — shape+scale (current keying):`,
+					`  distinct keys: ${keyMul.size}   ≥2: ${i2.groups} keys / ${i2.covered} objs   ≥4: ${i4.groups} keys / ${i4.covered} objs`,
+					top(keyMul, 15),
+					``,
+					`INSTANCING — shape only (if scale moved to instance matrix):`,
+					`  distinct keys: ${keyMulNS.size}   ≥2: ${ns2.groups} keys / ${ns2.covered} objs   ≥4: ${ns4.groups} keys / ${ns4.covered} objs`,
+					top(keyMulNS, 15),
+					``,
+					`MERGE-BY-TEXTURE:`,
+					`  distinct textures: ${texMul.size}   ≥2: ${t2.groups} textures / ${t2.covered} objs`,
+					top(texMul, 15),
+					``,
+					`LINKSETS:`,
+					`  roots: ${linkSize.size}   ≥2 prims: ${l2.groups} linksets / ${l2.covered} objs`,
+					`  largest: ${linkSizes.slice(0, 15).join(', ')}`,
+				].join('\n')
+				console.log(text)
+				return { drawCalls, multiMat, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, _text: text }
+			}
+			dev.log('[Census] qsCensus() ready — run it in the console on a heavy region once it settles')
+		}
 		// Texture backfill: re-apply textures to still-white meshes + retry timed-out fetches so the
 		// scene keeps filling and the IDB cache completes (persists across reloads). 3s cadence.
 		_texBackfillTimer = setInterval(backfillTextures, 3000)
@@ -3852,15 +4048,16 @@ export function useWorldEngine(canvasRef) {
 			}
 			_lastGeomB = geomB
 			const texB = getTextureBytes(), meshB = getMeshBytes(), geomCacheB = getGeomMemBytes()
-			setAppBytes(texB + meshB + geomB + geomCacheB)
+			// WHY no geomCacheB: CPU-RAM-only tier, excluded from VRAM budget (see cull-tick comment).
+			setAppBytes(texB + meshB + geomB)
 			{
 				const mg = memStats()
 				const pressure = memUnderPressure()
 				const mb = (b) => (b / 1048576).toFixed(0)
 				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
-				const line = `[Mem] app ${mb(texB + meshB + geomB + geomCacheB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size}`
+				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
+					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())}` +
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
 					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
@@ -3869,7 +4066,7 @@ export function useWorldEngine(canvasRef) {
 			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
 			if (_drainBuilt) {
 				const dline = `[Drain] built=${_drainBuilt} (${(_drainBuilt / 5).toFixed(0)}/s) avg=${(_drainMs / _drainBuilt).toFixed(1)}ms max=${_drainMaxMs.toFixed(1)}ms queued=${pendingMeshIds.size} hidden=${typeof document !== 'undefined' && document.hidden ? 1 : 0}` +
-					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget}`
+					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget} texBuildQ=${getTextureStats().buildQueued}`
 				debugStore.push('info', dline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: dline, stack: '' }) } catch { /* ignore */ }
 				_drainBuilt = 0; _drainMs = 0; _drainMaxMs = 0
@@ -3892,7 +4089,7 @@ export function useWorldEngine(canvasRef) {
 			const bs = meshBaker.takeStats()
 			if (bs.jobs || _applyN || _geomHitMem || _geomHitIdb || _geomMiss) {
 				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}` +
-					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending}`
+					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending} wdog=${_geomLookupWatchdogN}`
 				debugStore.push('info', bline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
 				_applyN = 0; _applyMs = 0; _applyMaxMs = 0
@@ -3948,6 +4145,7 @@ export function useWorldEngine(canvasRef) {
 		stopWaterHeightWatch()
 		stopTerrainTexWatch()
 		stopRegionSizeWatch()
+		stopGeomCacheRamWatch?.()
 		terrainShaderMaterial?.dispose()
 		terrainShaderMaterial = null
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
