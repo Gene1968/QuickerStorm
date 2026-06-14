@@ -13,7 +13,7 @@ import { useRealtimeSocket, takeWsStats, takeWsBytes } from './useRealtimeSocket
 import { useLLUDP } from './useLLUDP'
 import { useAudio } from './useAudio.js'
 import { useTeleport } from './useTeleport.js'
-import { getTexture, clearTextureCache } from './useTextureFetch.js'
+import { getTexture, clearTextureCache, peekTexture } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
@@ -37,6 +37,9 @@ import {
 import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch } from '@/lib/geomCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
+import { createInstancePool } from '@/lib/instancePool.js'
+import { splitParts } from '@/lib/geomParts.js'
+import { materialKey } from '@/lib/instanceKey.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
@@ -266,6 +269,16 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	const meshMap = new Map()  // localId → THREE.Mesh
+	// ── FEATURE-GAPS #6 draw-call instancing (gated on uiStore.instancing) ──
+	const _lastMoveAt = new Map()   // localId → performance.now() of last upsert/move (settle clock)
+	const _partsCache = new Map()   // geomKey → splitParts() templates (multi-material only)
+	let _instancePool = null        // createInstancePool(scene), created lazily on first use
+	const SETTLE_MS = 3000          // no-update dwell before an object may be instanced (tunable)
+
+	function ensureInstancePool() {
+		if (!_instancePool) _instancePool = createInstancePool(scene)
+		return _instancePool
+	}
 	const hoverTextMeshes = new Set()  // meshes that currently have hover text
 	const _htVec3 = new THREE.Vector3()  // reused for hover-text distance calc
 	// WHY (perf): prim mesh builds are deferred off the WS message handler into a paced per-frame
@@ -1708,6 +1721,7 @@ export function useWorldEngine(canvasRef) {
 		if (!scene) return
 		const id = uiStore.editObjectId
 		if (!uiStore.showObjectEdit || !id) { clearGizmo(); return }
+		if (uiStore.instancing) promoteOut(id)   // ensure an individual mesh exists for the gizmo
 		const mesh = meshMap.get(id)
 		if (!mesh) { clearGizmo(); return }
 		clearGizmo()
@@ -1806,6 +1820,7 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function upsertMesh(obj) {
+		if (uiStore.instancing) _lastMoveAt.set(obj.localId, performance.now())
 		// Guard: skip prims with non-finite pos/scale — they'd produce NaN geometry (Three.js
 		// "Computed radius is NaN" spam) and can't be placed. Bad decode or bad sim data.
 		const finite3 = (a) => Array.isArray(a) && a.length >= 3 && a.every(Number.isFinite)
@@ -2478,6 +2493,10 @@ export function useWorldEngine(canvasRef) {
 			if (!pos || (pos[0] === 0 && pos[1] === 0 && pos[2] === 0)) continue
 			// Update world store position
 			worldStore.updateObjectPos(obj.localId, pos)
+			if (uiStore.instancing && obj.localId !== ownAvatarLocalId) {
+				_lastMoveAt.set(obj.localId, performance.now())
+				if (_instancePool && _instancePool.has(obj.localId)) promoteOut(obj.localId)
+			}
 			// Move the mesh
 			const mesh = meshMap.get(obj.localId)
 			// WHY: Skip own avatar mesh entirely here. It is driven by the local dead-reckoning
@@ -3146,6 +3165,83 @@ export function useWorldEngine(canvasRef) {
 	// tracks proximity, bounded by the budget. selectEvictions takes farthest-first so a just-reloaded
 	// near object is never the one evicted. Works on all browsers (self-accounted bytes, not
 	// performance.memory); the process-heap emergency brake still applies where measurable.
+	// ── FEATURE-GAPS #6 draw-call instancing: migrate/promote helpers ──
+	// Re-derive the geomKey exactly as upsertMesh does (the prim path bakes scale into geometry).
+	function geomKeyFor(obj) {
+		const bakeScale = (obj.meshId || obj.sculptId) ? [1, 1, 1] : (obj.scale || [1, 1, 1])
+		return obj.meshId ? meshGeomKey(obj.meshId)
+			: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
+			: primGeomKey(obj.shape, bakeScale)
+	}
+
+	function splitPartsCached(gk, geom) {
+		let p = _partsCache.get(gk)
+		if (!p) { p = splitParts(geom); _partsCache.set(gk, p) }
+		return p
+	}
+
+	// Describe an object's instance pools, or null if it is not yet instanceable
+	// (placeholder, geometry not baked, or texture not loaded → retry a later tick).
+	function describeForPool(localId, mesh, obj) {
+		if (obj._placeholder) return null
+		const geom = mesh.geometry
+		if (!geom) return null
+		const gk = geomKeyFor(obj)
+		if (!geomMemGet(gk)) return null   // geometry not baked into the RAM cache yet → wait
+		const lit = uiStore.litShading && !obj.defaultFullbright
+		const alpha = !!(obj.defaultColor && obj.defaultColor[3] < 0.99)
+		const multi = hasMultiFaceMesh(obj) || hasMultiFacePrim(obj)
+		// Only decompose genuinely multi-material objects. A single-textured box prim can
+		// carry 6 geometry groups (one per face) — those must stay ONE pool, not six.
+		const parts = multi ? splitPartsCached(gk, geom) : [{ materialIndex: 0, geometry: geom }]
+		const out = []
+		for (const part of parts) {
+			const faceTex = multi
+				? ((obj.faceTextures && obj.faceTextures[part.materialIndex]) || obj.defaultTexture)
+				: pickPrimTexture(obj)
+			const texId = isRealTex(faceTex) ? faceTex : (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
+			// peekTexture: SYNCHRONOUS readiness gate. getTexture() is async (always returns a truthy
+			// Promise) so it can't tell ready from not-ready; peekTexture returns the resident texture
+			// or null without kicking off a fetch.
+			if (texId && !peekTexture(texId)) return null   // texture not loaded yet → wait, retry next tick
+			const mk = materialKey({ texId, uvKey: '', fullbright: !!obj.defaultFullbright, lit, alpha })
+			out.push({ poolKey: `${gk}::${part.materialIndex}::${mk}`, part, texId })
+		}
+		return out
+	}
+
+	// Fold a settled individual mesh into the instance pool, then drop the individual mesh.
+	function migrateIn(localId, mesh, obj) {
+		const desc = describeForPool(localId, mesh, obj)
+		if (!desc) return false
+		mesh.updateWorldMatrix(true, false)
+		const matrix = mesh.matrixWorld.clone()
+		const dc = obj.defaultColor
+		const color = new THREE.Color(dc ? dc[0] : 1, dc ? dc[1] : 1, dc ? dc[2] : 1)
+		const pool = ensureInstancePool()
+		for (const d of desc) {
+			const factory = () => {
+				const mat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+				if (d.texId) { const t = peekTexture(d.texId); if (t) mat.map = t }
+				mat.needsUpdate = true
+				// CLONE: the individual mesh's geometry is disposed by removeMesh below; the pool
+				// must own an independent copy or its geometry would be freed out from under it.
+				return { geometry: d.part.geometry.clone(), material: mat }
+			}
+			pool.add(d.poolKey, factory, matrix, color, localId)
+		}
+		removeMesh(localId)   // the instance now carries this object
+		return true
+	}
+
+	// Pull an object back out of the pool to an individual mesh (went dynamic / edit-selected).
+	function promoteOut(localId) {
+		if (!_instancePool || !_instancePool.has(localId)) return
+		_instancePool.remove(localId)
+		const obj = worldStore.objects.get(localId)
+		if (obj) upsertMesh(obj)   // rebuild through the normal path
+	}
+
 	function cullTick() {
 		if (!camera) return
 		// Push the truthful resident-asset total to the governor: texture bitmaps (O(cache)) +
@@ -3275,6 +3371,22 @@ export function useWorldEngine(canvasRef) {
 		uiStore.setEffectiveDrawDistance?.(_effNear)
 		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
 		if ((_cullStatTick++ % 3) === 0) updateCullStats()
+		// FEATURE-GAPS #6: fold settled meshes into the instance pool (gated; no-op when OFF).
+		if (uiStore.instancing) {
+			const now = performance.now()
+			let budget = 256   // cap migrations per tick to avoid a hitch
+			const ids = [...meshMap.keys()]   // snapshot — migrateIn mutates meshMap
+			for (const id of ids) {
+				if (budget <= 0) break
+				const mesh = meshMap.get(id)
+				if (!mesh) continue
+				const obj = worldStore.objects.get(id)
+				if (!obj || obj.pcode === PCODE_AVATAR) continue
+				const last = _lastMoveAt.get(id) ?? 0
+				if (now - last < SETTLE_MS) continue
+				if (migrateIn(id, mesh, obj)) budget--
+			}
+		}
 	}
 
 	function drainMeshQueue() {

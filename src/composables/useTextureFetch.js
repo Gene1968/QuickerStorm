@@ -330,6 +330,16 @@ export function pumpTextureBuilds() {
  * returns a clone cached by uuid+transform — so prims sharing the same texture+transform reuse ONE
  * GPU texture instead of mutating the shared base (which would corrupt every other prim using it).
  */
+// Synchronous "is the base GPU texture already resident?" peek. Returns the cached THREE.Texture or
+// null WITHOUT kicking off a fetch — used by the instancing migrate pass as a readiness gate (the
+// async getTexture() always returns a truthy Promise, so it can't gate "ready vs not-ready").
+export function peekTexture(uuid) {
+	if (!uuid || uuid === ZERO_UUID) return null
+	const t = cache.get(uuid)
+	if (t) lastUsed.set(uuid, Date.now())   // counted as applied → protect from LRU prune
+	return t || null
+}
+
 export function getTexture(uuid, xform = null) {
 	if (uuid) lastUsed.set(uuid, Date.now())   // applied now → protect from LRU prune
 	const baseP = getBaseTexture(uuid)
