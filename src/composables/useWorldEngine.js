@@ -972,16 +972,23 @@ export function useWorldEngine(canvasRef) {
 				if (!o || o.pcode === PCODE_AVATAR) return
 				primTargets.push(m)
 			})
+			if (_instancePool) for (const im of _instancePool.meshes()) primTargets.push(im)
 			const hits = _raycaster.intersectObjects(primTargets, true)
 			if (hits.length > 0) {
-				let m = hits[0].object
-				while (m && m.userData?.localId === undefined) m = m.parent
-				if (m?.userData?.localId != null) {
+				let clicked = null
+				const hit = hits[0]
+				if (hit.object?.userData?.qsInstanced) {
+					clicked = _instancePool.pick(hit.object, hit.instanceId)
+				} else {
+					let m = hit.object
+					while (m && m.userData?.localId === undefined) m = m.parent
+					if (m?.userData?.localId != null) clicked = m.userData.localId
+				}
+				if (clicked != null) {
 					// WHY: FS parity — unless "Edit linked" is on, a click selects the whole linkset
 					// (walk up to the root prim). positionGizmo() bboxes the root mesh, which contains
 					// all linked children, so the gizmo centers on the entire object. stopSelSyncWatch
 					// reacts to editObjectId and emits the ObjectSelect.
-					const clicked = m.userData.localId
 					uiStore.editObjectId = uiStore.editLinked ? clicked : resolveRootLocalId(clicked)
 					return
 				}
@@ -2277,6 +2284,9 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function removeMesh(localId) {
+		// WHY: a sim KillObject (object deleted) routes through removeMesh, but the object may now be
+		// instanced (not in meshMap). Drop the instance so it doesn't linger as a pool ghost.
+		if (_instancePool && _instancePool.has(localId)) { _instancePool.remove(localId); return }
 		const mesh = meshMap.get(localId)
 		if (mesh) {
 			// WHY: Traverse to dispose child geometry/materials (arm indicator etc.) not just root
@@ -2966,6 +2976,7 @@ export function useWorldEngine(canvasRef) {
 			if (!obj || obj.pcode === PCODE_AVATAR) return
 			primTargets.push(mesh)
 		})
+		if (_instancePool) for (const im of _instancePool.meshes()) primTargets.push(im)
 		const primHits = _raycaster.intersectObjects(primTargets, true)
 		if (primHits.length === 0) {
 			// Prim miss — try terrain
@@ -2985,17 +2996,24 @@ export function useWorldEngine(canvasRef) {
 			uiStore.closeLandMenu()
 			return
 		}
-		let hitMesh = primHits[0].object
-		while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
-		if (!hitMesh) return
-		const obj = worldStore.objects.get(hitMesh.userData.localId)
+		const primHit = primHits[0]
+		let pickedId = null
+		if (primHit.object?.userData?.qsInstanced) {
+			pickedId = _instancePool.pick(primHit.object, primHit.instanceId)
+		} else {
+			let hitMesh = primHit.object
+			while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
+			if (hitMesh) pickedId = hitMesh.userData.localId
+		}
+		if (pickedId == null) return
+		const obj = worldStore.objects.get(pickedId)
 		if (!obj) return
 		uiStore.closeAvatarMenu()
 		uiStore.closeLandMenu()
 		uiStore.openObjectMenu({
-			localId: hitMesh.userData.localId,
+			localId: pickedId,
 			fullId:  obj.fullId,
-			name:    obj.name || obj.text || `Object ${hitMesh.userData.localId}`,
+			name:    obj.name || obj.text || `Object ${pickedId}`,
 			pos:     obj.pos,
 			x: e.clientX,
 			y: e.clientY,
@@ -3218,19 +3236,21 @@ export function useWorldEngine(canvasRef) {
 		const matrix = mesh.matrixWorld.clone()
 		const dc = obj.defaultColor
 		const color = new THREE.Color(dc ? dc[0] : 1, dc ? dc[1] : 1, dc ? dc[2] : 1)
+		// Remove the individual mesh BEFORE adding to the pool, so the pool-aware removeMesh
+		// branch (which now short-circuits on pooled ids) does normal individual removal here.
+		// Cloning in the factory still works after dispose(): dispose frees GPU buffers, not the
+		// JS-side attribute arrays that .clone() copies.
+		removeMesh(localId)
 		const pool = ensureInstancePool()
 		for (const d of desc) {
 			const factory = () => {
 				const mat = new THREE.MeshBasicMaterial({ color: 0xffffff })
 				if (d.texId) { const t = peekTexture(d.texId); if (t) mat.map = t }
 				mat.needsUpdate = true
-				// CLONE: the individual mesh's geometry is disposed by removeMesh below; the pool
-				// must own an independent copy or its geometry would be freed out from under it.
 				return { geometry: d.part.geometry.clone(), material: mat }
 			}
 			pool.add(d.poolKey, factory, matrix, color, localId)
 		}
-		removeMesh(localId)   // the instance now carries this object
 		return true
 	}
 
