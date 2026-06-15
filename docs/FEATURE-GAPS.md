@@ -10,6 +10,14 @@
 
 ### Render / Cache (near-term)
 
+> 📐 **READ FIRST: [docs/render-cache-model.md](render-cache-model.md)** — the unified model for how
+> #6/#9/#10/#11/#13/#14 + textures interlock (2026-06-14). Two hard ceilings (single main thread, ~4 GB
+> Chrome tab heap); evict on VRAM budget NOT heap; heap pressure → pause intake; warm caches remove
+> bake+grid cost but NOT main-thread build cost; per-region matrix (cached/light/cold/heavy). **Next
+> (prioritized): near-first load → refresh-textures btn → near-aware texture evict → badge = texture
+> readiness → LOD → off-main-thread build.** These items are NOT independent — a fix for one shifts the
+> bottleneck to another; consult the model before picking work.
+
 | # | Item | Status |
 |---|------|--------|
 | 1 | CRC probe audit | ✅ done 2026-06-12 |
