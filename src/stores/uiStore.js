@@ -121,6 +121,15 @@ export const useUiStore = defineStore('ui', () => {
 	watch(geomCacheRamMb, (v) => localStorage.setItem('qs-geom-cache-mb', String(v)))
 	function setGeomCacheRamMb(v) { geomCacheRamMb.value = Math.max(128, Math.min(8192, Math.round(Number(v) || _autoGeomCacheMb()))) }
 
+	// Resident-asset / VRAM budget (MB) — gates the draw-distance governor (FEATURE-GAPS #13). 0 = auto
+	// (heap-scaled default in memGovernor). A higher value keeps more resident → larger visible radius;
+	// VRAM is unqueryable so this is a user opt-in (the heap-aware governor still backstops CPU heap).
+	// useWorldEngine applies it via memGovernor.setAppBudgetOverride on init + on change.
+	const _vbSaved = Number(localStorage.getItem('qs-vram-budget-mb'))
+	const vramBudgetMb = ref(Number.isFinite(_vbSaved) && _vbSaved > 0 ? Math.max(512, Math.min(6144, _vbSaved)) : 0)
+	watch(vramBudgetMb, (v) => localStorage.setItem('qs-vram-budget-mb', String(v)))
+	function setVramBudgetMb(v) { const n = Math.round(Number(v) || 0); vramBudgetMb.value = n <= 0 ? 0 : Math.max(512, Math.min(6144, n)) }
+
 	function toggleMode()        { mode.value = mode.value === '3d' ? '2d' : '3d' }
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
 	function toggleMinimap()     { showMinimap.value     = !showMinimap.value }
@@ -332,6 +341,7 @@ export const useUiStore = defineStore('ui', () => {
 		litShading, instancing, showFps, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		geomCacheRamMb, setGeomCacheRamMb,
+		vramBudgetMb, setVramBudgetMb,
 		openProfile, closeProfile, toggleProfile,
 		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,

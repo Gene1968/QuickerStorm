@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test'
 import {
 	setAppBytes, appRatio, appBudgetBytes, memUnderPressure, memRatio, emergencyHeap,
-	APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO,
+	APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, setAppBudgetOverride,
 } from '@/lib/memGovernor.js'
 
 // bun test has no performance.memory → memRatio() is null, budget falls back to the fixed default.
@@ -41,6 +41,32 @@ describe('self-accounted app budget', () => {
 	it('emergency brake never fires without a measurable heap (and so never on inherited-garbage-only signals)', () => {
 		setAppBytes(appBudgetBytes() * 0.9)
 		expect(emergencyHeap()).toBe(false)
+	})
+})
+
+// FEATURE-GAPS #13: the app/VRAM budget gates the draw-distance governor. 1536MB capped dd at ~48-64m
+// on dense regions even though heap had huge headroom (28%). Raised default (heap-scaled) + a user
+// override (Prefs slider) so capable machines show more scene; the heap-aware governor backstops CPU
+// heap, and live-verify checks VRAM (unqueryable).
+describe('app/VRAM budget — raised default + user override', () => {
+	const MB = 1048576
+	const setHeap = (limMB) => { globalThis.performance.memory = { usedJSHeapSize: 0, jsHeapSizeLimit: limMB * MB } }
+	const clearHeap = () => { try { delete globalThis.performance.memory } catch { globalThis.performance.memory = undefined } }
+
+	it('default is min(2048MB cap, 0.50 × heap)', () => {
+		setHeap(3072); try { expect(Math.round(appBudgetBytes() / MB)).toBe(1536) } finally { clearHeap() }  // 0.50×3072
+		setHeap(8192); try { expect(Math.round(appBudgetBytes() / MB)).toBe(2048) } finally { clearHeap() }  // capped
+	})
+	it('user override wins, clamped to [512, 6144] MB', () => {
+		try {
+			setHeap(4192)
+			setAppBudgetOverride(3000 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(3000)
+			setAppBudgetOverride(99999 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(6144)  // clamp high
+			setAppBudgetOverride(1 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(512)        // clamp low
+		} finally { setAppBudgetOverride(null); clearHeap() }
+	})
+	it('override of null restores the heap-scaled default', () => {
+		try { setHeap(3072); setAppBudgetOverride(3000 * MB); setAppBudgetOverride(null); expect(Math.round(appBudgetBytes() / MB)).toBe(1536) } finally { clearHeap() }
 	})
 })
 

@@ -14,13 +14,32 @@
 // Wiring: useWorldEngine pushes the byte total via setAppBytes() (cull tick ~1s + telemetry ~3s);
 // consumers (texture intake pump, mesh drain, culler) read appRatio()/memUnderPressure().
 
-const APP_BUDGET_CAP      = 1536 * 1048576  // hard cap on the resident-asset budget (bytes)
-const APP_BUDGET_FRACTION = 0.40            // ...or this fraction of the heap limit, when known
+// Resident-asset (VRAM-proxy) budget. Raised from 1536/0.40 → 2048/0.50 (FEATURE-GAPS #13): on a
+// dense region the old cap pinned the draw-distance governor at ~48-64m while CPU heap had huge
+// headroom (~28%). The heap-aware governor now backstops CPU heap, so we can hold more resident for a
+// larger visible radius. VRAM is unqueryable, so the default stays moderate and a user override
+// (Prefs slider) lets capable GPUs go higher; live-verify is the only real VRAM check.
+const APP_BUDGET_CAP      = 2048 * 1048576  // hard cap on the resident-asset budget (bytes)
+const APP_BUDGET_FRACTION = 0.50            // ...or this fraction of the heap limit, when known
 const APP_BUDGET_FALLBACK = 1024 * 1048576  // budget when the heap limit is unmeasurable
+const APP_BUDGET_OVERRIDE_MIN = 512  * 1048576   // user-override clamp (bytes)
+const APP_BUDGET_OVERRIDE_MAX = 6144 * 1048576
 const EMERGENCY_HEAP_RATIO = 0.92           // process-heap fraction that means pressure WHEN corroborated
 const CRITICAL_HEAP_RATIO  = 0.95           // process-heap fraction that ALWAYS means pressure (no corroboration)
 
 let _appBytes = 0
+let _appBudgetOverride = 0   // 0 = auto (heap-scaled default); >0 = user override (clamped). See setAppBudgetOverride.
+
+/**
+ * User override for the resident-asset/VRAM budget (Prefs slider). Pass null/0 to restore the
+ * heap-scaled default. Clamped to [512MB, 6144MB] — going higher risks VRAM (unqueryable), so the
+ * user opts in per machine; the heap-aware draw-distance governor still backstops CPU heap.
+ */
+export function setAppBudgetOverride(bytes) {
+	_appBudgetOverride = (bytes == null || bytes <= 0)
+		? 0
+		: Math.max(APP_BUDGET_OVERRIDE_MIN, Math.min(APP_BUDGET_OVERRIDE_MAX, Math.floor(bytes)))
+}
 
 function _mem() {
 	const m = typeof performance !== 'undefined' && performance.memory
@@ -48,8 +67,9 @@ export function setAppBytes(b) {
 	_appBytes = Number.isFinite(b) && b > 0 ? b : 0
 }
 
-/** Resident-asset budget in bytes. */
+/** Resident-asset budget in bytes. User override (clamped) wins; else heap-scaled default. */
 export function appBudgetBytes() {
+	if (_appBudgetOverride > 0) return _appBudgetOverride
 	const m = _mem()
 	return m ? Math.min(APP_BUDGET_CAP, m.jsHeapSizeLimit * APP_BUDGET_FRACTION) : APP_BUDGET_FALLBACK
 }

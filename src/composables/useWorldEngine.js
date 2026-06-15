@@ -19,8 +19,8 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
-import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
+import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride } from '@/lib/memGovernor.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceOverBudget, drawDistanceMayGrow } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -265,6 +265,7 @@ export function useWorldEngine(canvasRef) {
 		},
 	)
 	let stopGeomCacheRamWatch = null
+	let stopVramBudgetWatch = null
 	const { playSound } = useAudio()
 	const { requestTeleport } = useTeleport()
 
@@ -3390,7 +3391,10 @@ export function useWorldEngine(canvasRef) {
 		} else if (heapR == null || heapR < GEOM_MEM_HEAP_RELEASE_AT) {
 			setGeomMemPressureCap(null)                 // clear: restore the configured RAM budget
 		}
-		const over = r > CULL_TARGET || emergencyHeap()
+		// Heap-aware (FEATURE-GAPS #13): shrink the working set under app-budget OR real-heap pressure.
+		// A cold dense region pins heap ~96% while appRatio still looks free (~0.4); an app-only `over`
+		// never shrank dd → wedge. heapR > GEOM_MEM_HEAP_CAP_AT (0.82) fires earlier than emergencyHeap.
+		const over = drawDistanceOverBudget(r, heapR, CULL_TARGET, GEOM_MEM_HEAP_CAP_AT)
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
 		// Built once per tick, only when there is cull work to do.
@@ -3484,7 +3488,9 @@ export function useWorldEngine(canvasRef) {
 		// Hysteresis (shrink at >CULL_TARGET, grow at <CULL_RESUME) prevents boundary oscillation.
 		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
 		if (_effNear > ddTarget) _effNear = ddTarget
-		else if (r < CULL_RESUME && _effNear < ddTarget) _effNear = Math.min(ddTarget, _effNear + DRAW_DIST_STEP)
+		// Grow back ONLY when app AND heap both have headroom. The prior app-only gate grew dd every tick
+		// under pure heap pressure (app low, heap pinned), canceling the step-down → dd never shrank.
+		else if (drawDistanceMayGrow(r, heapR, CULL_RESUME, GEOM_MEM_HEAP_RELEASE_AT) && _effNear < ddTarget) _effNear = Math.min(ddTarget, _effNear + DRAW_DIST_STEP)
 		uiStore.setEffectiveDrawDistance?.(_effNear)
 		// Throttle the O(n) stats scan (iterates all objects) to ~every 3s, off the hot path.
 		if ((_cullStatTick++ % 3) === 0) updateCullStats()
@@ -4222,6 +4228,10 @@ export function useWorldEngine(canvasRef) {
 		// Apply the persisted geom-cache RAM budget and keep it live as the user adjusts the Prefs slider.
 		setGeomMemBudget(uiStore.geomCacheRamMb * 1024 * 1024)
 		stopGeomCacheRamWatch = watch(() => uiStore.geomCacheRamMb, (mbVal) => setGeomMemBudget(mbVal * 1024 * 1024))
+		// Apply the persisted VRAM/resident budget override (0 = auto heap-scaled default) + keep it live.
+		const applyVram = (mb) => setAppBudgetOverride(mb > 0 ? mb * 1024 * 1024 : null)
+		applyVram(uiStore.vramBudgetMb)
+		stopVramBudgetWatch = watch(() => uiStore.vramBudgetMb, applyVram)
 		_meshDrainTimer = setInterval(() => {
 			_lastDrainTickAt = performance.now()   // animate()'s starvation detector reads this
 			timed('ingest', pumpIngest)   // paced upsert/persist/queue (TP-flood backpressure, #11)
@@ -4483,6 +4493,7 @@ export function useWorldEngine(canvasRef) {
 		stopTerrainTexWatch()
 		stopRegionSizeWatch()
 		stopGeomCacheRamWatch?.()
+		stopVramBudgetWatch?.()
 		terrainShaderMaterial?.dispose()
 		terrainShaderMaterial = null
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.

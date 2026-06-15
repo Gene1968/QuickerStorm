@@ -377,6 +377,19 @@ onUnmounted(() => {
 							/>
 						</div>
 
+						<div class="pf-row pf-row--slider">
+							<div class="pf-row-info">
+								<span class="pf-row-label">Scene Detail (VRAM budget): {{ ui.vramBudgetMb > 0 ? ui.vramBudgetMb + ' MB' : 'Auto' }}</span>
+								<span class="pf-row-hint">Higher keeps more of the scene resident → larger draw distance. Uses GPU VRAM; raise only if your card has headroom (Auto = safe default).</span>
+							</div>
+							<input
+								type="range" min="0" max="6144" step="256"
+								:value="ui.vramBudgetMb"
+								@input="e => ui.setVramBudgetMb(e.target.value)"
+								class="w-32 accent-accent"
+							/>
+						</div>
+
 						<div class="pf-row pf-row--disabled">
 							<div class="pf-row-info">
 								<span class="pf-row-label">Avatar LOD Factor</span>

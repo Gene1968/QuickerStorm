@@ -32,6 +32,27 @@ export function groupChildrenByRoot(objects) {
 	return byRoot
 }
 
+// ── Heap-aware draw-distance governor (FEATURE-GAPS #13) ──────────────────────────────────────
+// The engine's effective draw radius (_effNear) shrinks the working set under memory pressure. It
+// must respond to EITHER the self-accounted app/VRAM budget OR the real process heap: a cold dense
+// region pins the heap near its limit (bake/decode churn) while appRatio still looks free, so an
+// app-only governor keeps loading past what the tab heap holds and wedges. heapRatio is null on
+// browsers without performance.memory → treated as "no heap pressure" (app gate alone, as before).
+
+// True when the working set should SHRINK (step _effNear down): over the app budget, or heap past
+// the step threshold (mirror the geom-mem-cap hysteresis: step at ~0.82).
+export function drawDistanceOverBudget(appRatio, heapRatio, cullTarget, heapStepAt) {
+	return appRatio > cullTarget || (heapRatio != null && heapRatio > heapStepAt)
+}
+
+// True when the working set MAY GROW (step _effNear up): app AND heap must BOTH have headroom.
+// WHY both: the prior bug grew dd back on appRatio alone, canceling the heap-driven step-down every
+// tick so dd never shrank under pure heap pressure (app low, heap pinned) → the wedge. Release at the
+// lower hysteresis band (~0.68) so it doesn't immediately re-grow into the pressure it just relieved.
+export function drawDistanceMayGrow(appRatio, heapRatio, cullResume, heapReleaseAt) {
+	return appRatio < cullResume && (heapRatio == null || heapRatio < heapReleaseAt)
+}
+
 // Nearest-first within rNear, capped at maxN. Used when there is headroom: rebuild the closest
 // previously-evicted objects. Anything beyond rNear is left evicted (hysteresis vs the evict radius).
 export function selectReloads(candidates, rNear, maxN) {

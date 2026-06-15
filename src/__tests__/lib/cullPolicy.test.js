@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'bun:test'
-import { selectEvictions, selectReloads, groupChildrenByRoot } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceOverBudget, drawDistanceMayGrow } from '@/lib/cullPolicy.js'
+
+// FEATURE-GAPS #13: the draw-distance governor must shrink the working set under EITHER app-budget OR
+// heap pressure, and only grow it back when BOTH have headroom. The live wedge: a cold 48k region pins
+// heap ~96% while appRatio is only ~0.4 — the OLD recovery (appRatio-only) grew dd back every tick,
+// canceling the heap step-down → dd stuck at 96m → never fits → wedge.
+describe('heap-aware draw-distance pressure (#13)', () => {
+	it('over budget when app exceeds target OR heap exceeds the step threshold', () => {
+		expect(drawDistanceOverBudget(1.2, 0.50, 1.0, 0.82)).toBe(true)   // app over
+		expect(drawDistanceOverBudget(0.40, 0.90, 1.0, 0.82)).toBe(true)  // heap over (the wedge signature)
+		expect(drawDistanceOverBudget(0.40, 0.50, 1.0, 0.82)).toBe(false) // both clear
+		expect(drawDistanceOverBudget(0.40, null, 1.0, 0.82)).toBe(false) // no heap signal (Firefox/Safari)
+	})
+	it('may grow ONLY when app AND heap both have headroom', () => {
+		expect(drawDistanceMayGrow(0.40, 0.50, 0.85, 0.68)).toBe(true)    // both clear → grow
+		expect(drawDistanceMayGrow(0.40, 0.90, 0.85, 0.68)).toBe(false)   // heap pressure blocks growth (THE FIX)
+		expect(drawDistanceMayGrow(0.90, 0.50, 0.85, 0.68)).toBe(false)   // app pressure blocks growth
+		expect(drawDistanceMayGrow(0.40, null, 0.85, 0.68)).toBe(true)    // no heap signal → app gate only
+	})
+})
 
 describe('selectEvictions', () => {
 	it('evicts farthest first, capped at maxN', () => {
