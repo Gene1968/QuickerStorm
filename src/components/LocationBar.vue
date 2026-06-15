@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useGridStore } from '@/stores/gridStore'
@@ -20,6 +20,12 @@ const { requestTeleport, requestRegionTeleport } = useTeleport()
 const { playSound } = useAudio()
 const { history: tpHistory } = useTeleportHistory()
 const showLocationHistory = ref(false)
+
+function onOutsideMouseDown(e) {
+	if (showLocationHistory.value && !e.target.closest('.locationbar')) showLocationHistory.value = false
+}
+onMounted(() => window.addEventListener('mousedown', onOutsideMouseDown))
+onUnmounted(() => window.removeEventListener('mousedown', onOutsideMouseDown))
 
 function teleportFromHistory(place) {
 	showLocationHistory.value = false
@@ -218,5 +224,4 @@ function onEditKeydown(e) {
 </template>
 
 <style scoped>
-/* TODO: click-out to close */
 </style>
