@@ -20,7 +20,7 @@ import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceOverBudget, drawDistanceMayGrow } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -3391,10 +3391,13 @@ export function useWorldEngine(canvasRef) {
 		} else if (heapR == null || heapR < GEOM_MEM_HEAP_RELEASE_AT) {
 			setGeomMemPressureCap(null)                 // clear: restore the configured RAM budget
 		}
-		// Heap-aware (FEATURE-GAPS #13): shrink the working set under app-budget OR real-heap pressure.
-		// A cold dense region pins heap ~96% while appRatio still looks free (~0.4); an app-only `over`
-		// never shrank dd → wedge. heapR > GEOM_MEM_HEAP_CAP_AT (0.82) fires earlier than emergencyHeap.
-		const over = drawDistanceOverBudget(r, heapR, CULL_TARGET, GEOM_MEM_HEAP_CAP_AT)
+		// EVICTION + texture-prune trigger = VRAM/app budget exceeded, or a genuine heap CRISIS
+		// (emergencyHeap, ~0.95). WHY NOT moderate heap (>0.82): evicting resident assets does NOT
+		// relieve heap (it's held by transient bake/decode garbage, not the resident scene) — it just
+		// churns the visible world to cubes and prunes near textures away for no benefit (live: eviction
+		// firing every tick at app=43% heap=84%, textures vanishing). Moderate heap pressure is handled
+		// by PAUSING intake (memUnderPressure/the critical brake), not by evicting. See FEATURE-GAPS #13.
+		const over = r > CULL_TARGET || emergencyHeap()
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
 		// Built once per tick, only when there is cull work to do.

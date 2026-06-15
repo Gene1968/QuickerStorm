@@ -39,12 +39,6 @@ export function groupChildrenByRoot(objects) {
 // app-only governor keeps loading past what the tab heap holds and wedges. heapRatio is null on
 // browsers without performance.memory → treated as "no heap pressure" (app gate alone, as before).
 
-// True when the working set should SHRINK (step _effNear down): over the app budget, or heap past
-// the step threshold (mirror the geom-mem-cap hysteresis: step at ~0.82).
-export function drawDistanceOverBudget(appRatio, heapRatio, cullTarget, heapStepAt) {
-	return appRatio > cullTarget || (heapRatio != null && heapRatio > heapStepAt)
-}
-
 // True when the working set MAY GROW (step _effNear up): app AND heap must BOTH have headroom.
 // WHY both: the prior bug grew dd back on appRatio alone, canceling the heap-driven step-down every
 // tick so dd never shrank under pure heap pressure (app low, heap pinned) → the wedge. Release at the
