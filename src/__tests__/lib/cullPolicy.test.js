@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance } from '@/lib/cullPolicy.js'
 
 // FEATURE-GAPS #13: the draw-distance governor must only GROW the radius when BOTH app-budget AND heap
 // have headroom — the old recovery (appRatio-only) grew dd back every tick even under heap pressure.
@@ -73,5 +73,27 @@ describe('selectReloads', () => {
 	})
 	it('empty candidates → []', () => {
 		expect(selectReloads([], 96, 5)).toEqual([])
+	})
+})
+
+describe('orderByDistance', () => {
+	it('orders ids ascending by distFn (nearest first)', () => {
+		const dist = new Map([[1, 30], [2, 200], [3, 10], [4, 96]])
+		expect(orderByDistance([1, 2, 3, 4], id => dist.get(id))).toEqual([3, 1, 4, 2])
+	})
+	it('ids whose distFn returns Infinity sort last', () => {
+		const dist = new Map([[1, Infinity], [2, 5], [3, Infinity], [4, 50]])
+		expect(orderByDistance([1, 2, 3, 4], id => dist.get(id))).toEqual([2, 4, 1, 3])
+	})
+	it('empty → []', () => {
+		expect(orderByDistance([], () => 0)).toEqual([])
+	})
+	it('single id → [id]', () => {
+		expect(orderByDistance([7], () => 42)).toEqual([7])
+	})
+	it('does not mutate the input array', () => {
+		const ids = [3, 1, 2]
+		orderByDistance(ids, id => id)
+		expect(ids).toEqual([3, 1, 2])
 	})
 })

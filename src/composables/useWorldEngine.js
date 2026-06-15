@@ -20,7 +20,7 @@ import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -2054,10 +2054,10 @@ export function useWorldEngine(canvasRef) {
 					// WHY thunk: a mesh/sculpt cache hit must skip getMesh/getSculpt entirely — the
 					// raw-submesh fetch only happens when the baked cache truly misses.
 					const jobThunk = obj.meshId
-						? () => getMesh(obj.meshId).then(subs =>
+						? () => getMesh(obj.meshId, nearRefDist(obj)).then(subs =>
 							(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
 						: obj.sculptId
-							? () => getSculpt(obj.sculptId, obj.sculptType ?? 1).then(subs =>
+							? () => getSculpt(obj.sculptId, obj.sculptType ?? 1, nearRefDist(obj)).then(subs =>
 								(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
 							: () => meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale })
 					requestGeometry(geomKey, jobThunk, applySwap)
@@ -2081,7 +2081,7 @@ export function useWorldEngine(canvasRef) {
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
 				const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
 				texCalls++
-				getTexture(primTexId, xform).then(tex => {
+				getTexture(primTexId, xform, nearRefDist(obj)).then(tex => {
 					// DIAG (P2): classify apply outcome to pin the white-scene cause.
 					if (!tex) texNull++
 					else if (!mesh.parent) texDropNoParent++
@@ -2121,7 +2121,7 @@ export function useWorldEngine(canvasRef) {
 					if (d.doubleSided) mat.side = THREE.DoubleSide
 					if (d.alphaMode === 'BLEND') mat.transparent = true
 					else if (d.alphaMode === 'MASK') mat.alphaTest = d.alphaCutoff
-					const setMap = (uuid, slot, srgb) => uuid && getTexture(uuid).then(t => {
+					const setMap = (uuid, slot, srgb) => uuid && getTexture(uuid, null, nearRefDist(obj)).then(t => {
 						if (t && mesh.material === mat) { if (srgb) t.colorSpace = THREE.SRGBColorSpace; mat[slot] = t; mat.needsUpdate = true }
 					})
 					setMap(d.baseColorTex, 'map', true)
@@ -2137,7 +2137,7 @@ export function useWorldEngine(canvasRef) {
 					if (!m || !mesh.parent || mesh.material !== mat) return
 					// isMeshStandardMaterial guard: normalMap on a Basic/Lambert-from-relight material
 					// poisons its program (see the placeholder WHY above) — only Standard takes it.
-					if (m.normMap) getTexture(m.normMap).then(t => { if (t && mesh.material === mat && mat.isMeshStandardMaterial) { mat.normalMap = t; mat.needsUpdate = true } })
+					if (m.normMap) getTexture(m.normMap, null, nearRefDist(obj)).then(t => { if (t && mesh.material === mat && mat.isMeshStandardMaterial) { mat.normalMap = t; mat.needsUpdate = true } })
 					// MeshStandard has no spec map; approximate shininess via roughness (higher exp = smoother).
 					if (m.specExp) mat.roughness = Math.max(0.1, 1 - m.specExp / 255)
 					// Persist the material's alpha mode on the object — authoritative for every later
@@ -3158,6 +3158,28 @@ export function useWorldEngine(canvasRef) {
 		return camera.position.distanceTo(t)
 	}
 
+	// Near-first reference distance (FEATURE-GAPS: near-first load). "Nearby" means near the AVATAR,
+	// not the camera: the orbit/zoom camera can sit far from the avatar, and on a fresh load the camera
+	// holds its (128,25,-128) init default until the avatar is placed — so camDistToObj (camera-based,
+	// used by culling) would rank by region-center, not the viewer. We use the avatar's own SL position
+	// (authoritative, dead-reckoned), falling back to the region spawn while the avatar isn't placed
+	// yet. SL-space distance (obj.pos is SL); no THREE conversion needed. Used ONLY for near-first
+	// ordering of the build/fetch queues — culling stays on camDistToObj.
+	function nearRefDist(obj) {
+		if (!obj) return Infinity
+		const ref = avatarSLPos || worldStore.spawnPos
+		if (!ref) return Infinity
+		// Linkset children store PARENT-RELATIVE positions (small offsets, not region coords), so
+		// ranking them on obj.pos gives garbage. Resolve to the ROOT's region position so the whole
+		// linkset ranks by its real location — mirrors the culler, which operates on roots only.
+		let pos = obj.pos
+		const pid = obj.parentId ?? 0
+		if (pid !== 0) { const root = worldStore.objects.get(pid); if (root?.pos) pos = root.pos }
+		if (!pos) return Infinity
+		const dx = pos[0] - ref[0], dy = pos[1] - ref[1], dz = pos[2] - ref[2]
+		return Math.sqrt(dx * dx + dy * dy + dz * dz)
+	}
+
 	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY %-within-_effNear: with the
 	// dynamic draw distance the culler deliberately won't load past _effNear, so measuring against a
 	// fixed 192m span would peg the badge below 100% forever (nothing beyond _effNear will ever build).
@@ -3554,6 +3576,29 @@ export function useWorldEngine(canvasRef) {
 		})
 	}
 
+	// Near-first drain order (FEATURE-GAPS: near-first load). pendingMeshIds (a Set) stays the
+	// source of truth for membership; _drainOrder is a throttled distance-sorted view of it that
+	// drainMeshQueue walks so the player's surroundings build BEFORE far objects. Rebuilt only when
+	// stale (TTL elapsed, fully drained, or the camera moved enough that "nearest" changed) so the
+	// O(n log n) sort runs ~1×/s, never per frame. Stale ids left in the array are skipped on walk.
+	let _drainOrder = []
+	let _drainCursor = 0
+	let _drainOrderAt = 0
+	let _drainOrderRef = null   // [x,y,z] viewer ref (avatar/spawn) at last rebuild — re-sort on move
+	const DRAIN_ORDER_TTL_MS = 750
+	const DRAIN_ORDER_MOVE_M = 8
+
+	function rebuildDrainOrder() {
+		_drainOrder = orderByDistance([...pendingMeshIds], (id) => {
+			const o = worldStore.objects.get(id)
+			return o ? nearRefDist(o) : Infinity   // unknown/killed → sort last (skipped on walk)
+		})
+		_drainCursor = 0
+		_drainOrderAt = performance.now()
+		const ref = avatarSLPos || worldStore.spawnPos
+		_drainOrderRef = ref ? [ref[0], ref[1], ref[2]] : null
+	}
+
 	function drainMeshQueue() {
 		if (!pendingMeshIds.size) { _dtEmpty++; return }
 		// Memory governor: stop baking new geometry while the JS heap is near its limit (each bake adds
@@ -3565,10 +3610,25 @@ export function useWorldEngine(canvasRef) {
 		// the load crawls exactly while the user is away. No frames to protect when hidden → spend a
 		// big budget per (rare) tick instead. Visible tab keeps the small per-frame budget.
 		const budget = (typeof document !== 'undefined' && document.hidden) ? 250 : MESH_DRAIN_BUDGET_MS
-		for (const localId of pendingMeshIds) {
+		// Rebuild the near-first order when stale: exhausted, TTL elapsed, or the avatar moved far
+		// enough that the existing ordering no longer reflects "nearest from where the player stands".
+		const ref = avatarSLPos || worldStore.spawnPos
+		let refMoved = 0
+		if (ref && _drainOrderRef) {
+			const dx = ref[0] - _drainOrderRef[0], dy = ref[1] - _drainOrderRef[1], dz = ref[2] - _drainOrderRef[2]
+			refMoved = Math.sqrt(dx * dx + dy * dy + dz * dz)
+		}
+		if (_drainCursor >= _drainOrder.length ||
+			performance.now() - _drainOrderAt > DRAIN_ORDER_TTL_MS ||
+			refMoved > DRAIN_ORDER_MOVE_M) {
+			rebuildDrainOrder()
+		}
+		while (_drainCursor < _drainOrder.length) {
 			// WHY + _geomPending: bake dispatch is deferred behind the async IDB lookup, so deferred
 			// entries are future bakes the cap must see — outstanding() alone rises too late on cold load.
 			if (meshBaker.outstanding() + _geomPending > BAKE_INFLIGHT_CAP) { _dtBrkCap++; break }   // backpressure: let the worker catch up
+			const localId = _drainOrder[_drainCursor++]
+			if (!pendingMeshIds.has(localId)) continue   // killed / evicted / already built since the sort
 			pendingMeshIds.delete(localId)
 			const obj = worldStore.objects.get(localId)
 			if (!obj) continue  // killed before its mesh was built
@@ -3691,7 +3751,7 @@ export function useWorldEngine(canvasRef) {
 				: (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
 			if (!faceTex) continue
 			const m = mats[i]
-			getTexture(faceTex, faceXform(i)).then(tex => {
+			getTexture(faceTex, faceXform(i), nearRefDist(obj)).then(tex => {
 				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
 				m.map = tex
 				if (!(obj.faceColors?.[sf(i)] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
@@ -3770,7 +3830,7 @@ export function useWorldEngine(canvasRef) {
 		const texId = pickPrimTexture(obj)
 		if (!texId) return
 		const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
-		getTexture(texId, xform).then(tex => {
+		getTexture(texId, xform, nearRefDist(obj)).then(tex => {
 			if (!tex || !mesh.parent || mesh.material !== mat || mat.map) return
 			mat.map = tex
 			if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])

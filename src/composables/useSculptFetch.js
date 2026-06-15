@@ -3,6 +3,7 @@
 // one submesh as base64 typed arrays. Keyed by sculptId+type (same map can be rezzed as different
 // sculpt types). Concurrency-capped + negative cache like the other asset fetchers.
 import { useRealtimeSocket } from './useRealtimeSocket'
+import { heapPush, heapPop } from '@/lib/priorityQueue.js'
 import { C, S } from '@shared/protocol.js'
 
 const FETCH_TIMEOUT_MS = 30_000
@@ -41,7 +42,8 @@ function _on(d) {
 	resolve(subs)
 }
 
-function _netFetch(sculptId, sculptType) {
+// priority = distance to the viewer (smaller = nearer = fetched sooner); queue is a min-heap.
+function _netFetch(sculptId, sculptType, priority = Infinity) {
 	const key = keyOf(sculptId, sculptType)
 	return new Promise(resolve => {
 		const run = () => {
@@ -51,12 +53,12 @@ function _netFetch(sculptId, sculptType) {
 			pending.set(key, v => { clearTimeout(timer); _done(); resolve(v) })
 			emit(C.SCULPT_FETCH, { sculptId, sculptType })
 		}
-		if (active < MAX_INFLIGHT) run(); else queue.push(run)
+		if (active < MAX_INFLIGHT) run(); else heapPush(queue, { run, priority })
 	})
 }
-function _done() { active--; if (queue.length && active < MAX_INFLIGHT) queue.shift()() }
+function _done() { active--; if (queue.length && active < MAX_INFLIGHT) heapPop(queue).run() }
 
-export function getSculpt(sculptId, sculptType) {
+export function getSculpt(sculptId, sculptType, priority = Infinity) {
 	if (!sculptId) return Promise.resolve(null)
 	const key = keyOf(sculptId, sculptType)
 	if (mem.has(key)) return Promise.resolve(mem.get(key))
@@ -64,7 +66,7 @@ export function getSculpt(sculptId, sculptType) {
 	if (inflight.has(key)) return inflight.get(key)
 	_wire()
 	const p = (async () => {
-		const net = await _netFetch(sculptId, sculptType)
+		const net = await _netFetch(sculptId, sculptType, priority)
 		if (net) { mem.set(key, net); return net }
 		failed.add(key)
 		return null

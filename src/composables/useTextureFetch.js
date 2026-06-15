@@ -6,6 +6,7 @@
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
+import { heapPush, heapPop } from '@/lib/priorityQueue.js'
 import { emergencyHeap } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
@@ -104,7 +105,10 @@ function _wire() {
 // as the true near-OOM stop.
 const TEX_INTAKE_BUDGET = 320 * 1048576
 function _pump() {
-	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || getTextureBytes() > TEX_INTAKE_BUDGET)) { active++; netQueue.shift()() }
+	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || getTextureBytes() > TEX_INTAKE_BUDGET)) {
+		active++
+		heapPop(netQueue).run()   // nearest queued fetch first (near-first load)
+	}
 }
 
 // Re-pump from a periodic caller (the world-engine drain tick) so queued fetches resume after the
@@ -144,7 +148,7 @@ function _onAssetData(d) {
 // Fetch a texture's WebP bytes from the server over WS, gated by MAX_INFLIGHT. Resolves the Blob
 // or null (timeout/miss). The slot is held from emit() until S.ASSET_DATA or timeout, so the server's
 // serialized J2C decoder is never asked for more than MAX_INFLIGHT textures at once.
-function _wsFetch(uuid) {
+function _wsFetch(uuid, priority = Infinity) {
 	_wire()
 	stats.requested++
 	return new Promise(resolve => {
@@ -187,7 +191,7 @@ function _wsFetch(uuid) {
 			emit(C.ASSET_FETCH, { assetType: 'texture', uuid })
 		}
 		// active was already incremented by _pump(); queue + pump keeps the bookkeeping in one place.
-		netQueue.push(run)
+		heapPush(netQueue, { run, priority })   // min-heap by distance; _pump dispatches nearest first
 		_pump()
 	})
 }
@@ -219,7 +223,7 @@ export function getTextureBytes() {
 }
 
 // Resolve a UUID to its WebP Blob through all cache layers. Deduped; populates IDB on a miss.
-function getBlob(uuid) {
+function getBlob(uuid, priority = Infinity) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
 	if (blobCache.has(uuid)) return Promise.resolve(blobCache.get(uuid))
 	if (failedHard.has(uuid)) return Promise.resolve(null)                       // server errored — never retry
@@ -229,7 +233,7 @@ function getBlob(uuid) {
 	const p = (async () => {
 		const cached = await texCacheGet(uuid)         // IndexedDB (survives reloads)
 		if (cached) { blobCache.set(uuid, cached.blob); alphaCache.set(uuid, cached.hasAlpha); return cached.blob }
-		const net = await _wsFetch(uuid)               // server fetch + transcode (sets alphaCache)
+		const net = await _wsFetch(uuid, priority)     // server fetch + transcode (sets alphaCache)
 		if (net) { blobCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time
 		// null here = hard error (failedHard set in _onAssetData) or timeout (softAttempts bumped in
 		// _wsFetch). Either way classified already — a later getBlob call retries soft ones.
@@ -280,13 +284,13 @@ async function buildTexture(blob) {
 }
 
 // Base texture for a UUID (no UV transform). Cached + deduped at the GPU-texture layer.
-function getBaseTexture(uuid) {
+function getBaseTexture(uuid, priority = Infinity) {
 	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
 	if (cache.has(uuid))       { lastUsed.set(uuid, Date.now()); return Promise.resolve(cache.get(uuid)) }
 	if (texInflight.has(uuid)) return texInflight.get(uuid)
 
 	// Blob-ready is cheap; defer the expensive buildTexture+upload to the per-frame budgeted pump.
-	const p = getBlob(uuid).then(blob => {
+	const p = getBlob(uuid, priority).then(blob => {
 		if (!blob) { texInflight.delete(uuid); return null }
 		return new Promise((resolve) => { buildQueue.push({ uuid, blob, resolve }) })
 	})
@@ -345,9 +349,9 @@ export function peekTexture(uuid) {
 	return t || null
 }
 
-export function getTexture(uuid, xform = null) {
+export function getTexture(uuid, xform = null, priority = Infinity) {
 	if (uuid) lastUsed.set(uuid, Date.now())   // applied now → protect from LRU prune
-	const baseP = getBaseTexture(uuid)
+	const baseP = getBaseTexture(uuid, priority)
 	if (isIdentityXform(xform)) return baseP
 	const key = `${uuid}|${xform.repeat[0]}|${xform.repeat[1]}|${xform.offset[0]}|${xform.offset[1]}|${xform.rotation}`
 	if (xformCache.has(key)) return Promise.resolve(xformCache.get(key))

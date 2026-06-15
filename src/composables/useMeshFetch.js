@@ -5,6 +5,7 @@
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { meshCacheGet, meshCachePut } from '@/lib/meshCache.js'
 import { createByteLRU } from '@/lib/byteLRU.js'
+import { heapPush, heapPop } from '@/lib/priorityQueue.js'
 import { C, S } from '@shared/protocol.js'
 
 const FETCH_TIMEOUT_MS = 30_000
@@ -63,8 +64,9 @@ function _on(d) {
 	meshCachePut(d.meshId, subs)
 }
 
-// Send one network request, respecting the in-flight cap; queue if full.
-function _netFetch(uuid) {
+// Send one network request, respecting the in-flight cap; queue (min-heap, nearest first) if full.
+// priority = distance to the viewer (smaller = nearer = fetched sooner); Infinity for non-near callers.
+function _netFetch(uuid, priority = Infinity) {
 	return new Promise(resolve => {
 		const run = async () => {
 			active++
@@ -77,10 +79,10 @@ function _netFetch(uuid) {
 			pending.set(uuid, v => { clearTimeout(timer); _done(); resolve(v) })
 			emit(C.MESH_FETCH, { meshId: uuid })
 		}
-		if (active < MAX_INFLIGHT) run(); else queue.push(run)
+		if (active < MAX_INFLIGHT) run(); else heapPush(queue, { run, priority })
 	})
 }
-function _done() { active--; if (queue.length && active < MAX_INFLIGHT) queue.shift()() }
+function _done() { active--; if (queue.length && active < MAX_INFLIGHT) heapPop(queue).run() }
 
 /** Live fetch counters (mesh). For watching steady population / confirming the cap holds. */
 export function getMeshStats() {
@@ -92,7 +94,7 @@ export function getMeshBytes() {
 	return mem.bytes()
 }
 
-export function getMesh(uuid) {
+export function getMesh(uuid, priority = Infinity) {
 	if (!uuid) return Promise.resolve(null)
 	if (mem.has(uuid)) return Promise.resolve(mem.get(uuid))
 	if (failed.has(uuid)) return Promise.resolve(null)
@@ -102,7 +104,7 @@ export function getMesh(uuid) {
 	const p = (async () => {
 		const cached = await meshCacheGet(uuid)
 		if (cached) { mem.set(uuid, cached); return cached }
-		const net = await _netFetch(uuid)
+		const net = await _netFetch(uuid, priority)
 		if (net) { mem.set(uuid, net); meshCachePut(uuid, net); return net }
 		failed.add(uuid)
 		return null

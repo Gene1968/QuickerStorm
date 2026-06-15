@@ -56,3 +56,11 @@ export function selectReloads(candidates, rNear, maxN) {
 		.slice(0, maxN)
 		.map(c => c.id)
 }
+
+// Nearest-first ordering of a plain id list (near-first load). The engine owns THREE/camera, so it
+// passes a distFn(id)→metres; this module just returns a NEW array sorted ascending (Infinity last).
+// Used to drain the mesh-build queue closest-first so the player's surroundings build before far
+// objects. Pure + total; the caller's Set stays the source of truth (stale ids are skipped on drain).
+export function orderByDistance(ids, distFn) {
+	return [...ids].sort((a, b) => distFn(a) - distFn(b))
+}
