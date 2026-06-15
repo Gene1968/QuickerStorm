@@ -40,6 +40,14 @@ export function replayCachedWorld(session: CircuitState): void {
 		}))
 	}
 
+	// Re-establish the OWN avatar before prims. On resume the sim won't re-broadcast it (agent already
+	// present) and it's never in the client's IDB cache, so without this the client never sets
+	// ownAvatarLocalId → no follow-cam, movement blocked (user can only orbit) until a teleport. The
+	// localId is session-stable, so live TerseUpdates reconcile the (briefly stale) replayed position.
+	if (session.ownAvatarUpdate) {
+		ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: [session.ownAvatarUpdate] } }))
+	}
+
 	const patches = [...session.terrainCache.values()]
 	if (patches.length > 0) {
 		for (let i = 0; i < patches.length; i += PATCHES_PER_FRAME) {
@@ -65,7 +73,7 @@ export function replayCachedWorld(session: CircuitState): void {
 		}
 	}
 
-	slog.info(ws, `[resync] replayed cached world: region="${session.cachedRegionName ?? ''}" patches=${patches.length} objects=${objs.length} spawnPos=${session.cachedSpawnPos?.join(',') ?? '?'}`)
+	slog.info(ws, `[resync] replayed cached world: region="${session.cachedRegionName ?? ''}" patches=${patches.length} objects=${objs.length} ownAvatar=${session.ownAvatarUpdate ? 'yes' : 'NONE'} spawnPos=${session.cachedSpawnPos?.join(',') ?? '?'}`)
 	// Decode-forensics companion (lludp.ts WATCH_LOCALIDS): resync is a delivery path the packet
 	// watch can't see — report whether a watched object was part of this replay and what it carried.
 	for (const idStr of (process.env.QS_WATCH_LOCALIDS ?? '').split(',')) {

@@ -146,6 +146,13 @@ export interface CircuitState {
 	// established by an ObjectUpdate, so the cache is what makes the scene reconstitutable.
 	// objCache stores the raw decoded obj payload as forwarded to the browser.
 	objCache: Map<number, unknown>   // localId → obj record (shape matches decodeObjectUpdate output)
+	// The own avatar's last full ObjectUpdate (pcode 47, fullId == agentId), captured at receive time.
+	// WHY: on session resume the sim won't re-broadcast the avatar (agent already present) and a
+	// duplicate CompleteAgentMovement is ignored, so without this the own avatar is lost on reload
+	// (no ownAvatarLocalId → follow-cam dead, movement blocked). resync replays this so the client
+	// re-establishes ownAvatarLocalId; the localId is session-stable, so live TerseUpdates reconcile.
+	ownAvatarUpdate?: unknown
+
 	// Every ObjectUpdateCached probe (localId → crc) seen this session. WHY: the sim floods these in
 	// the first seconds after login — often BEFORE the browser's world engine has mounted its WS
 	// handlers — so the forwarded copies dispatch into the void and the client never requests the

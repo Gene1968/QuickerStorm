@@ -668,6 +668,13 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					session.distinctLocalIds.add(o.localId)
 					const idx = session.cacheMissPending.indexOf(o.localId)
 					if (idx >= 0) session.cacheMissPending.splice(idx, 1)
+					// Capture the OWN avatar's full update so resync can re-establish it after a page
+					// reload (the sim won't re-broadcast it on resume). pcode 47 = avatar; match fullId
+					// to our agentId. Stored separately from objCache so it survives even if evicted.
+					const oa = o as { pcode?: number; fullId?: string }
+					if (oa.pcode === 47 && oa.fullId && oa.fullId.toLowerCase() === session.agentId.toLowerCase()) {
+						session.ownAvatarUpdate = o
+					}
 					// DIAG: child prims — look up parent's cached pos to see if parent is underwater
 					// DIAG: root prims (parentId=0) placed below water = decode or sim issue
 					if ((o.parentId ?? 0) !== 0) {
@@ -1263,6 +1270,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// ObjectUpdate); replying immediately would replay an empty/partial backlog.
 		session.probeResyncWanted = true
 		slog.info(session.ws, `[ObjCached] probe-resync armed (backlog=${session.probeBacklog?.size ?? 0} so far)`)
+		// The engine just registered its OBJECT_UPDATE handler — re-send the own avatar NOW. WHY: the
+		// replayCachedWorld burst on resume fires BEFORE the engine mounts, so its avatar frame is lost
+		// (AGENT_SPAWN_POS survives only because App.vue catches it pre-mount). Prims recover via the
+		// probe backlog, but the avatar isn't a probe and is never client-cached, so it has no other
+		// recovery path. This frame reaches the mounted engine → ownAvatarLocalId set, follow-cam +
+		// movement restored; the session-stable localId lets live TerseUpdates reconcile the position.
+		if (session.ownAvatarUpdate) {
+			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: [session.ownAvatarUpdate] } }))
+			slog.info(session.ws, `→ own-avatar re-sent on probe-resync (engine ready)`)
+		}
 		return
 	}
 

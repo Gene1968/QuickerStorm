@@ -120,9 +120,12 @@ hard ceilings.
 
 ## Next work (prioritized — value per effort)
 
-1. **Prioritize-near** — build + fetch the immediate surroundings FIRST (distance-ordered queues). Makes
-   *nearby* load in seconds even on a heavy region (the FS "nearby in 1–2 s" feel), and lets the badge
-   stop saying "caching" once the near set is ready. Helps every region type, no tuning. **Highest value.**
+1. **Prioritize-near** — ✅ IMPLEMENTED 2026-06-15 (uncommitted; see mem [[near-first-load-shipped]]).
+   Build + texture + mesh + sculpt queues dispatch nearest-to-avatar first (min-heap + `nearRefDist`,
+   child→root resolved). **Correct but its benefit is MASKED on mesh/heavy regions by #11 (texture
+   read-starvation) + #13 (heap/LOD)** — confirmed live: cubes build instantly, the slow part is
+   download completion (#11 starves it) and the region can't fit 4GB anyway (#13). So near-first won't
+   *feel* better until #11 + #13 move in concert. **NEXT = #11 (off-main-thread IDB reads / throttle).**
 2. **Refresh-textures button** (wire the disabled `ObjectContextMenu` stub) — force-reload a specific
    object's assets (clear negative-cache, jump the queue). Manual escape hatch when far things are deferred.
 3. **Near-aware texture eviction** — `pruneTexturesLRU` must protect textures of near/visible objects so a
