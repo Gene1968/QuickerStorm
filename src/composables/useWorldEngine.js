@@ -4270,6 +4270,25 @@ export function useWorldEngine(canvasRef) {
 				const t2 = coverage(texMul, 2), l2 = coverage(linkSize, 2)
 				const linkSizes = [...linkSize.values()].sort((a, b) => b - a)
 
+				// ── HEAP ATTRIBUTION (DEV, FEATURE-GAPS #13/#11): hunt the ~3GB retained heap that wedges a
+				// full cold 48k load at 97% (accounted ~975MB, worldStore ~23MB → ~3GB unexplained). The key
+				// tell is a GPU-resource disposal leak: glGeometries/glTextures >> what's actually rendered.
+				const rinfo = renderer?.info
+				const tS = getTextureStats?.() || {}, mS = getMeshStats?.() || {}
+				const pm = (typeof performance !== 'undefined' && performance.memory) || null
+				const wbs = getGeomWriteBufStats()
+				const heapAttr = {
+					glGeometries: rinfo?.memory?.geometries ?? -1,   // ⚠ >> rendered ⇒ BufferGeometry disposal leak
+					glTextures:   rinfo?.memory?.textures   ?? -1,   // ⚠ >> distinctTextures ⇒ texture disposal leak
+					glPrograms:   rinfo?.programs?.length    ?? -1,
+					ingestQ: _ingestQueue.length, orphanRoots: orphansByParent.size,
+					geomPending: _geomPending, buildQ: pendingMeshIds.size, evicted: evicted.size, meshMap: meshMap.size,
+					texQ: tS.queued, texInflight: tS.inflight, texCache: tS.cached,
+					meshQ: mS.queued, meshInflight: mS.inflight, meshCache: mS.cached,
+					geomMemMB: Math.round(getGeomMemBytes() / 1048576), wBufMB: Math.round(wbs.bytes / 1048576), wBufDrop: wbs.dropped,
+					heapUsedMB: pm ? Math.round(pm.usedJSHeapSize / 1048576) : -1, heapLimitMB: pm ? Math.round(pm.jsHeapSizeLimit / 1048576) : -1,
+				}
+
 				// ── POOL-KEY FRAGMENTATION (why instancing dedups poorly) — run with the flag OFF so all
 				// objects are individual meshes carrying their real materials. Shows what splits pools:
 				// geom-only (best case) → +texId → +material flags → +UV (the current pool key). If the
@@ -4303,6 +4322,12 @@ export function useWorldEngine(canvasRef) {
 					`POOLS: ${poolMeshes} instanced draw calls for ${poolObjs} pooled objs`,
 					`SCENE TOTAL ≈ ${sceneDrawCalls} (individual ${drawCalls} + pools ${poolMeshes})   |   renderer.info GL calls (last frame, incl terrain/water/etc): ${glCalls}`,
 					`rendered type split: ${[...byType].map(([k, c]) => `${k}=${c}`).join('  ')}`,
+					``,
+					`── HEAP ATTRIBUTION (hunt the ~3GB; heap ${heapAttr.heapUsedMB}/${heapAttr.heapLimitMB}MB) ──`,
+					`GL geometries: ${heapAttr.glGeometries}  (rendered ${rendered.length})  ⚠leak if ≫    GL textures: ${heapAttr.glTextures}  (distinct ${texMul.size})    programs: ${heapAttr.glPrograms}`,
+					`queues: ingest=${heapAttr.ingestQ}  buildQ=${heapAttr.buildQ}  geomPending=${heapAttr.geomPending}  evicted=${heapAttr.evicted}  orphanRoots=${heapAttr.orphanRoots}`,
+					`tex: q=${heapAttr.texQ} inflight=${heapAttr.texInflight} cache=${heapAttr.texCache}    mesh: q=${heapAttr.meshQ} inflight=${heapAttr.meshInflight} cache=${heapAttr.meshCache}`,
+					`pools: geomMem=${heapAttr.geomMemMB}MB  wBuf=${heapAttr.wBufMB}MB(drop ${heapAttr.wBufDrop})`,
 					`per-face blockers (material array → not directly batchable): ${perFaceBlockers}`,
 					``,
 					`INSTANCING — shape+scale (current keying):`,
@@ -4328,7 +4353,7 @@ export function useWorldEngine(canvasRef) {
 				console.log(text)
 				// Relay to the Bun server log ([ClientLog]) so it's readable without the browser console.
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: text.slice(0, 4000), stack: '' }) } catch { /* not connected */ }
-				return { drawCalls, multiMat, poolMeshes, poolObjs, sceneDrawCalls, glCalls, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, _text: text }
+				return { drawCalls, multiMat, poolMeshes, poolObjs, sceneDrawCalls, glCalls, objects: all.length, rendered: rendered.length, byType: Object.fromEntries(byType), distinctGeomKeys: keyMul.size, distinctGeomKeysNoScale: keyMulNS.size, distinctTextures: texMul.size, i2, i4, ns2, ns4, t2, l2, heapAttr, _text: text }
 			}
 			dev.log('[Census] qsCensus() ready — run it in the console on a heavy region once it settles')
 		}

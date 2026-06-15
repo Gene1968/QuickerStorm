@@ -28,9 +28,14 @@ const FETCH_TIMEOUT_MS = 30_000
 // for the session, and which ones win the race varies per load. Cap concurrent network fetches like
 // useMeshFetch does so the queue drains steadily instead of flooding. (texCacheGet/IDB hits and
 // in-memory hits don't go through the cap — only true network fetches do.)
-// 12: live telemetry showed 0 timeouts at 6 and ~1.3 fetches/s (grid round-trip bound, parallelizable)
-// → headroom to roughly double throughput. Raise further only if timeouts stay 0.
-const MAX_INFLIGHT = 12
+// Sweet spot = 6. The raise to 12 (chasing "parallelizable headroom") BACKFIRED: live [Asset]
+// telemetry on a dense cold region showed per-fetch time ballooning 0.4s → 4.4s as concurrency
+// climbed, with NET throughput dropping to ~1/s (vs 0 timeouts + ~1.3/s at 6). The grid's asset
+// service is throughput-limited, not cleanly parallel — 12-way concurrency just adds queue latency
+// and pushes fetches toward FETCH_TIMEOUT_MS, where they negative-cache and NEVER persist to qs-tex
+// (poisoning the warm cache). 6 keeps each fetch fast, every fetch completes, and texCachePut warms
+// qs-tex reliably so the NEXT visit is instant. Re-tune only with fresh [Asset] fetch=ms evidence.
+const MAX_INFLIGHT = 6
 
 // Per-frame texture build/upload pump (FEATURE-GAPS #11). Blob-ready enqueues a build job; the
 // engine drains buildQueue once per frame via pumpTextureBuilds(), spreading the decode/downscale/

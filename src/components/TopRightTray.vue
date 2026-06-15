@@ -82,7 +82,7 @@ function initials(name) {
 			title="Conversations"
 			@click="ui.toggleChat()"
 		>
-			<MessageCircleIcon class="w-5 h-5" />
+			<MessageCircleIcon class="w-5 h-5 text-fg" />
 			<span v-if="im.unreadCount.value" class="tray-alert-badge">x{{ im.unreadCount.value }}</span>
 			<span v-else class="tray-count-badge">{{ [...im.conversations.value.values()].length }}</span>
 		</button>
@@ -139,20 +139,20 @@ function initials(name) {
 	font-weight: 700;
 	line-height: 1.2;
 	text-align: center;
-	color: #fff;
+	color: var(--fg);
 }
 .tray-count-badge {
 	position: absolute;
 	border-radius: 50%;
-	background: #fff;
+	background: var(--fg);
 	margin-top: 0.01rem;
 	min-height: 0.95rem;
 	min-width: 0.95rem;
 	font-size: 0.55rem;
 	font-weight: 700;
-	line-height: 1.5;
+	line-height: 1.75;
 	text-align: center;
-	color: #666;
+	color: var(--panel);
 }
 
 /* Count superimposed directly on the envelope glyph (white with a dark outline so it reads on the

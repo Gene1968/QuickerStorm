@@ -5,7 +5,7 @@
 // on the server; the browser gets clean base64. Shapes from caps-feature-map cluster A.
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
-import { decodeInPool } from '../lib/j2cPool'
+import { decodeInPool, getPoolStats } from '../lib/j2cPool'
 import { createAssetMemo } from '../lib/assetMemo'
 import { S } from '../../shared/protocol.js'
 
@@ -66,22 +66,27 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 		// shares the in-flight grid fetch + decode instead of re-queuing both. Errors throw and are
 		// never cached (the rejection reaches every coalesced waiter; a later retry re-attempts).
 		const payload = await assetMemo.memo(`${assetType}:${uuid}`, async () => {
+			const tFetch0 = performance.now()
 			const res = await fetch(url, { headers: { Accept: spec.accept }, signal: AbortSignal.timeout(25_000) })
 			// WHY: OpenSim returns 404 (not 416) when a speculative range overshoots; here we make no
 			// range request, so a 404 is a genuine missing asset.
 			if (!res.ok) throw new Error(`http_${res.status}`)
 			const raw = Buffer.from(await res.arrayBuffer())
+			const fetchMs = Math.round(performance.now() - tFetch0)   // DIAG: remote-fetch vs decode split
 
-			let out: Buffer, hasAlpha = false, dims = ''
+			let out: Buffer, hasAlpha = false, dims = '', decodeMs = 0
 			if (spec.transcode) {
+				const tDec0 = performance.now()
 				const r = await decodeInPool(raw); out = r.image; hasAlpha = r.hasAlpha
+				decodeMs = Math.round(performance.now() - tDec0)
 				dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
 			}
 			else out = raw
 			// Sampled: first 10 then every 25th (real work only — cache hits are silent; [AssetMemo]
 			// stats carry the totals). Per-asset lines were the dominant server-log flood.
 			if (++_assetLogN <= 10 || _assetLogN % 25 === 0) {
-				slog.info(s.ws, `[Asset] #${_assetLogN} ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcode ? ` → ${out.length}B webp${dims}` : ''})`)
+				const ps = getPoolStats()
+				slog.info(s.ws, `[Asset] #${_assetLogN} ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcode ? ` → ${out.length}B webp${dims}` : ''}) fetch=${fetchMs}ms decode=${decodeMs}ms | pool w=${ps.workers} degraded=${ps.degraded} inflight=${ps.inflight}`)
 			}
 			return {
 				mime: spec.transcode ? spec.mime : (res.headers.get('content-type') || spec.mime),
