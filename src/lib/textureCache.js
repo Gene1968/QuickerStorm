@@ -109,7 +109,12 @@ export function planEvictions(entries, capBytes) {
 // freezes the caller's blobInflight promise FOREVER; every later request for that uuid joins the
 // frozen promise and the whole texture queue wedges. Past the watchdog we declare a miss — the
 // caller re-fetches from the network (server memoizes), which is slow-but-alive instead of stuck.
-const GET_WATCHDOG_MS = 10_000
+// #11: raised 10s → 30s. The watchdog exists only to break a read that NEVER settles (frozen txn).
+// At 10s it also fired for merely-SLOW reads — under main-thread saturation a read's onsuccess
+// callback queues behind long tasks, so the read completes but its callback is delayed seconds. That
+// false "miss" sent the caller to the network → refetch storm that fed the saturation spiral. At 30s
+// a slow-but-completing read resolves the real blob (no network); only a genuinely-stuck read trips.
+const GET_WATCHDOG_MS = 30_000
 let _watchdogTrips = 0
 
 export async function texCacheGet(uuid, now = Date.now()) {

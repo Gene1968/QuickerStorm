@@ -62,5 +62,11 @@ export function selectReloads(candidates, rNear, maxN) {
 // Used to drain the mesh-build queue closest-first so the player's surroundings build before far
 // objects. Pure + total; the caller's Set stays the source of truth (stale ids are skipped on drain).
 export function orderByDistance(ids, distFn) {
-	return [...ids].sort((a, b) => distFn(a) - distFn(b))
+	// Decorate-sort-undecorate: call distFn EXACTLY ONCE per id (not inside the comparator, which would
+	// invoke it ~2·n·log(n) times). On a 20k-deep build queue with a Map-lookup + child→root distFn,
+	// comparator-side evaluation cost ~1.5s/rebuild and starved the render loop (#11). This is O(n) distFn.
+	return ids
+		.map(id => ({ id, d: distFn(id) }))
+		.sort((a, b) => a.d - b.d)
+		.map(e => e.id)
 }

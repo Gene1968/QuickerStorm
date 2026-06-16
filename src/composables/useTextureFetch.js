@@ -231,7 +231,10 @@ function getBlob(uuid, priority = Infinity) {
 	if (blobInflight.has(uuid)) return blobInflight.get(uuid)
 
 	const p = (async () => {
-		const cached = await texCacheGet(uuid)         // IndexedDB (survives reloads)
+		const cached = await texCacheGet(uuid)         // IndexedDB (survives reloads). #11: the read's
+		// watchdog is raised (see GET_WATCHDOG_MS) so a slow-but-completing read RESOLVES THE REAL BLOB
+		// here instead of false-missing → network. Only a genuine miss (fast null) or a truly-stuck
+		// read (past the long watchdog) falls through to the network — no refetch storm.
 		if (cached) { blobCache.set(uuid, cached.blob); alphaCache.set(uuid, cached.hasAlpha); return cached.blob }
 		const net = await _wsFetch(uuid, priority)     // server fetch + transcode (sets alphaCache)
 		if (net) { blobCache.set(uuid, net); texCachePut(uuid, net, alphaCache.get(uuid) ?? false); return net }   // persist for next time

@@ -501,6 +501,7 @@ export function useWorldEngine(canvasRef) {
 	let _frN = 0, _frMs = 0, _frMaxMs = 0               // rAF frame-work gauge (reset each 5s report)
 	let _ltN = 0, _ltMs = 0, _ltMaxMs = 0               // PerformanceObserver longtask totals
 	let _ltTotalMs = 0                                  // never-reset longtask accumulator (lit-gate reads deltas)
+	const _phaseMs = {}   // #11 attribution (DEV): timed() phase → accumulated main-thread ms this window
 	let _lastTexReq = 0, _lastMeshReq = 0  // last logged request counts (skip log when idle + unchanged)
 		// Persistent object cache: repaint the scene instantly on reload from IndexedDB, then let live
 		// ObjectUpdates correct it. Region key = global X/Y coords; live data wins (replay never
@@ -3363,6 +3364,7 @@ export function useWorldEngine(canvasRef) {
 		try { return fn() }
 		finally {
 			const dt = performance.now() - t0
+			_phaseMs[name] = (_phaseMs[name] || 0) + dt   // #11 attribution: accumulate per-phase main-thread ms
 			if (dt > 250) {
 				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: `[Slow] ${name} ${Math.round(dt)}ms (objs=${worldStore.objects.size} meshMap=${meshMap.size} buildQ=${pendingMeshIds.size} inst=${_instancePool?.count() ?? 0})`, stack: '' }) } catch { /* not connected */ }
 			}
@@ -3585,8 +3587,9 @@ export function useWorldEngine(canvasRef) {
 	let _drainCursor = 0
 	let _drainOrderAt = 0
 	let _drainOrderRef = null   // [x,y,z] viewer ref (avatar/spawn) at last rebuild — re-sort on move
-	const DRAIN_ORDER_TTL_MS = 750
-	const DRAIN_ORDER_MOVE_M = 8
+	const DRAIN_ORDER_TTL_MS = 2000   // #11: re-sort the near-first order at most ~2×/window (was 750ms);
+	const DRAIN_ORDER_MOVE_M = 8      // a huge queue makes each rebuild non-trivial even after the O(n) fix
+	// — movement still forces a fresh sort so "nearest from where you stand" stays correct.
 
 	function rebuildDrainOrder() {
 		_drainOrder = orderByDistance([...pendingMeshIds], (id) => {
@@ -4197,7 +4200,7 @@ export function useWorldEngine(canvasRef) {
 		// Spread texture build+upload across frames (FEATURE-GAPS #11): drain a budgeted slice of
 		// the build queue here so freshly-uploaded textures are GPU-resident before render() and
 		// the per-frame upload count is bounded (no burst spike).
-		pumpTextureBuilds()
+		timed('texbuild', pumpTextureBuilds)   // #11 attribution: texture decode (createImageBitmap) + GPU upload
 
 		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
 		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
@@ -4485,14 +4488,19 @@ export function useWorldEngine(canvasRef) {
 			// Main-thread health: frame work (rAF) + long tasks. This is what starves the drain timer.
 			if (_frN || _ltN) {
 				const ws = takeWsStats()
+				// #11 attribution: per-phase main-thread ms this window (which phase eats the frame).
+				const phases = Object.entries(_phaseMs).filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1])
+					.map(([k, v]) => `${k}=${Math.round(v)}`).join(' ')
 				const mline = `[Main] frames=${_frN} avg=${(_frN ? _frMs / _frN : 0).toFixed(0)}ms max=${_frMaxMs.toFixed(0)}ms` +
 					` | longtasks=${_ltN} total=${_ltMs.toFixed(0)}ms max=${_ltMaxMs.toFixed(0)}ms` +
+					` | phases: ${phases || '-'}` +
 					` | ws parse=${ws.parseMs.toFixed(0)}ms top: ${ws.top || '-'}`
 				debugStore.push('info', mline)
 				if (_relay) {
 					try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: mline, stack: '' }) } catch { /* ignore */ }
 				}
 				_frN = 0; _frMs = 0; _frMaxMs = 0; _ltN = 0; _ltMs = 0; _ltMaxMs = 0
+				for (const k in _phaseMs) delete _phaseMs[k]
 			}
 			// Where bake time actually goes: worker-side geometry ms vs main-thread applySwap ms,
 			// plus how much baking the geometry cache AVOIDED (hit=mem+idb vs miss=real bakes).
