@@ -3565,6 +3565,7 @@ export function useWorldEngine(canvasRef) {
 		for (const [id, mesh] of meshMap) {
 			const obj = worldStore.objects.get(id)
 			if (!obj) continue                          // KillObject race — leave for cullTick/removeMesh
+			if (mesh.userData._rescueN >= 2) continue   // render-quarantined (strike 2 hid it) — don't re-show
 			if ((obj.parentId ?? 0) !== 0) continue     // children ride their root's visibility
 			if (obj.pcode === PCODE_AVATAR) continue    // never hide avatars
 			if (id === ownAvatarLocalId || id === editId) continue  // never hide own/edited
