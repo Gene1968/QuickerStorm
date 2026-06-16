@@ -125,7 +125,14 @@ hard ceilings.
    child→root resolved). **Correct but its benefit is MASKED on mesh/heavy regions by #11 (texture
    read-starvation) + #13 (heap/LOD)** — confirmed live: cubes build instantly, the slow part is
    download completion (#11 starves it) and the region can't fit 4GB anyway (#13). So near-first won't
-   *feel* better until #11 + #13 move in concert. **NEXT = #11 (off-main-thread IDB reads / throttle).**
+   *feel* better until #11 + #13 move in concert.
+   **✅ #11 TAMED + COMMITTED 2026-06-15** (see mem [[texture-read-starvation-tamed]]): TexCache watchdog
+   10s→30s (slow read resolves the real blob, no false-miss→network storm) + fixed our own near-first
+   drain-order sort (`orderByDistance` ran distFn in the comparator = ~1.5s/rebuild on a 20k queue,
+   starved render to frames=0 → precompute O(n) + TTL 750→2000ms). Live: frames 0→~42fps, textures fill,
+   `⏱0`. Added `[Main] phases:` per-phase main-thread attribution (DEV). **NEXT = render (#13):** phases
+   show `render=1671–2546ms/window` dominates as objects build; far objects (~300m+) drawn at dd=192m →
+   scene-graph traversal → 3–6fps + springback. → LOD / cull far OUT of the scene graph / off-thread render.
 2. **Refresh-textures button** (wire the disabled `ObjectContextMenu` stub) — force-reload a specific
    object's assets (clear negative-cache, jump the queue). Manual escape hatch when far things are deferred.
 3. **Near-aware texture eviction** — `pruneTexturesLRU` must protect textures of near/visible objects so a

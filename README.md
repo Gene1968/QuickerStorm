@@ -15,6 +15,8 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 - Persistent CRC object cache — full scene from IDB on reload, zero sim re-fetch
 - Scenery loading badge gives better insight into redraws as you navigate new areas
 - Warm reload: geometry and textures load from disk in seconds, not minutes
+- Near-first loading: the scene around your avatar builds and textures before distant objects
+- Heavy-region texture loading no longer death-spirals on the single main thread (cached reads stop false-missing into a network-refetch storm)
 - Multi-floater inventory browsing with accurate counts, search, and filter
 
 ---
