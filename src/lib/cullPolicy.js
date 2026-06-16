@@ -70,3 +70,23 @@ export function orderByDistance(ids, distFn) {
 		.sort((a, b) => a.d - b.d)
 		.map(e => e.id)
 }
+
+// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling). Decides which ROOT meshes to
+// show/hide by camera distance, with a hysteresis dead-zone so objects parked at the boundary don't
+// flicker. WHY decoupled from selectEvictions: eviction only runs when OVER BUDGET, so on a region that
+// fits in the heap nothing beyond _effNear is evicted and it all stays in the scene graph being
+// traversed every frame (the "300m+ drawn at dd=192m" cost). Hiding a root makes THREE's projectObject
+// early-return and skip its entire subtree → one .visible test collapses a whole linkset's traversal.
+// The engine pre-filters protected ids (avatars/own/edited) — they are never passed here, so never
+// hidden. `visible` is each root's current mesh.visible; we emit ONLY ids whose state must change so the
+// caller writes the minimum number of .visible flags. Pure + total (no THREE/DOM).
+export function selectVisibility(candidates, effNear, hysteresis) {
+	const showAt = effNear - hysteresis
+	const show = [], hide = []
+	for (const c of candidates) {
+		if (c.dist > effNear) { if (c.visible) hide.push(c.id) }       // beyond radius → hide if shown
+		else if (c.dist < showAt) { if (!c.visible) show.push(c.id) }  // well inside → show if hidden
+		// else: dead-zone (showAt, effNear] → keep current visibility
+	}
+	return { show, hide }
+}

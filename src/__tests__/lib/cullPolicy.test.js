@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility } from '@/lib/cullPolicy.js'
 
 // FEATURE-GAPS #13: the draw-distance governor must only GROW the radius when BOTH app-budget AND heap
 // have headroom — the old recovery (appRatio-only) grew dd back every tick even under heap pressure.
@@ -95,5 +95,47 @@ describe('orderByDistance', () => {
 		const ids = [3, 1, 2]
 		orderByDistance(ids, id => id)
 		expect(ids).toEqual([3, 1, 2])
+	})
+})
+
+// FEATURE-GAPS #13 (render ceiling): the render-distance visibility cull hides root meshes beyond the
+// governor radius _effNear (decoupled from memory eviction) so far objects stop being traversed every
+// frame. Pure decision: distance-only with a hysteresis dead-zone; the engine pre-filters protected ids
+// (avatars/own/edited) and passes each root's current .visible so only CHANGES are emitted.
+describe('selectVisibility (#13 render-distance cull)', () => {
+	it('hides currently-visible roots beyond effNear', () => {
+		const cands = [{ id: 1, dist: 300, visible: true }, { id: 2, dist: 50, visible: true }]
+		expect(selectVisibility(cands, 192, 16)).toEqual({ show: [], hide: [1] })
+	})
+	it('shows currently-hidden roots within (effNear - hysteresis)', () => {
+		const cands = [{ id: 1, dist: 50, visible: false }, { id: 2, dist: 300, visible: false }]
+		expect(selectVisibility(cands, 192, 16)).toEqual({ show: [1], hide: [] })
+	})
+	it('hysteresis dead-zone: roots between (effNear - hyst) and effNear keep their state (no churn)', () => {
+		// effNear=192, hyst=16 → dead zone (176, 192]
+		const cands = [
+			{ id: 1, dist: 185, visible: true },   // visible in band → stays visible (not re-hidden)
+			{ id: 2, dist: 185, visible: false },  // hidden in band → stays hidden (not re-shown)
+		]
+		expect(selectVisibility(cands, 192, 16)).toEqual({ show: [], hide: [] })
+	})
+	it('emits ONLY state changes (already-correct roots omitted)', () => {
+		const cands = [
+			{ id: 1, dist: 50, visible: true },    // near + already visible → no-op
+			{ id: 2, dist: 300, visible: false },  // far + already hidden → no-op
+		]
+		expect(selectVisibility(cands, 192, 16)).toEqual({ show: [], hide: [] })
+	})
+	it('boundary: dist exactly == effNear is NOT hidden (strict >)', () => {
+		const cands = [{ id: 1, dist: 192, visible: true }]
+		expect(selectVisibility(cands, 192, 16)).toEqual({ show: [], hide: [] })
+	})
+	it('empty candidates → {show:[], hide:[]}', () => {
+		expect(selectVisibility([], 192, 16)).toEqual({ show: [], hide: [] })
+	})
+	it('does not mutate the input array', () => {
+		const cands = [{ id: 1, dist: 300, visible: true }, { id: 2, dist: 50, visible: false }]
+		selectVisibility(cands, 192, 16)
+		expect(cands.map(c => c.id)).toEqual([1, 2])
 	})
 })
