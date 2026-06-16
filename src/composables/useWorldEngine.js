@@ -18,7 +18,7 @@ import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
-import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
+import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
@@ -205,6 +205,8 @@ export function useWorldEngine(canvasRef) {
 	const stopLitShadingWatch = watch(() => uiStore.litShading, (on) => relightScene(on))
 	// MenuBar "Rebuild Scene" → full client-side recovery (clear evictions, requeue, resync).
 	const stopSceneRebuildWatch = watch(() => uiStore.sceneRebuildTick, () => rebuildScene('user'))
+	// ObjectContextMenu "Refresh textures" → clear one object's texture failure/cache state + re-apply.
+	const stopTexRefreshWatch = watch(() => uiStore.textureRefreshReq, (req) => { if (req) refreshObjectTextures(req.localId) })
 	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
 	// built — water plane starts at the default 20m and terrain is coloured against it. When the
 	// real sea level arrives, reposition the water plane and recolour terrain to match.
@@ -2084,7 +2086,13 @@ export function useWorldEngine(canvasRef) {
 			// own colors rather than being tinted by the default-color fallback. Per-face textures
 			// (faceTextures) + UV repeat/offset come in a later slice; MVP applies the default face.
 			const primTexId = (!isAvatar && !obj._placeholder && !meshMulti && !primMulti) ? pickPrimTexture(obj) : null
-			if (primTexId) {
+			// Near-aware build (FEATURE-GAPS #13): only fetch the diffuse texture for objects within the
+			// draw distance. Fetching for far objects the cull will immediately hide just floods the grid
+			// queue + main-thread decode (live: queued climbs, fps→8). A far single-material mesh builds
+			// white and gets its texture from backfillTextures (visible-gated) when the cull shows it on
+			// approach. NOT applied to per-face meshes (handled below) — backfill skips multi-material, so
+			// gating them would strand them white when shown (extending per-face backfill is a follow-up).
+			if (primTexId && camDistToObj(obj) <= renderRadius()) {
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
 				const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
 				texCalls++
@@ -2244,6 +2252,14 @@ export function useWorldEngine(canvasRef) {
 			}
 			normalizeChildTransform(mesh)
 			meshMap.set(obj.localId, mesh)
+			// Near-aware (FEATURE-GAPS #13): a ROOT born beyond the draw distance is hidden IMMEDIATELY so
+			// it never flashes for the ~200ms until visibilityTick runs. During load, far objects stream in
+			// AND the governor evicts/reloads them — each rebuild would otherwise show for one cull interval
+			// (the live "far objects flicker for a couple minutes" at 388m). Children ride their root's
+			// visibility; avatars are never hidden. visibilityTick maintains it with hysteresis as you move.
+			if (parentLocalId === 0 && obj.pcode !== PCODE_AVATAR && camDistToObj(obj) > renderRadius()) {
+				mesh.visible = false
+			}
 
 			// WHY: O(1) reparent of orphans that were waiting on THIS mesh's localId. Replaces a
 			// per-build full meshMap scan (O(n²) overall — the dominant big-region build cost).
@@ -3217,11 +3233,18 @@ export function useWorldEngine(canvasRef) {
 		const now = Date.now()
 		if (pct < 100 && known > 0) { if (!_loadEpisodeStart) _loadEpisodeStart = now }
 		else _loadEpisodeStart = 0
+		// Texture readiness for the badge (FEATURE-GAPS #4): geometry pct can hit 100 while textures are
+		// still streaming (the "100% but cubes/bare" report). texPending = anything still queued/in-flight/
+		// awaiting GPU build (region-global, not near-set-only — good enough for "is anything still
+		// loading?"); texFailed surfaces hard-errored assets so the badge can hint at the Refresh action.
+		const tx = getTextureStats()
 		worldStore.setCullStats({
 			resident, known, evicted: evicted.size, pct,
 			atTarget: _effNear >= ddTarget,            // at full target radius → "complete scene", else "nearby"
 			massive: _loadEpisodeStart > 0 && (now - _loadEpisodeStart) >= MAJOR_LOAD_MS,
 			effNear: Math.round(_effNear),
+			texPending: tx.queued + tx.inflight + tx.buildQueued,
+			texFailed: tx.hardFail,
 		})
 		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
@@ -3549,17 +3572,30 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// The render/draw-distance horizon (m) — what the user wants to SEE. The visibility cull hides roots
+	// beyond it, and the build path skips fetching diffuse textures beyond it (near-aware, FEATURE-GAPS
+	// #13). STABLE (user slider), distinct from the oscillating memory-eviction radius _effNear.
+	function renderRadius() { return Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT) }
+
 	// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling). Hide ROOT meshes beyond the
-	// governor radius _effNear so WebGLRenderer.render stops traversing them every frame; show them again
+	// draw-distance target so WebGLRenderer.render stops traversing them every frame; show them again
 	// within the hysteresis band. Decoupled from memory eviction (cullTick): eviction only fires over
-	// budget, so on a region that fits the heap nothing beyond _effNear is otherwise removed → it all gets
-	// traversed (the 3–6fps "300m+ drawn at dd=192m" cost). Roots only — projectObject early-returns on an
-	// invisible parent and skips the whole subtree, so one .visible flag collapses a linkset's traversal.
-	// Hide, don't evict: meshes stay resident in meshMap (instant re-show, no rebuild). Cheap: a distance
-	// compare + boolean write per root, no allocation in the hot loop. ~5Hz is enough for snappy pop-in.
-	// Protected ids (avatars/own/edited) are excluded here → never hidden.
+	// budget, so on a region that fits the heap nothing far is otherwise removed → it all gets traversed
+	// (the 3–6fps "300m+ drawn at dd=192m" cost). Roots only — projectObject early-returns on an invisible
+	// parent and skips the whole subtree, so one .visible flag collapses a linkset's traversal. Hide, don't
+	// evict: meshes stay resident in meshMap (instant re-show, no rebuild).
+	// WHY the STABLE ddTarget, not _effNear: _effNear is the memory governor's radius and it OSCILLATES
+	// (steps ±DRAW_DIST_STEP each tick under load pressure). Hiding on it made objects near the boundary
+	// FLICKER hidden/shown as _effNear swung past them — the 16m hysteresis is measured against the current
+	// radius, so a moving radius defeats it (live: "far objects flicker on/off for the first couple
+	// minutes"). The render horizon is what the USER wants to see (a fixed target), not the governor's
+	// internal pressure radius. Under pressure _effNear < ddTarget and cullTick EVICTS beyond _effNear
+	// (removes from meshMap → not a candidate here), so the resident set the cull shows is still bounded;
+	// this just stops the boundary churn. Cheap: a distance compare + boolean write per root, no allocation
+	// in the hot loop. ~5Hz is enough for snappy pop-in. Protected ids (avatars/own/edited) never hidden.
 	function visibilityTick() {
 		if (!camera) return
+		const ddTarget = renderRadius()
 		const editId = uiStore.editObjectId
 		const cands = []
 		for (const [id, mesh] of meshMap) {
@@ -3571,7 +3607,7 @@ export function useWorldEngine(canvasRef) {
 			if (id === ownAvatarLocalId || id === editId) continue  // never hide own/edited
 			cands.push({ id, dist: camDistToObj(obj), visible: mesh.visible })
 		}
-		const { show, hide } = selectVisibility(cands, _effNear, VIS_CULL_HYSTERESIS)
+		const { show, hide } = selectVisibility(cands, ddTarget, VIS_CULL_HYSTERESIS)
 		for (const id of show) { const m = meshMap.get(id); if (m) m.visible = true }
 		for (const id of hide) { const m = meshMap.get(id); if (m) m.visible = false }
 	}
@@ -3881,10 +3917,41 @@ export function useWorldEngine(canvasRef) {
 	// pass converges and tapers as the scene fills. Cheap relative to the removed O(n²) build scan.
 	function backfillTextures() {
 		for (const [localId, mesh] of meshMap) {
+			// Near-aware (FEATURE-GAPS #13): skip cull-hidden meshes — fetching textures for objects beyond
+			// the draw distance (which we aren't even rendering) floods the fetch queue and starves the
+			// visible near set (live: queued=4472, the bare-near-objects symptom). They re-request via this
+			// same sweep once the visibility cull shows them on approach.
+			if (!mesh.visible) continue
 			if (Array.isArray(mesh.material) || mesh.material?.map) continue
 			const obj = worldStore.objects.get(localId)
 			if (obj) reapplyDiffuse(mesh, obj)
 		}
+	}
+
+	// Manual "Refresh textures" (ObjectContextMenu) for an object stuck bare. Clears the object's texture
+	// failure/cache state (refreshTextures) so the next fetch re-pulls IDB→network, then forces a re-apply:
+	// per-face meshes rebuild their material array (buildFaceMaterials re-resolves every face), single-
+	// material meshes get map=null so reapplyDiffuse (which short-circuits when a map is already set) will
+	// re-fetch and re-apply. Cache hits land instantly; true misses fill in as the fetch completes.
+	function refreshObjectTextures(localId) {
+		const obj = worldStore.objects.get(localId)
+		if (!obj) return
+		const set = new Set()
+		if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
+		if (Array.isArray(obj.faceTextures)) for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
+		if (!set.size) return
+		refreshTextures([...set])
+		const mesh = meshMap.get(localId)
+		if (mesh) {
+			if (Array.isArray(mesh.material)) {
+				buildFaceMaterials(mesh, obj, obj.meshId ? null : primFaceMap(obj.shape))
+			} else if (mesh.material) {
+				mesh.material.map = null
+				mesh.material.needsUpdate = true
+				reapplyDiffuse(mesh, obj)
+			}
+		}
+		debugStore.push('info', `[Tex] manual refresh localId=${localId} (${set.size} textures)`)
 	}
 
 	// ── Lit-shading A/B toggle (QuickPrefs ▸ Graphics ▸ Lit Shading) ────────────────────────────
@@ -4590,6 +4657,7 @@ export function useWorldEngine(canvasRef) {
 		stopAlwaysRunWatch()
 		stopLitShadingWatch()
 		stopSceneRebuildWatch()
+		stopTexRefreshWatch()
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()

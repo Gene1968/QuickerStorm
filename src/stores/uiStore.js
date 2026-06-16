@@ -68,6 +68,13 @@ export const useUiStore = defineStore('ui', () => {
 	// has memory-evicted, so it cannot recover a culled-empty scene. This can.
 	const sceneRebuildTick   = ref(0)
 	function requestSceneRebuild() { sceneRebuildTick.value++ }
+	// ObjectContextMenu "Refresh textures" → engine clears the object's texture failure/cache state and
+	// re-applies (manual escape hatch for an object stuck bare). Carries the target localId; `seq` bumps
+	// so the engine's watch fires even when the same object is refreshed twice in a row.
+	const textureRefreshReq  = ref(null)
+	function requestTextureRefresh(localId) {
+		textureRefreshReq.value = { localId, seq: (textureRefreshReq.value?.seq ?? 0) + 1 }
+	}
 	// WHY: FS-parity lit shading (MeshLambert + scene lights) so untextured/blank-white surfaces show
 	// form through shading instead of rendering as flat cutouts. Default ON; worldEngine watches and
 	// swaps materials live, and auto-disables it (once per session, with a notification) if FPS stays
@@ -338,6 +345,7 @@ export const useUiStore = defineStore('ui', () => {
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
 		sceneRebuildTick, requestSceneRebuild,
+		textureRefreshReq, requestTextureRefresh,
 		litShading, instancing, showFps, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		geomCacheRamMb, setGeomCacheRamMb,

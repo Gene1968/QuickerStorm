@@ -5,9 +5,9 @@
 // repeated calls and thrash on the same (or dead) UUIDs.
 import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
-import { texCacheGet, texCachePut, texFailedLoad, texFailedMark } from '@/lib/textureCache.js'
+import { texCacheGet, texCachePut, texFailedLoad, texFailedMark, texFailedClear } from '@/lib/textureCache.js'
 import { heapPush, heapPop } from '@/lib/priorityQueue.js'
-import { emergencyHeap } from '@/lib/memGovernor.js'
+import { emergencyHeap, appRatio } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 
@@ -96,16 +96,17 @@ function _wire() {
 }
 
 // Free an in-flight slot and start the next queued fetch (if any).
-// WHY a texture-OWN budget (not the shared app budget): on a dense region the geometry pool
-// saturates the global budget permanently, which paused texture intake to a trickle — the scene
-// finished building but stayed white (observed: ⏱0 timeouts yet ~0.3 fetches/s, intake only during
-// momentary budget dips). Textures now gate on their own resident bytes; as they fill, the global
-// budget rises and the culler trades far GEOMETRY for them — the right swap, since near geometry
-// is R_NEAR-protected and pruneTexturesLRU bounds this pool under pressure. emergencyHeap() stays
-// as the true near-OOM stop.
-const TEX_INTAKE_BUDGET = 320 * 1048576
+// WHY gate on the shared APP budget, not a fixed texture-only cap (FEATURE-GAPS #13 near-aware textures,
+// 2026-06-16): the old fixed 320 MB `TEX_INTAKE_BUDGET` STRANDED intake on a warm heavy region. Warm IDB
+// hits bypass this gate and fill `cache` well past 320 MB (live: cached=3375 ≈ 0.5–0.9 GB), after which
+// the pump pauses PERMANENTLY — and nothing frees room, because pruneTexturesLRU only runs when over the
+// ~2 GB app budget, which a warm region doesn't reach. Result: inflight=0, queued=4472, done=24 — wedged,
+// not slow. Gating on `appRatio()` instead lets textures use real app headroom (≈1.7 GB unused there),
+// and when they DO fill the app budget the culler trades far GEOMETRY + pruneTexturesLRU sheds far/old
+// textures (LRU = near-aware: near faces are re-applied within 20 s so they're protected). emergencyHeap()
+// remains the hard near-OOM stop. Near-first heap-pop is unchanged so visible faces still fetch first.
 function _pump() {
-	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || getTextureBytes() > TEX_INTAKE_BUDGET)) {
+	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || appRatio() >= 1.0)) {
 		active++
 		heapPop(netQueue).run()   // nearest queued fetch first (near-first load)
 	}
@@ -416,6 +417,34 @@ export function pruneTexturesLRU(maxPerCall = 64, now = Date.now()) {
 		n++
 	}
 	return n
+}
+
+/**
+ * Force a fresh re-fetch of specific texture UUIDs — the manual "Refresh textures" escape hatch for an
+ * object stuck bare (hard-errored or soft-timed-out past the retry budget). Clears EVERY in-memory layer
+ * for each uuid (failure classes, GPU/blob caches, in-flight dedupes, UV clones, object URLs) plus the
+ * persisted IDB negative-cache mark, so the next getTexture() re-pulls through IDB→network. Does NOT
+ * dispose live THREE.Textures: another mesh may still reference one via its material.map (textures are
+ * shared) — dropping our cache entry just means a fresh copy is built on the next fetch. The engine
+ * re-applies to the object's mesh after calling this; _pump() resumes any queue freed by clearing fails.
+ */
+export function refreshTextures(uuids) {
+	for (const uuid of uuids) {
+		if (!uuid || uuid === ZERO_UUID) continue
+		failedHard.delete(uuid)
+		softAttempts.delete(uuid)
+		cache.delete(uuid)
+		blobCache.delete(uuid)
+		blobInflight.delete(uuid)
+		texInflight.delete(uuid)
+		lastUsed.delete(uuid)
+		alphaCache.delete(uuid)
+		const ou = objUrlCache.get(uuid); if (ou) { URL.revokeObjectURL(ou); objUrlCache.delete(uuid) }
+		const prefix = uuid + '|'
+		for (const k of [...xformCache.keys()]) if (k.startsWith(prefix)) xformCache.delete(k)
+		texFailedClear(uuid)   // best-effort: drop the persisted negative-cache mark too
+	}
+	_pump()
 }
 
 /**

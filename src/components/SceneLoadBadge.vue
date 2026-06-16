@@ -2,20 +2,32 @@
 import { computed } from 'vue'
 import { useWorldStore } from '@/stores/worldStore'
 const world = useWorldStore()
-// Show only while the scene is still streaming in (and there is something to load).
-const show = computed(() => world.cullStats.known > 0 && world.cullStats.pct < 100)
-// "nearby scene …" while the draw distance is below the target (a subset — more comes as it grows
-// or as memory frees); "complete scene …" once we're loading out to the full target radius. A
-// "Major new scenery to cache" preface on very large scenes so a slow first load reads as expected.
+// Show while geometry is still streaming in OR textures are still loading — geometry can hit 100%
+// while textures stream (FEATURE-GAPS #4: the "100% but bare" blind spot), so the badge must stay up
+// until the near set is actually textured, not just built.
+const show = computed(() => {
+	const cs = world.cullStats
+	return cs.known > 0 && (cs.pct < 100 || (cs.texPending ?? 0) > 0)
+})
+// While geometry < 100%: "nearby scene …" until the draw distance reaches the target (a subset — more
+// comes as it grows/frees), "complete scene …" at the full radius; a "Major new scenery to cache"
+// preface on very large scenes. Once geometry is complete but textures are still arriving, switch to a
+// texture-progress readout so a still-bare scene reads as "loading", not "done".
 const label = computed(() => {
 	const cs = world.cullStats
-	const phase = cs.atTarget ? 'Complete scene' : 'Nearby scene'
-	const preface = cs.massive ? 'Major new scenery to cache: ' : ''
-	return `${preface}${phase} ${cs.pct}% loaded`
+	if (cs.pct < 100) {
+		const phase = cs.atTarget ? 'Complete scene' : 'Nearby scene'
+		const preface = cs.massive ? 'Major new scenery to cache: ' : ''
+		return `${preface}${phase} ${cs.pct}% loaded`
+	}
+	return `Textures loading… ${cs.texPending ?? 0} left`
 })
 const title = computed(() => {
 	const cs = world.cullStats
-	return `Resident ${cs.resident} / known ${cs.known} within ${cs.effNear}m draw distance · evicted ${cs.evicted} for memory`
+	const base = `Resident ${cs.resident} / known ${cs.known} within ${cs.effNear}m draw distance · evicted ${cs.evicted} for memory`
+	return (cs.texFailed ?? 0) > 0
+		? `${base} · ${cs.texFailed} textures failed (right-click an object → Refresh textures)`
+		: base
 })
 </script>
 

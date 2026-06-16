@@ -130,13 +130,25 @@ hard ceilings.
    10s→30s (slow read resolves the real blob, no false-miss→network storm) + fixed our own near-first
    drain-order sort (`orderByDistance` ran distFn in the comparator = ~1.5s/rebuild on a 20k queue,
    starved render to frames=0 → precompute O(n) + TTL 750→2000ms). Live: frames 0→~42fps, textures fill,
-   `⏱0`. Added `[Main] phases:` per-phase main-thread attribution (DEV). **NEXT = render (#13):** phases
-   show `render=1671–2546ms/window` dominates as objects build; far objects (~300m+) drawn at dd=192m →
-   scene-graph traversal → 3–6fps + springback. → LOD / cull far OUT of the scene graph / off-thread render.
-2. **Refresh-textures button** (wire the disabled `ObjectContextMenu` stub) — force-reload a specific
-   object's assets (clear negative-cache, jump the queue). Manual escape hatch when far things are deferred.
-3. **Near-aware texture eviction** — `pruneTexturesLRU` must protect textures of near/visible objects so a
-   dense over-VRAM-budget region doesn't drop the texture right next to you.
-4. **Badge reflects texture/mesh readiness** of the near set, not just geometry % (fixes "100% but cubes").
+   `⏱0`. Added `[Main] phases:` per-phase main-thread attribution (DEV).
+   **✅ RENDER (#13) FIXED + live-verified 2026-06-16** (see mem [[render-distance-cull-shipped]]): a ~5Hz
+   visibility cull hides ROOT meshes beyond the draw-distance horizon (`projectObject` early-returns on an
+   invisible parent → skips its whole subtree) → `render` 1671–2546 → 127–968 ms/window, frames → 55–90 fps,
+   springback gone. Hide on the STABLE draw target (not the oscillating `_effNear`) + far roots born-hidden at
+   build = no boundary flicker. Slice 2 (static `matrixAutoUpdate=false`) STOOD DOWN (YAGNI — render no longer
+   dominant). **NEXT CEILING = #11 main-thread DECODE:** with the pump unwedged, texture
+   `createImageBitmap`+GPU upload + IDB-read starvation (15s) peg the thread at ~5 fps and cap draw distance →
+   off-main-thread decode worker (item 6).
+2. **Refresh-textures button** — ✅ DONE 2026-06-16 (`ObjectContextMenu` → `requestTextureRefresh` → engine
+   `refreshObjectTextures`: clears failure/cache layers incl. the persisted negative-cache, re-applies).
+3. **Near-aware textures** — ✅ DONE 2026-06-16: backfill + build-time diffuse fetch skip cull-hidden/far
+   meshes; `_pump` gates on `appRatio()` not the fixed 320 MB cap (which warm IDB stranded → the pump wedge,
+   `inflight:0 queued:4472`); `pruneTexturesLRU` LRU already protects near (re-applied <20s). Per-face
+   backfill = remaining follow-up (backfill skips multi-material → can't yet near-gate per-face build fetch).
+4. **Badge reflects texture readiness** — ✅ DONE 2026-06-16: cullStats `texPending`/`texFailed`; badge stays
+   up showing "Textures loading… N" after geometry hits 100%. (Region-global count, not near-set-only yet.)
 5. **LOD** — low-detail instantly, refine in place (progressive, FS-style).
-6. **Off-main-thread building** (OffscreenCanvas + worker render) — the deep fix for the #11 ceiling.
+6. **Off-main-thread texture decode** (#11 Pass 2) — ⭐ **NEXT**: move `b64ToBlob` + `createImageBitmap` +
+   downscale into a worker (mirror `meshBake.worker.js`; the per-frame upload pump already survives the move).
+   THE fix for the ~5 fps decode ceiling — frees the main thread so draw distance can rise. (OffscreenCanvas
+   worker *render* = deeper, later.)

@@ -294,6 +294,25 @@ export async function texFailedMark(uuid, now = Date.now()) {
 	} catch { /* best-effort */ }
 }
 
+/**
+ * Drop the persisted permanent-failure mark for a UUID (best-effort) — the manual "Refresh textures"
+ * escape hatch: a previously server-errored texture should get a clean re-fetch (and persist if it now
+ * succeeds) instead of being skipped forever from the IDB negative-cache. In-memory state is cleared
+ * separately by useTextureFetch.refreshTextures().
+ */
+export async function texFailedClear(uuid, _now = Date.now()) {
+	try {
+		const db = await openDb()
+		await new Promise((resolve) => {
+			const tx = db.transaction(FAILED, 'readwrite')
+			tx.objectStore(FAILED).delete(uuid)
+			tx.oncomplete = resolve
+			tx.onerror    = resolve  // best-effort — swallow
+			tx.onabort    = resolve
+		})
+	} catch { /* best-effort */ }
+}
+
 /** Clears all texture cache entries and resets the totalBytes counter. */
 export async function clearTextureCache() {
 	try {
