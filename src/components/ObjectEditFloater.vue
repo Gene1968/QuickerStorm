@@ -121,6 +121,7 @@ const typeInfo = computed(() => {
 	if (o.pcode === 29) return { kind: 'grass',  label: 'Grass',  detail: null }
 	if (o.meshId)   return { kind: 'mesh',   label: 'Mesh',   detail: o.meshId }
 	if (o.sculptId) return { kind: 'sculpt', label: `Sculpted (${sculptStitch(o.sculptType)})`, detail: o.sculptId }
+	if (o._placeholder) return { kind: 'placeholder', label: `Placeholder (${o._placeholder})`, detail: null }
 	const bb = deriveBuildingBlock(o.shape)
 	return { kind: 'prim', label: bb ? `Prim — ${bb}` : 'Primitive', detail: null }
 })
@@ -366,7 +367,7 @@ watch(
 		? arr.map((v, i) => (v == null ? null : { i, v })).filter(Boolean)
 		: arr
 	const dump = '[TEDUMP] ' + JSON.stringify({
-		localId: o.localId, name: o.name, type: typeInfo.value.label, meshId: o.meshId,
+		localId: o.localId, name: o.name, type: typeInfo.value.label, placeholder: o._placeholder ?? false, meshId: o.meshId,
 		sculptId: o.sculptId, sculptType: o.sculptType,
 		shape: o.shape && { pathCurve: o.shape.pathCurve, profileCurve: o.shape.profileCurve,
 			profileHollow: o.shape.profileHollow, pathBegin: o.shape.pathBegin, pathEnd: o.shape.pathEnd,
