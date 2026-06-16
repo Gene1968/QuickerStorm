@@ -20,7 +20,7 @@ import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -308,6 +308,7 @@ export function useWorldEngine(canvasRef) {
 	let _meshDrainTimer = null   // mesh build/reparent driver — focus-independent (see onMounted)
 	let _texBackfillTimer = null // re-applies textures to still-white meshes + drives fetch retries
 	let _cullTimer = null        // memory-budget distance-culling tick (~1s)
+	let _visTimer = null         // render-distance visibility cull tick (~200ms) — FEATURE-GAPS #13
 	let _longTaskObs = null      // PerformanceObserver for main-thread long tasks (telemetry)
 	const evicted = new Set()    // localIds dropped for memory (kept in worldStore + IDB; rebuilt on approach)
 	// Cull thresholds are fractions of the SELF-ACCOUNTED asset budget (memGovernor appRatio:
@@ -338,6 +339,11 @@ export function useWorldEngine(canvasRef) {
 	const DRAW_DIST_DEFAULT = 96 // fallback target when uiStore is unset
 	const DRAW_DIST_MIN = 32     // metres — emergency floor; immediate surroundings always stay resident
 	const DRAW_DIST_STEP = 16    // metres per governor step (down under pressure / up with headroom)
+	// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling): hysteresis band (m) for the
+	// show/hide boundary at _effNear. Hidden beyond _effNear, shown within (_effNear - this) → no flicker
+	// for objects parked at the edge. Runs ~5×/s (own timer) — far cheaper than the per-frame traversal
+	// it removes. Hides only (keeps meshes resident for instant re-show); eviction stays VRAM-driven.
+	const VIS_CULL_HYSTERESIS = 16
 	// Geom RAM-cache heap-pressure cap (FEATURE-GAPS #13) — see cullTick. The mem tier shares the tab
 	// heap, so clamp it when the process heap is tight. Hysteresis (cap above CAP_AT, release below
 	// RELEASE_AT) avoids thrashing; FLOOR is both the shrink target and the "worth shedding" gate.
@@ -3543,6 +3549,32 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling). Hide ROOT meshes beyond the
+	// governor radius _effNear so WebGLRenderer.render stops traversing them every frame; show them again
+	// within the hysteresis band. Decoupled from memory eviction (cullTick): eviction only fires over
+	// budget, so on a region that fits the heap nothing beyond _effNear is otherwise removed → it all gets
+	// traversed (the 3–6fps "300m+ drawn at dd=192m" cost). Roots only — projectObject early-returns on an
+	// invisible parent and skips the whole subtree, so one .visible flag collapses a linkset's traversal.
+	// Hide, don't evict: meshes stay resident in meshMap (instant re-show, no rebuild). Cheap: a distance
+	// compare + boolean write per root, no allocation in the hot loop. ~5Hz is enough for snappy pop-in.
+	// Protected ids (avatars/own/edited) are excluded here → never hidden.
+	function visibilityTick() {
+		if (!camera) return
+		const editId = uiStore.editObjectId
+		const cands = []
+		for (const [id, mesh] of meshMap) {
+			const obj = worldStore.objects.get(id)
+			if (!obj) continue                          // KillObject race — leave for cullTick/removeMesh
+			if ((obj.parentId ?? 0) !== 0) continue     // children ride their root's visibility
+			if (obj.pcode === PCODE_AVATAR) continue    // never hide avatars
+			if (id === ownAvatarLocalId || id === editId) continue  // never hide own/edited
+			cands.push({ id, dist: camDistToObj(obj), visible: mesh.visible })
+		}
+		const { show, hide } = selectVisibility(cands, _effNear, VIS_CULL_HYSTERESIS)
+		for (const id of show) { const m = meshMap.get(id); if (m) m.visible = true }
+		for (const id of hide) { const m = meshMap.get(id); if (m) m.visible = false }
+	}
+
 	// Frame-budgeted ingestion: pull prim objects off _ingestQueue and do the upsert + (optional)
 	// persist + mesh-queue-add that onObjectUpdate used to do synchronously. Runs on the 30ms drain
 	// interval (CPU work, focus-independent). Builds are still gated separately in drainMeshQueue.
@@ -4306,6 +4338,7 @@ export function useWorldEngine(canvasRef) {
 			if ((_drainTick++ & 3) === 0) timed('reparent', reparentOrphans)
 		}, 30)
 		_cullTimer = setInterval(() => timed('cull', cullTick), 1000)
+		_visTimer = setInterval(() => timed('vis', visibilityTick), 200)
 		// ── DEV-only draw-call census (FEATURE-GAPS #6 instrumentation; DISPOSABLE, uncommitted) ──
 		// Run `qsCensus()` in the console on a heavy region AFTER it settles (objs/buildQ stable) to
 		// size the instancing vs merge-by-texture opportunity. Reads worldStore.objects (data model)
@@ -4576,6 +4609,7 @@ export function useWorldEngine(canvasRef) {
 		if (_assetStatsTimer) { clearInterval(_assetStatsTimer); _assetStatsTimer = null }
 		if (_meshDrainTimer) { clearInterval(_meshDrainTimer); _meshDrainTimer = null }
 		if (_cullTimer) { clearInterval(_cullTimer); _cullTimer = null }
+		if (_visTimer) { clearInterval(_visTimer); _visTimer = null }
 		if (_longTaskObs) { try { _longTaskObs.disconnect() } catch { /* ignore */ } _longTaskObs = null }
 		evicted.clear()
 		if (_texBackfillTimer) { clearInterval(_texBackfillTimer); _texBackfillTimer = null }
