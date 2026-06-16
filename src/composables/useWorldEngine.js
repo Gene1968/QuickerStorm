@@ -36,6 +36,7 @@ import {
 	geometryFromArrays,       // worker-baked/cached arrays → BufferGeometry (applySwap + tier-1 sync cache hits)
 } from '@/lib/primGeometry.js'
 import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomMemPressureCap, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch, getGeomWriteBufStats } from '@/lib/geomCache.js'
+import { setTexCacheLoading, getTextureWriteBufStats } from '@/lib/textureCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 import { createInstancePool } from '@/lib/instancePool.js'
@@ -3424,6 +3425,7 @@ export function useWorldEngine(canvasRef) {
 		const tStat = getTextureStats(), mStat = getMeshStats()
 		const loading = pendingMeshIds.size > 50 || tStat.queued > 0 || tStat.inflight > 0 || mStat.queued > 0 || _geomPending > 25
 		setGeomCacheLoading(loading)
+		setTexCacheLoading(loading)   // same load signal: suspend qs-tex flushes so reads aren't starved
 		// Re-record this region's key manifest on every settle EDGE (loading true→false). geomManifestRecord
 		// no-ops unless the key set grew, so the manifest converges UP to the full working set across the
 		// settle dips of a heavy load and across revisits — fixing the early, draw-distance-limited snapshot
@@ -4580,7 +4582,8 @@ export function useWorldEngine(canvasRef) {
 			// upsertMesh throughput (the cold-load bottleneck): builds + avg/max per-call ms since last report
 			if (_drainBuilt) {
 				const dline = `[Drain] built=${_drainBuilt} (${(_drainBuilt / 5).toFixed(0)}/s) avg=${(_drainMs / _drainBuilt).toFixed(1)}ms max=${_drainMaxMs.toFixed(1)}ms queued=${pendingMeshIds.size} hidden=${typeof document !== 'undefined' && document.hidden ? 1 : 0}` +
-					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget} texBuildQ=${getTextureStats().buildQueued}`
+					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget}` +
+					(() => { const _ts = getTextureStats(), _wb = getTextureWriteBufStats(); return ` texBuildQ=${_ts.buildQueued} texUpQ=${_ts.uploadQueued} texDec=${_ts.decodeOutstanding} texWB=${Math.round(_wb.bytes / 1048576)}MB texWBdrop=${_wb.dropped}` })()
 				debugStore.push('info', dline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: dline, stack: '' }) } catch { /* ignore */ }
 				_drainBuilt = 0; _drainMs = 0; _drainMaxMs = 0

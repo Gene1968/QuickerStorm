@@ -300,7 +300,9 @@
       "PowerShell(\\(Get-Content \"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\bf720664-3040-4781-8e14-e47d5d6fee19\\\\tasks\\\\bg1dkvl3t.output\" | Measure-Object -Line\\).Lines)",
       "PowerShell($f=\"C:\\\\Users\\\\gene1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-gene1-Downloads-Pages-git-QuickerStorm\\\\bf720664-3040-4781-8e14-e47d5d6fee19\\\\tasks\\\\bg1dkvl3t.output\"; \\(Get-Content $f | Measure-Object -Line\\).Lines)",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $pr = Get-Process -Id $_ -ErrorAction SilentlyContinue; Write-Output \"Killing PID $_ \\($\\($pr.ProcessName\\)\\)\"; Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } } else { Write-Output \"Nothing listening on 8787\" }; Start-Sleep -Milliseconds 500; \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\) ? \"STILL IN USE\" : \"PORT 8787 FREE\")",
-      "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $pr = Get-Process -Id $_ -ErrorAction SilentlyContinue; Write-Output \"8787 held by PID $_ \\($\\($pr.ProcessName\\)\\), started $\\($pr.StartTime\\)\" } } else { Write-Output \"Nothing listening on 8787\" })"
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $pr = Get-Process -Id $_ -ErrorAction SilentlyContinue; Write-Output \"8787 held by PID $_ \\($\\($pr.ProcessName\\)\\), started $\\($pr.StartTime\\)\" } } else { Write-Output \"Nothing listening on 8787\" })",
+      "Bash(Select-String \"texDecode\")",
+      "Read(//c/Users/gene1/Downloads/Pages/git/QuickerStorm/**)"
     ]
   }
 }

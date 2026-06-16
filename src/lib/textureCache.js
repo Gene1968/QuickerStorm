@@ -56,6 +56,154 @@ let _lastStats = null  // last known { count, bytes } — served to Prefs from m
                        // Every put refreshes this; IDB is only read when no put has run yet
                        // this session (quiet DB — the case the read can't starve).
 
+// ── Write-deferral (warm-read decouple — port of geomCache #10 to qs-tex) ──────────────────────────
+// WHY: texCachePut used to open a readwrite [STORE,META] txn PER call (put + stats-get + count, plus an
+// eviction cursor-walk when over cap). A region fill is ~1-2k such write txns; because they share the
+// STORE scope with the readonly texCacheGet reads, IndexedDB SERIALIZES every read behind the write
+// convoy → reads measured ~7.4s (network slots wedged, queue climbing). Buffer puts in memory and flush
+// the whole buffer in ONE txn per window so reads interleave; suspend flushes during the load burst;
+// defer a flush while a read is in flight. Direct port of the committed geomCache deferral.
+const _writeBuf = new Map()      // uuid → { uuid, blob, bytes, hasAlpha, lastUsed }  (latest-wins)
+let _writeBufBytes = 0           // running sum of buffered blob bytes (byte ceiling, O(1))
+let _writeBufDropped = 0         // puts skipped at the hard cap (telemetry — no silent caps)
+let _readsInFlight = 0           // in-flight texCacheGet count; _flushNow defers while > 0 (read-priority)
+let _loading = false             // engine load-burst signal (suspend flushes); see setTexCacheLoading
+let _deferStartedAt = 0          // wall-clock of first deferred write since last flush (time ceiling)
+let _exitTimer = null            // trailing debounce so brief load dips don't thrash flush mode
+let _flushTimer = null
+let _flushing = null
+const FLUSH_MS = 300
+const FLUSH_MAX = 256            // texture records are small WebP blobs → batch more than geom (200)
+const LOADING_EXIT_DEBOUNCE_MS = 750
+let _ceilingBytes = 64 * 1024 * 1024     // force a flush past this much buffered (textures are small)
+let _maxDeferMs = 30000                  // never defer a flush longer than this
+let _writeBufHardCap = 128 * 1024 * 1024 // past this, stop buffering NEW uuids (overwrites still proceed)
+let _lastForcedLogAt = 0
+function _logForcedFlush(reason) {
+	const t = Date.now()
+	if (t - _lastForcedLogAt < 1000) return
+	_lastForcedLogAt = t
+	console.debug('[TexCache] deferred flush forced:', reason, Math.round(_writeBufBytes / 1048576) + 'MB buffered')
+}
+
+/** Engine signal: true during a region-load burst (suspend flushes), false when the build settles. */
+export function setTexCacheLoading(v) {
+	if (v) {
+		if (_exitTimer) { clearTimeout(_exitTimer); _exitTimer = null }
+		_loading = true
+	} else if (_loading && !_exitTimer) {
+		_exitTimer = setTimeout(() => {
+			_exitTimer = null; _loading = false; _deferStartedAt = 0; _flushNow(true)
+		}, LOADING_EXIT_DEBOUNCE_MS)
+	}
+}
+
+/** Write-buffer telemetry: { bytes, dropped } — surfaced on the engine [Drain] line. */
+export function getTextureWriteBufStats() { return { bytes: _writeBufBytes, dropped: _writeBufDropped } }
+
+/** Test/governor hook: tune the deferral safety ceilings. */
+export function setTexDeferLimits({ ceilingBytes, maxDeferMs, hardCapBytes } = {}) {
+	if (typeof ceilingBytes === 'number') _ceilingBytes = ceilingBytes
+	if (typeof maxDeferMs === 'number') _maxDeferMs = maxDeferMs
+	if (typeof hardCapBytes === 'number') _writeBufHardCap = hardCapBytes
+}
+
+/** Test hook: force the write buffer to disk now (bypasses the loading + read-priority gates). */
+export async function __flushTexWritesNow() { await _flushNow(true) }
+
+function _scheduleFlush() {
+	if (_loading) {
+		if (!_deferStartedAt) _deferStartedAt = Date.now()
+		if (_writeBufBytes >= _ceilingBytes) { _logForcedFlush('byte-ceiling'); _deferStartedAt = 0; _flushNow(true); return }
+		if (!_flushTimer) _flushTimer = setTimeout(_checkDeferCeilings, FLUSH_MS)
+		return
+	}
+	if (_writeBuf.size >= FLUSH_MAX) { _flushNow(); return }
+	if (_flushTimer) return
+	_flushTimer = setTimeout(() => { _flushTimer = null; _flushNow() }, FLUSH_MS)
+}
+
+function _checkDeferCeilings() {
+	_flushTimer = null
+	if (!_loading) { _flushNow(); return }
+	const overBytes = _writeBufBytes >= _ceilingBytes
+	const overTime = _deferStartedAt && (Date.now() - _deferStartedAt) >= _maxDeferMs
+	if (overBytes || overTime) { _logForcedFlush(overBytes ? 'byte-ceiling' : 'time-ceiling'); _deferStartedAt = 0; _flushNow(true); return }
+	if (_writeBuf.size) _flushTimer = setTimeout(_checkDeferCeilings, FLUSH_MS)
+}
+
+async function _flushNow(force = false) {
+	if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
+	// While loading, only forced flushes (ceilings / settle-exit / pagehide) proceed.
+	if (!force && _loading) {
+		if (!_flushTimer) _flushTimer = setTimeout(_checkDeferCeilings, FLUSH_MS)
+		return
+	}
+	// Read-priority: defer the readwrite flush while a texCacheGet is in flight so reads aren't starved.
+	if (!force && _readsInFlight > 0 && _writeBuf.size < FLUSH_MAX) {
+		if (!_flushTimer) _flushTimer = setTimeout(() => { _flushTimer = null; _flushNow() }, FLUSH_MS)
+		return
+	}
+	if (_flushing) await _flushing
+	if (!_writeBuf.size) return
+	const batch = [..._writeBuf.values()]
+	_writeBuf.clear()
+	_writeBufBytes = 0
+	_deferStartedAt = 0
+	_flushing = (async () => {
+		try {
+			const db = await openDb()
+			await new Promise((resolve, reject) => {
+				const tx = db.transaction([STORE, META], 'readwrite')
+				const st = tx.objectStore(STORE)
+				const mt = tx.objectStore(META)
+				const batchKeys = new Set(batch.map(b => b.uuid))
+				let added = 0
+				let pending = batch.length
+				let statsResult = null
+				const finishStats = (total) => {
+					const cReq = st.count()
+					cReq.onsuccess = () => {
+						mt.put({ k: 'stats', totalBytes: total, count: cReq.result })
+						statsResult = { count: cReq.result, bytes: total }
+					}
+				}
+				const afterAllKeys = () => {
+					const mreq = mt.get('stats')
+					mreq.onsuccess = () => {
+						let total = (mreq.result?.totalBytes ?? 0) + added
+						if (total <= _capBytes) { finishStats(total); return }
+						// Over cap → lastUsed cursor oldest-first; never evict a uuid just written this batch.
+						const cur = st.index('lastUsed').openCursor()
+						cur.onsuccess = () => {
+							const c = cur.result
+							if (!c || total <= _capBytes) { finishStats(total); return }
+							if (!batchKeys.has(c.value.uuid)) { total -= c.value.bytes; c.delete() }
+							c.continue()
+						}
+					}
+				}
+				for (const rec of batch) {
+					// getKey-before-put: textures are immutable by UUID, so a duplicate uuid = identical
+					// content. Always put (refreshes lastUsed); only count bytes for genuinely NEW uuids so
+					// totalBytes can't drift upward on re-persist and trigger spurious evictions.
+					const gkReq = st.getKey(rec.uuid)
+					gkReq.onsuccess = () => {
+						st.put({ uuid: rec.uuid, blob: rec.blob, bytes: rec.bytes, hasAlpha: rec.hasAlpha, lastUsed: rec.lastUsed })
+						if (gkReq.result === undefined) added += rec.bytes
+						if (--pending === 0) afterAllKeys()
+					}
+				}
+				tx.oncomplete = () => { if (statsResult) _lastStats = statsResult; resolve() }
+				tx.onerror = () => reject(tx.error ?? new Error('tex flush txn error'))
+				tx.onabort = () => reject(tx.error ?? new Error('tex flush txn aborted'))
+			})
+		} catch (e) { console.warn('[TexCache] flush failed:', e) }
+	})()
+	await _flushing
+	_flushing = null
+}
+
 function openDb() {
 	if (_db) return Promise.resolve(_db)
 	return new Promise((resolve, reject) => {
@@ -118,6 +266,11 @@ const GET_WATCHDOG_MS = 30_000
 let _watchdogTrips = 0
 
 export async function texCacheGet(uuid, now = Date.now()) {
+	// Buffered-but-unflushed write: serve it directly so a just-put texture is readable without a
+	// spurious network refetch while it waits for the next flush window.
+	const buf = _writeBuf.get(uuid)
+	if (buf) { buf.lastUsed = now; return { blob: buf.blob, hasAlpha: buf.hasAlpha } }
+	_readsInFlight++   // read-priority gate (see _flushNow); always paired with the finally below
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
@@ -146,6 +299,8 @@ export async function texCacheGet(uuid, now = Date.now()) {
 	} catch (e) {
 		console.warn('[TexCache] get failed:', e)
 		return null
+	} finally {
+		_readsInFlight--
 	}
 }
 
@@ -178,50 +333,24 @@ async function flushTouches() {
 	} catch { /* best-effort LRU */ }
 }
 
-/** Persist a texture Blob by UUID, then evict LRU entries if over the size cap. */
-export async function texCachePut(uuid, blob, hasAlpha = false, now = Date.now()) {
+/** Persist a texture Blob by UUID. Buffers into _writeBuf (coalesced, latest-wins); the batched
+ *  _flushNow writes the whole buffer in one txn per window so reads aren't serialized behind per-put
+ *  writes. Synchronous (fire-and-forget): callers don't await it. */
+export function texCachePut(uuid, blob, hasAlpha = false, now = Date.now()) {
 	try {
-		const db = await openDb()
 		const bytes = blob.size
-		await new Promise((resolve, reject) => {
-			const tx = db.transaction([STORE, META], 'readwrite')
-			const st = tx.objectStore(STORE)
-			const mt = tx.objectStore(META)
-			st.put({ uuid, blob, bytes, hasAlpha, lastUsed: now })
-			// After all mutations are queued: count (ordered after any deletes, so it reflects
-			// them), write META {totalBytes, count}, and stage the in-memory snapshot for commit.
-			let pending = null
-			const finishStats = (total) => {
-				const cReq = st.count()
-				cReq.onsuccess = () => {
-					mt.put({ k: 'stats', totalBytes: total, count: cReq.result })
-					pending = { count: cReq.result, bytes: total }
-				}
-			}
-			const mreq = mt.get('stats')
-			mreq.onsuccess = () => {
-				let total = (mreq.result?.totalBytes ?? 0) + bytes
-				if (total <= _capBytes) {
-					finishStats(total)
-					return
-				}
-				// Over cap → walk the lastUsed index oldest-first, deleting until under cap. Skip the
-				// row we just inserted (newest) so a single oversized put can't evict itself.
-				const cur = st.index('lastUsed').openCursor()
-				cur.onsuccess = () => {
-					const c = cur.result
-					if (!c || total <= _capBytes) { finishStats(total); return }
-					if (c.value.uuid !== uuid) { total -= c.value.bytes; c.delete() }
-					c.continue()
-				}
-			}
-			tx.oncomplete = () => { if (pending) _lastStats = pending; resolve() }
-			tx.onerror    = () => reject(tx.error ?? new Error('put txn error'))
-			tx.onabort    = () => reject(tx.error ?? new Error('put txn aborted'))
-		})
-	} catch (e) {
-		console.warn('[TexCache] put failed:', e)
-	}
+		const prev = _writeBuf.get(uuid)
+		// Hard bound: once over the buffer cap, skip buffering NEW uuids (overwrites of already-buffered
+		// uuids still proceed — they don't grow the net buffer) so the buffer can never OOM the tab.
+		if (prev || _writeBufBytes < _writeBufHardCap) {
+			if (prev) _writeBufBytes -= prev.bytes        // overwrite: drop the stale record's bytes
+			_writeBuf.set(uuid, { uuid, blob, bytes, hasAlpha, lastUsed: now })
+			_writeBufBytes += bytes
+			_scheduleFlush()
+		} else {
+			_writeBufDropped++
+		}
+	} catch { /* best-effort persistence */ }
 }
 
 /** Returns { count, bytes, capBytes } for the texture cache. Served from memory once any put
@@ -315,6 +444,13 @@ export async function texFailedClear(uuid, _now = Date.now()) {
 
 /** Clears all texture cache entries and resets the totalBytes counter. */
 export async function clearTextureCache() {
+	// WHY cancel timer + await in-flight flush first: a committed-after-clear batch could otherwise
+	// resurrect records into a freshly cleared store (e.g. "Refresh textures" clicked mid-load).
+	if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
+	if (_flushing) await _flushing
+	_writeBuf.clear(); _writeBufBytes = 0; _deferStartedAt = 0
+	if (_exitTimer) { clearTimeout(_exitTimer); _exitTimer = null }
+	_loading = false
 	try {
 		const db = await openDb()
 		await new Promise((resolve, reject) => {
@@ -326,4 +462,9 @@ export async function clearTextureCache() {
 			tx.onabort = () => reject(tx.error ?? new Error('clear txn aborted'))
 		})
 	} catch { /* ignore */ }
+}
+
+// Flush any buffered writes on tab close so a deferred batch still persists (mirrors geomCache).
+if (typeof window !== 'undefined' && window.addEventListener) {
+	window.addEventListener('pagehide', () => { _flushNow(true) })
 }

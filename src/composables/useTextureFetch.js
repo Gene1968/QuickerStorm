@@ -10,6 +10,7 @@ import { heapPush, heapPop } from '@/lib/priorityQueue.js'
 import { emergencyHeap, appRatio } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
+import { useTexDecoder } from './useTexDecoder.js'
 
 // Decode a base64 payload (as delivered over WS) into a typed Blob for IDB storage + createImageBitmap.
 // WHY: storing the Blob (not a data-URL string) drops the +33% base64 inflation and lets the GPU
@@ -38,13 +39,23 @@ const FETCH_TIMEOUT_MS = 30_000
 // qs-tex reliably so the NEXT visit is instant. Re-tune only with fresh [Asset] fetch=ms evidence.
 const MAX_INFLIGHT = 6
 
-// Per-frame texture build/upload pump (FEATURE-GAPS #11). Blob-ready enqueues a build job; the
-// engine drains buildQueue once per frame via pumpTextureBuilds(), spreading the decode/downscale/
-// upload cost instead of bursting it (which jams the main thread and starves IDB read callbacks).
-const TEX_BUILD_MAX_PER_FRAME = 32   // cap builds STARTED per frame (the real throttle)
-const TEX_BUILD_BUDGET_MS     = 4    // wall-clock cap on the synchronous dispatch loop
-const buildQueue = []                // { uuid, blob, resolve }
+// Per-frame texture pipeline (FEATURE-GAPS #11). Two phases, both driven once per frame by
+// pumpTextureBuilds(): (A) dispatch blob-ready jobs to the decode worker (off-thread, bounded by
+// DECODE_INFLIGHT_CAP); (B) drain decoded ImageBitmaps to the GPU (initTexture) within a frame budget.
+// Splitting decode from upload keeps createImageBitmap/downscale off the main thread while the upload
+// (which must stay main-thread) is still throttled, so the texture burst no longer jams the main thread
+// or starves IDB read callbacks.
+const TEX_BUILD_MAX_PER_FRAME = 32   // cap UPLOADS started per frame (the main-thread throttle)
+const TEX_BUILD_BUDGET_MS     = 4    // wall-clock cap on the synchronous upload-dispatch loop
+const buildQueue = []                // { uuid, blob, resolve }  — awaiting decode dispatch
 let _renderer = null                 // injected by the engine; if null, uploads stay lazy
+// Decode (createImageBitmap + downscale) runs OFF the main thread in this worker; only the GPU upload
+// (initTexture) stays here. uploadQueue holds decoded ImageBitmaps awaiting that throttled upload.
+const texDecoder = useTexDecoder()
+const uploadQueue = []               // { uuid, bitmap, resolve }
+// Bound resident decoded ImageBitmaps so a fill flood can't pile them up faster than upload drains.
+// ~0.25 MB each at 256² → 64 ≈ a 16 MB ceiling of decoded-but-not-uploaded bitmaps.
+const DECODE_INFLIGHT_CAP = 64
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
 const texInflight = new Map()  // uuid → Promise<THREE.Texture|null>
@@ -203,7 +214,7 @@ export function getTextureStats() {
 	// server time; srv is the server handler's own measure — (net − srv) ≈ loop/transit overhead.
 	const f = (t) => ({ n: t.n, avg: t.n ? Math.round(t.ms / t.n) : 0, max: Math.round(t.max) })
 	return {
-		...stats, inflight: active, queued: netQueue.length, buildQueued: buildQueue.length, cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size,
+		...stats, inflight: active, queued: netQueue.length, buildQueued: buildQueue.length, uploadQueued: uploadQueue.length, decodeOutstanding: texDecoder.outstanding(), decoderDead: texDecoder.isDead(), cached: cache.size, hardFail: failedHard.size, softWait: softAttempts.size,
 		timing: { qWait: f(timing.qWait), idb: f(timing.idb), net: f(timing.net), srv: f(timing.srv) },
 	}
 }
@@ -249,37 +260,17 @@ function getBlob(uuid, priority = Infinity) {
 }
 
 // Client-side resident-texture dimension cap. WHY: a dense region holds thousands of THREE.Textures;
-// each retains its decoded image in memory at the source size. At 512² that's ~1 MB each — 3.4k
-// textures ≈ 3.4 GB, which alone fills Chrome's ~4 GB tab heap and stalls/crashes the load. Downscaling
-// the resident image to ≤256² quarters that (~0.9 GB) regardless of the cached WebP size, trading some
-// sharpness for the ability to load the whole region.
+// each retains its decoded image at the source size (~1 MB at 512²). Downscaling the resident image to
+// ≤256² quarters that (~0.9 GB for 3.4k textures) so the whole region fits Chrome's ~4 GB tab heap.
+// The downscale itself now happens in the decode worker (decodeToBitmap); MAX_TEX_DIM is passed to it.
 const MAX_TEX_DIM = 256
 
-// Build a THREE.Texture from a WebP Blob, downscaling the resident image to MAX_TEX_DIM.
-// WHY imageOrientation:'flipY' + tex.flipY=false: the old path uploaded an <img> with Three's
-// default flipY=true (UNPACK_FLIP_Y_WEBGL). WebGL IGNORES that pixel-store flag for ImageBitmap
-// sources, so we bake the flip into the decode instead and disable Three's flip — otherwise the
-// canvas-downscale branch (a canvas DOES honor the flag) and the direct-bitmap branch would
-// disagree on orientation. Both branches now carry pre-flipped pixels + flipY=false → UVs match
-// the previous Image-element behavior exactly.
-// WHY premultiplyAlpha:'none': WebGL ignores texture.premultiplyAlpha for ImageBitmap sources —
-// the creation-time option governs, and the browser default may premultiply (darkened cutout
-// edges vs the old straight-alpha <img> path); 'none' pins straight alpha.
-async function buildTexture(blob) {
-	let bitmap
-	try { bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' }) } catch { return null }
-	let source = bitmap
-	const longest = Math.max(bitmap.width, bitmap.height)
-	if (longest > MAX_TEX_DIM) {
-		const s = MAX_TEX_DIM / longest
-		const cw = Math.max(1, Math.round(bitmap.width * s))
-		const ch = Math.max(1, Math.round(bitmap.height * s))
-		const canvas = document.createElement('canvas')
-		canvas.width = cw; canvas.height = ch
-		const ctx = canvas.getContext('2d')
-		if (ctx) { ctx.drawImage(bitmap, 0, 0, cw, ch); source = canvas; bitmap.close?.() }
-	}
-	const tex = new THREE.Texture(source)
+// Wrap a decoded ImageBitmap (already flipped + straight-alpha + downscaled by decodeToBitmap) in a
+// THREE.Texture. No GPU upload here — _processUpload calls initTexture. WHY flipY=false: the Y-flip was
+// baked at decode time (WebGL ignores UNPACK_FLIP_Y for ImageBitmap sources), so Three's flip is
+// disabled to keep UVs matching the previous <img> path; straight alpha was likewise pinned at decode.
+function bitmapToTexture(bitmap) {
+	const tex = new THREE.Texture(bitmap)
 	tex.flipY = false
 	tex.colorSpace = THREE.SRGBColorSpace
 	tex.wrapS = tex.wrapT = THREE.RepeatWrapping
@@ -293,7 +284,7 @@ function getBaseTexture(uuid, priority = Infinity) {
 	if (cache.has(uuid))       { lastUsed.set(uuid, Date.now()); return Promise.resolve(cache.get(uuid)) }
 	if (texInflight.has(uuid)) return texInflight.get(uuid)
 
-	// Blob-ready is cheap; defer the expensive buildTexture+upload to the per-frame budgeted pump.
+	// Blob-ready is cheap; defer the expensive decode+upload to the per-frame budgeted pump.
 	const p = getBlob(uuid, priority).then(blob => {
 		if (!blob) { texInflight.delete(uuid); return null }
 		return new Promise((resolve) => { buildQueue.push({ uuid, blob, resolve }) })
@@ -303,35 +294,63 @@ function getBaseTexture(uuid, priority = Infinity) {
 	return p
 }
 
-// One build job: decode+downscale (buildTexture), upload now (initTexture, off the render() critical
-// path), then run the post-build bookkeeping getBaseTexture used to do and resolve the awaiting
-// promise. Async — the pump dispatches these at a bounded rate; continuations land as decode
-// completes. A failed decode resolves null (consumer keeps its placeholder).
-async function _processBuild({ uuid, blob, resolve }) {
-	let tex = null
-	try { tex = await buildTexture(blob) } catch { /* buildTexture currently returns null on failure; guard future changes */ }
-	texInflight.delete(uuid)
-	if (tex) {
-		try { _renderer?.initTexture(tex) } catch { /* lazy upload at render() remains the fallback */ }
-		tex.userData.hasAlpha = alphaCache.get(uuid) || false
-		cache.set(uuid, tex)
-		lastUsed.set(uuid, Date.now())
-		// Free the in-memory Blob mirror now the GPU texture exists — thousands of resident
-		// Blobs would be their own heap hog. Previews re-read IndexedDB on demand via
-		// getTextureUrl; the GPU texture is what rendering needs.
-		blobCache.delete(uuid)
+// Phase A: dispatch blob-ready jobs to the decode worker (off the main thread). Bounded by
+// DECODE_INFLIGHT_CAP so decoded ImageBitmaps can't outpace the upload drain. Posting a Blob to a worker
+// is cheap (structured clone shares the backing store by reference — no byte copy). A null bitmap
+// (decode failed / dead UUID) clears texInflight and resolves the consumer's promise with null so it
+// keeps its placeholder — same guarantee as the old synchronous build path's try/catch.
+function _dispatchDecodes() {
+	// Bound BOTH the per-frame dispatch count AND the total pending decode work. WHY both:
+	// (a) per-frame cap (TEX_BUILD_MAX_PER_FRAME): if the worker is DEAD, decode() runs INLINE on the
+	//     main thread (syncDecode → createImageBitmap). outstanding() is then always 0, so without a
+	//     per-call cap this loop would drain the WHOLE buildQueue into unbounded main-thread decodes in
+	//     one frame → freeze (worse than Pass 1, which capped builds at 32/frame). The cap degrades a
+	//     dead worker gracefully to Pass-1 behavior.
+	// (b) total-pending cap (outstanding + uploadQueue): decoded ImageBitmaps awaiting upload hold RGBA
+	//     and uploadQueue is otherwise unbounded — gate so slow frames can't pile up resident bitmaps.
+	let dispatched = 0
+	while (buildQueue.length
+	       && dispatched < TEX_BUILD_MAX_PER_FRAME
+	       && (texDecoder.outstanding() + uploadQueue.length) < DECODE_INFLIGHT_CAP) {
+		dispatched++
+		const { uuid, blob, resolve } = buildQueue.shift()
+		texDecoder.decode(blob, MAX_TEX_DIM).then((bitmap) => {
+			if (!bitmap) { texInflight.delete(uuid); resolve(null); return }
+			uploadQueue.push({ uuid, bitmap, resolve })
+		})
 	}
+}
+
+// Phase B (one upload job): wrap the decoded bitmap in a THREE.Texture, upload now (initTexture, off the
+// render() critical path), run the post-build bookkeeping getBaseTexture used to do, resolve. Synchronous
+// so drainWithinBudget actually bounds this main-thread GPU cost.
+function _processUpload({ uuid, bitmap, resolve }) {
+	let tex
+	// WHY guard: drainWithinBudget catches a throw here via onError, but if bitmapToTexture ever threw
+	// we'd leak texInflight AND never resolve → the consumer hangs as a permanently-white texture.
+	// Always clear inflight + resolve, exactly as the null-bitmap path does.
+	try { tex = bitmapToTexture(bitmap) } catch { texInflight.delete(uuid); resolve(null); return }
+	texInflight.delete(uuid)
+	try { _renderer?.initTexture(tex) } catch { /* lazy upload at render() remains the fallback */ }
+	tex.userData.hasAlpha = alphaCache.get(uuid) || false
+	cache.set(uuid, tex)
+	lastUsed.set(uuid, Date.now())
+	// Free the in-memory Blob mirror now the GPU texture exists — thousands of resident Blobs would be
+	// their own heap hog. Previews re-read IndexedDB on demand via getTextureUrl.
+	blobCache.delete(uuid)
 	resolve(tex)
 }
 
-/** Drain the texture build queue within this frame's budget. Driven once per frame by the engine. */
+/** Drive the texture pipeline once per frame (called by the engine in animate()): dispatch decodes
+ *  off-thread (bounded), then drain completed decodes to the GPU within this frame's budget. */
 export function pumpTextureBuilds() {
+	_dispatchDecodes()
 	return drainWithinBudget({
-		queue: buildQueue,
+		queue: uploadQueue,
 		maxItems: TEX_BUILD_MAX_PER_FRAME,
 		budgetMs: TEX_BUILD_BUDGET_MS,
-		processOne: _processBuild,
-		onError: (e) => console.warn('[Tex] build pump error:', e),
+		processOne: _processUpload,
+		onError: (e) => console.warn('[Tex] upload pump error:', e),
 	})
 }
 
