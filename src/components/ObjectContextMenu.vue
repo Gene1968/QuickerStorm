@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useUiStore } from '@/stores/uiStore'
-import { useLLUDP }   from '@/composables/useLLUDP'
+import { useUiStore }    from '@/stores/uiStore'
+import { useWorldStore } from '@/stores/worldStore'
+import { useLLUDP }      from '@/composables/useLLUDP'
 
-const ui = useUiStore()
+const ui    = useUiStore()
+const world = useWorldStore()
 const { sendTouch, sendSit } = useLLUDP()
 
 const menu = computed(() => ui.objectMenu)
@@ -42,7 +44,10 @@ function refreshTextures() {
 
 function edit() {
 	if (!menu.value) return
-	ui.openObjectEdit(menu.value.localId)
+	const clicked = menu.value.localId
+	const obj = world.objects.get(clicked)
+	const rootId = obj && (obj.parentId ?? 0) !== 0 ? obj.parentId : clicked
+	ui.openObjectEdit(rootId)
 	ui.focusFloater('object-edit')
 }
 

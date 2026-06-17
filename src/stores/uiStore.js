@@ -323,7 +323,7 @@ export const useUiStore = defineStore('ui', () => {
 	// Edit actions are Phase 3 (HTTP-cap perms); this is purely the visual scaffold.
 	const gizmoMode      = ref('move')
 	function setGizmoMode(m) { gizmoMode.value = m }
-	function openObjectEdit(localId) { editObjectId.value = localId; showObjectEdit.value = true; closeObjectMenu() }
+	function openObjectEdit(localId) { editObjectId.value = localId; showObjectEdit.value = true; editLinked.value = false; closeObjectMenu() }
 	function toggleObjectEdit()      { showObjectEdit.value = !showObjectEdit.value }
 
 	return {
