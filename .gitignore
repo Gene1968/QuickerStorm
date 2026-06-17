@@ -43,6 +43,10 @@ Thumbs.db
 db/data/
 
 
+# Server disk asset cache (Tier-2)
+.cache/
+
+
 # Logs + diagnostic dumps
 logs
 *.log
