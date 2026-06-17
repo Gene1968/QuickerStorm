@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach } from 'bun:test'
 import {
 	setAppBytes, appRatio, appBudgetBytes, memUnderPressure, memRatio, emergencyHeap,
 	APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, setAppBudgetOverride,
+	setResidentCount, heapThrottled, SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT,
 } from '@/lib/memGovernor.js'
 
 // bun test has no performance.memory → memRatio() is null, budget falls back to the fixed default.
 // That makes the self-accounted path (the part that matters cross-browser) fully testable here.
 
-beforeEach(() => setAppBytes(0))
+beforeEach(() => { setAppBytes(0); setResidentCount(0) })
 
 describe('self-accounted app budget', () => {
 	it('memRatio is null without performance.memory (non-Chrome path)', () => {
@@ -100,5 +101,59 @@ describe('critical-heap brake (heap-aware throttle)', () => {
 		setHeap(3870, 4192)          // ratio ~0.923
 		setAppBytes(appBudgetBytes() * 0.6)   // appRatio 0.6 > 0.5
 		try { expect(emergencyHeap()).toBe(true) } finally { clearHeap() }
+	})
+})
+
+// FEATURE-GAPS #11 churn: a heavy cold load rides heap ~0.85–0.95 while appRatio stays ~0.35 (the
+// real heap is write buffer + bake/decode garbage, not in _appBytes). Below the 0.95 hard brake and
+// below the 0.92+appRatio>0.5 corroboration, NOTHING throttled → buildQ ran away, scene churned.
+// The soft brake closes that band, corroborated by a real resident scene (meshMap.size) so a
+// hard-reload inheriting ~90% garbage heap with no scene can't be blanked.
+describe('soft-heap brake (heavy-cold-load churn)', () => {
+	const MB = 1048576
+	const setHeap = (usedMB, limitMB) => { globalThis.performance.memory = { usedJSHeapSize: usedMB * MB, jsHeapSizeLimit: limitMB * MB } }
+	const clearHeap = () => { try { delete globalThis.performance.memory } catch { globalThis.performance.memory = undefined } }
+
+	it('exports a sane hysteresis band and resident floor', () => {
+		expect(SOFT_HEAP_ON).toBeGreaterThan(SOFT_HEAP_OFF)
+		expect(SOFT_HEAP_ON).toBeLessThan(0.95)        // below the hard brake
+		expect(MIN_RESIDENT).toBeGreaterThan(0)
+	})
+
+	it('fires on the churn signature (heap 0.88, real scene) even though appRatio < 0.5', () => {
+		setHeap(3690, 4192)              // ratio ~0.88 — in the soft band, below 0.95
+		setAppBytes(100 * MB)            // appRatio ~0.065 — the unaccounted-heap signature
+		setResidentCount(17471)          // a genuinely large resident scene
+		try {
+			expect(memRatio()).toBeGreaterThan(SOFT_HEAP_ON)
+			expect(appRatio()).toBeLessThan(0.5)
+			expect(heapThrottled()).toBe(true)
+			expect(memUnderPressure()).toBe(true)
+		} finally { clearHeap() }
+	})
+
+	it('does NOT fire with no resident scene (hard-reload inherited-garbage blank-startup guard)', () => {
+		setHeap(3690, 4192)              // ratio ~0.88 — same high heap...
+		setResidentCount(0)              // ...but no scene yet → must still build (no blank region)
+		try { expect(heapThrottled()).toBe(false) } finally { clearHeap() }
+	})
+
+	it('hysteresis: engages above ON, stays engaged mid-band, releases below OFF', () => {
+		setResidentCount(17471)
+		try {
+			setHeap(3610, 4192)          // ~0.861 > 0.85 ON → engage
+			expect(heapThrottled()).toBe(true)
+			setHeap(3360, 4192)          // ~0.801 between OFF and ON → stay engaged (latched)
+			expect(heapThrottled()).toBe(true)
+			setHeap(3220, 4192)          // ~0.768 < 0.78 OFF → release
+			expect(heapThrottled()).toBe(false)
+		} finally { clearHeap() }
+	})
+
+	it('never fires without a measurable heap (non-Chrome safety), regardless of resident count', () => {
+		clearHeap()
+		setResidentCount(50000)
+		expect(memRatio()).toBeNull()
+		expect(heapThrottled()).toBe(false)
 	})
 })

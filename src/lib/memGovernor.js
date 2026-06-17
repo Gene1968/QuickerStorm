@@ -27,7 +27,21 @@ const APP_BUDGET_OVERRIDE_MAX = 6144 * 1048576
 const EMERGENCY_HEAP_RATIO = 0.92           // process-heap fraction that means pressure WHEN corroborated
 const CRITICAL_HEAP_RATIO  = 0.95           // process-heap fraction that ALWAYS means pressure (no corroboration)
 
+// Soft-heap brake (FEATURE-GAPS #11 churn): a heavy COLD load rides heap in this band while appRatio
+// stays low (the real heap is the write buffer + bake/decode garbage, none of it in _appBytes). The
+// 0.95 hard brake + 0.92/appRatio>0.5 corroboration both slip under heap 0.89/app 0.35 → nothing
+// throttled → buildQ ran away + the scene churned. This brake pauses intake in the band so GC reclaims
+// the transient garbage before heap reaches the hard brake. Corroborated by a real resident scene
+// (meshMap.size > MIN_RESIDENT) NOT appRatio: a hard-reloaded page inherits the prior page's ~90%
+// uncollected heap, so throttling on raw memRatio would refuse the first build → blank region; but an
+// inherited-garbage startup holds no scene (meshMap≈0), while the churn held meshMap=17471.
+const SOFT_HEAP_ON  = 0.85   // engage the soft brake above this heap ratio (with resident corroboration)
+const SOFT_HEAP_OFF = 0.78   // release below this (hysteresis — let GC reclaim before resuming intake)
+const MIN_RESIDENT  = 500    // require a real resident scene to corroborate (blank-startup guard)
+
 let _appBytes = 0
+let _residentCount = 0   // engine pushes meshMap.size (cull tick); corroborates the soft-heap brake
+let _softBrakeOn = false // hysteresis latch for heapThrottled()
 let _appBudgetOverride = 0   // 0 = auto (heap-scaled default); >0 = user override (clamped). See setAppBudgetOverride.
 
 /**
@@ -67,6 +81,11 @@ export function setAppBytes(b) {
 	_appBytes = Number.isFinite(b) && b > 0 ? b : 0
 }
 
+/** Engine pushes its live resident mesh count (meshMap.size) here; corroborates the soft-heap brake. */
+export function setResidentCount(n) {
+	_residentCount = Number.isFinite(n) && n > 0 ? n : 0
+}
+
 /** Resident-asset budget in bytes. User override (clamped) wins; else heap-scaled default. */
 export function appBudgetBytes() {
 	if (_appBudgetOverride > 0) return _appBudgetOverride
@@ -99,10 +118,28 @@ export function emergencyHeap() {
 	return r > EMERGENCY_HEAP_RATIO && appRatio() > 0.5
 }
 
-// True when intake (texture fetches, mesh bakes) should pause: over the self-accounted budget,
-// or genuinely near OOM (see emergencyHeap).
-export function memUnderPressure() {
-	return appRatio() > 1 || emergencyHeap()
+// Soft-heap brake: pause intake while the process heap rides in the 0.85–0.95 band AND we genuinely
+// hold a resident scene (so a hard-reload's inherited garbage — heap high, no scene — can't blank the
+// region). Hysteresis (engage > ON, release < OFF) prevents per-tick chatter as a single bake nudges
+// heap across the line. Returns false when heap is unmeasurable (non-Chrome) — same safety as
+// emergencyHeap. The 0.95 emergencyHeap brake remains the unconditional backstop above this band.
+export function heapThrottled() {
+	const r = memRatio()
+	if (r == null) { _softBrakeOn = false; return false }
+	if (_residentCount <= MIN_RESIDENT) { _softBrakeOn = false; return false }
+	if (_softBrakeOn) {
+		if (r < SOFT_HEAP_OFF) _softBrakeOn = false
+	} else {
+		if (r > SOFT_HEAP_ON) _softBrakeOn = true
+	}
+	return _softBrakeOn
 }
 
-export { APP_BUDGET_CAP, APP_BUDGET_FRACTION, APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, CRITICAL_HEAP_RATIO }
+// True when intake (texture fetches, mesh bakes, prim ingest) should pause: over the self-accounted
+// budget, genuinely near OOM (emergencyHeap), or in the soft-heap band with a real scene (heapThrottled).
+export function memUnderPressure() {
+	return appRatio() > 1 || emergencyHeap() || heapThrottled()
+}
+
+export { APP_BUDGET_CAP, APP_BUDGET_FRACTION, APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, CRITICAL_HEAP_RATIO,
+	SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT }

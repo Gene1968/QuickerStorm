@@ -7,7 +7,7 @@ import * as THREE from 'three'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { texCacheGet, texCachePut, texFailedLoad, texFailedMark, texFailedClear } from '@/lib/textureCache.js'
 import { heapPush, heapPop } from '@/lib/priorityQueue.js'
-import { emergencyHeap, appRatio } from '@/lib/memGovernor.js'
+import { emergencyHeap, appRatio, heapThrottled } from '@/lib/memGovernor.js'
 import { C, S } from '@shared/protocol.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { useTexDecoder } from './useTexDecoder.js'
@@ -117,7 +117,7 @@ function _wire() {
 // textures (LRU = near-aware: near faces are re-applied within 20 s so they're protected). emergencyHeap()
 // remains the hard near-OOM stop. Near-first heap-pop is unchanged so visible faces still fetch first.
 function _pump() {
-	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || appRatio() >= 1.0)) {
+	while (active < MAX_INFLIGHT && netQueue.length && !(emergencyHeap() || appRatio() >= 1.0 || heapThrottled())) {
 		active++
 		heapPop(netQueue).run()   // nearest queued fetch first (near-first load)
 	}

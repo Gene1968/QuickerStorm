@@ -19,7 +19,7 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
-import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride } from '@/lib/memGovernor.js'
+import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
@@ -3410,6 +3410,9 @@ export function useWorldEngine(canvasRef) {
 		// and worsened the cull-spiral (FEATURE-GAPS #13). It has its own RAM budget (setGeomMemBudget).
 		// Must match the 3s stats-timer sum or the governor signal oscillates between the two sites.
 		setAppBytes(getTextureBytes() + getMeshBytes() + _lastGeomB)
+		// Corroborates the soft-heap brake (memGovernor.heapThrottled): a real resident scene means a
+		// high heap is OUR load (throttle), not a hard-reload inheriting the prior page's garbage (build).
+		setResidentCount(meshMap.size)
 		// Warm-read decouple (FEATURE-GAPS #10): detect region entry (login/TP/walk) by coords, reset
 		// per-region key tracking, and prefetch that region's manifest into the mem tier before its
 		// ObjectUpdate storm. Uniform across all entry paths — no per-handler wiring needed.
@@ -3621,6 +3624,11 @@ export function useWorldEngine(canvasRef) {
 	const INGEST_MAX = 512
 	function pumpIngest() {
 		if (!_ingestQueue.length) return
+		// Memory governor: pause pulling prims off the ingest queue under pressure (heap soft-brake,
+		// VRAM budget, or the 0.95 OOM brake). Each ingest does upsertObject + queues a mesh build, so
+		// continuing would feed buildQ + worldStore while the heap is already tight (the cold-load churn:
+		// buildQ ran away to 42k). The queue retains its items and drains once pressure clears.
+		if (memUnderPressure()) return
 		const hidden = (typeof document !== 'undefined' && document.hidden)
 		drainWithinBudget({
 			queue: _ingestQueue,
@@ -4575,11 +4583,14 @@ export function useWorldEngine(canvasRef) {
 			{
 				const mg = memStats()
 				const pressure = memUnderPressure()
+				// Distinguish the NEW soft-heap brake (0.85–0.95 band) from the existing app-budget/0.95
+				// throttles so a heavy cold load can be live-verified as actually firing it (#11 churn).
+				const throttleSeg = pressure ? (heapThrottled() ? ' ⚠THROTTLE(soft-heap)' : ' ⚠THROTTLING') : ''
 				const mb = (b) => (b / 1048576).toFixed(0)
 				const heapSeg = mg ? `heap ${mg.usedMB}/${mg.limitMB}MB (${(mg.ratio * 100).toFixed(0)}%)` : 'heap n/a'
 				const wb = getGeomWriteBufStats()
 				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
-					`${pressure ? ' ⚠THROTTLING' : ''} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())} wBuf=${mb(wb.bytes)}MB${wb.dropped ? ` drop=${wb.dropped}` : ''}` +
+					`${throttleSeg} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())} wBuf=${mb(wb.bytes)}MB${wb.dropped ? ` drop=${wb.dropped}` : ''}` +
 					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size + (_instancePool?.count() ?? 0)} inst=${_instancePool?.count() ?? 0} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
