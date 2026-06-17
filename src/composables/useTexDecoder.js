@@ -1,10 +1,10 @@
-import { decodeToBitmap } from '@/lib/texDecodeBitmap.js'
+import { decodeToPixels } from '@/lib/texDecodeBitmap.js'
 
-// Dispatches Blob→ImageBitmap decode to a module worker (off the main thread), falling back to
+// Dispatches Blob→RGBA-pixels decode to a module worker (off the main thread), falling back to
 // synchronous main-thread decode when the worker can't be constructed (no module-worker support, CSP,
 // test env) or errors out. FEATURE-GAPS #11 Pass 2 — mirrors useMeshBaker.
 //
-//   decode(blob, maxDim) → Promise<ImageBitmap | null>
+//   decode(blob, maxDim) → Promise<{ data: Uint8ClampedArray, width, height } | null>
 export function useTexDecoder() {
 	let worker = null
 	let dead = false
@@ -21,7 +21,7 @@ export function useTexDecoder() {
 	// Main-thread fallback decode (no worker): time it locally — this IS real main-thread cost.
 	function syncDecode(blob, maxDim) {
 		const t0 = performance.now()
-		return Promise.resolve(decodeToBitmap(blob, maxDim)).then(b => { stats.decodeMs += performance.now() - t0; return b })
+		return Promise.resolve(decodeToPixels(blob, maxDim)).then(px => { stats.decodeMs += performance.now() - t0; return px })
 	}
 
 	function initWorker() {
@@ -29,10 +29,10 @@ export function useTexDecoder() {
 		try {
 			worker = new Worker(new URL('../workers/texDecode.worker.js', import.meta.url), { type: 'module' })
 			worker.onmessage = (e) => {
-				const { id, bitmap, decodeMs } = e.data
+				const { id, pixels, decodeMs } = e.data
 				stats.decodeMs += decodeMs || 0
 				const p = pending.get(id)
-				if (p) { pending.delete(id); p.resolve(bitmap || null) }
+				if (p) { pending.delete(id); p.resolve(pixels || null) }
 				jobsSinceSpawn++
 				if (jobsSinceSpawn >= RECYCLE_AFTER_JOBS && pending.size === 0) {
 					jobsSinceSpawn = 0

@@ -50,11 +50,11 @@ const TEX_BUILD_BUDGET_MS     = 4    // wall-clock cap on the synchronous upload
 const buildQueue = []                // { uuid, blob, resolve }  — awaiting decode dispatch
 let _renderer = null                 // injected by the engine; if null, uploads stay lazy
 // Decode (createImageBitmap + downscale) runs OFF the main thread in this worker; only the GPU upload
-// (initTexture) stays here. uploadQueue holds decoded ImageBitmaps awaiting that throttled upload.
+// (initTexture) stays here. uploadQueue holds decoded RGBA pixel buffers awaiting that throttled upload.
 const texDecoder = useTexDecoder()
-const uploadQueue = []               // { uuid, bitmap, resolve }
-// Bound resident decoded ImageBitmaps so a fill flood can't pile them up faster than upload drains.
-// ~0.25 MB each at 256² → 64 ≈ a 16 MB ceiling of decoded-but-not-uploaded bitmaps.
+const uploadQueue = []               // { uuid, pixels: {data,width,height}, resolve }
+// Bound resident decoded pixel buffers so a fill flood can't pile them up faster than upload drains.
+// ~0.25 MB each at 256² → 64 ≈ a 16 MB ceiling of decoded-but-not-uploaded pixels.
 const DECODE_INFLIGHT_CAP = 64
 
 const cache       = new Map()  // uuid → THREE.Texture (base, GPU)
@@ -262,18 +262,27 @@ function getBlob(uuid, priority = Infinity) {
 // Client-side resident-texture dimension cap. WHY: a dense region holds thousands of THREE.Textures;
 // each retains its decoded image at the source size (~1 MB at 512²). Downscaling the resident image to
 // ≤256² quarters that (~0.9 GB for 3.4k textures) so the whole region fits Chrome's ~4 GB tab heap.
-// The downscale itself now happens in the decode worker (decodeToBitmap); MAX_TEX_DIM is passed to it.
+// The downscale itself now happens in the decode worker (decodeToPixels); MAX_TEX_DIM is passed to it.
 const MAX_TEX_DIM = 256
 
-// Wrap a decoded ImageBitmap (already flipped + straight-alpha + downscaled by decodeToBitmap) in a
-// THREE.Texture. No GPU upload here — _processUpload calls initTexture. WHY flipY=false: the Y-flip was
-// baked at decode time (WebGL ignores UNPACK_FLIP_Y for ImageBitmap sources), so Three's flip is
-// disabled to keep UVs matching the previous <img> path; straight alpha was likewise pinned at decode.
-function bitmapToTexture(bitmap) {
-	const tex = new THREE.Texture(bitmap)
+// Wrap decoded RGBA CPU pixels ({data, width, height}, already Y-flipped + straight-alpha + downscaled by
+// decodeToPixels) in a THREE.DataTexture. No GPU upload here — _processUpload calls initTexture.
+// WHY DataTexture (not Texture(ImageBitmap)): a worker-decoded GPU ImageBitmap can't upload on the main GL
+// context (shared-image/mailbox mismatch → glCopySubTextureCHROMIUM errors); raw CPU bytes have no mailbox.
+// WHY the explicit filters/mipmaps: THREE.DataTexture defaults to NearestFilter + generateMipmaps=false
+// (THREE.Texture defaulted to Linear + mipmaps), so we restore Linear + trilinear mipmaps to keep the look.
+// WHY flipY=false: the Y-flip is baked into the pixel data at decode (DataTexture ignores UNPACK_FLIP_Y);
+// straight alpha was likewise pinned at decode → matches the previous path's UVs and transparency.
+function pixelsToTexture({ data, width, height }) {
+	// Uint8Array view over the transferred buffer (THREE wants a plain TypedArray for an UnsignedByte tex).
+	const view = data instanceof Uint8Array ? data : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+	const tex = new THREE.DataTexture(view, width, height, THREE.RGBAFormat, THREE.UnsignedByteType)
 	tex.flipY = false
 	tex.colorSpace = THREE.SRGBColorSpace
 	tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+	tex.magFilter = THREE.LinearFilter
+	tex.minFilter = THREE.LinearMipmapLinearFilter
+	tex.generateMipmaps = true
 	tex.needsUpdate = true
 	return tex
 }
@@ -314,22 +323,22 @@ function _dispatchDecodes() {
 	       && (texDecoder.outstanding() + uploadQueue.length) < DECODE_INFLIGHT_CAP) {
 		dispatched++
 		const { uuid, blob, resolve } = buildQueue.shift()
-		texDecoder.decode(blob, MAX_TEX_DIM).then((bitmap) => {
-			if (!bitmap) { texInflight.delete(uuid); resolve(null); return }
-			uploadQueue.push({ uuid, bitmap, resolve })
+		texDecoder.decode(blob, MAX_TEX_DIM).then((pixels) => {
+			if (!pixels) { texInflight.delete(uuid); resolve(null); return }
+			uploadQueue.push({ uuid, pixels, resolve })
 		})
 	}
 }
 
-// Phase B (one upload job): wrap the decoded bitmap in a THREE.Texture, upload now (initTexture, off the
+// Phase B (one upload job): wrap the decoded pixels in a THREE.DataTexture, upload now (initTexture, off the
 // render() critical path), run the post-build bookkeeping getBaseTexture used to do, resolve. Synchronous
 // so drainWithinBudget actually bounds this main-thread GPU cost.
-function _processUpload({ uuid, bitmap, resolve }) {
+function _processUpload({ uuid, pixels, resolve }) {
 	let tex
-	// WHY guard: drainWithinBudget catches a throw here via onError, but if bitmapToTexture ever threw
+	// WHY guard: drainWithinBudget catches a throw here via onError, but if pixelsToTexture ever threw
 	// we'd leak texInflight AND never resolve → the consumer hangs as a permanently-white texture.
-	// Always clear inflight + resolve, exactly as the null-bitmap path does.
-	try { tex = bitmapToTexture(bitmap) } catch { texInflight.delete(uuid); resolve(null); return }
+	// Always clear inflight + resolve, exactly as the null-pixels path does.
+	try { tex = pixelsToTexture(pixels) } catch { texInflight.delete(uuid); resolve(null); return }
 	texInflight.delete(uuid)
 	try { _renderer?.initTexture(tex) } catch { /* lazy upload at render() remains the fallback */ }
 	tex.userData.hasAlpha = alphaCache.get(uuid) || false

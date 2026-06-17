@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useTexDecoder } from '@/composables/useTexDecoder.js'
 
 // jsdom: constructing a module Worker from a file URL throws → exercises the sync fallback. jsdom also
-// has no createImageBitmap, so the fallback decodeToBitmap resolves null. The contract under test is
+// has no createImageBitmap, so the fallback decodeToPixels resolves null. The contract under test is
 // "degrades to null WITHOUT hanging", which is exactly the worker-unavailable path real browsers never hit.
 describe('useTexDecoder (fallback)', () => {
 	let dec
