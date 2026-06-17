@@ -9,18 +9,17 @@ import { computeAutoGeomCacheMb } from '@/lib/geomCache.js'
 // keeps them legible — row 1: #1+#2 side-by-side; row 2: #3 half-offset above;
 // row 3: #4+#5 full; row 4: #6 half-offset. User drag overrides defaultPos.
 export const MAX_INVENTORY = 6
-const INV_ROW_BOTTOM = [
-	'2.575rem',
-	'calc(2.575rem + 47vh + 0.125rem)',
-	'calc(2.575rem + 92vh + 0.0625rem)',
+const INV_ROW_TOP = [
+	'calc(100vh - 2.575rem - 46vh)',
+	'calc(100vh - 2.575rem - 92vh - 0.125rem)',
 ]
 export const INVENTORY_DEFAULT_POS = [
-	{ left: '0.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #1
-	{ left: '16.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #2
-	{ left: '8.8125vw', bottom: INV_ROW_BOTTOM[1] }, // #3
-	{ left: '33.0625vw', bottom: INV_ROW_BOTTOM[0] }, // #4
-	{ left: '25.3125vw', bottom: INV_ROW_BOTTOM[1] }, // #5
-	{ left: '49.5625vw', bottom: INV_ROW_BOTTOM[0] }, // #6
+	{ left: '0.0625vw', top: INV_ROW_TOP[0] },// #1
+	{ left: '16.0625vw', top: INV_ROW_TOP[0] },// #2
+	{ left: '8.3125vw', top: INV_ROW_TOP[1] },// #3
+	{ left: '32.0625vw', top: INV_ROW_TOP[0] },// #4
+	{ left: '24.3125vw', top: INV_ROW_TOP[1] },// #5
+	{ left: '48.0625vw', top: INV_ROW_TOP[0] },// #6
 ]
 
 export const useUiStore = defineStore('ui', () => {

@@ -44,7 +44,7 @@ const cameraRows = [
 		id="movement-help"
 		title="Movement &amp; Shortcuts"
 		:wrap-style="{ width: '35rem' }"
-		:default-pos="{ left: '28%', top: '5%' }"
+		:default-pos="{ left: '28vw', top: '5vh' }"
 		@close="ui.showMovementHelp = false"
 	>
 		<div class="p-4 text-xs text-fg-subtle space-y-5">

@@ -136,7 +136,7 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 		id="camera"
 		title="🎥 Camera"
 		:wrap-style="{ width: '19rem', resize: 'both' }"
-		:default-pos="{ left: '17.25vw', bottom: '2.5rem' }"
+		:default-pos="{ left: '17.25vw', top: 'calc(100vh - 2.5rem - 12.25vw)' }"
 		@close="ui.toggleCameraControls()"
 	>
 		<div class="containerQ flex flex-col gap-[3px] p-[5px] select-none">

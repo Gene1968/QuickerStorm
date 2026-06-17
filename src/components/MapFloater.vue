@@ -636,7 +636,7 @@ onUnmounted(() => {
 		id="map"
 		title="🗺 World Map"
 		:wrap-style="{ width: '62vw', height: '68vh', minWidth: '640px', minHeight: '400px', resize: 'both' }"
-		:default-pos="{ left: '50%', top: '53%', transform: 'translate(-50%, -50%)' }"
+		:default-pos="{ left: '50vw', top: '53vh', transform: 'translate(-50%, -50%)' }"
 		@close="ui.toggleMap()"
 	>
 		<div class="flex flex-1 min-h-0 overflow-hidden">

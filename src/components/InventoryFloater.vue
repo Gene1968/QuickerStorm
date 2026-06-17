@@ -259,7 +259,7 @@ onUnmounted(() => {
 	<FloaterWindow
 		:id="floaterId"
 		:title="title"
-		:wrap-style="{ width: '16.5vw', height: '47vh', resize: 'both' }"
+		:wrap-style="{ width: '16vw', height: '46vh', resize: 'both' }"
 		:default-pos="defaultPos"
 		@close="close"
 		class="min-w-[16.5rem]"
