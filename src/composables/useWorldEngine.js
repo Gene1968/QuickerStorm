@@ -740,6 +740,7 @@ export function useWorldEngine(canvasRef) {
 	// sim's own deceleration. Instant stop left avatarSLPos behind the still-coasting sim, and the
 	// TerseUpdate correction then rubber-banded across that gap.
 	let drVelX = 0, drVelY = 0
+	let _drCollisionBlocked = false  // true when checkCollision() stalled DR this frame
 	const DR_ACCEL_RATE = 25  // velocity ramp-up on press (1/s) — reaches speed in ~0.12s
 	const DR_DECEL_RATE = 4   // skid-to-stop decay on release (1/s) — ~0.4s glide, matches sim feel
 	let terseUpdateCount = 0  // diagnostic: confirm TerseUpdates are flowing
@@ -2607,7 +2608,7 @@ export function useWorldEngine(canvasRef) {
 					// Suppress correction while moving OR still skidding (residual DR velocity) —
 					// otherwise the ease toward the lagged sim pos re-introduces a pull the instant
 					// the key is released, mid-coast. Once fully stopped, settle gently.
-					const movingNow = MOVE_KEYS.some(k => keys[k]) || drVelX !== 0 || drVelY !== 0
+					const movingNow = (MOVE_KEYS.some(k => keys[k]) || drVelX !== 0 || drVelY !== 0) && !_drCollisionBlocked
 					// WHY: while airborne (vertVel !== 0) local physics owns the full arc — the sim's
 					// TerseUpdate position lags by ~RTT. XY corrections during flight cause horizontal
 					// shake; Z corrections cause the post-landing re-bounce (sim still shows avatar
@@ -4223,12 +4224,15 @@ export function useWorldEngine(canvasRef) {
 				// so DR doesn't march coords through walls and diverge from where peers see us.
 				if (checkCollision(drVelX / vMag, drVelY / vMag)) {
 					drVelX = 0; drVelY = 0
+					_drCollisionBlocked = true
 				} else {
+					_drCollisionBlocked = false
 					avatarSLPos[0] += drVelX * dt
 					avatarSLPos[1] += drVelY * dt
 				}
 			} else {
 				drVelX = 0; drVelY = 0  // snap to rest below threshold so the idle gate trips
+				_drCollisionBlocked = false
 			}
 			// WHY: only push Z directly while flying. On the ground the jump impulse
 			// (vertVel = JUMP_VEL) drives vertical motion through the gravity loop, which
