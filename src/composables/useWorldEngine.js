@@ -2749,6 +2749,10 @@ export function useWorldEngine(canvasRef) {
 					else child.material.dispose()
 				}
 			})
+			for (const lbl of [mesh.userData?.label2D, mesh.userData?.hoverLabel]) {
+				if (lbl?.element?.parentNode) lbl.element.remove()
+				lbl?.parent?.remove(lbl)
+			}
 			mesh.parent?.remove(mesh)
 		})
 		meshMap.clear()
