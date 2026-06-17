@@ -4405,6 +4405,13 @@ export function useWorldEngine(canvasRef) {
 			timed('ingest', pumpIngest)   // paced upsert/persist/queue (TP-flood backpressure, #11)
 			timed('drain', drainMeshQueue)
 			timed('pumpTex', pumpTextures)   // resume governor-paused texture fetches once heap pressure clears
+			// Drive the texture decode/upload pump here too WHEN UNFOCUSED: animate()'s !hasFocus
+			// early-return (and rAF being paused in a hidden tab) otherwise stalls pumpTextureBuilds, so
+			// decode/upload halts and buildQueue piles up until refocus (the "stuck until I click back"
+			// symptom — visible-but-unfocused, e.g. DevTools focused, hits it too). This interval runs
+			// regardless of focus; gate on !hasFocus so it's mutually exclusive with animate()'s call
+			// (no double-pump). Hidden tabs clamp this interval to ~1Hz so fill is slow but never stalls.
+			if (typeof document !== 'undefined' && !document.hasFocus()) timed('texbuild', pumpTextureBuilds)
 			if ((_drainTick++ & 3) === 0) timed('reparent', reparentOrphans)
 		}, 30)
 		_cullTimer = setInterval(() => timed('cull', cullTick), 1000)

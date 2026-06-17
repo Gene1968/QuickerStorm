@@ -68,6 +68,17 @@ function loadTex(uuid) {
 	texUrls[uuid] = null
 	getTextureUrl(uuid).then((url) => { texUrls[uuid] = url || null }).catch(() => { texUrls[uuid] = null })
 }
+// An <img> load error means our cached object URL was revoked by the texture layer (pruneTexturesLRU /
+// refreshTextures call URL.revokeObjectURL on eviction) — the blob is still in qs-tex IDB. Drop the dead
+// URL and re-resolve once (getTextureUrl re-reads IDB → fresh URL). Retry-once guards an error loop on a
+// genuinely bad URL; a null re-resolve just hides the <img> (no loop).
+const _texRetried = new Set()
+function reloadTex(uuid) {
+	if (!uuid || _texRetried.has(uuid)) return
+	_texRetried.add(uuid)
+	delete texUrls[uuid]
+	loadTex(uuid)
+}
 
 // Larger preview ("texture picker"): clicking any chip opens it over the floater body.
 const previewUuid = ref(null)
@@ -713,7 +724,7 @@ function close() {
 										:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
 										@click="openPreview(obj.defaultTexture)"
 									>
-										<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" />
+										<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
 										<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
 									</button>
 									Diffuse
@@ -791,7 +802,7 @@ function close() {
 									:title="`Face ${c.face} — click for preview`"
 									@click="openPreview(c.uuid)"
 								>
-									<img v-if="texUrls[c.uuid]" :src="texUrls[c.uuid]" class="w-full h-full object-cover" alt="" />
+									<img v-if="texUrls[c.uuid]" :src="texUrls[c.uuid]" class="w-full h-full object-cover" alt="" @error="reloadTex(c.uuid)" />
 									<span v-else class="absolute inset-0 flex items-center justify-center text-fg/30 text-2xs">…</span>
 									<span class="absolute bottom-0 right-0 px-0.5 bg-black/60 text-[0.5rem] text-fg/80 rounded-tl">{{ c.face }}</span>
 								</button>
@@ -927,6 +938,7 @@ function close() {
 						class="max-w-full max-h-full object-contain border border-edge rounded-sm"
 						:style="{ background: 'repeating-conic-gradient(#0003 0 25%, transparent 0 50%) 0 0 / 1rem 1rem' }"
 						alt="texture preview"
+						@error="reloadTex(previewUuid)"
 					/>
 					<div v-else class="text-fg/40 italic text-xs">Loading texture…</div>
 				</div>
