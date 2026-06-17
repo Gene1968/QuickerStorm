@@ -33,6 +33,9 @@ export const useWorldStore = defineStore('world', () => {
 	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100, atTarget: true, massive: false, effNear: 0, texPending: 0, texFailed: 0 })
 	function setCullStats(s) { cullStats.value = s }
 
+	const sceneLoading = ref(true)   // region assets still draining? published from useWorldEngine.cullTick
+	function setSceneLoading(v) { sceneLoading.value = !!v }
+
 	// WHY: ObjectUpdate nameValue is the raw SL NameValue string, e.g.:
 	//   "FirstName STRING RW SV John\nLastName STRING RW SV Doe\n"
 	// AvatarList reads .name; parse it here so all consumers get a display name.
@@ -158,7 +161,7 @@ export const useWorldStore = defineStore('world', () => {
 	}
 
 	return {
-		objects, avatars, prims, cullStats, setCullStats,
+		objects, avatars, prims, cullStats, setCullStats, sceneLoading, setSceneLoading,
 		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,

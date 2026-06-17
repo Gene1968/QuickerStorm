@@ -3435,6 +3435,7 @@ export function useWorldEngine(canvasRef) {
 		const loading = pendingMeshIds.size > 50 || tStat.queued > 0 || tStat.inflight > 0 || mStat.queued > 0 || _geomPending > 25
 		setGeomCacheLoading(loading)
 		setTexCacheLoading(loading)   // same load signal: suspend qs-tex flushes so reads aren't starved
+		worldStore.setSceneLoading(loading)   // publish region-idle signal (gates the inventory bulk walk)
 		// Re-record this region's key manifest on every settle EDGE (loading true→false). geomManifestRecord
 		// no-ops unless the key set grew, so the manifest converges UP to the full working set across the
 		// settle dips of a heavy load and across revisits — fixing the early, draw-distance-limited snapshot

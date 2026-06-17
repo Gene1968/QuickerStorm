@@ -8,6 +8,7 @@ import { onMounted, onUnmounted, watch } from 'vue'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useWorldStore } from '@/stores/worldStore'
 import { loadCachedInventory, saveCachedInventory } from '@/lib/inventoryCache'
 import { C, S } from '@shared/protocol.js'
 
@@ -15,13 +16,25 @@ const BATCH        = 40   // folders per cap POST (server batches them into one 
 const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background bulk load
 const PUMP_MS      = 150
 
+// Defer the background full-inventory walk until the region's assets have drained (worldStore.sceneLoading
+// false), so it doesn't peg the client main thread and starve region texture/mesh loading on a cold load
+// (FEATURE-GAPS cold-pipeline #2). Bounded by a ceiling so a never-settling region still loads inventory.
+export const FETCHALL_DEFER_CEILING_MS = 240_000
+
+/** True while the bulk walk should wait: the region is still loading AND we are within the ceiling. */
+export function shouldDeferInventoryWalk(sceneLoading, elapsedMs, ceilingMs = FETCHALL_DEFER_CEILING_MS) {
+	return !!sceneLoading && elapsedMs < ceilingMs
+}
+
 let registered = false
 let pump = null
+let capsReadyAt = 0   // performance.now() at caps-ready; the bulk-walk defer ceiling is measured from here
 
 export function useInventory() {
 	const { on, off, emit } = useRealtimeSocket()
 	const inv     = useInventoryStore()
 	const session = useSessionStore()
+	const world   = useWorldStore()
 
 	// Fetch one or more folders' items in a single batched cap request.
 	function fetchFolders(ids) {
@@ -44,6 +57,9 @@ export function useInventory() {
 		if (pump) return
 		pump = setInterval(() => {
 			if (!inv.capsReady) return
+			// Hold the full walk until the region's assets have drained (bounded) — see
+			// shouldDeferInventoryWalk. Prevents the cold-load main-thread starvation of texture/mesh load.
+			if (shouldDeferInventoryWalk(world.sceneLoading, performance.now() - capsReadyAt)) return
 			const slots = MAX_INFLIGHT - inv.fetching.size
 			const pending = inv.pendingAgentFolders()
 			if (pending.length === 0 && inv.fetching.size === 0) { stopFetchAll(); return }
@@ -88,6 +104,7 @@ export function useInventory() {
 
 	async function onCapsReady(d) {
 		inv.setCaps(d?.caps || [])
+		capsReadyAt = performance.now()
 		// Load cache BEFORE starting fetches so items appear immediately.
 		await loadCache()
 		// WHY: one-shot save watcher registered here (not at module level) so it is fresh for
