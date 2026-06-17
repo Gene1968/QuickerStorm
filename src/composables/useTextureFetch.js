@@ -439,7 +439,12 @@ export function pruneTexturesLRU(maxPerCall = 64, now = Date.now()) {
 		if (n >= maxPerCall) break
 		cache.delete(uuid); lastUsed.delete(uuid); alphaCache.delete(uuid)
 		blobCache.delete(uuid)
-		const ou = objUrlCache.get(uuid); if (ou) { URL.revokeObjectURL(ou); objUrlCache.delete(uuid) }
+		// WHY NOT revoke the preview object URL here: object URLs are created ONLY by getTextureUrl (the
+		// ObjectEditFloater preview), and revoking one the floater is still showing leaves a dead blob: src
+		// → a console `ERR_FILE_NOT_FOUND` 404 (the <img> @error self-heals, but the failed GET is logged).
+		// The prune's real goal — freeing the decoded RGBA — is done by cache.delete above; the lingering
+		// objUrl only pins the small WebP Blob (bounded by distinct-previewed textures, freed on teardown /
+		// explicit refreshTextures). So leave objUrlCache to the intentional revoke sites (refresh/teardown).
 		const prefix = uuid + '|'
 		for (const k of [...xformCache.keys()]) if (k.startsWith(prefix)) xformCache.delete(k)
 		n++

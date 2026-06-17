@@ -68,8 +68,9 @@ function loadTex(uuid) {
 	texUrls[uuid] = null
 	getTextureUrl(uuid).then((url) => { texUrls[uuid] = url || null }).catch(() => { texUrls[uuid] = null })
 }
-// An <img> load error means our cached object URL was revoked by the texture layer (pruneTexturesLRU /
-// refreshTextures call URL.revokeObjectURL on eviction) — the blob is still in qs-tex IDB. Drop the dead
+// An <img> load error means our cached object URL was revoked by the texture layer (refreshTextures /
+// clearTextureCache call URL.revokeObjectURL; the memory-pressure prune no longer does) — the blob is
+// still in qs-tex IDB. Drop the dead
 // URL and re-resolve once (getTextureUrl re-reads IDB → fresh URL). Retry-once guards an error loop on a
 // genuinely bad URL; a null re-resolve just hides the <img> (no loop).
 const _texRetried = new Set()
