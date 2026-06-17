@@ -1072,6 +1072,7 @@ export interface ObjectData {
   sculptType?:      number              // raw sculpt type byte (1 sphere..4 cylinder, 5 mesh)
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
+  phantom?:      boolean  // PrimFlags bit 0x400 — avatar passes through; skip collision
 }
 
 /**
@@ -1097,7 +1098,7 @@ export function decodeObjectUpdateCompressed(
   const count = buf[off++]
   for (let i = 0; i < count && off < buf.length; i++) {
     try {
-      off += 4   // UpdateFlags U32
+      const cUpdateFlags = buf.readUInt32LE(off); off += 4
       if (off + 2 > buf.length) throw new Error(`Data Variable2 prefix OOB at off=${off}`)
       const dataLen = buf.readUInt16LE(off); off += 2
       const dataEnd = off + dataLen
@@ -1260,6 +1261,7 @@ export function decodeObjectUpdateCompressed(
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
+        ...((cUpdateFlags & 0x400) ? { phantom: true } : {}),
       })
     } catch (e) {
       onError?.(`compressedObj[${i}/${count}] failOff=${off}: ${(e as Error).message}`)
@@ -1367,7 +1369,7 @@ export function decodeObjectUpdate(
       }
       off += odLen
       const parentId = buf.readUInt32LE(off); off += 4
-      off += 4   // updateFlags
+      const updateFlags = buf.readUInt32LE(off); off += 4
       // WHY: Path/profile block is 23 bytes. Decode each field for client-side prim shape.
       //   PathCurve(1) + ProfileCurve(1) + PathBegin(2) + PathEnd(2) +
       //   PathScaleX(1) + PathScaleY(1) + PathShearX(1) + PathShearY(1) +
@@ -1586,6 +1588,7 @@ export function decodeObjectUpdate(
         ...(text ? { text } : {}),
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
+        ...((updateFlags & 0x400) ? { phantom: true } : {}),
       })
       // WHY: A tail OOB means `off` is no longer aligned to the next object's start.
       // Subsequent objects in this packet can't be safely decoded — break out cleanly so

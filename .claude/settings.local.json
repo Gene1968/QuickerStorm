@@ -302,7 +302,10 @@
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $pr = Get-Process -Id $_ -ErrorAction SilentlyContinue; Write-Output \"Killing PID $_ \\($\\($pr.ProcessName\\)\\)\"; Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } } else { Write-Output \"Nothing listening on 8787\" }; Start-Sleep -Milliseconds 500; \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\) ? \"STILL IN USE\" : \"PORT 8787 FREE\")",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $pr = Get-Process -Id $_ -ErrorAction SilentlyContinue; Write-Output \"8787 held by PID $_ \\($\\($pr.ProcessName\\)\\), started $\\($pr.StartTime\\)\" } } else { Write-Output \"Nothing listening on 8787\" })",
       "Bash(Select-String \"texDecode\")",
-      "Read(//c/Users/gene1/Downloads/Pages/git/QuickerStorm/**)"
+      "Read(//c/Users/gene1/Downloads/Pages/git/QuickerStorm/**)",
+      "PowerShell($p = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess; if \\($p\\) { $proc = Get-Process -Id $p -ErrorAction SilentlyContinue; \"Port 8787 owner: PID $p \\($\\($proc.ProcessName\\)\\)\"; Stop-Process -Id $p -Force; Start-Sleep -Milliseconds 800; \"Stopped.\" } else { \"No listener on 8787.\" }; $still = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($still\\) { \"STILL LISTENING\" } else { \"Port 8787 free.\" })",
+      "Bash(:)",
+      "PowerShell($ok=$false; for\\($i=0;$i -lt 10;$i++\\){ $l=Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if\\($l\\){ \"LISTENING on 8787 \\(PID $\\($l.OwningProcess | Select-Object -First 1\\)\\)\"; $ok=$true; break }; Start-Sleep -Milliseconds 500 }; if\\(-not $ok\\){\"NOT listening yet after 5s\"})"
     ]
   }
 }

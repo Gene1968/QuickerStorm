@@ -3120,10 +3120,11 @@ export function useWorldEngine(canvasRef) {
 		_rayDir.set(slDirX, 0, -slDirY).normalize()
 		_raycaster.set(_rayOrigin, _rayDir)
 		_raycaster.far = COLLIDE_DIST
-		// Collect candidate meshes — skip own avatar, terrain, water.
+		// Collect candidate meshes — skip own avatar, phantom objects, terrain, water.
 		const targets = []
 		for (const [lid, m] of meshMap) {
 			if (lid === ownAvatarLocalId) continue
+			if (worldStore.objects.get(lid)?.phantom) continue
 			targets.push(m)
 		}
 		if (targets.length === 0) return false
