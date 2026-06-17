@@ -3949,25 +3949,41 @@ export function useWorldEngine(canvasRef) {
 	// per-face meshes rebuild their material array (buildFaceMaterials re-resolves every face), single-
 	// material meshes get map=null so reapplyDiffuse (which short-circuits when a map is already set) will
 	// re-fetch and re-apply. Cache hits land instantly; true misses fill in as the fetch completes.
+	// If localId is a child prim, walks up to the root and refreshes the whole linkset.
 	function refreshObjectTextures(localId) {
-		const obj = worldStore.objects.get(localId)
-		if (!obj) return
+		const clicked = worldStore.objects.get(localId)
+		if (!clicked) return
+		// Resolve root: SL linksets are flat — every child's parentId IS the root's localId.
+		const rootId = (clicked.parentId ?? 0) !== 0 ? clicked.parentId : localId
+
+		// Collect root + all children
+		const members = []
+		const root = worldStore.objects.get(rootId)
+		if (root) members.push([rootId, root])
+		for (const [id, o] of worldStore.objects) {
+			if ((o.parentId ?? 0) === rootId) members.push([id, o])
+		}
+
 		const set = new Set()
-		if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
-		if (Array.isArray(obj.faceTextures)) for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
+		for (const [, o] of members) {
+			if (isRealTex(o.defaultTexture)) set.add(o.defaultTexture)
+			if (Array.isArray(o.faceTextures)) for (const f of o.faceTextures) if (isRealTex(f)) set.add(f)
+		}
 		if (!set.size) return
 		refreshTextures([...set])
-		const mesh = meshMap.get(localId)
-		if (mesh) {
+
+		for (const [id, o] of members) {
+			const mesh = meshMap.get(id)
+			if (!mesh) continue
 			if (Array.isArray(mesh.material)) {
-				buildFaceMaterials(mesh, obj, obj.meshId ? null : primFaceMap(obj.shape))
+				buildFaceMaterials(mesh, o, o.meshId ? null : primFaceMap(o.shape))
 			} else if (mesh.material) {
 				mesh.material.map = null
 				mesh.material.needsUpdate = true
-				reapplyDiffuse(mesh, obj)
+				reapplyDiffuse(mesh, o)
 			}
 		}
-		debugStore.push('info', `[Tex] manual refresh localId=${localId} (${set.size} textures)`)
+		debugStore.push('info', `[Tex] manual refresh rootId=${rootId} (${members.length} prims, ${set.size} textures)`)
 	}
 
 	// ── Lit-shading A/B toggle (QuickPrefs ▸ Graphics ▸ Lit Shading) ────────────────────────────
