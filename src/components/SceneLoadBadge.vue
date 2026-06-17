@@ -16,7 +16,7 @@ const show = computed(() => {
 const label = computed(() => {
 	const cs = world.cullStats
 	if (cs.pct < 100) {
-		const phase = cs.atTarget ? 'Complete scene' : 'Nearby scene'
+		const phase = cs.atTarget ? 'Overall scene' : 'Nearby scene'
 		const preface = cs.massive ? 'Major new scenery to cache: ' : ''
 		return `${preface}${phase} ${cs.pct}% loaded`
 	}
@@ -34,7 +34,7 @@ const title = computed(() => {
 <template>
 	<div
 		v-if="show"
-		class="absolute top-14 right-2 z-20 -mt-1 py-1 px-3 max-w-[11.1rem] rounded-sm bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
+		class="absolute top-14 right-2 z-20 -mt-1.5 py-1 px-3 max-w-[9.2vw] rounded-sm bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
 		:title="title"
 	>
 		{{ label }}
