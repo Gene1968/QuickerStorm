@@ -18,9 +18,15 @@ const DB_NAME = 'qs-geom', DB_VERSION = 1, STORE = 'geom', META = 'meta'
 
 // ── Cap (initCacheCap pattern from textureCache.js) ─────────────────────────
 // 0.2/2GB filled to 97% after just two regions (15.9k entries, 11.7k of them per-scale mesh
-// copies) — interim bump to 0.3/4GB until unscaled-bake dedup lands. Origin quota ~11.6GB;
-// qs-tex holds ~60%, so 0.3 keeps geom under the texture share.
-export const GEOM_CACHE_MAX_BYTES      = 4 * 1024 * 1024 * 1024
+// copies) — bumped to 0.3 of the origin quota. The 0.3 fraction stays fixed: the origin quota is
+// fully apportioned (qs-tex 0.6, qs-geom 0.3, qs-mesh 0.1 = 1.0), so raising the fraction would
+// push total IDB usage past the quota → QuotaExceeded on writes, and shrinking tex would starve
+// the cold-texture pipeline (the real load bottleneck). The hard cap is the only safe lever: at
+// 4GB it CLIPPED geom below its own 0.3 share on machines whose free-disk quota exceeds ~13.3GB
+// (0.3 × quota > 4GB). Raised to 8GB so geom can reach its full reserved share on large disks;
+// it's still bounded by 0.3 × quota, so this never eats into the tex/mesh shares. On a ~11.6GB
+// quota the fraction binds at ~3.48GB and this is a no-op — it only helps on roomier disks.
+export const GEOM_CACHE_MAX_BYTES      = 8 * 1024 * 1024 * 1024
 export const GEOM_CACHE_FALLBACK_BYTES = 1 * 1024 * 1024 * 1024
 const CAP_FRACTION = 0.3
 let _capBytes = GEOM_CACHE_FALLBACK_BYTES
@@ -51,6 +57,12 @@ export function initGeomCacheCap() {
 				if (!_capExplicit) _capBytes = est
 			}
 		} catch { /* keep fallback */ }
+		// WHY persist(): request persistent (non-best-effort) storage so the browser won't evict
+		// qs-geom under disk pressure — that's what keeps warm regions warm ACROSS sessions. It's
+		// origin-wide (textureCache requests it too), so calling here just makes geom durability
+		// independent of whether/when the tex-cache init path ran. Fire-and-forget: Firefox may show
+		// a permission doorhanger; don't let an unanswered prompt or rejection block the cap above.
+		try { navigator.storage?.persist?.()?.catch?.(() => {}) } catch { /* unsupported */ }
 		console.debug('[GeomCache] cap', Math.round(_capBytes / 1048576) + 'MB')
 		return _capBytes
 	})()

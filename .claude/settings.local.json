@@ -307,7 +307,9 @@
       "Bash(:)",
       "PowerShell($ok=$false; for\\($i=0;$i -lt 10;$i++\\){ $l=Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if\\($l\\){ \"LISTENING on 8787 \\(PID $\\($l.OwningProcess | Select-Object -First 1\\)\\)\"; $ok=$true; break }; Start-Sleep -Milliseconds 500 }; if\\(-not $ok\\){\"NOT listening yet after 5s\"})",
       "Bash(sed -n '1,40p' src/composables/useTexDecoder.js)",
-      "Bash(sed -n '220,245p' src/composables/useTextureFetch.js)"
+      "Bash(sed -n '220,245p' src/composables/useTextureFetch.js)",
+      "Bash(bunx vitest *)",
+      "PowerShell(npx vitest run src/__tests__/lib/geomCache.test.js 2>&1 | Select-Object -Last 30)"
     ]
   }
 }

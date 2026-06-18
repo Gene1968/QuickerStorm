@@ -126,7 +126,9 @@ All shape params already decoded server-side. The following are geometry-generat
 ### Objects: Trees / Plants / Particles
 
 - [ ] System trees and plants (PCode 0x01 / 0x04) — 0%; need billboard or fixed geometry treatment
+- [ ] flexi, flutter anim?
 - [ ] Particle systems (PSBlock) — fields decoded but skipped; need THREE.Points emitter per object; extended 192-byte OpenSim format causes tail-OOB on some prims
+- [ ] Particle Editor / Inject, Particle Explorer, Rip
 
 ---
 
@@ -234,6 +236,7 @@ Working: folder tree, lazy expand + background bulk load, item browse, count foo
 - [ ] Create folder
 - [ ] Change permissions
 - [ ] Transfer / drop to another agent
+- [ ] Accept from another agent
 - [ ] "Folder of 42" / CMT batch operations
 - [ ] Play inventory assets inline (sounds, animations, gestures — locally and in-world options)
 - [ ] Find / filter duplicate UUIDs
@@ -324,7 +327,7 @@ Working: peer signaling, WS proxy layer.
 
 Working: profile floater via avatar-properties cap (~60%).
 
-- [!] Not live-tested on a real grid ?
+- [!] Not live-tested on a real grid ? what do you mean?  It shows, but is so minimal I wouldn't call it a test until ready
 - [ ] Edit own profile fields (about, first life, web URL, languages)
 - [ ] Upload / change profile photo
 - [ ] Picks tab (create / edit / delete picks)
@@ -349,8 +352,8 @@ Working: profile floater via avatar-properties cap (~60%).
 ### Scripting & Object Behaviors
 
 - [ ] Touch handler dispatch to script (llTouch → script event)
-- [ ] Animated rotation scripts (spinning prims via ObjectUpdate pose stream)
-- [ ] Script-driven texture changes
+- [ ] Animated rotation scripts (spinning prims via ObjectUpdate pose stream) - is this partial yet?
+- [ ] Script-driven texture changes - helpful
 - [ ] General LSL event dispatch (touch, collision, sensor, timer…)
 - [ ] High-use LSL functions (llGiveInventory, llTeleportAgent, llDialog…)
 
