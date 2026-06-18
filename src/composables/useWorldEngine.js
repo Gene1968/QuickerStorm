@@ -231,7 +231,7 @@ export function useWorldEngine(canvasRef) {
 		() => `${sessionStore.regionSizeX}x${sessionStore.regionSizeY}`,
 		() => rebuildTerrainGeometry(),
 	)
-	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => refreshGizmo())
+	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => { refreshGizmo(); refreshHighlight() })
 	// WHY: LandContextMenu "Walk To" — snap own avatar + camera to chosen terrain point.
 	// Same snap logic as onAgentSpawnPos but triggered client-side via uiStore.requestWarp().
 	const stopWarpWatch = watch(() => uiStore.pendingWarpPos, (pos) => {
@@ -247,7 +247,8 @@ export function useWorldEngine(canvasRef) {
 		uiStore.clearWarp()
 	})
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
-	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) clearGizmo(); else refreshGizmo() })
+	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) { clearGizmo(); clearHighlight() } else { refreshGizmo(); refreshHighlight() } })
+	const stopHlLinkedWatch  = watch(() => uiStore.editLinked,     () => refreshHighlight())
 	// WHY: Sim-side ObjectSelect must be paired with ObjectDeselect or selections leak server-side
 	// (sim keeps the prim flagged for this agent forever). Single source of truth: the prim that
 	// SHOULD be selected on the sim is whatever the UI is acting on — the Build Tools target while
@@ -4751,6 +4752,7 @@ export function useWorldEngine(canvasRef) {
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
 		stopGizmoVisWatch()
+		stopHlLinkedWatch()
 		stopSelSyncWatch()
 		stopWaterHeightWatch()
 		stopTerrainTexWatch()
@@ -4762,6 +4764,7 @@ export function useWorldEngine(canvasRef) {
 		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
 		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
 		clearGizmo()
+		clearHighlight()
 		endFocusGlide()
 		cancelAnimationFrame(animId)
 		uninstallConsoleForwarder()
