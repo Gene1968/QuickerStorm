@@ -1770,6 +1770,8 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function clearHighlight() {
+		// WHY: dispose runs unconditionally even if ls.parent is already null (mesh was evicted
+		// by culling) — ls.parent?.remove is a no-op in that case but geometry/material are freed.
 		for (const ls of highlightLines) {
 			ls.geometry.dispose()
 			ls.material.dispose()
@@ -1779,7 +1781,7 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function _addHighlight(localId, color) {
-		if (uiStore.instancing) promoteOut(localId)
+		if (uiStore.instancing) promoteOut(localId)  // WHY: mirrors refreshGizmo — individual mesh needed; no promoteIn on deselect by design (consistent with gizmo pattern)
 		const mesh = meshMap.get(localId)
 		if (!mesh || !mesh.geometry) return
 		const edges = new THREE.EdgesGeometry(mesh.geometry)
