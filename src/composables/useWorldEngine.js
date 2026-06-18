@@ -688,6 +688,7 @@ export function useWorldEngine(canvasRef) {
 	// at scene root (not parented to mesh) so prim parent rotation doesn't twist the axes.
 	let gizmoGroup    = null  // THREE.Group | null
 	let gizmoMeshId   = null  // localId the gizmo is currently tracking, for repositioning
+	let highlightLines = []   // LineSegments[] — one per highlighted prim, cleared on selection change
 
 	// ── Physics state ─────────────────────────────────────────────────────────
 	// WHY: simple per-session vertical velocity for gravity. SL standard g ≈ 9.8 m/s².
@@ -1684,6 +1685,8 @@ export function useWorldEngine(canvasRef) {
 	const _GIZMO_X = 0xff5555
 	const _GIZMO_Y = 0x55ff55
 	const _GIZMO_Z = 0x5588ff
+	const _HL_ROOT  = 0xffee00  // FS gold-yellow — selected root or solo prim
+	const _HL_CHILD = 0x7ab8ff  // FS light blue  — linked child prims
 
 	function _buildArrow(color, dir) {
 		// Shaft + cone head pointing along +dir (length 1, head at tip).
@@ -1764,6 +1767,44 @@ export function useWorldEngine(canvasRef) {
 			id = pid
 		}
 		return id
+	}
+
+	function clearHighlight() {
+		for (const ls of highlightLines) {
+			ls.geometry.dispose()
+			ls.material.dispose()
+			ls.parent?.remove(ls)
+		}
+		highlightLines = []
+	}
+
+	function _addHighlight(localId, color) {
+		if (uiStore.instancing) promoteOut(localId)
+		const mesh = meshMap.get(localId)
+		if (!mesh || !mesh.geometry) return
+		const edges = new THREE.EdgesGeometry(mesh.geometry)
+		const mat   = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85 })
+		const lines = new THREE.LineSegments(edges, mat)
+		lines.renderOrder = 998
+		mesh.add(lines)
+		highlightLines.push(lines)
+	}
+
+	function refreshHighlight() {
+		clearHighlight()
+		if (!uiStore.showObjectEdit || !uiStore.editObjectId) return
+		const id = uiStore.editObjectId
+		if (uiStore.editLinked) {
+			// Single prim (root or child depending on what was clicked) — yellow only.
+			_addHighlight(id, _HL_ROOT)
+		} else {
+			// Whole linkset: root=yellow, children=light blue.
+			// editObjectId is always the root when editLinked is false (enforced by click handler + openObjectEdit).
+			_addHighlight(id, _HL_ROOT)
+			for (const [cid, o] of worldStore.objects) {
+				if ((o.parentId ?? 0) === id) _addHighlight(cid, _HL_CHILD)
+			}
+		}
 	}
 
 	function refreshGizmo() {
