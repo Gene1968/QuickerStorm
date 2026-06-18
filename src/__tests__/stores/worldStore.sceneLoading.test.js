@@ -20,3 +20,18 @@ describe('worldStore.sceneLoading', () => {
 		expect(w.sceneLoading).toBe(false)
 	})
 })
+
+describe('worldStore.assetProgress', () => {
+	it('defaults to 0', () => {
+		const w = useWorldStore()
+		expect(w.assetProgress).toBe(0)
+	})
+
+	it('setAssetProgress stores a floored integer (monotonic asset-completion counter)', () => {
+		const w = useWorldStore()
+		w.setAssetProgress(42)
+		expect(w.assetProgress).toBe(42)
+		w.setAssetProgress(7.9)
+		expect(w.assetProgress).toBe(7)
+	})
+})

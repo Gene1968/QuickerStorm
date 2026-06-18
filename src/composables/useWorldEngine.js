@@ -3490,6 +3490,10 @@ export function useWorldEngine(canvasRef) {
 		setGeomCacheLoading(loading)
 		setTexCacheLoading(loading)   // same load signal: suspend qs-tex flushes so reads aren't starved
 		worldStore.setSceneLoading(loading)   // publish region-idle signal (gates the inventory bulk walk)
+		// Publish a monotonic asset-completion counter so the inventory gate can defer on FORWARD PROGRESS
+		// (not a wall-clock ceiling): a heavy region stays "loading" for many minutes, so the gate holds
+		// inventory while this advances and releases only on a real no-progress stall. See shouldDeferInventoryWalk.
+		worldStore.setAssetProgress((tStat.done || 0) + (mStat.done || 0))
 		// Re-record this region's key manifest on every settle EDGE (loading true→false). geomManifestRecord
 		// no-ops unless the key set grew, so the manifest converges UP to the full working set across the
 		// settle dips of a heavy load and across revisits — fixing the early, draw-distance-limited snapshot

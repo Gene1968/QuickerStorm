@@ -16,19 +16,40 @@ const BATCH        = 40   // folders per cap POST (server batches them into one 
 const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background bulk load
 const PUMP_MS      = 150
 
-// Defer the background full-inventory walk until the region's assets have drained (worldStore.sceneLoading
-// false), so it doesn't peg the client main thread and starve region texture/mesh loading on a cold load
-// (FEATURE-GAPS cold-pipeline #2). Bounded by a ceiling so a never-settling region still loads inventory.
-export const FETCHALL_DEFER_CEILING_MS = 240_000
+// Defer the background full-inventory walk while the region is still loading assets, so it doesn't peg
+// the client main thread and starve region texture/mesh load on a cold load (FEATURE-GAPS cold-pipeline
+// #2). The earlier wall-clock ceiling (240s) was WRONG for heavy regions: a ~10k-object region is still
+// actively loading at 4 min, so the ceiling released inventory INTO the live load and the stall returned,
+// just delayed (live-confirmed 2026-06-18 — tex q plateaued ~1100 for ~10 min the instant the ceiling
+// fired). Gate on FORWARD PROGRESS instead: keep deferring while assets keep completing; release only on
+// genuine idle (drained), a real no-progress stall (region wedged — never-starve inventory), a region
+// that never showed load (prepopulate timeout), or a generous absolute ceiling (final safety).
+export const FETCHALL_STALL_MS         = 30_000    // no asset completions for this long while loading → release
+export const FETCHALL_PREPOPULATE_MS   = 20_000    // region never showed load within this of caps-ready → release
+export const FETCHALL_DEFER_CEILING_MS = 900_000   // absolute safety cap; the stall backstop is the real release
 
-/** True while the bulk walk should wait: the region is still loading AND we are within the ceiling. */
-export function shouldDeferInventoryWalk(sceneLoading, elapsedMs, ceilingMs = FETCHALL_DEFER_CEILING_MS) {
-	return !!sceneLoading && elapsedMs < ceilingMs
+/**
+ * Decide whether to HOLD the background inventory walk this tick.
+ * @param sawLoading       have we ever observed the region loading (populated at least once)?
+ * @param sceneLoading     is the region loading assets right now?
+ * @param msSinceProgress  ms since the asset-completion counter last advanced
+ * @param msSinceCapsReady ms since caps became ready (prepopulate window + absolute ceiling measured here)
+ */
+export function shouldDeferInventoryWalk(sawLoading, sceneLoading, msSinceProgress, msSinceCapsReady,
+	{ stallMs = FETCHALL_STALL_MS, prepopulateMs = FETCHALL_PREPOPULATE_MS, ceilingMs = FETCHALL_DEFER_CEILING_MS } = {}) {
+	if (msSinceCapsReady >= ceilingMs) return false        // absolute last-ditch: never defer forever
+	if (!sawLoading) return msSinceCapsReady < prepopulateMs   // wait (bounded) for the region to start loading
+	if (!sceneLoading) return false                        // region drained/idle → walk now
+	return msSinceProgress < stallMs                       // loading + progressing → defer; stalled → walk
 }
 
 let registered = false
 let pump = null
-let capsReadyAt = 0   // performance.now() at caps-ready; the bulk-walk defer ceiling is measured from here
+let capsReadyAt = 0    // performance.now() at caps-ready; prepopulate window + absolute ceiling measured from here
+// Bulk-walk gate progress tracking (reset per login in onCapsReady):
+let _sawLoading = false       // region has shown load activity at least once (guards the premature-open race)
+let _lastProgress = -1        // last seen worldStore.assetProgress value
+let _lastProgressAt = 0       // performance.now() when assetProgress last advanced
 
 export function useInventory() {
 	const { on, off, emit } = useRealtimeSocket()
@@ -57,9 +78,14 @@ export function useInventory() {
 		if (pump) return
 		pump = setInterval(() => {
 			if (!inv.capsReady) return
-			// Hold the full walk until the region's assets have drained (bounded) — see
-			// shouldDeferInventoryWalk. Prevents the cold-load main-thread starvation of texture/mesh load.
-			if (shouldDeferInventoryWalk(world.sceneLoading, performance.now() - capsReadyAt)) return
+			// Hold the full walk while the region is still actively loading assets — see
+			// shouldDeferInventoryWalk. Track region activity (latch) + asset forward-progress so a heavy
+			// region keeps inventory deferred for its WHOLE load (not just a fixed wall-clock window).
+			const now = performance.now()
+			const prog = world.assetProgress | 0
+			if (world.sceneLoading || prog > _lastProgress) _sawLoading = true   // region has shown activity
+			if (prog > _lastProgress) { _lastProgress = prog; _lastProgressAt = now }   // assets advanced → reset stall timer
+			if (shouldDeferInventoryWalk(_sawLoading, world.sceneLoading, now - _lastProgressAt, now - capsReadyAt)) return
 			const slots = MAX_INFLIGHT - inv.fetching.size
 			const pending = inv.pendingAgentFolders()
 			if (pending.length === 0 && inv.fetching.size === 0) { stopFetchAll(); return }
@@ -104,7 +130,12 @@ export function useInventory() {
 
 	async function onCapsReady(d) {
 		inv.setCaps(d?.caps || [])
+		// Reset the bulk-walk gate's per-login state so a fresh login/region starts clean (module-level
+		// state survives SPA re-login). _lastProgressAt seeds from now so the stall timer isn't pre-tripped.
 		capsReadyAt = performance.now()
+		_sawLoading = false
+		_lastProgress = -1
+		_lastProgressAt = capsReadyAt
 		// Load cache BEFORE starting fetches so items appear immediately.
 		await loadCache()
 		// WHY: one-shot save watcher registered here (not at module level) so it is fresh for

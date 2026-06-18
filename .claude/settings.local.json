@@ -309,7 +309,12 @@
       "Bash(sed -n '1,40p' src/composables/useTexDecoder.js)",
       "Bash(sed -n '220,245p' src/composables/useTextureFetch.js)",
       "Bash(bunx vitest *)",
-      "PowerShell(npx vitest run src/__tests__/lib/geomCache.test.js 2>&1 | Select-Object -Last 30)"
+      "PowerShell(npx vitest run src/__tests__/lib/geomCache.test.js 2>&1 | Select-Object -Last 30)",
+      "Bash(ps -W)",
+      "Bash(tasklist)",
+      "PowerShell(npx vitest run src/__tests__/composables/useInventory.gate.test.js src/__tests__/stores/worldStore.sceneLoading.test.js 2>&1 | Select-Object -Last 18)",
+      "PowerShell(\"=== Free Apartments first 35s: non-spammy events 16:55:53-16:56:28 ===\"; Select-String -Path server-watch.log -Pattern '16:5[56]:' | Where-Object { $_.Line -match '16:55:5[3-9]|16:56:[0-2][0-9]' -and $_.Line -notmatch 'PrimDiag|terrain|MOVE|UDP RX' } | Select-Object -First 40 | ForEach-Object { $_.Line })",
+      "PowerShell(Start-Sleep -Seconds 20; \"=== newest handshake / login ===\"; Select-String -Path server-watch.log -Pattern 'RegionHandshake|AgentMovementComplete' | Select-Object -Last 3 | ForEach-Object { $_.Line }; \"=== newest [InvGate] ===\"; Select-String -Path server-watch.log -Pattern '\\\\[InvGate\\\\]' | Select-Object -Last 3 | ForEach-Object { $_.Line }; \"=== log tail ===\"; Get-Content server-watch.log -Tail 3)"
     ]
   }
 }

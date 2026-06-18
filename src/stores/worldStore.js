@@ -36,6 +36,14 @@ export const useWorldStore = defineStore('world', () => {
 	const sceneLoading = ref(true)   // region assets still draining? published from useWorldEngine.cullTick
 	function setSceneLoading(v) { sceneLoading.value = !!v }
 
+	// Monotonic count of completed asset fetches (textures + meshes), published from cullTick. The
+	// inventory bulk-walk gate watches this for FORWARD PROGRESS: a heavy region keeps sceneLoading
+	// true for many minutes, so the gate can't use a wall-clock ceiling (it would release inventory
+	// into a still-active load). Deferring while this counter advances — and only releasing on a real
+	// no-progress stall — keeps inventory out of the way for the whole load. See shouldDeferInventoryWalk.
+	const assetProgress = ref(0)
+	function setAssetProgress(v) { assetProgress.value = v | 0 }
+
 	// WHY: ObjectUpdate nameValue is the raw SL NameValue string, e.g.:
 	//   "FirstName STRING RW SV John\nLastName STRING RW SV Doe\n"
 	// AvatarList reads .name; parse it here so all consumers get a display name.
@@ -162,6 +170,7 @@ export const useWorldStore = defineStore('world', () => {
 
 	return {
 		objects, avatars, prims, cullStats, setCullStats, sceneLoading, setSceneLoading,
+		assetProgress, setAssetProgress,
 		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
