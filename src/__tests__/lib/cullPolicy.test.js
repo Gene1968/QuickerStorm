@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
 
 // FEATURE-GAPS #13: the draw-distance governor must only GROW the radius when BOTH app-budget AND heap
 // have headroom — the old recovery (appRatio-only) grew dd back every tick even under heap pressure.
@@ -137,5 +137,40 @@ describe('selectVisibility (#13 render-distance cull)', () => {
 		const cands = [{ id: 1, dist: 300, visible: true }, { id: 2, dist: 50, visible: false }]
 		selectVisibility(cands, 192, 16)
 		expect(cands.map(c => c.id)).toEqual([1, 2])
+	})
+})
+
+describe('shouldEvictForBudget', () => {
+	// Eviction/texture-prune/draw-distance step-down must trigger ONLY on the resident/VRAM budget
+	// (appRatio), never on raw process heap — evicting resident assets cannot relieve heap held by
+	// transient garbage/backlog. The signature deliberately omits any heap parameter (regression guard
+	// against re-introducing `|| emergencyHeap()`).
+	it('evicts when the resident budget is exceeded', () => {
+		expect(shouldEvictForBudget(1.01, 1.0)).toBe(true)
+		expect(shouldEvictForBudget(2.0, 1.0)).toBe(true)
+	})
+
+	it('does NOT evict at or under the resident budget', () => {
+		expect(shouldEvictForBudget(1.0, 1.0)).toBe(false)
+		expect(shouldEvictForBudget(0.05, 1.0)).toBe(false)   // app 5% — the heap-99%/app-5% collapse case
+	})
+})
+
+describe('shouldAutoRebuild', () => {
+	// The auto-rebuild re-queues every object; it must NOT fire while intake is intentionally paused by
+	// the heap brake (a paused scene is not a dead scene). Fires only on a real dead-scene signal.
+	it('fires when dead-scan threshold is reached and NOT under pressure', () => {
+		expect(shouldAutoRebuild(3, 3, false)).toBe(true)
+		expect(shouldAutoRebuild(5, 3, false)).toBe(true)
+	})
+
+	it('does NOT fire while under memory pressure (paused, not dead)', () => {
+		expect(shouldAutoRebuild(3, 3, true)).toBe(false)
+		expect(shouldAutoRebuild(99, 3, true)).toBe(false)
+	})
+
+	it('does NOT fire below the dead-scan threshold', () => {
+		expect(shouldAutoRebuild(2, 3, false)).toBe(false)
+		expect(shouldAutoRebuild(0, 3, false)).toBe(false)
 	})
 })

@@ -47,6 +47,25 @@ export function drawDistanceMayGrow(appRatio, heapRatio, cullResume, heapRelease
 	return appRatio < cullResume && (heapRatio == null || heapRatio < heapReleaseAt)
 }
 
+// True when the resident-asset working set should shed (evict far roots, prune textures, step the
+// draw distance down). Keys on the self-accounted resident/VRAM budget ONLY — deliberately NOT on the
+// process heap. WHY: on a heavy cold region the heap is dominated by transient GC garbage + the build
+// backlog, not the resident scene (live 2026-06-18: heap 99% while appRatio 5%); evicting resident
+// assets then relieves nothing and just craters draw distance, wipes near textures, and churns
+// evict→reload. Heap pressure is handled upstream by PAUSING intake/build (memGovernor.memUnderPressure),
+// letting GC reclaim the garbage. See docs/superpowers/specs/2026-06-18-heap-graceful-stability-design.md.
+export function shouldEvictForBudget(appRatio, cullTarget) {
+	return appRatio > cullTarget
+}
+
+// True when the dead-scene auto-rebuild (which re-queues EVERY object) should fire. Requires the
+// dead-scan count to have reached its threshold AND the engine not to be under memory pressure: a scene
+// the heap brake has intentionally paused looks "dead" (no build progress) but must not be re-queued —
+// that would balloon the build backlog at the worst moment. Caller still applies its own time cooldown.
+export function shouldAutoRebuild(deadScans, threshold, underPressure) {
+	return deadScans >= threshold && !underPressure
+}
+
 // Nearest-first within rNear, capped at maxN. Used when there is headroom: rebuild the closest
 // previously-evicted objects. Anything beyond rNear is left evicted (hysteresis vs the evict radius).
 export function selectReloads(candidates, rNear, maxN) {

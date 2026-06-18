@@ -19,8 +19,8 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
-import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, emergencyHeap, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility } from '@/lib/cullPolicy.js'
+import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -3311,7 +3311,9 @@ export function useWorldEngine(canvasRef) {
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
 		// R_NEAR-guard fixes; this recovers users anyway instead of asking them to hard-reload).
 		_deadScans = (known > 200 && resident === 0) ? _deadScans + 1 : 0
-		if (_deadScans >= 3 && Date.now() - _lastAutoRebuild > 120_000) {
+		// Don't auto-rebuild while the heap brake has intentionally paused intake — a paused scene is not
+		// a dead scene, and re-queuing every object would balloon the build backlog (graceful-stability spec).
+		if (shouldAutoRebuild(_deadScans, 3, memUnderPressure()) && Date.now() - _lastAutoRebuild > 120_000) {
 			_lastAutoRebuild = Date.now()
 			_deadScans = 0
 			rebuildScene('auto: dead scene detected')
@@ -3514,13 +3516,14 @@ export function useWorldEngine(canvasRef) {
 		} else if (heapR == null || heapR < GEOM_MEM_HEAP_RELEASE_AT) {
 			setGeomMemPressureCap(null)                 // clear: restore the configured RAM budget
 		}
-		// EVICTION + texture-prune trigger = VRAM/app budget exceeded, or a genuine heap CRISIS
-		// (emergencyHeap, ~0.95). WHY NOT moderate heap (>0.82): evicting resident assets does NOT
-		// relieve heap (it's held by transient bake/decode garbage, not the resident scene) — it just
-		// churns the visible world to cubes and prunes near textures away for no benefit (live: eviction
-		// firing every tick at app=43% heap=84%, textures vanishing). Moderate heap pressure is handled
-		// by PAUSING intake (memUnderPressure/the critical brake), not by evicting. See FEATURE-GAPS #13.
-		const over = r > CULL_TARGET || emergencyHeap()
+		// EVICTION + texture-prune + draw-distance step-down trigger = resident/VRAM (app) budget exceeded
+		// ONLY. Heap pressure does NOT trigger eviction: evicting resident assets cannot relieve heap held
+		// by transient bake/decode garbage + the build backlog, not the resident scene. At heap 99%/app 5%
+		// (live 2026-06-18, Never Depot 10.9k objs) the old `|| emergencyHeap()` clause just cratered draw
+		// distance to the 32m floor, wiped near textures, and churned evict→reload for zero heap relief.
+		// Heap pressure is handled by PAUSING intake/build (memUnderPressure), letting GC reclaim the
+		// garbage. See docs/superpowers/specs/2026-06-18-heap-graceful-stability-design.md.
+		const over = shouldEvictForBudget(r, CULL_TARGET)
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
 		// Built once per tick, only when there is cull work to do.
