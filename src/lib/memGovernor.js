@@ -24,6 +24,13 @@ const APP_BUDGET_FRACTION = 0.50            // ...or this fraction of the heap l
 const APP_BUDGET_FALLBACK = 1024 * 1048576  // budget when the heap limit is unmeasurable
 const APP_BUDGET_OVERRIDE_MIN = 512  * 1048576   // user-override clamp (bytes)
 const APP_BUDGET_OVERRIDE_MAX = 6144 * 1048576
+// The override is ADDITIONALLY clamped to this fraction of the tab HEAP LIMIT. WHY: the resident-asset
+// budget + transient bake/decode garbage + scene/worldStore overhead must all fit the heap, so the
+// override can never exceed this share — else appRatio can't reach 1.0 (the eviction trigger) before heap
+// OOMs. Live 2026-06-18: a 6144MB override on a 4192MB-heap tab let resident grow to ~5GB → heap 138%,
+// eviction never fired (appRatio 0.85<1), stuck textures. 0.6 leaves ~40% of heap for the rest. It also
+// makes the effective max HEAP-RELATIVE: a small-heap machine self-limits, a roomy one scales up safely.
+const APP_BUDGET_OVERRIDE_HEAP_FRACTION = 0.6
 const EMERGENCY_HEAP_RATIO = 0.92           // process-heap fraction that means pressure WHEN corroborated
 const CRITICAL_HEAP_RATIO  = 0.95           // process-heap fraction that ALWAYS means pressure (no corroboration)
 
@@ -86,10 +93,20 @@ export function setResidentCount(n) {
 	_residentCount = Number.isFinite(n) && n > 0 ? n : 0
 }
 
-/** Resident-asset budget in bytes. User override (clamped) wins; else heap-scaled default. */
+// Pure: clamp the resident-asset override to a heap-safe ceiling (`fraction` × heap limit). heapLimitBytes
+// <= 0 (non-Chrome, no performance.memory) → fall back to the fixed cap (can't measure heap, so honor the
+// user's explicit value up to the absolute max — heap-pause/eviction-on-heap don't apply there anyway).
+// Exported for unit tests (no navigator/performance dep). See APP_BUDGET_OVERRIDE_HEAP_FRACTION.
+export function resolveOverrideBudget(overrideBytes, heapLimitBytes,
+	fraction = APP_BUDGET_OVERRIDE_HEAP_FRACTION, fallbackCap = APP_BUDGET_OVERRIDE_MAX) {
+	const ceil = heapLimitBytes > 0 ? Math.floor(heapLimitBytes * fraction) : fallbackCap
+	return Math.min(overrideBytes, ceil)
+}
+
+/** Resident-asset budget in bytes. User override (heap-safe-clamped) wins; else heap-scaled default. */
 export function appBudgetBytes() {
-	if (_appBudgetOverride > 0) return _appBudgetOverride
 	const m = _mem()
+	if (_appBudgetOverride > 0) return resolveOverrideBudget(_appBudgetOverride, m ? m.jsHeapSizeLimit : 0)
 	return m ? Math.min(APP_BUDGET_CAP, m.jsHeapSizeLimit * APP_BUDGET_FRACTION) : APP_BUDGET_FALLBACK
 }
 
@@ -142,4 +159,4 @@ export function memUnderPressure() {
 }
 
 export { APP_BUDGET_CAP, APP_BUDGET_FRACTION, APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, CRITICAL_HEAP_RATIO,
-	SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT }
+	SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT, APP_BUDGET_OVERRIDE_HEAP_FRACTION }

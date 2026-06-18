@@ -3,6 +3,7 @@ import {
 	setAppBytes, appRatio, appBudgetBytes, memUnderPressure, memRatio, emergencyHeap,
 	APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, setAppBudgetOverride,
 	setResidentCount, heapThrottled, SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT,
+	resolveOverrideBudget, APP_BUDGET_OVERRIDE_HEAP_FRACTION,
 } from '@/lib/memGovernor.js'
 
 // bun test has no performance.memory → memRatio() is null, budget falls back to the fixed default.
@@ -58,16 +59,43 @@ describe('app/VRAM budget — raised default + user override', () => {
 		setHeap(3072); try { expect(Math.round(appBudgetBytes() / MB)).toBe(1536) } finally { clearHeap() }  // 0.50×3072
 		setHeap(8192); try { expect(Math.round(appBudgetBytes() / MB)).toBe(2048) } finally { clearHeap() }  // capped
 	})
-	it('user override wins, clamped to [512, 6144] MB', () => {
+	it('user override clamped to [512MB, 0.6 × heap] on Chrome (heap-safe ceiling)', () => {
 		try {
-			setHeap(4192)
-			setAppBudgetOverride(3000 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(3000)
-			setAppBudgetOverride(99999 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(6144)  // clamp high
+			setHeap(4192)   // 0.6 × 4192 ≈ 2515MB heap-safe ceiling
+			setAppBudgetOverride(3000 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(2515)  // clamped to heap ceiling
+			setAppBudgetOverride(99999 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(2515) // clamp high → heap ceiling
 			setAppBudgetOverride(1 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(512)        // clamp low
+		} finally { setAppBudgetOverride(null); clearHeap() }
+	})
+	it('override honored up to the fixed max on a roomy heap', () => {
+		try {
+			setHeap(16384)  // 0.6 × 16384 ≈ 9830MB > 6144 fixed max → override honored
+			setAppBudgetOverride(6144 * MB); expect(Math.round(appBudgetBytes() / MB)).toBe(6144)
 		} finally { setAppBudgetOverride(null); clearHeap() }
 	})
 	it('override of null restores the heap-scaled default', () => {
 		try { setHeap(3072); setAppBudgetOverride(3000 * MB); setAppBudgetOverride(null); expect(Math.round(appBudgetBytes() / MB)).toBe(1536) } finally { clearHeap() }
+	})
+})
+
+// The resident-asset override must never exceed a fraction of the TAB HEAP LIMIT — else appRatio can't
+// reach 1.0 (the eviction trigger) before heap OOMs. Live 2026-06-18: a 6144MB override on a 4192MB-heap
+// tab let resident grow to ~5GB → heap 138%, eviction never fired, stuck textures.
+describe('resolveOverrideBudget (heap-safe override ceiling)', () => {
+	const MB = 1048576
+	it('clamps the override to 0.6 × heap limit on Chrome', () => {
+		expect(Math.round(resolveOverrideBudget(6144 * MB, 4192 * MB) / MB)).toBe(2515)   // 0.6×4192
+		expect(Math.round(resolveOverrideBudget(2000 * MB, 4192 * MB) / MB)).toBe(2000)   // under ceiling → honored
+	})
+	it('honors a large override on a roomy heap (ceiling above the fixed max)', () => {
+		expect(Math.round(resolveOverrideBudget(6144 * MB, 16384 * MB) / MB)).toBe(6144)  // 0.6×16384 ≈ 9830 > 6144
+	})
+	it('falls back to the fixed cap when the heap limit is unknown (non-Chrome)', () => {
+		expect(Math.round(resolveOverrideBudget(6144 * MB, 0) / MB)).toBe(6144)
+	})
+	it('exposes a sane heap fraction (leaves room for garbage/overhead)', () => {
+		expect(APP_BUDGET_OVERRIDE_HEAP_FRACTION).toBeGreaterThan(0.3)
+		expect(APP_BUDGET_OVERRIDE_HEAP_FRACTION).toBeLessThanOrEqual(0.8)
 	})
 })
 

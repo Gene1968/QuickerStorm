@@ -1582,8 +1582,11 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		session.tpDebugUntil = Date.now() + 60_000
 		// Store destination handle so TeleportProgress handler can attempt same-sim completion.
 		session.pendingTpHandle = handle
-		const x = Math.max(1, Math.min(255, d.x))
-		const y = Math.max(1, Math.min(255, d.y))
+		// WHY 8191 not 255 (matches the C.TELEPORT handler above): server doesn't know the region's
+		// dimensions (var regions are 512-8192m); the client clamps to the real size, this is only a
+		// sanity bound. The old 255 cap snapped intra-region TPs to Y=255 in a 512m var region.
+		const x = Math.max(1, Math.min(8191, d.x))
+		const y = Math.max(1, Math.min(8191, d.y))
 		const z = Math.max(0.5, d.z)
 		const seq = nextSeq(session)
 		const pkt = encodeTeleportLocationRequest({
