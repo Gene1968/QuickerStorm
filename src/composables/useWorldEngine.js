@@ -248,7 +248,17 @@ export function useWorldEngine(canvasRef) {
 	})
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
 	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) { clearGizmo(); clearHighlight() } else { refreshGizmo(); refreshHighlight() } })
-	const stopHlLinkedWatch  = watch(() => uiStore.editLinked,     () => refreshHighlight())
+	const stopHlLinkedWatch  = watch(() => uiStore.editLinked, (linked) => {
+		if (!linked && uiStore.editObjectId) {
+			// editLinked turned OFF — resolve back to root so the whole linkset is selected again.
+			const root = resolveRootLocalId(uiStore.editObjectId)
+			if (root !== uiStore.editObjectId) {
+				uiStore.editObjectId = root  // stopGizmoSelWatch handles gizmo + highlight refresh
+				return
+			}
+		}
+		refreshHighlight()
+	})
 	// WHY: Sim-side ObjectSelect must be paired with ObjectDeselect or selections leak server-side
 	// (sim keeps the prim flagged for this agent forever). Single source of truth: the prim that
 	// SHOULD be selected on the sim is whatever the UI is acting on — the Build Tools target while
