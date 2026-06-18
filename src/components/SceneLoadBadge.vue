@@ -26,7 +26,7 @@ const title = computed(() => {
 	const cs = world.cullStats
 	const base = `Resident ${cs.resident} / known ${cs.known} within ${cs.effNear}m draw distance · evicted ${cs.evicted} for memory`
 	return (cs.texFailed ?? 0) > 0
-		? `${base} · ${cs.texFailed} textures failed (right-click an object → Refresh textures)`
+		? `${base} · ${cs.texFailed} textures failed (right-click an object → Texture refresh)`
 		: base
 })
 </script>

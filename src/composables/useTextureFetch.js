@@ -453,7 +453,7 @@ export function pruneTexturesLRU(maxPerCall = 64, now = Date.now()) {
 }
 
 /**
- * Force a fresh re-fetch of specific texture UUIDs — the manual "Refresh textures" escape hatch for an
+ * Force a fresh re-fetch of specific texture UUIDs — the manual "Texture refresh" escape hatch for an
  * object stuck bare (hard-errored or soft-timed-out past the retry budget). Clears EVERY in-memory layer
  * for each uuid (failure classes, GPU/blob caches, in-flight dedupes, UV clones, object URLs) plus the
  * persisted IDB negative-cache mark, so the next getTexture() re-pulls through IDB→network. Does NOT

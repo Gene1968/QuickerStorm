@@ -424,7 +424,7 @@ export async function texFailedMark(uuid, now = Date.now()) {
 }
 
 /**
- * Drop the persisted permanent-failure mark for a UUID (best-effort) — the manual "Refresh textures"
+ * Drop the persisted permanent-failure mark for a UUID (best-effort) — the manual "Texture refresh"
  * escape hatch: a previously server-errored texture should get a clean re-fetch (and persist if it now
  * succeeds) instead of being skipped forever from the IDB negative-cache. In-memory state is cleared
  * separately by useTextureFetch.refreshTextures().
@@ -445,7 +445,7 @@ export async function texFailedClear(uuid, _now = Date.now()) {
 /** Clears all texture cache entries and resets the totalBytes counter. */
 export async function clearTextureCache() {
 	// WHY cancel timer + await in-flight flush first: a committed-after-clear batch could otherwise
-	// resurrect records into a freshly cleared store (e.g. "Refresh textures" clicked mid-load).
+	// resurrect records into a freshly cleared store (e.g. "Texture refresh" clicked mid-load).
 	if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
 	if (_flushing) await _flushing
 	_writeBuf.clear(); _writeBufBytes = 0; _deferStartedAt = 0

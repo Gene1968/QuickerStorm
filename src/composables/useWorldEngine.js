@@ -206,7 +206,7 @@ export function useWorldEngine(canvasRef) {
 	const stopLitShadingWatch = watch(() => uiStore.litShading, (on) => relightScene(on))
 	// MenuBar "Rebuild Scene" → full client-side recovery (clear evictions, requeue, resync).
 	const stopSceneRebuildWatch = watch(() => uiStore.sceneRebuildTick, () => rebuildScene('user'))
-	// ObjectContextMenu "Refresh textures" → clear one object's texture failure/cache state + re-apply.
+	// ObjectContextMenu "Texture refresh" → clear one object's texture failure/cache state + re-apply.
 	const stopTexRefreshWatch = watch(() => uiStore.textureRefreshReq, (req) => { if (req) refreshObjectTextures(req.localId) })
 	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
 	// built — water plane starts at the default 20m and terrain is coloured against it. When the
@@ -3999,7 +3999,7 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
-	// Manual "Refresh textures" (ObjectContextMenu) for an object stuck bare. Clears the object's texture
+	// Manual "Texture refresh" (ObjectContextMenu) for an object stuck bare. Clears the object's texture
 	// failure/cache state (refreshTextures) so the next fetch re-pulls IDB→network, then forces a re-apply:
 	// per-face meshes rebuild their material array (buildFaceMaterials re-resolves every face), single-
 	// material meshes get map=null so reapplyDiffuse (which short-circuits when a map is already set) will

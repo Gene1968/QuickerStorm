@@ -67,7 +67,7 @@ export const useUiStore = defineStore('ui', () => {
 	// has memory-evicted, so it cannot recover a culled-empty scene. This can.
 	const sceneRebuildTick   = ref(0)
 	function requestSceneRebuild() { sceneRebuildTick.value++ }
-	// ObjectContextMenu "Refresh textures" → engine clears the object's texture failure/cache state and
+	// ObjectContextMenu "Texture refresh" → engine clears the object's texture failure/cache state and
 	// re-applies (manual escape hatch for an object stuck bare). Carries the target localId; `seq` bumps
 	// so the engine's watch fires even when the same object is refreshed twice in a row.
 	const textureRefreshReq  = ref(null)
