@@ -59,14 +59,15 @@ describe('decodeObjectUpdateCompressed — Data block layout (per Firestorm sObj
     cflags?: number
     omega?: boolean
     parentId?: number
+    clickAction?: number
   }): Buffer {
-    const { localId, pcode = 9, scale, pos, cflags = 0, parentId = 0 } = opts
+    const { localId, pcode = 9, scale, pos, cflags = 0, parentId = 0, clickAction = 0 } = opts
     const parts: Buffer[] = []
     parts.push(uuidToBytes(FULL_ID))                                     // FullID 16
     const lid = Buffer.alloc(4); lid.writeUInt32LE(localId); parts.push(lid)
     parts.push(Buffer.from([pcode, 0]))                                  // PCode + State
     parts.push(Buffer.alloc(4))                                         // CRC
-    parts.push(Buffer.from([3, 0]))                                     // Material + ClickAction
+    parts.push(Buffer.from([3, clickAction]))                            // Material + ClickAction
     const sc = Buffer.alloc(12); scale.forEach((v, i) => sc.writeFloatLE(v, i * 4)); parts.push(sc)
     const ps = Buffer.alloc(12); pos.forEach((v, i) => ps.writeFloatLE(v, i * 4)); parts.push(ps)
     parts.push(Buffer.alloc(12))                                        // Rot (3 floats, all 0)
@@ -117,6 +118,20 @@ describe('decodeObjectUpdateCompressed — Data block layout (per Firestorm sObj
     })
     const objs = decodeObjectUpdateCompressed(buildPacket([data]), 0)
     expect(objs[0].parentId).toBe(999)
+  })
+
+  it('decodes clickAction Buy (2) from compressed object buffer', () => {
+    const data = buildData({ localId: 77, scale: [1, 1, 1], pos: [10, 10, 10], clickAction: 2 })
+    const objs = decodeObjectUpdateCompressed(buildPacket([data]), 0)
+    expect(objs).toHaveLength(1)
+    expect(objs[0].clickAction).toBe(2)
+  })
+
+  it('omits clickAction when value is Touch (0)', () => {
+    const data = buildData({ localId: 78, scale: [1, 1, 1], pos: [10, 10, 10], clickAction: 0 })
+    const objs = decodeObjectUpdateCompressed(buildPacket([data]), 0)
+    expect(objs).toHaveLength(1)
+    expect(objs[0].clickAction).toBeUndefined()
   })
 })
 

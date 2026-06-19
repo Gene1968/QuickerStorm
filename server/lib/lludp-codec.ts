@@ -1073,6 +1073,7 @@ export interface ObjectData {
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
   phantom?:      boolean  // PrimFlags bit 0x400 — avatar passes through; skip collision
+  clickAction?:  number   // U8: 0=Touch,1=Sit,2=Buy,3=Pay,4=Open,5=PlayAnim,6=Zoom,7=Disabled
 }
 
 /**
@@ -1109,8 +1110,8 @@ export function decodeObjectUpdateCompressed(
       const pcode    = buf[off++]
       off += 1   // state
       const crc = buf.readUInt32LE(off); off += 4   // PseudoCRC (was skipped)
-      off += 1   // material
-      off += 1   // clickAction
+      off += 1                        // material (not stored)
+      const clickAction = buf[off++]  // ClickAction U8
       const sx = buf.readFloatLE(off);     off += 4
       const sy = buf.readFloatLE(off);     off += 4
       const sz = buf.readFloatLE(off);     off += 4
@@ -1262,6 +1263,7 @@ export function decodeObjectUpdateCompressed(
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
         ...((cUpdateFlags & 0x400) ? { phantom: true } : {}),
+        ...(clickAction !== 0 ? { clickAction } : {}),
       })
     } catch (e) {
       onError?.(`compressedObj[${i}/${count}] failOff=${off}: ${(e as Error).message}`)
@@ -1331,7 +1333,8 @@ export function decodeObjectUpdate(
         }
         break
       }
-      off += 2   // material, clickAction
+      off += 1                        // material (not stored)
+      const clickAction = buf[off++]  // ClickAction U8
       const sx = buf.readFloatLE(off); off += 4  // Scale
       const sy = buf.readFloatLE(off); off += 4
       const sz = buf.readFloatLE(off); off += 4
@@ -1589,6 +1592,7 @@ export function decodeObjectUpdate(
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
         ...((updateFlags & 0x400) ? { phantom: true } : {}),
+        ...(clickAction !== 0 ? { clickAction } : {}),
       })
       // WHY: A tail OOB means `off` is no longer aligned to the next object's start.
       // Subsequent objects in this packet can't be safely decoded — break out cleanly so
