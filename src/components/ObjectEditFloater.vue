@@ -166,6 +166,23 @@ const profileCurveLabel = computed(() => {
 	return `${map[low] ?? 'Unknown'} (${c})`
 })
 
+const CLICK_ACTION_OPTIONS = [
+	{ value: 0, label: 'Touch (default)' },
+	{ value: 1, label: 'Sit on object' },
+	{ value: 2, label: 'Buy object' },
+	{ value: 3, label: 'Pay object' },
+	{ value: 4, label: 'Open' },
+	{ value: 5, label: 'Play animation' },
+	{ value: 6, label: 'Zoom' },
+	{ value: 7, label: 'Ignore object' },
+]
+const SALE_TYPE_OPTIONS = [
+	{ value: 0, label: 'Not for sale' },
+	{ value: 1, label: 'Original' },
+	{ value: 2, label: 'Copy' },
+	{ value: 3, label: 'Contents' },
+]
+
 // WHY: SL permission bits — bit 13=Modify, bit 14=Copy, bit 15=Transfer, bit 19=Export.
 // Display as concatenated letters like "CMT" (Copy/Modify/Transfer) per SL/Firestorm convention.
 function permLetters(mask) {
@@ -430,7 +447,7 @@ function close() {
 							? 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'
 							: buildTool === t.id
 								? 'border-accent text-accent bg-accent/10'
-								: 'border-edge text-fg/70 hover:text-fg hover:bg-white/5'"
+								: 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20'"
 						@click="pickTool(t)"
 					>
 						<component :is="t.icon" class="w-4 h-4" />
@@ -477,14 +494,14 @@ function close() {
 						title="Select previous linked part or face"
 						:disabled="!canCycle"
 						class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-white/5' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
+						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
 						@click="selectLink(-1)"
 					><ChevronLeftIcon class="w-3 h-3" /></button>
 					<button
 						title="Select next linked part or face"
 						:disabled="!canCycle"
 						class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-white/5' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
+						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
 						@click="selectLink(1)"
 					><ChevronRightIcon class="w-3 h-3" /></button>
 					<button
@@ -538,9 +555,9 @@ function close() {
 				<template v-if="activeTab === 'general'">
 					<div class="grid grid-cols-[4.5rem_auto] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-fg/50 text-end" title="63 chars, ASCII-7 + pipe.">Name:</div>
-						<input :value="obj.name || '(Object)'" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
+						<input :value="obj.name || '(Object)'" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
 						<div class="text-fg/50 text-end" title="127 chars. May get used in hover tips or scripting">Description:</div>
-						<input :value="obj.description || ''" readonly placeholder="—" class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
+						<input :value="obj.description || ''" readonly placeholder="—" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
 						<div class="text-fg/50 text-end">UUID:</div>
 						<input :value="obj.fullId" readonly class="px-1.5 py-0.5 text-fg font-mono text-2xs" />
 						<div class="text-fg/50 text-end">Type:</div>
@@ -549,30 +566,41 @@ function close() {
 						<div class="text-fg whitespace-pre-wrap">{{ obj.text || '—' }}</div>
 					</div>
 					<div v-if="obj.creatorId" class="border-t border-edge pt-2">
-						<div class="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1.5 text-xs">
-							<div class="text-fg/50 text-end">Creator:</div>
-							<input :value="obj.creatorId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50 text-end">Owner:</div>
-							<input :value="obj.ownerId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50 text-end">Last Owner:</div>
-							<input value="(to-do)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50 text-end">Group:</div>
-							<input :value="obj.groupId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50 text-end">Created:</div>
-							<div class="text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
-							<div class="text-fg/50 text-end self-center">Click to:</div>
-							<select title="A click action enables you to interact with an object with a single left click. Each click action has a special cursor indicating what it does. Some click actions have requirements to function. For example Touch and Pay require scripts" class="qs-input px-2 py-1 rounded-sm bg-panel border border-edge text-fg">
-								<option value="touch">Touch(default) (to-do)</option>
-								<option value="sit">Sit on object</option>
-								<option value="buy">Buy object</option>
-								<option value="pay">Pay object</option>
-								<option value="open">Open</option>
-								<option value="zoom">Zoom</option>
-								<option value="ignore">Ignore object</option>
-								<option value="none">None</option>
+						<div class="grid grid-cols-[4.5rem_1fr] text-xs">
+							<div class="pe-2 text-fg/50 text-end">Creator:</div>
+							<input :value="obj.creatorId" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="pe-2 text-fg/50 text-end">Owner:</div>
+							<input :value="obj.ownerId" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="pe-2 text-fg/50 text-end">Last Owner:</div>
+							<input :value="obj.lastOwnerId || '—'" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="pe-2 text-fg/50 text-end">Group:</div>
+							<input :value="obj.groupId" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="pe-2 text-fg/50 text-end">Created:</div>
+							<div class="mb-1 px-1.5 py-0.5 text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
+							<div class="flex items-center justify-end gap-2 pe-2 text-fg/50 text-end">Click to:</div>
+							<select title="A click action enables you to interact with an object with a single left click." disabled class="qs-input mb-1 px-2 py-1 rounded-sm bg-panel border border-edge text-fg">
+								<option v-for="o in CLICK_ACTION_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.clickAction ?? 0)">{{ o.label }}</option>
 							</select>
-							<div class="text-fg/50 text-end">Sale:</div>
-							<input :value="obj.saleType ? `Type ${obj.saleType} — L$${obj.salePrice}` : 'Not for sale'" readonly class="px-1.5 py-0.5 text-fg" />
+							<template v-if="obj.touchName">
+								<div class="pe-2 text-fg/50 text-end">Touch label:</div>
+								<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.touchName }}</div>
+							</template>
+							<template v-if="obj.sitName">
+								<div class="pe-2 text-fg/50 text-end">Sit label:</div>
+								<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.sitName }}</div>
+							</template>
+							<label class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 ps-1 text-fg/50 text-end"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
+							<div class="flex items-center gap-1 bg-fg/20 py-1">
+								<select title="Whether purchaser receives original, copy, or contents." disabled class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 text-fg">
+									<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
+								</select>
+							</div>
+							<div class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 text-fg/50 text-end self-center">Price ?$</div>
+							<div class="flex items-center gap-1 bg-fg/20 pb-1">
+								<input type="number" min="0" max="999999999" step="1" :value="obj.salePrice" readonly
+								class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 w-20 text-fg" />
+								<button title="Mark/Update object(s) for sale." class="ui-btn p-1 px-5 text-xs rounded-sm border transition-colors">Apply</button>
+							</div>
 						</div>
 					</div>
 					<div v-if="obj.baseMask != null" class="border-t border-edge pt-2">
@@ -595,10 +623,10 @@ function close() {
 					prim-shape params + the building-block / mesh / sculpt type. The type row is how
 					you tell a mesh from a sculpt from a plain prim. -->
 				<template v-else-if="activeTab === 'object'">
-					[ ] Locked
-					[ ] Physical
-					[ ] Temporary
-					[ ] Phantom
+					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Modify permission — object is locked against edits"><input type="checkbox" :checked="!(obj.ownerMask & 0x4000)" disabled class="accent-accent" /> Locked</label>
+					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" :checked="!!obj.physical" disabled class="accent-accent" /> Physical</label>
+					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" :checked="!!obj.temporary" disabled class="accent-accent" /> Temporary</label>
+					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" :checked="!!obj.phantom" disabled class="accent-accent" /> Phantom</label>
 					<button title="Copy Object Parameters to Clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
 					<button title="Paste Object Parameters from Clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
 					<!-- Identity / linkset -->
@@ -609,13 +637,13 @@ function close() {
 							<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
 							<div class="flex items-center gap-1.5 min-w-0">
 								<button
-									class="w-10 h-10 shrink-0 bg-white/5 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
+									class="w-10 h-10 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
 									:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
 									@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
 								>
 									<span>{{ typeInfo.kind === 'mesh' ? '◰' : '⛰' }}</span>
 								</button>
-								<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+								<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
 							</div>
 							LOD: Num Triangles
 							High: ####
@@ -734,7 +762,7 @@ function close() {
 							<div class="flex items-center gap-1 min-w-0">
 								<div class="flex flex-col items-center gap-1">
 									<button
-										class="w-16 h-16 shrink-0 bg-white/5 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xs overflow-hidden hover:border-accent"
+										class="w-16 h-16 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xs overflow-hidden hover:border-accent"
 										:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
 										@click="openPreview(obj.defaultTexture)"
 									>
@@ -748,7 +776,7 @@ function close() {
 									<input
 										:value="obj.defaultTexture || '(none)'"
 										readonly
-										class="w-full bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
+										class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
 									/>
 								</div>
 							</div>
@@ -765,18 +793,18 @@ function close() {
 									v-else
 									:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
 									readonly
-									class="flex-1 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
+									class="flex-1 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
 								/>
 							</div>
 							<div class="text-fg/50 self-center">Full bright</div>
 							<div class="text-fg">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
 							<div class="text-fg/50 self-center">Glow</div>
-							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 							<div class="text-fg/50 self-center">Trans %</div>
 							<input
 								:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
 								readonly
-								class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
+								class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
 							/>
 							<div class="text-fg/50 self-center">Alpha mode</div>
 							<div class="text-fg">
@@ -784,7 +812,7 @@ function close() {
 									texture has alpha. Emissive mask renders as None (unlit materials). -->
 								<select
 									v-model="alphaMode"
-									class="ui-select w-full bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg"
+									class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg"
 								>
 									<option value="">Auto (blend if alpha)</option>
 									<option value="none">None</option>
@@ -812,7 +840,7 @@ function close() {
 								<button
 									v-for="c in faceTexChips"
 									:key="c.face"
-									class="relative w-10 h-10 bg-white/5 border border-edge rounded-sm overflow-hidden hover:border-accent"
+									class="relative w-10 h-10 bg-fg/20 border border-edge rounded-sm overflow-hidden hover:border-accent"
 									:title="`Face ${c.face} — click for preview`"
 									@click="openPreview(c.uuid)"
 								>
@@ -846,29 +874,29 @@ function close() {
 							<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 								<div class="text-fg/50 self-center">Scale H / V</div>
 								<div class="grid grid-cols-2 gap-1">
-									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								</div>
 								<div class="text-fg/50 self-center">Offset H / V</div>
 								<div class="grid grid-cols-2 gap-1">
-									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-									<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								</div>
 								<div class="text-fg/50 self-center">Rotation°</div>
-								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								<template v-if="defaultMapping.rpm != null">
 									<div class="text-fg/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
-									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
 								</template>
 								<div class="text-fg/50 self-center">Mapping</div>
 								<div class="text-fg">{{ defaultMapping.mapping }}</div>
 							</div>
-							<div class="my-1 text-gray-500">[ ] Synchronize materials</div>
-							<div class="my-1 text-gray-500">[ ] Align planar faces</div>
+							<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Synchronize materials</label>
+							<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Align planar faces</label>
 						</div>
 						<div v-if="obj.defaultMaterialId" class="border-t border-edge pt-2">
 							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
-							<input :value="obj.defaultMaterialId" readonly class="w-full bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<input :value="obj.defaultMaterialId" readonly class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
 						</div>
 					</template>
 
@@ -886,9 +914,9 @@ function close() {
 										<input
 											:value="obj.defaultPbrMaterial || distinctPbr[0] || '(none)'"
 											readonly
-											class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
+											class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
 										/>
-										<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-white/5" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
+										<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
 									</div>
 								</div>
 							</div>
@@ -897,7 +925,7 @@ function close() {
 								<div class="space-y-1">
 									<div v-for="c in pbrFaceChips" :key="c.face" class="flex items-center gap-1.5 text-2xs">
 										<span class="w-8 shrink-0 text-fg/50">F{{ c.face }}</span>
-										<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
+										<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
 									</div>
 								</div>
 							</div>
@@ -943,7 +971,7 @@ function close() {
 			>
 				<div class="flex items-center gap-2 px-3 py-2 border-b border-edge shrink-0">
 					<span class="text-xs text-fg font-semibold">Texture Preview</span>
-					<button class="ml-auto ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-white/5" title="Close" @click="closePreview"><XIcon class="w-3.5 h-3.5" /></button>
+					<button class="ml-auto ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Close" @click="closePreview"><XIcon class="w-3.5 h-3.5" /></button>
 				</div>
 				<div class="flex-1 min-h-0 flex items-center justify-center p-3">
 					<img
@@ -957,8 +985,8 @@ function close() {
 					<div v-else class="text-fg/40 italic text-xs">Loading texture…</div>
 				</div>
 				<div class="flex items-center gap-1.5 px-3 py-2 border-t border-edge shrink-0">
-					<input :value="previewUuid" readonly class="flex-1 min-w-0 bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-					<button class="ui-btn p-1.5 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-white/5" title="Copy UUID" @click="copyText(previewUuid)"><CopyIcon class="w-3.5 h-3.5" /></button>
+					<input :value="previewUuid" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+					<button class="ui-btn p-1.5 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Copy UUID" @click="copyText(previewUuid)"><CopyIcon class="w-3.5 h-3.5" /></button>
 				</div>
 			</div>
 		</div>

@@ -3220,7 +3220,12 @@ export function useWorldEngine(canvasRef) {
 		}
 
 		const obj = worldStore.objects.get(pickedId)
-		const ca = obj?.clickAction ?? 0
+		const rawCa = obj?.clickAction ?? 0
+		// WHY: Buy (2) and Pay (3) are root-linkset-only actions — child prims with these set are
+		// builder sloppiness (you can only buy/pay the whole object). Suppress on children so we
+		// don't show a spurious buy badge. Sit/Touch/Open/etc. are allowed on child prims.
+		const isChild = (obj?.parentId ?? 0) !== 0
+		const ca = (isChild && (rawCa === 2 || rawCa === 3)) ? 0 : rawCa
 		// WHY: show hand only when the object has a script that handles touch (handleTouch flag,
 		// PrimFlags bit 0x80) or has a non-default ClickAction (Sit/Buy/Pay/…). ClickAction=0
 		// alone does not mean the object is interactive — it's the default for all prims.

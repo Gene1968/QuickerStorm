@@ -136,7 +136,7 @@ All shape params already decoded server-side. The following are geometry-generat
 
 ### Object Build & Edit Floater
 
-Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdate, per-face texture mapping display with Repeats-per-meter.
+Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdate, per-face texture mapping display with Repeats-per-meter. General tab: name, description, UUID, type, hover text, creator/owner/lastOwner/group UUIDs, creation date, click action (read-only), touchName/sitName, for-sale + sale type + price (read-only), permissions (CMTX letters). Object tab: locked/physical/temporary/phantom flags (read-only, from PrimFlags + ownerMask), localId, parentId, link count, position/size/rotation, prim shape params.
 
 - [ ] Edit name and description
 - [ ] Edit permissions
@@ -147,6 +147,7 @@ Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdat
 - [ ] Sculpt texture assignment
 - [ ] Create new prim in-world
 - [ ] Link / Unlink prims
+- [ ] **Link number wrong (2026-06-19)** — we compute link order by sorting children by LocalID; correct source is `ObjectProperties.LinkNumber` (U32). e.g. child localId 955628720 shows as link 47 vs FS link 67 in the same 154-prim linkset. Fix: decode and store `LinkNumber` from ObjectProperties; use it instead of sorted position.
 - [ ] Object face raycast picking — currently picks bounding box; need per-triangle for correct face selection
 - [ ] Open / unpack box contents (RequestTaskInventory + Xfer)
 - [ ] Take, Delete, Copy to inventory (perms + Phase 3 caps)
@@ -155,7 +156,9 @@ Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdat
 
 ### Right-Click Menus
 
-**Avatar menu (~30% — IM, View Profile, Face Toward done):**
+**Hover cursor system (done 2026-06-19):** hand cursor on hover over touchable objects (handleTouch PrimFlags bit 0x80, or clickAction 1–6); badge icon next to cursor for Sit/Buy/Pay/Open/PlayAnim/Zoom; crosshair when Edit floater open; left-click fires sendTouch when hand cursor active; Buy/Pay suppressed on child prims; Touch disabled in context menu for clickAction=7.
+
+**Avatar menu (~40% — IM, View Profile, Face Toward, Texture Refresh done):**
 - [ ] Zoom to avatar
 - [ ] Call (voice)
 - [ ] Invite to group
@@ -163,7 +166,7 @@ Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdat
 - [ ] Save outfit
 - [ ] Self: open AppearanceFloater, Sit/Stand, Fly/Land, community actions
 
-**Object menu (~30% — Edit, Inspect, Touch done):**
+**Object menu (~40% — Edit, Inspect, Touch + hover-cursor + left-click-touch + Texture Refresh done; Touch disabled for clickAction=7):**
 - [ ] Sit on object (SitOnObject + RequestObjectPropertiesFamily)
 - [ ] Take, Delete (Phase 3 caps)
 - [ ] Buy / Pay (if object is for sale / L$ enabled)
