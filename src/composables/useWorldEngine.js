@@ -199,7 +199,7 @@ export function useWorldEngine(canvasRef) {
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
-	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery } = useLLUDP()
+	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendTouch } = useLLUDP()
 	const meshBaker = useMeshBaker()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
@@ -1051,6 +1051,11 @@ export function useWorldEngine(canvasRef) {
 			}
 			// Miss — clicked terrain/water/sky/avatar: drop selection.
 			uiStore.editObjectId = null
+			return
+		}
+		// Left-click fires touch when hovering a touchable object (hand cursor active)
+		if (!e.altKey && _hoverLocalId != null && !uiStore.showObjectEdit) {
+			sendTouch(_hoverLocalId)
 			return
 		}
 		if (!e.altKey) return   // WHY: regular drag disabled — only alt+drag active
@@ -3039,6 +3044,7 @@ export function useWorldEngine(canvasRef) {
 	// the wall. Cast a short ray from the avatar in the intended SL-XY direction and check
 	// for any non-own mesh in front. Hit → block step + play bump.
 	let _hoverThrottle = 0
+	let _hoverLocalId  = null
 	const _raycaster   = new THREE.Raycaster()
 	const _rayOrigin   = new THREE.Vector3()
 	const _rayDir      = new THREE.Vector3()
@@ -3192,6 +3198,7 @@ export function useWorldEngine(canvasRef) {
 		if (!hits.length) {
 			canvas.style.cursor = 'default'
 			hoverAction.value = null
+			_hoverLocalId = null
 			return
 		}
 
@@ -3208,19 +3215,26 @@ export function useWorldEngine(canvasRef) {
 		if (pickedId == null) {
 			canvas.style.cursor = 'default'
 			hoverAction.value = null
+			_hoverLocalId = null
 			return
 		}
 
 		const obj = worldStore.objects.get(pickedId)
 		const ca = obj?.clickAction ?? 0
+		// WHY: show hand only when the object has a script that handles touch (handleTouch flag,
+		// PrimFlags bit 0x80) or has a non-default ClickAction (Sit/Buy/Pay/…). ClickAction=0
+		// alone does not mean the object is interactive — it's the default for all prims.
+		const touchable = ca !== 7 && (ca !== 0 || obj?.handleTouch)
 
-		canvas.style.cursor = ca === 7 ? 'default' : 'pointer'
-		hoverAction.value = ca === 7 ? null : ca
+		canvas.style.cursor = touchable ? 'pointer' : 'default'
+		hoverAction.value = touchable ? ca : null
+		_hoverLocalId = touchable ? pickedId : null
 	}
 
 	function onPointerLeave() {
 		if (canvasRef.value) canvasRef.value.style.cursor = 'default'
 		hoverAction.value = null
+		_hoverLocalId = null
 	}
 
 	// WHY: Right-click avatar menu "Face Toward" action — set yaw so own avatar looks at target.

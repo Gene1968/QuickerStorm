@@ -1073,6 +1073,7 @@ export interface ObjectData {
   text?:         string   // hovertext (Variable1)
   textColor?:    [number, number, number, number]  // RGBA 0..1
   phantom?:      boolean  // PrimFlags bit 0x400 — avatar passes through; skip collision
+  handleTouch?:  boolean  // PrimFlags bit 0x80 — object has a touch event handler script
   clickAction?:  number   // U8: 0=Touch,1=Sit,2=Buy,3=Pay,4=Open,5=PlayAnim,6=Zoom,7=Disabled
 }
 
@@ -1263,6 +1264,7 @@ export function decodeObjectUpdateCompressed(
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
         ...((cUpdateFlags & 0x400) ? { phantom: true } : {}),
+        ...((cUpdateFlags & 0x80)  ? { handleTouch: true } : {}),
         ...(clickAction !== 0 ? { clickAction } : {}),
       })
     } catch (e) {
@@ -1592,6 +1594,7 @@ export function decodeObjectUpdate(
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
         ...((updateFlags & 0x400) ? { phantom: true } : {}),
+        ...((updateFlags & 0x80)  ? { handleTouch: true } : {}),
         ...(clickAction !== 0 ? { clickAction } : {}),
       })
       // WHY: A tail OOB means `off` is no longer aligned to the next object's start.

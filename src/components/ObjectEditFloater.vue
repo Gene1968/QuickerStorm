@@ -536,30 +536,43 @@ function close() {
 			<div v-else class="flex-1 overflow-y-auto px-3 py-2 space-y-3">
 				<!-- General ─────────────────────────────────────────────── -->
 				<template v-if="activeTab === 'general'">
-					<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-fg/50" title="63 chars, ASCII-7 + pipe.">Name:</div>
+					<div class="grid grid-cols-[4.5rem_auto] gap-x-2 gap-y-1.5 text-xs">
+						<div class="text-fg/50 text-end" title="63 chars, ASCII-7 + pipe.">Name:</div>
 						<input :value="obj.name || '(Object)'" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
-						<div class="text-fg/50" title="127 chars. May get used in hover tips or scripting">Description:</div>
+						<div class="text-fg/50 text-end" title="127 chars. May get used in hover tips or scripting">Description:</div>
 						<input :value="obj.description || ''" readonly placeholder="—" class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
-						<div class="text-fg/50">UUID:</div>
-						<input :value="obj.fullId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-						<div class="text-fg/50">Type:</div>
-						<div class="text-fg">{{ typeInfo.label }}</div>
-						<div class="text-fg/50">Hover Text:</div>
+						<div class="text-fg/50 text-end">UUID:</div>
+						<input :value="obj.fullId" readonly class="px-1.5 py-0.5 text-fg font-mono text-2xs" />
+						<div class="text-fg/50 text-end">Type:</div>
+						<input :value="typeInfo.label" readonly class="px-1.5 py-0.5 text-fg" />
+						<div class="text-fg/50 text-end">Hover Text:</div>
 						<div class="text-fg whitespace-pre-wrap">{{ obj.text || '—' }}</div>
 					</div>
 					<div v-if="obj.creatorId" class="border-t border-edge pt-2">
-						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-							<div class="text-fg/50">Creator:</div>
+						<div class="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1.5 text-xs">
+							<div class="text-fg/50 text-end">Creator:</div>
 							<input :value="obj.creatorId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50">Owner:</div>
+							<div class="text-fg/50 text-end">Owner:</div>
 							<input :value="obj.ownerId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50">Group:</div>
+							<div class="text-fg/50 text-end">Last Owner:</div>
+							<input value="(to-do)" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="text-fg/50 text-end">Group:</div>
 							<input :value="obj.groupId" readonly class="bg-white/5 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="text-fg/50">Created:</div>
+							<div class="text-fg/50 text-end">Created:</div>
 							<div class="text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
-							<div class="text-fg/50">Sale:</div>
-							<div class="text-fg">{{ obj.saleType ? `Type ${obj.saleType} — L$${obj.salePrice}` : 'Not for sale' }}</div>
+							<div class="text-fg/50 text-end self-center">Click to:</div>
+							<select title="A click action enables you to interact with an object with a single left click. Each click action has a special cursor indicating what it does. Some click actions have requirements to function. For example Touch and Pay require scripts" class="qs-input px-2 py-1 rounded-sm bg-panel border border-edge text-fg">
+								<option value="touch">Touch(default) (to-do)</option>
+								<option value="sit">Sit on object</option>
+								<option value="buy">Buy object</option>
+								<option value="pay">Pay object</option>
+								<option value="open">Open</option>
+								<option value="zoom">Zoom</option>
+								<option value="ignore">Ignore object</option>
+								<option value="none">None</option>
+							</select>
+							<div class="text-fg/50 text-end">Sale:</div>
+							<input :value="obj.saleType ? `Type ${obj.saleType} — L$${obj.salePrice}` : 'Not for sale'" readonly class="px-1.5 py-0.5 text-fg" />
 						</div>
 					</div>
 					<div v-if="obj.baseMask != null" class="border-t border-edge pt-2">
