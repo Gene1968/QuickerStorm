@@ -294,7 +294,7 @@ export const useUiStore = defineStore('ui', () => {
 
 	// WHY: object (prim) context menu — Inspect / Touch / Sit. Phase 2 subset; edit/take/copy
 	// require HTTP caps + perms (Phase 3).
-	const objectMenu = ref(null)  // null | { localId, fullId, name, pos, x, y }
+	const objectMenu = ref(null)  // null | { localId, fullId, name, pos, clickAction, x, y }
 	function openObjectMenu(target) { objectMenu.value = target }
 	function closeObjectMenu()      { objectMenu.value = null }
 

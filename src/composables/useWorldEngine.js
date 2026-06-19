@@ -1,5 +1,5 @@
 // src/composables/useWorldEngine.js — Three.js scene driven by LLUDP ObjectUpdate data
-import { onMounted, onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 import gsap from 'gsap'
@@ -194,6 +194,8 @@ export function useWorldEngine(canvasRef) {
 	const sessionStore      = useSessionStore()
 	const mapStore          = useMapStore()
 	const uiStore           = useUiStore()
+	const hoverAction = ref(null)   // null | 0-7  (ClickAction value, null = no interactive object under cursor)
+	const hoverPos    = ref({ x: 0, y: 0 })
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
@@ -3036,6 +3038,7 @@ export function useWorldEngine(canvasRef) {
 	// stop arriving, and other clients see us stuck while DR would march our coords through
 	// the wall. Cast a short ray from the avatar in the intended SL-XY direction and check
 	// for any non-own mesh in front. Hit → block step + play bump.
+	let _hoverThrottle = 0
 	const _raycaster   = new THREE.Raycaster()
 	const _rayOrigin   = new THREE.Vector3()
 	const _rayDir      = new THREE.Vector3()
@@ -3144,12 +3147,80 @@ export function useWorldEngine(canvasRef) {
 			fullId:  obj.fullId,
 			name:    obj.name || obj.text || `Object ${pickedId}`,
 			pos:     obj.pos,
+			clickAction: obj.clickAction ?? 0,
 			x: e.clientX,
 			y: e.clientY,
 		})
 		// WHY: Sim only sends ObjectProperties (name/creator/owner/perms) in response to an
 		// explicit ObjectSelect. Opening objectMenu triggers stopSelSyncWatch, which emits the
 		// ObjectSelect (and the paired ObjectDeselect once the menu/edit floater closes).
+	}
+
+	function onPointerMove(e) {
+		const now = performance.now()
+		if (now - _hoverThrottle < 80) return
+		_hoverThrottle = now
+
+		hoverPos.value = { x: e.clientX, y: e.clientY }
+
+		const canvas = canvasRef.value
+		if (!canvas) return
+
+		// Edit floater active → select mode, suppress hover interaction
+		if (uiStore.floaterStack?.includes('object-edit')) {
+			canvas.style.cursor = 'crosshair'
+			hoverAction.value = null
+			return
+		}
+
+		const rect = canvas.getBoundingClientRect()
+		const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1
+		const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1
+		_raycaster.setFromCamera({ x: nx, y: ny }, camera)
+
+		// Mirror primTargets construction from onContextMenu (lines 3100-3108)
+		const targets = []
+		meshMap.forEach((mesh, localId) => {
+			if (localId === ownAvatarLocalId) return
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR) return
+			targets.push(mesh)
+		})
+		if (_instancePool) for (const im of _instancePool.meshes()) targets.push(im)
+
+		const hits = _raycaster.intersectObjects(targets, true)
+		if (!hits.length) {
+			canvas.style.cursor = 'default'
+			hoverAction.value = null
+			return
+		}
+
+		// Resolve localId from hit — mirrors onContextMenu lines 3128-3136
+		const hit = hits[0]
+		let pickedId = null
+		if (hit.object?.userData?.qsInstanced) {
+			pickedId = _instancePool.pick(hit.object, hit.instanceId)
+		} else {
+			let hitMesh = hit.object
+			while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
+			if (hitMesh) pickedId = hitMesh.userData.localId
+		}
+		if (pickedId == null) {
+			canvas.style.cursor = 'default'
+			hoverAction.value = null
+			return
+		}
+
+		const obj = worldStore.objects.get(pickedId)
+		const ca = obj?.clickAction ?? 0
+
+		canvas.style.cursor = ca === 7 ? 'default' : 'pointer'
+		hoverAction.value = ca === 7 ? null : ca
+	}
+
+	function onPointerLeave() {
+		if (canvasRef.value) canvasRef.value.style.cursor = 'default'
+		hoverAction.value = null
 	}
 
 	// WHY: Right-click avatar menu "Face Toward" action — set yaw so own avatar looks at target.
@@ -4742,6 +4813,8 @@ export function useWorldEngine(canvasRef) {
 		// Scroll wheel for forward/back movement; passive:false so we can preventDefault
 		canvasRef.value.addEventListener('wheel', onWheel, { passive: false })
 		canvasRef.value.addEventListener('contextmenu', onContextMenu)
+		canvasRef.value.addEventListener('pointermove',  onPointerMove)
+		canvasRef.value.addEventListener('pointerleave', onPointerLeave)
 		canvasRef.value.addEventListener('dblclick', onDblClick)
 		on(S.OBJECT_UPDATE,    onObjectUpdate)
 		on(S.TERSE_UPDATE,     onTerseUpdate)
@@ -4803,6 +4876,8 @@ export function useWorldEngine(canvasRef) {
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
 		canvasRef.value?.removeEventListener('wheel', onWheel)
 		canvasRef.value?.removeEventListener('contextmenu', onContextMenu)
+		canvasRef.value?.removeEventListener('pointermove',  onPointerMove)
+		canvasRef.value?.removeEventListener('pointerleave', onPointerLeave)
 		canvasRef.value?.removeEventListener('dblclick', onDblClick)
 		off(S.OBJECT_UPDATE,   onObjectUpdate)
 		off(S.TERSE_UPDATE,    onTerseUpdate)
@@ -4837,5 +4912,5 @@ export function useWorldEngine(canvasRef) {
 
 	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
-	return { scene, camera }
+	return { scene, camera, hoverAction, hoverPos, onPointerMove, onPointerLeave }
 }
