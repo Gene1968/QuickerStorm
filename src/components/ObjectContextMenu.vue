@@ -77,7 +77,7 @@ onUnmounted(() => {
 		@contextmenu.prevent
 	>
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="touch">Touch</button>
+		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed" :disabled="menu.clickAction === 7" @click="touch">Touch</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="edit">Edit…</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="sit">Sit Here</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="inspect">{{ showInspect ? 'Hide Inspect' : 'Inspect' }}</button>
