@@ -55,10 +55,11 @@ export const useWorldStore = defineStore('world', () => {
 	}
 
 	function upsertObject(obj) {
-		// obj: { localId, fullId, pcode, pos, rot, scale, nameValue }
+		// obj: { localId, fullId, pcode, pos, rot, scale, nameValue, clickAction }
 		const existing = objects.value.get(obj.localId) ?? {}
 		const name = obj.nameValue ? parseNameValue(obj.nameValue) : (existing.name ?? '')
 		const rec = { ...existing, ...obj, name }
+		rec.clickAction = obj.clickAction ?? existing.clickAction ?? 0
 		objects.value.set(obj.localId, rec)
 		_index(obj.localId, rec)
 	}
