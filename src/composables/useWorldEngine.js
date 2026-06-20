@@ -4297,7 +4297,7 @@ export function useWorldEngine(canvasRef) {
 		const cf = updateCamera(dt)
 
 		const _flyMoving = isFlying && !!(cf & (CTRL_AT_POS | CTRL_AT_NEG | CTRL_LEFT_POS | CTRL_LEFT_NEG | CTRL_UP_POS | CTRL_UP_NEG))
-		if (_flyMoving) playSoundLooping('flying.mp3')
+		if (_flyMoving) playSoundLooping('flying.mp3', 0.5)
 		else stopLooping()
 
 		// WHY: Third-person follow camera — positions camera behind and above avatar.
