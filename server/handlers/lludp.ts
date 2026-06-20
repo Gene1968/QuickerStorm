@@ -235,11 +235,18 @@ const DEST_REGION_CAPS = [
  */
 export function applyTeleportFinish(
 	sessionId: string,
-	f: { simIp: string; simPort: number; regionHandle: bigint; seedCap: string; simAccess: number },
+	f: { simIp: string; simPort: number; regionHandle: bigint; seedCap: string; simAccess: number;
+	     regionSizeX?: number; regionSizeY?: number },
 ): void {
 	const session = getSession(sessionId)
 	if (!session) return
 	const { simIp, simPort, regionHandle, seedCap, simAccess } = f
+	// Var-region size of the destination (0 when the grid's TeleportFinish omits it — UDP path always
+	// does). Forwarded to the client so its movement clamp uses the real region bounds; 0 → client keeps
+	// its map-block fallback. See docs/superpowers/specs/2026-06-19-varregion-size-on-tp-design.md.
+	const regionSizeX = f.regionSizeX ?? 0
+	const regionSizeY = f.regionSizeY ?? 0
+	if (regionSizeX > 0) slog.info(session.ws, `[TP] destination region size = ${regionSizeX}×${regionSizeY}`)
 	session.pendingTpHandle = undefined
 	session.tpDebugUntil = 0
 
@@ -256,7 +263,7 @@ export function applyTeleportFinish(
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		if (!sameRegion) {
-			session.ws.send(JSON.stringify({ t: S.TELEPORT_FINISH, d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess } }))
+			session.ws.send(JSON.stringify({ t: S.TELEPORT_FINISH, d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess, regionSizeX, regionSizeY } }))
 			slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, new region handle=${regionHandle}) — browser notified to clear scene`)
 		} else {
 			slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, same region) — awaiting AgentMovementComplete at new pos`)

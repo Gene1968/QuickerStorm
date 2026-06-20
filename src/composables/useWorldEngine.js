@@ -2849,20 +2849,29 @@ export function useWorldEngine(canvasRef) {
 				const h = BigInt(d.regionHandle)
 				sessionStore.regionX = Number(h >> 32n)
 				sessionStore.regionY = Number(h & 0xFFFFFFFFn)
-				// WHY: UDP TeleportFinish carries no region size (only the EventQueue variant
-				// does, which we don't have). Backfill from the map-block cache so var-region
-				// destinations don't inherit the previous region's dimensions — wrong size
-				// breaks movement clamping, terrain build, and the map's region outline.
-				// Cache miss → query the destination cell; onMapBlocks applies the size.
-				const cellX = Math.floor(sessionStore.regionX / 256)
-				const cellY = Math.floor(sessionStore.regionY / 256)
-				const blk = mapStore.getRegion(cellX, cellY)
-				if (blk) {
-					sessionStore.regionSizeX = blk.sizeX || 256
-					sessionStore.regionSizeY = blk.sizeY || 256
+				// PREFERRED: the EventQueue TeleportFinish now carries the destination's var-region size
+				// (server decodes RegionSizeX/RegionSizeY). Authoritative + synchronous → the movement
+				// clamp uses the real bounds immediately (fixes the 1024-region "walled at Y=511" bug
+				// where regionSize stayed at the login value). 0 = grid omitted it → map-block fallback.
+				if (d.regionSizeX > 0 && d.regionSizeY > 0) {
+					sessionStore.regionSizeX = d.regionSizeX
+					sessionStore.regionSizeY = d.regionSizeY
+					_pendingRegionSizeLookup = false
+					debugStore.push('info', `[3D] Region size from TeleportFinish: ${d.regionSizeX}×${d.regionSizeY}`)
 				} else {
-					_pendingRegionSizeLookup = true
-					sendMapQuery(cellX, cellX, cellY, cellY)
+					// FALLBACK (older grids): backfill from the map-block cache so var-region destinations
+					// don't inherit the previous region's dimensions. Cache miss → query the destination
+					// cell; onEngineMapBlocks applies the size when the reply lands.
+					const cellX = Math.floor(sessionStore.regionX / 256)
+					const cellY = Math.floor(sessionStore.regionY / 256)
+					const blk = mapStore.getRegion(cellX, cellY)
+					if (blk) {
+						sessionStore.regionSizeX = blk.sizeX || 256
+						sessionStore.regionSizeY = blk.sizeY || 256
+					} else {
+						_pendingRegionSizeLookup = true
+						sendMapQuery(cellX, cellX, cellY, cellY)
+					}
 				}
 			} catch { /* ignore parse error — non-blocking */ }
 		}

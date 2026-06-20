@@ -27,6 +27,8 @@ export interface TeleportFinishFields {
 	seedCap:       string
 	simAccess:     number
 	teleportFlags: number
+	regionSizeX:   number   // var-region size of the DESTINATION (0 = absent/unknown on this grid)
+	regionSizeY:   number
 }
 
 /** Decode a base64 <binary> LLSD leaf (our parser keeps it as verbatim text) to bytes. */
@@ -68,6 +70,16 @@ export function decodeTeleportFinishLLSD(body: LLSDValue): TeleportFinishFields 
 		if (fb.length >= 4) teleportFlags = fb.readUInt32BE(0)
 	}
 
+	// Var-region size of the DESTINATION region. Modern OpenSim/SL include RegionSizeX/RegionSizeY as
+	// <integer> in the TeleportFinish Info block; older grids omit them (→ 0 = unknown, client keeps its
+	// fallback). A 4-byte BE <binary> form is tolerated too. WHY this matters: without it the client's
+	// regionSize stays at the LOGIN region's value, and the avatar movement clamp [1, regionSize-1] walls
+	// the avatar at the wrong boundary in a larger var-region (1024 region → stuck at 511).
+	const sizeOf = (v: LLSDValue): number => {
+		let n = llsdNum(v)
+		if (!n && typeof v === 'string') { const b = b64bytes(v); if (b.length >= 4) n = b.readUInt32BE(0) }
+		return n || 0
+	}
 	return {
 		simIp,
 		simPort,
@@ -75,6 +87,8 @@ export function decodeTeleportFinishLLSD(body: LLSDValue): TeleportFinishFields 
 		seedCap:   llsdStr(m.SeedCapability),
 		simAccess: llsdNum(m.SimAccess),
 		teleportFlags,
+		regionSizeX: sizeOf(m.RegionSizeX),
+		regionSizeY: sizeOf(m.RegionSizeY),
 	}
 }
 
@@ -191,7 +205,25 @@ function dispatchEvent(sessionId: string, message: string, body: LLSDValue): voi
 			break
 		}
 		// Region-crossing / neighbour events — logged for now, handled in a later bundle.
-		case 'EnableSimulator':
+		case 'EnableSimulator': {
+			// Instrumentation (var-region size source): OpenSim's EnableSimulator SimulatorInfo block
+			// can carry RegionSizeX/RegionSizeY for a neighbour OR the destination. Log it so we can
+			// confirm whether this grid delivers the current-region size via TeleportFinish (preferred,
+			// already wired) or only here — informs whether a follow-up needs to consume it.
+			try {
+				const info = (body as Record<string, LLSDValue>)?.SimulatorInfo
+				const e = (Array.isArray(info) ? info[0] : info) as Record<string, LLSDValue> | undefined
+				if (e) {
+					const sx = llsdNum(e.RegionSizeX), sy = llsdNum(e.RegionSizeY)
+					const hb = typeof e.Handle === 'string' ? b64bytes(e.Handle) : Buffer.alloc(0)
+					const handle = hb.length >= 8 ? hb.readBigUInt64BE(0) : 0n
+					slog.info(s.ws, `[EQ] EnableSimulator handle=${handle} size=${sx || '?'}×${sy || '?'}`)
+				} else {
+					slog.info(s.ws, `[EQ] (unhandled) EnableSimulator (no SimulatorInfo)`)
+				}
+			} catch { slog.info(s.ws, `[EQ] (unhandled) EnableSimulator`) }
+			break
+		}
 		case 'EstablishAgentCommunication':
 		case 'CrossedRegion':
 			slog.info(s.ws, `[EQ] (unhandled) ${message}`)

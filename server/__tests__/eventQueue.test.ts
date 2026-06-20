@@ -12,11 +12,16 @@ function buildBody(opts: {
 	seedCap: string
 	simAccess: number
 	teleportFlags: number
+	regionSizeX?: number   // var-region size — present on modern OpenSim/SL TeleportFinish events
+	regionSizeY?: number
 }): string {
 	const ipBytes = Buffer.from(opts.simIp.split('.').map(Number))            // 4 bytes, network order
 	const rhBuf = Buffer.alloc(8); rhBuf.writeBigUInt64BE(opts.regionHandle)  // 8 bytes BE
 	const tfBuf = Buffer.alloc(4); tfBuf.writeUInt32BE(opts.teleportFlags)    // 4 bytes BE
 	const locBuf = Buffer.alloc(4); locBuf.writeUInt32BE(4)
+	const sizeXml =
+		(opts.regionSizeX !== undefined ? `<key>RegionSizeX</key><integer>${opts.regionSizeX}</integer>` : '') +
+		(opts.regionSizeY !== undefined ? `<key>RegionSizeY</key><integer>${opts.regionSizeY}</integer>` : '')
 	return (
 		`<?xml version="1.0"?>\n<llsd><map><key>Info</key><array><map>` +
 		`<key>AgentID</key><uuid>11111111-2222-3333-4444-555555555555</uuid>` +
@@ -27,6 +32,7 @@ function buildBody(opts: {
 		`<key>SimIP</key><binary encoding="base64">${ipBytes.toString('base64')}</binary>` +
 		`<key>SimPort</key><integer>${opts.simPort}</integer>` +
 		`<key>TeleportFlags</key><binary encoding="base64">${tfBuf.toString('base64')}</binary>` +
+		sizeXml +
 		`</map></array></map></llsd>`
 	)
 }
@@ -81,5 +87,31 @@ describe('decodeTeleportFinishLLSD', () => {
 	it('returns null for a body with no Info block', () => {
 		expect(decodeTeleportFinishLLSD({ foo: 'bar' })).toBeNull()
 		expect(decodeTeleportFinishLLSD(null)).toBeNull()
+	})
+
+	// Var-region fix (2026-06-19): a 1024×1024 region walled the avatar at Y=511 because regionSize
+	// stayed at the login value (512). The authoritative current-region size on a teleport is in the
+	// EQ TeleportFinish RegionSizeX/RegionSizeY fields (modern OpenSim/SL). Decode them so the client
+	// movement clamp uses the real size. See docs/superpowers/specs/2026-06-19-varregion-size-on-tp-design.md.
+	it('decodes var-region RegionSizeX/RegionSizeY when present', () => {
+		const handle = (9961n * 256n << 32n) | (10085n * 256n)   // Bountiful Sandbox cell
+		const body = parseLLSD(buildBody({
+			simIp: '46.4.91.94', simPort: 12054, regionHandle: handle,
+			seedCap: 'http://x/', simAccess: 13, teleportFlags: 0,
+			regionSizeX: 1024, regionSizeY: 1024,
+		})) as Record<string, unknown>
+		const f = decodeTeleportFinishLLSD(body)
+		expect(f!.regionSizeX).toBe(1024)
+		expect(f!.regionSizeY).toBe(1024)
+	})
+
+	it('reports regionSize 0 (unknown) when the event omits the size fields', () => {
+		const body = parseLLSD(buildBody({
+			simIp: '10.0.0.1', simPort: 9000, regionHandle: 1n,
+			seedCap: 'http://x/', simAccess: 13, teleportFlags: 0,
+		})) as Record<string, unknown>
+		const f = decodeTeleportFinishLLSD(body)
+		expect(f!.regionSizeX).toBe(0)
+		expect(f!.regionSizeY).toBe(0)
 	})
 })

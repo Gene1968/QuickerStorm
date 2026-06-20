@@ -58,7 +58,7 @@ export const S = {
 	CHAT_MSG:     'chat_msg',   // { fromName, sourceId, type, channel, message, pos }
 	REGION_INFO:  'region',     // { name, handle, waterHeight }
 	TELEPORT_OK:       'tp_ok',       // { regionName, seedCap }
-	TELEPORT_FINISH:   'tp_finish',   // { simIp, simPort, regionHandle, seedCap, simAccess } — cross-region TP
+	TELEPORT_FINISH:   'tp_finish',   // { simIp, simPort, regionHandle, seedCap, simAccess, regionSizeX, regionSizeY } — cross-region TP (size 0 = grid omitted it)
 	TELEPORT_FAILED:   'tp_failed',   // { reason: string } — sim rejected the TeleportLocationRequest
 	TELEPORT_STARTED:  'tp_started',  // {} — TeleportLocationRequest sent; show progress overlay
 	TELEPORT_PROGRESS: 'tp_progress', // { status: string } — "contacting"|"arriving" etc.
