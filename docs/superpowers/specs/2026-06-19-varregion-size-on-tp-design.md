@@ -52,8 +52,13 @@ Server already restarted with the fix (circuit dropped — expected). Hard-reloa
 to ~1023. If the log instead shows `[TP] destination region size = 0` (grid omits it) but the
 `[EQ] EnableSimulator … size=1024×1024` line appears → follow-up: consume EnableSimulator's size.
 
-## Out of scope (separate bug)
+## Terrain past 512 (CORRECTED — not a visible bug)
 
-`TERRAIN_STRIDE = 513` (`worldStore.js`) caps the terrain heightmap at 512m, so terrain/ground past
-Y=512 stays flat/absent even with `regionSize=1024`. Movement is now unblocked; terrain rendering for
->512 var-regions is a separate fix (scale stride/array/plane to the region size).
+Initially flagged as broken; **corrected after Gene live-confirmed full hills/rivers at 527/574/NE.**
+The live `onTerrainPatch` render reads heights from the incoming patch payload bounded by the real
+`regionSize` (`vStride = rx+1`, guard `slX > rx`) → the full var-region renders correctly. The
+`TERRAIN_STRIDE = 513` / `setTerrainPatch` `>=512` cap only limits the worldStore PERSISTENCE copy
+(`terrainHeights`), which feeds `sampleTerrainHeight` (avatar local ground prediction past 512 — but the
+sim is authoritative for Z and corrects it, so minor/masked) and `rebuildTerrainFromStore` after an HMR
+remount (SW-quadrant only until patches re-arrive — transient). No rewrite needed. Optional tidy: scale
+the stride + the `>=512` guard to the region size so persistence/sampling are var-region-correct.

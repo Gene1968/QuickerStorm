@@ -113,18 +113,19 @@ export function playSound(filename, volume = 1) {
 	} catch { /* ignore */ }
 }
 
-export function playSoundForRoom(filename, volume = 1) {
+export function playSoundForNearbyWorld(filename, volume = 1) {
 	playSound(filename, volume)
 	_soundBroadcaster?.(filename, volume)
 }
 
-function playLooping(filename) {
+function playSoundLooping(filename, volume = 1) {
 	if (!soundOk() || _loopAudio) return
 	try {
 		const url = _sfx[`../assets/audio/${filename}`]
 		if (!url) return
 		_loopAudio = new Audio(url)
 		_loopAudio.loop = true
+		_loopAudio.volume = Math.min(1, Math.max(0, Number(volume) * masterVolume.value))
 		_loopAudio.play().catch(() => {})
 	} catch { /* ignore */ }
 }
@@ -136,9 +137,9 @@ function stopLooping() {
 }
 
 // ── Procedural sounds ─────────────────────────────────────────────────────────
-function playDoorOpen()  { playSoundForRoom('dooropen.mp3',  0.7) }
-function playDoorClose() { playSoundForRoom('doorclose.mp3', 0.7) }
-function playDogBark()   { playSoundForRoom('bark.mp3') }
+function playDoorOpen()  { playSoundForNearbyWorld('dooropen.mp3',  0.7) }
+function playDoorClose() { playSoundForNearbyWorld('doorclose.mp3', 0.7) }
+function playDogBark()   { playSoundForNearbyWorld('bark.mp3') }
 
 function playFootstep() {
 	if (!soundOk()) return
@@ -271,8 +272,8 @@ export function useAudio() {
 		playChime, playPTTStart, playPTTStop,
 		playTransition, playGreet, playDogBark,
 		playAnnouncementBell,
-		playSound, playSoundForRoom,
-		playLooping, stopLooping,
+		playSound, playSoundForNearbyWorld,
+		playSoundLooping, stopLooping,
 		// Master
 		isAllAudioMuted, toggleAllAudioMute,
 		masterVolume,

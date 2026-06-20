@@ -282,7 +282,7 @@ export function useWorldEngine(canvasRef) {
 	)
 	let stopGeomCacheRamWatch = null
 	let stopVramBudgetWatch = null
-	const { playSound } = useAudio()
+	const { playSound, playSoundLooping, stopLooping } = useAudio()
 	const { requestTeleport } = useTeleport()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
@@ -4289,6 +4289,10 @@ export function useWorldEngine(canvasRef) {
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
+
+		const _flyMoving = isFlying && !!(cf & (CTRL_AT_POS | CTRL_AT_NEG | CTRL_LEFT_POS | CTRL_LEFT_NEG | CTRL_UP_POS | CTRL_UP_NEG))
+		if (_flyMoving) playSoundLooping('flying.mp3')
+		else stopLooping()
 
 		// WHY: Third-person follow camera — positions camera behind and above avatar.
 		// Lerp factor 0.15 smooths 10Hz TerseUpdate jitter into fluid motion.

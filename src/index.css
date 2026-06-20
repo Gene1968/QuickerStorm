@@ -7,6 +7,7 @@
 /* WHY: v4 auto source-detection scans the whole repo; saving docs/*.md
    re-emits the CSS and full-reloads the dev server. Exclude non-source dirs. */
 @source not "../docs";
+@source not "assets";
 
 /* ── PALETTE (swap this block to change theme) ──────────────────── */
 /*
