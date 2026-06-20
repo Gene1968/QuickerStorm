@@ -49,17 +49,16 @@ export default {
 				'9xl': ['clamp(4.25rem,  4.839vw + 3.161rem, 20rem)',     { lineHeight: '1' }],
 			},
 			fontFamily: {
-				montserrat: ['Montserrat', ...defaultTheme.fontFamily.sans],
-				roboto: ['Roboto-Flex', ...defaultTheme.fontFamily.sans],
-				sans: ['RobotoFlex', ...defaultTheme.fontFamily.sans],
-				serif: ['EurostileExtended', ...defaultTheme.fontFamily.serif],
+				orbitron: ['Orbitron', ...defaultTheme.fontFamily.sans],
+				nunito: ['Nunito', ...defaultTheme.fontFamily.sans],
+				serif: ['Besley', ...defaultTheme.fontFamily.serif],
+				sans: ['Nunito', ...defaultTheme.fontFamily.sans],
+				firacode: ['FiraCode', ...defaultTheme.fontFamily.mono],
+				mono: ['FiraCode', ...defaultTheme.fontFamily.mono],
 				display: [
-					'EurostileExtended-Black',
+					'Orbitron',
 					...defaultTheme.fontFamily.serif,
 				],
-				'eurostile-ext': 'Eurostile-Ext',
-				'eurostile-med': 'Eurostile-Med',
-				'roboto-flex': 'Roboto-Flex',
 			},
 			colors: {
 				/*

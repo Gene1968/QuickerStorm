@@ -178,7 +178,7 @@ function onEditKeydown(e) {
 			>
 				<!-- Region + coords -->
 				<span class="font-medium truncate max-w-[33vw]">{{ region }}</span>
-				<span class="text-fg/60 font-montserrat shrink-0">({{ coords }})</span>
+				<span class="text-fg/60 font-mono shrink-0">({{ coords }})</span>
 				<!-- Maturity badge -->
 				<span v-if="maturity" :class="['shrink-0 ml-0.5', maturity.color]">
 					· {{ maturity.label }}

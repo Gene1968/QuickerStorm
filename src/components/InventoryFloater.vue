@@ -361,7 +361,7 @@ onUnmounted(() => {
 		<div v-if="!tabFills" class="flex-1"/>
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-fg">
 			<div class="relative">
-				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon /><ChevronDownIcon class="w-3" /></button>
+				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon class="w-3.5 h-3.5" /><ChevronDownIcon class="w-2.5" /></button>
 				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-panel border border-edge rounded-sm shadow-lg" @click.stop>
 					<div class="px-2 py-1 text-2xs text-fg-muted border-b border-edge">Sort</div>
 					<button
@@ -374,7 +374,7 @@ onUnmounted(() => {
 				</div>
 			</div>
 			<div class="relative">
-				<button class="ui-btn px-1" title="Add new item" @click.stop="showAddMenu = !showAddMenu"><PlusIcon /></button>
+				<button class="ui-btn px-1" title="Add new item" @click.stop="showAddMenu = !showAddMenu"><PlusIcon class="w-3.5 h-3.5" /></button>
 				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs" @click.stop>
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newFolderHere">New Folder</button>
 					<div class="border-t border-edge"></div>
@@ -395,17 +395,17 @@ onUnmounted(() => {
 				:class="isLast ? 'opacity-40 cursor-not-allowed' : nextOpen ? 'text-accent border-accent' : ''"
 				class="ui-btn"
 				@click="toggleNext"
-			><LuggageIcon /></button>
-			<button class="ui-btn" title="Show filters - Shows the filter side menu when selected. Becomes highlighted when any filter is enabled. (TO-DO)"><FilterIcon /></button>
-			<button v-if="true" class="ui-btn" title="Switch between views (TO-DO)"><ListIcon /></button>
-			<button v-else class="ui-btn" title="Switch between views (TO-DO)"><TableOfContentsIcon /></button>
+			><LuggageIcon class="w-3.5 h-3.5" /></button>
+			<button class="ui-btn" title="Show filters - Shows the filter side menu when selected. Becomes highlighted when any filter is enabled. (TO-DO)"><FilterIcon class="w-3.5 h-3.5" /></button>
+			<button v-if="true" class="ui-btn" title="Switch between views (TO-DO)"><ListIcon class="w-3.5 h-3.5" /></button>
+			<button v-else class="ui-btn" title="Switch between views (TO-DO)"><TableOfContentsIcon class="w-3.5 h-3.5" /></button>
 			<div
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
 				class="grow border border-edge-strong p-1 text-2xs text-fg truncate user-select-none flex items-center gap-1"
-			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 text-green-400" :size="10" /><Loader2Icon v-else class="shrink-0 animate-spin opacity-60" :size="10" />{{ inv.agentItemCount.toLocaleString() }} Elements<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
-			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon /></button>
+			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 w-3 h-3 text-green-400" /><Loader2Icon v-else class="shrink-0 w-3 h-3 animate-spin opacity-60" />{{ inv.agentItemCount.toLocaleString() }} Items<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
+			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon class="w-3.5 h-3.5" /></button>
 		</div>
 	</FloaterWindow>
 </template>

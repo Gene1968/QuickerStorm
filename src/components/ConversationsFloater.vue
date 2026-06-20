@@ -245,17 +245,18 @@ async function submitChat() {
 					class="relative group"
 				>
 					<button
+						class="flex items-center gap-1 py-3.5"
 						:class="activeTab === tab.id
 							? 'active'
 							: ''"
 						@click="selectTab(tab.id)"
 					>
-						<span class="-mt-0.5 text-base leading-none">{{ tab.icon }}</span>
+						<span class="-mt-0.5 text-sm leading-none">{{ tab.icon }}</span>
 						<span :title="tab.label" class="w-full text-start leading-none truncate">{{ tab.label }}</span>
 					</button>
 					<button
 						v-if="tab.closable"
-						class="absolute block top-2 right-2 border p-0 opacity-20 hover:opacity-100"
+						class="absolute block top-1 right-1 border p-0 opacity-20 hover:opacity-100"
 						title="Close this conversation"
 						@click="closeImTab(tab.id, $event)"
 					>

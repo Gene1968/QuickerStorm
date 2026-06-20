@@ -42,13 +42,14 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 | Profile floater | 🟡 ~60% |
 | Places floater | 🟡 ~65% |
 | Object Build & Edit | 🟡 ~40% |
-| Appearance / Outfits | 🟡 ~35% |
-| Voice (WebRTC) | 🔜 signaling done, gateway TODO |
+| Appearance / Outfits | 🟡 ~15% |
 | Neighboring-sim terrain | 🔜 |
+| Voice (WebRTC) | 🔜 signaling done, gateway TODO |
 | Groups + Group IM | 🔜 |
 | Environment (sky, day/night) | 🔜 |
 | Media (sounds, parcel audio, video) | 🔜 |
 | Web-on-prim | 🔜 |
+| Publicly live open for Beta (NAS or VPS backend) | 🔜 |
 
 See [`docs/FEATURE-GAPS.md`](docs/FEATURE-GAPS.md) for detailed per-feature gap tracking.
 

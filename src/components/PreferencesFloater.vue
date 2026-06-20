@@ -149,7 +149,7 @@ onUnmounted(() => {
 	<FloaterWindow
 		id="preferences"
 		title="Preferences"
-		:wrap-style="{ width: 'clamp(32rem, 58vw, 52rem)', height: 'clamp(26rem, 72vh, 44rem)' }"
+		:wrap-style="{ width: 'clamp(32rem, 54vw, 52rem)', height: 'clamp(24rem, 60vh, 44rem)' }"
 		@close="cancel"
 	>
 		<!-- ── Search ─────────────────────────────────────────────────── -->
@@ -605,9 +605,9 @@ onUnmounted(() => {
 						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Texture Cache</span>
-								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-xs px-3 py-1" @click="cache.clearTex()" :disabled="cache.texStats.value.loading">
 									Clear Textures
-									<p class="font-normal text-xs">(not recommended)</p>
+									<p class="font-normal text-2xs">(not recommended)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -641,9 +641,9 @@ onUnmounted(() => {
 						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Geometry Cache</span>
-								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearGeom()" :disabled="cache.geomStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-xs px-3 py-1" @click="cache.clearGeom()" :disabled="cache.geomStats.value.loading">
 									Clear Geometry
-									<p class="font-normal text-xs">(forces full re-bake)</p>
+									<p class="font-normal text-2xs">(forces full re-bake)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -671,9 +671,9 @@ onUnmounted(() => {
 						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Object Cache</span>
-								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-xs px-3 py-1" @click="cache.clearObj()" :disabled="cache.objStats.value.loading">
 									Clear Objects
-									<p class="font-normal text-xs">(forces full re-stream)</p>
+									<p class="font-normal text-2xs">(forces full re-stream)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -701,9 +701,9 @@ onUnmounted(() => {
 						<div class="pf-cache-card bg-panel-alt/70">
 							<div class="pf-cache-header">
 								<span class="pf-cache-title">Mesh Cache</span>
-								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-sm px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
+								<button class="qs-btn ui-btn flex flex-col rounded-md font-bold text-xs px-3 py-1" @click="cache.clearMesh()" :disabled="cache.meshStats.value.loading">
 									Clear Meshes
-									<p class="font-normal text-xs">(not recommended)</p>
+									<p class="font-normal text-2xs">(not recommended)</p>
 								</button>
 							</div>
 							<div class="pf-cache-stats">
@@ -754,7 +754,7 @@ onUnmounted(() => {
 	display: flex;
 	align-items: center;
 	gap: 0.5rem;
-	padding: 0.5rem 1rem;
+	padding: 0.35rem 0.35rem 0.35rem 0.65rem;
 	border-bottom: 1px solid var(--edge);
 	flex-shrink: 0;
 }
@@ -782,8 +782,8 @@ onUnmounted(() => {
 .pf-tab {
 	display: flex;
 	align-items: center;
-	gap: 0.5rem;
-	padding: 0.5rem 0.75rem;
+	gap: 0.35rem;
+	padding: 0.5rem 0.4rem;
 	background: none;
 	border: none;
 	border-left: 2px solid transparent;
@@ -1016,22 +1016,26 @@ onUnmounted(() => {
 	&:hover { text-decoration: underline; }
 }
 
+.qs-btn {
+	min-width: 8rem;
+}
+
 /* ── Footer ──────────────────────────────────────────────────────────────── */
 .pf-footer {
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
 	gap: 0.5rem;
-	padding: 0.625rem 1rem;
+	padding: 0.5rem 0.65rem;
 	border-top: 1px solid var(--edge);
 	flex-shrink: 0;
 }
 
 .pf-btn {
 	border-radius: 0.375rem;
-	font-size: 0.8125rem;
+	font-size: 0.75rem;
 	font-weight: 600;
-	padding: 0.375rem 1.125rem;
+	padding: 0.15rem 1rem;
 	cursor: pointer;
 	transition: background 0.15s, border-color 0.15s, color 0.15s;
 }

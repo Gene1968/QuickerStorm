@@ -200,10 +200,10 @@ const panelStyle = computed(() => ({
 		>
 			<!-- Titlebar / drag handle -->
 			<div
-				class="flex items-center justify-between p-1 ps-3 bg-panel-alt border-b border-edge shrink-0 select-none cursor-grab active:cursor-grabbing"
+				class="flex items-center justify-between ps-3 bg-panel-alt border-b border-edge shrink-0 select-none cursor-grab active:cursor-grabbing"
 				@mousedown.stop="onTitlebarMousedown"
 			>
-				<span class="text-sm font-semibold text-fg">{{ title }}</span>
+				<span class="text-xs font-semibold tracking-wider text-fg">{{ title }}</span>
 				<div class="flex items-center gap-0.5">
 					<!-- Dock: return to default position + size; only shown once moved/resized -->
 					<button

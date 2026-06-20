@@ -57,6 +57,23 @@ export default ({ mode }) => {
 			host: '0.0.0.0',
 			port: 5173,
 			strictPort: false, // bump to next available port if 5173 is in use
+			// WHY: Vite's chokidar watcher full-reloads the client on ANY changed
+			// file it watches — incl. non-source files (docs, README, the huge
+			// server-watch.log) and imported assets like .mp3 (assets can't HMR,
+			// so an edit forces a full reload). These never affect the running UI,
+			// so dropping them from the watcher stops the session-killing reloads.
+			// Merged with Vite's defaults (node_modules, .git); does not replace.
+			watch: {
+				ignored: [
+					'**/docs/**',
+					'**/*.md',
+					'**/*.log',
+					'**/server-log.txt',
+					'**/prim-ids-snapshot.txt',
+					'**/.claude/**',
+					'**/src/assets/audio/**',
+				],
+			},
 		},
 		plugins: plugins,
 		assetsInclude: ['**/*.mp4', '**/*.pdf'],

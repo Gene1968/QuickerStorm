@@ -2,12 +2,14 @@
 @import "https://unpkg.com/open-props/normalize.min.css";
 @import "https://unpkg.com/open-props/buttons.min.css"; */
 
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @config "../tailwind.config.js";
-/* WHY: v4 auto source-detection scans the whole repo; saving docs/*.md
-   re-emits the CSS and full-reloads the dev server. Exclude non-source dirs. */
-@source not "../docs";
-@source not "assets";
+/* WHY: v4 auto source-detection scans the whole repo, so saving docs/*.md,
+   README, .claude memory, etc. re-emits CSS and full-reloads dev — wrecking
+   the session. source(none) disables auto-detection; we then declare the
+   ONLY real source dirs explicitly. Nothing outside these is ever scanned. */
+@source "../index.html";
+@source "../src/**/*.{vue,js,ts,jsx,tsx}";
 
 /* ── PALETTE (swap this block to change theme) ──────────────────── */
 /*
@@ -85,6 +87,30 @@ html.light {
 	--accent-light: var(--primary-6);   --accent-light-ch: var(--primary-6-ch);
 	--fp-svg-bg:    #FDECD8;
 }
+
+
+/* ── FONTS ────────────────────────────────────────────────────────── */
+
+@font-face {
+	font-family: 'Orbitron';
+	src: url('@/assets/font/Orbitron-variable.woff2') format('woff2-variations');
+}
+@font-face {
+	font-family: 'Nunito';
+	src: url('@/assets/font/NunitoSans-variable.woff2') format('woff2-variations');
+	font-weight: 400 500;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Besley';
+	src: url('@/assets/font/Besley-serif-variable.woff2') format('woff2-variations');
+}
+@font-face {
+	font-family: 'FiraCode';
+	src: url('@/assets/font/FiraCode-mono-variable.woff2') format('woff2-variations');
+}
+
 
 
 
@@ -240,7 +266,7 @@ textarea.bg-panel-alt {
 	*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 	html {
-		font-family: 'RobotoFlex', system-ui, sans-serif;
+		font-family: 'Nunito', system-ui, sans-serif;
 		background: var(--surface);
 		color: var(--fg);
 		min-height: 100vh;
