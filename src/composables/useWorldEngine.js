@@ -17,7 +17,7 @@ import { getTexture, clearTextureCache } from './useTextureFetch.js'
 import { getPbrMaterial, getLegacyMaterial } from './useMaterialFetch.js'
 import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
-import { getSculpt } from './useSculptFetch.js'
+import { getSculpt, getSculptStats } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
@@ -3389,6 +3389,11 @@ export function useWorldEngine(canvasRef) {
 		// awaiting GPU build (region-global, not near-set-only — good enough for "is anything still
 		// loading?"); texFailed surfaces hard-errored assets so the badge can hint at the Refresh action.
 		const tx = getTextureStats()
+		// Object-download readiness (FEATURE-GAPS badge gap): a mesh/sculpt object's placeholder box is
+		// already resident, so geometry pct hits 100 while the asset still downloads (Bountiful 2026-06-19:
+		// pct=100 yet ~460 meshes trickled for 15min, badge read "done"). Surface mesh+sculpt queue depth so
+		// the badge keeps a "Objects N downloading" line up until the assets actually arrive.
+		const mx = getMeshStats(), sx = getSculptStats()
 		worldStore.setCullStats({
 			resident, known, evicted: evicted.size, pct,
 			atTarget: _effNear >= ddTarget,            // at full target radius → "complete scene", else "nearby"
@@ -3396,6 +3401,8 @@ export function useWorldEngine(canvasRef) {
 			effNear: Math.round(_effNear),
 			texPending: tx.queued + tx.inflight + tx.buildQueued,
 			texFailed: tx.hardFail,
+			objPending: (mx.queued ?? 0) + (mx.inflight ?? 0) + (sx.queued ?? 0) + (sx.inflight ?? 0),
+			objFailed: (mx.failed ?? 0) + (sx.failed ?? 0),
 		})
 		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +

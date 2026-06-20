@@ -58,6 +58,12 @@ function _netFetch(sculptId, sculptType, priority = Infinity) {
 }
 function _done() { active--; if (queue.length && active < MAX_INFLIGHT) heapPop(queue).run() }
 
+/** Live fetch counters (sculpt). Mirrors getMeshStats — feeds the scene-load badge's object-download
+ *  stage so a still-downloading sculpt keeps the badge up instead of reading "done". */
+export function getSculptStats() {
+	return { inflight: active, queued: queue.length, failed: failed.size, cached: mem.size }
+}
+
 export function getSculpt(sculptId, sculptType, priority = Infinity) {
 	if (!sculptId) return Promise.resolve(null)
 	const key = keyOf(sculptId, sculptType)

@@ -30,7 +30,7 @@ export const useWorldStore = defineStore('world', () => {
 	// WITHIN the current draw distance; atTarget = at the full target radius (badge says "complete"
 	// vs "nearby"); massive = this load has run long enough (duration, not count) to be slow → badge
 	// prepends the "Major new scenery to cache" preface; effNear = current draw distance (m).
-	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100, atTarget: true, massive: false, effNear: 0, texPending: 0, texFailed: 0 })
+	const cullStats = ref({ resident: 0, known: 0, evicted: 0, pct: 100, atTarget: true, massive: false, effNear: 0, texPending: 0, texFailed: 0, objPending: 0, objFailed: 0 })
 	function setCullStats(s) { cullStats.value = s }
 
 	const sceneLoading = ref(true)   // region assets still draining? published from useWorldEngine.cullTick
