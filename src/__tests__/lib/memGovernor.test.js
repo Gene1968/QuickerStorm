@@ -3,7 +3,7 @@ import {
 	setAppBytes, appRatio, appBudgetBytes, memUnderPressure, memRatio, emergencyHeap,
 	APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, setAppBudgetOverride,
 	setResidentCount, heapThrottled, SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT,
-	resolveOverrideBudget, APP_BUDGET_OVERRIDE_HEAP_FRACTION,
+	resolveOverrideBudget, APP_BUDGET_OVERRIDE_HEAP_FRACTION, SOFT_HEAP_APP_STANDDOWN,
 } from '@/lib/memGovernor.js'
 
 // bun test has no performance.memory → memRatio() is null, budget falls back to the fixed default.
@@ -183,5 +183,60 @@ describe('soft-heap brake (heavy-cold-load churn)', () => {
 		setResidentCount(50000)
 		expect(memRatio()).toBeNull()
 		expect(heapThrottled()).toBe(false)
+	})
+})
+
+// FEATURE-GAPS #13/#11 "Lever 3" (2026-06-19): a SETTLED heavy region wedges — heap rides ~0.80
+// (above the 0.78 release) while appRatio is ~0.98, so the LATCHED soft brake never clears and the
+// build queue freezes forever. That 0.80 heap is the LIVE resident scene (in _appBytes), not garbage,
+// so pausing builds reclaims nothing. The brake must STAND DOWN when appRatio already explains the
+// heap and defer to the appRatio budget controller (eviction + draw-distance step). See
+// docs/superpowers/specs/2026-06-19-heap-brake-resident-standdown-design.md.
+describe('soft-heap brake — resident-explained standdown', () => {
+	const MB = 1048576
+	const setHeap = (usedMB, limitMB) => { globalThis.performance.memory = { usedJSHeapSize: usedMB * MB, jsHeapSizeLimit: limitMB * MB } }
+	const clearHeap = () => { try { delete globalThis.performance.memory } catch { globalThis.performance.memory = undefined } }
+
+	it('exports a sane standdown threshold (between the churn appRatio and a full budget)', () => {
+		expect(SOFT_HEAP_APP_STANDDOWN).toBeGreaterThan(0.5)
+		expect(SOFT_HEAP_APP_STANDDOWN).toBeLessThan(1)
+	})
+
+	it('stands down when the resident scene explains the heap (high appRatio in the soft band) — the wedge fix', () => {
+		setHeap(3690, 4192)                          // ratio ~0.88 — in the soft band, above SOFT_HEAP_ON
+		setResidentCount(11538)                      // a genuinely large resident scene
+		setAppBytes(appBudgetBytes() * 0.98)         // appRatio ~0.98 — heap is the resident scene, accounted
+		try {
+			expect(memRatio()).toBeGreaterThan(SOFT_HEAP_ON)
+			expect(appRatio()).toBeGreaterThanOrEqual(SOFT_HEAP_APP_STANDDOWN)
+			expect(heapThrottled()).toBe(false)      // brake stands down → builds resume (no more frozen buildQ)
+			expect(memUnderPressure()).toBe(false)   // appRatio<1, emergencyHeap false, brake stood down
+		} finally { clearHeap() }
+	})
+
+	it('resets the latch when appRatio rises above standdown (no lingering throttle)', () => {
+		setResidentCount(11538)
+		try {
+			setHeap(3610, 4192)                      // ~0.861 > ON, appRatio ~0 → engage the latch
+			setAppBytes(100 * MB)
+			expect(heapThrottled()).toBe(true)
+			setHeap(3360, 4192)                      // ~0.801 mid-band — latched brake would normally STAY on
+			setAppBytes(appBudgetBytes() * 0.9)      // appRatio 0.9 ≥ standdown → stand down, clear the latch
+			expect(heapThrottled()).toBe(false)
+			// Prove the latch was actually cleared (not just masked): drop appRatio back low at the same
+			// mid-band heap (0.801 < ON) — a cleared latch stays off; a still-set latch would read true.
+			setAppBytes(100 * MB)
+			expect(heapThrottled()).toBe(false)
+		} finally { clearHeap() }
+	})
+
+	it('still fires on the churn signature (low appRatio, high heap) — standdown does not weaken it', () => {
+		setHeap(3690, 4192)                          // ~0.88
+		setResidentCount(17471)
+		setAppBytes(100 * MB)                        // appRatio ~0.05 — below standdown → brake still fires
+		try {
+			expect(appRatio()).toBeLessThan(SOFT_HEAP_APP_STANDDOWN)
+			expect(heapThrottled()).toBe(true)
+		} finally { clearHeap() }
 	})
 })

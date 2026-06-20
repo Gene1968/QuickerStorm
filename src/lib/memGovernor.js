@@ -45,6 +45,15 @@ const CRITICAL_HEAP_RATIO  = 0.95           // process-heap fraction that ALWAYS
 const SOFT_HEAP_ON  = 0.85   // engage the soft brake above this heap ratio (with resident corroboration)
 const SOFT_HEAP_OFF = 0.78   // release below this (hysteresis — let GC reclaim before resuming intake)
 const MIN_RESIDENT  = 500    // require a real resident scene to corroborate (blank-startup guard)
+// Stand the soft brake DOWN when the resident scene already explains the heap (appRatio at/above this).
+// WHY (FEATURE-GAPS #13/#11 "Lever 3", live 2026-06-19): a SETTLED heavy region rides heap ~0.80 (above
+// the 0.78 release) while appRatio ~0.98 — that heap is LIVE resident assets (in _appBytes), not
+// transient garbage, so pausing builds reclaims nothing and the latch never clears → buildQ frozen
+// forever (the wedge). The soft brake exists ONLY for the low-appRatio / high-heap case (bake/decode
+// garbage NOT in _appBytes). When appRatio explains the heap, the appRatio budget controller (eviction +
+// draw-distance step) owns the regime and emergencyHeap (self-releasing, unlatched) backstops OOM. =
+// CULL_RESUME, the radius the engine already treats as actively eviction-managed.
+const SOFT_HEAP_APP_STANDDOWN = 0.85
 
 let _appBytes = 0
 let _residentCount = 0   // engine pushes meshMap.size (cull tick); corroborates the soft-heap brake
@@ -144,6 +153,12 @@ export function heapThrottled() {
 	const r = memRatio()
 	if (r == null) { _softBrakeOn = false; return false }
 	if (_residentCount <= MIN_RESIDENT) { _softBrakeOn = false; return false }
+	// Resident-explained standdown: when the self-accounted scene (appRatio) already accounts for the
+	// heap, pausing builds cannot shed LIVE data — the appRatio budget controller (eviction + draw
+	// distance step) owns this regime and emergencyHeap backstops genuine OOM. Reset the latch so a
+	// later low-appRatio churn re-engages cleanly. Without this a settled heavy region latches the
+	// brake forever (heap ~0.80 > the 0.78 release) → frozen buildQ. See SOFT_HEAP_APP_STANDDOWN.
+	if (appRatio() >= SOFT_HEAP_APP_STANDDOWN) { _softBrakeOn = false; return false }
 	if (_softBrakeOn) {
 		if (r < SOFT_HEAP_OFF) _softBrakeOn = false
 	} else {
@@ -159,4 +174,4 @@ export function memUnderPressure() {
 }
 
 export { APP_BUDGET_CAP, APP_BUDGET_FRACTION, APP_BUDGET_FALLBACK, EMERGENCY_HEAP_RATIO, CRITICAL_HEAP_RATIO,
-	SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT, APP_BUDGET_OVERRIDE_HEAP_FRACTION }
+	SOFT_HEAP_ON, SOFT_HEAP_OFF, MIN_RESIDENT, APP_BUDGET_OVERRIDE_HEAP_FRACTION, SOFT_HEAP_APP_STANDDOWN }
