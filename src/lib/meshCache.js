@@ -85,21 +85,37 @@ function txDone(tx) {
 	})
 }
 
+// WHY watchdog: a readonly get that NEVER settles — a silently-stuck txn fires NEITHER
+// onsuccess/onerror NOR onabort (observed live 2026-06-19: 12 mesh reads frozen indefinitely on a
+// warm region after a heavy load + circuit swap) — hangs the awaiting caller forever. useMeshFetch
+// awaits this read INSIDE its in-flight slot (active++ before the 30s network timer is armed), so a
+// hung read permanently consumes a slot with NO timeout (diag ⏱0) and never emits MESH_FETCH → all
+// MAX_INFLIGHT slots leak → the whole mesh queue wedges and objects stay placeholder cubes. Past the
+// watchdog we declare a MISS; the caller falls through to a network fetch (slow-but-alive instead of
+// stuck). 30s matches texCacheGet (#11): only a genuinely-frozen txn trips it, not a merely-slow read
+// whose onsuccess callback is queued behind main-thread long tasks.
+const GET_WATCHDOG_MS = 30_000
+let _watchdogTrips = 0
+/** Count of get-watchdog trips this session (frozen-txn misses). For telemetry / tests. */
+export function getMeshWatchdogTrips() { return _watchdogTrips }
+
 export async function meshCacheGet(uuid, now = Date.now()) {
 	try {
 		const db = await openDb()
 		return await new Promise((resolve, reject) => {
 			// readonly so 1000s of concurrent gets don't serialize behind a write-lock; the LRU
 			// touch is deferred and batched (textureCache pattern).
+			const timer = setTimeout(() => { _watchdogTrips++; resolve(null) }, GET_WATCHDOG_MS)
+			const settle = (fn, v) => { clearTimeout(timer); fn(v) }
 			const tx = db.transaction(STORE, 'readonly')
-			tx.onabort = () => reject(tx.error ?? new Error('get txn aborted'))
+			tx.onabort = () => settle(reject, tx.error ?? new Error('get txn aborted'))
 			const req = tx.objectStore(STORE).get(uuid)
 			req.onsuccess = () => {
 				const rec = req.result
 				if (rec) _touchLater(uuid, now)
-				resolve(rec ? rec.submeshes : null)
+				settle(resolve, rec ? rec.submeshes : null)
 			}
-			req.onerror = () => reject(req.error)
+			req.onerror = () => settle(reject, req.error)
 		})
 	} catch { return null }
 }

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { describe, it, expect } from 'bun:test'
 import {
 	meshDbConfig, getMeshCacheStats, clearMeshCache, resolveMeshCap,
-	setMeshCapBytes, meshCachePut, meshCacheGet,
+	setMeshCapBytes, meshCachePut, meshCacheGet, getMeshWatchdogTrips,
 	MESH_CACHE_MAX_BYTES, MESH_CACHE_FALLBACK_BYTES,
 } from '@/lib/meshCache.js'
 
@@ -49,5 +49,18 @@ describe('meshCache', () => {
 		expect((await meshCacheGet('new'))?.length).toBe(1)
 		const stats = await getMeshCacheStats()
 		expect(stats.count).toBe(2)
+	})
+
+	// FEATURE-GAPS cube-wedge (2026-06-19): meshCacheGet gained a 30s watchdog so a silently-stuck
+	// readonly txn (fires no success/error/abort) can never hang the caller forever — that hang leaked
+	// all of useMeshFetch's MAX_INFLIGHT slots and froze the mesh pipeline (placeholder cubes). The
+	// watchdog can't be exercised with fake-indexeddb (it always fires events), so this just guards the
+	// counter wiring + proves normal settles clear the timer (no spurious trips on the happy path).
+	it('exposes a watchdog-trip counter that stays 0 on the normal (settling) path', async () => {
+		await clearMeshCache()
+		await meshCachePut('wd', mkSubs(1024), 1000)
+		expect((await meshCacheGet('wd'))?.length).toBe(1)   // settle via onsuccess (clears the timer)
+		expect(await meshCacheGet('wd-miss')).toBe(null)     // settle via empty onsuccess
+		expect(getMeshWatchdogTrips()).toBe(0)
 	})
 })
