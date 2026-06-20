@@ -33,6 +33,7 @@ export default {
 			 * Rem inside clamp resolves against browser root (16px), not html.
 			 */
 			fontSize: {
+				'3xs': ['clamp(0.4375rem, 0.081vw + 0.419rem, 0.625rem)',  { lineHeight: '1rem' }],
 				'2xs': ['clamp(0.5625rem, 0.081vw + 0.544rem, 0.875rem)',  { lineHeight: '1rem' }],
 				xs:   ['clamp(0.6875rem, 0.081vw + 0.669rem, 1rem)',       { lineHeight: '1rem' }],
 				sm:   ['clamp(0.75rem,   0.161vw + 0.714rem, 1.25rem)',    { lineHeight: '1.25rem' }],

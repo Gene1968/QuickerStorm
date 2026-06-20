@@ -23,7 +23,7 @@ function logout() {
 // disabled: true → stub not yet implemented; renders with opacity-40 cursor-not-allowed
 const tools = [
 	{ id: 'chat',       icon: '💬', label: 'Chat',      title: 'Nearby Chat',        action: () => ui.toggleChat(),       active: () => ui.showChat },
-	{ id: 'speak',      icon: '🎙️', label: 'Speak',     title: 'Toggle Mic',         action: () => voice.toggleMute(),    active: () => voice.isEnabled.value && !voice.isMuted.value },
+	{ id: 'speak',      icon: '🎙️', label: 'Speak',     title: 'Toggle Mic',         action: () => voice.toggleMute(),    active: () => voice.isEnabled.value && !voice.isMuted.value,                disabled: true },
 	{ id: 'voice',      icon: '🎧', label: 'Nearby Voice',     title: 'Voice Controls',     action: () => {},                    active: () => false,                disabled: true },
 	{ id: 'walk',       icon: '🚶', label: 'Walk·Run·Fly',      title: 'Movement Controls',  action: () => ui.toggleMoveControls(), active: () => ui.showMoveControls },
 	{ id: 'camera',     icon: '🎥', label: 'Camera',    title: 'Camera Controls',    action: () => ui.toggleCameraControls(), active: () => ui.showCameraControls },
@@ -53,13 +53,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-	<div class="flex flex-row items-center justify-evenly gap-1 px-1 h-10 bg-black/80 border-t border-edge shrink-0 select-none">
+	<div class="flex flex-row items-center justify-evenly gap-1 px-1 h-9 bg-black/80 border-t border-edge shrink-0 select-none">
 
 		<!-- Tool buttons -->
 		<button
 			v-for="t in tools"
 			:key="t.id"
-			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-7 rounded-sm text-3xs truncate transition-colors"
 			:class="t.disabled
 				? 'opacity-40 cursor-not-allowed text-fg/50'
 				: t.active()
@@ -70,28 +70,28 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 			@click="t.action()"
 		>
 			<span class="text-base leading-none">{{ t.icon }}</span>
-			<span class="leading-none my-0.5 hidden sm:block">{{ t.label }}</span>
+			<span class="leading-none mt-0.5 hidden sm:block">{{ t.label }}</span>
 		</button>
 
 		<!-- 2D / 3D toggle -->
 		<button
-			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors text-fg/70 hover:bg-white/10 hover:text-fg"
+			class="flex flex-1 flex-col items-center justify-center h-7 rounded-sm text-3xs truncate transition-colors text-fg/70 hover:bg-white/10 hover:text-fg"
 			:title="ui.mode === '3d' ? 'Switch to 2D view' : 'Switch to 3D view'"
 			@click="ui.toggleMode()"
 		>
 			<span class="text-base leading-none">{{ ui.mode === '3d' ? '2D' : '3D' }}</span>
-			<span class="leading-none my-0.5 hidden sm:block">View</span>
+			<span class="leading-none mt-0.5 hidden sm:block">View</span>
 		</button>
 
 		<!-- Debug panel toggle (Ctrl+Shift+4) -->
 		<button
-			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-7 rounded-sm text-3xs truncate transition-colors"
 			:class="ui.showDebug ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Debug Panel (Ctrl+Shift+4)"
 			@click="ui.toggleDebug()"
 		>
 			<span class="text-base leading-none">🔌</span>
-			<span class="leading-none my-0.5 hidden sm:block">Debug</span>
+			<span class="leading-none mt-0.5 hidden sm:block">Debug</span>
 		</button>
 
 		<!-- Logout -->
@@ -106,7 +106,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		<!-- Notifications: moved to the top-right tray (TopRightTray.vue), FS-style. Bottombar
 		     entry removed per design — notifications open from the top-right envelope button. -->
 		<!-- <button
-			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-7 rounded-sm text-2xs truncate transition-colors"
 			:class="ui.showNotifications ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Notifications"
 			@click="ui.toggleNotifications()"
@@ -115,19 +115,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 				🔔
 				<span v-if="notif.totalUnread" class="absolute -top-1 -right-2 bg-red-600 text-fg rounded-full text-2xs leading-none px-1 py-0.5 min-w-[1rem] text-center">{{ notif.totalUnread }}</span>
 			</span>
-			<span class="leading-none my-0.5 hidden sm:block">Notifs</span>
+			<span class="leading-none mt-0.5 hidden sm:block">Notifs</span>
 		</button> -->
 
 		<!-- Quick Prefs (last btn, right edge) -->
 		<button
 			data-quick-prefs-trigger
-			class="flex flex-1 flex-col items-center justify-center h-8 rounded-sm text-2xs truncate transition-colors"
+			class="flex flex-1 flex-col items-center justify-center h-7 rounded-sm text-3xs truncate transition-colors"
 			:class="ui.showQuickPrefs ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Quick Preferences"
 			@click="ui.toggleQuickPrefs()"
 		>
 			<span class="text-base leading-none">⚙</span>
-			<span class="leading-none my-0.5 hidden sm:block">Quick Prefs</span>
+			<span class="leading-none mt-0.5 hidden sm:block">Quick Prefs</span>
 		</button>
 
 		<!-- Quick Prefs popover (rendered outside toolbar flow, fixed-positioned) -->

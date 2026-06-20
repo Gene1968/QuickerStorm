@@ -19,7 +19,8 @@ const movementRows = [
 ]
 
 const shortcutRows = [
-	{ keys: 'Ctrl+M',       desc: 'Map display (toggle)' },
+	{ keys: 'Ctrl+M',       desc: 'Map, regions, TP (toggle)' },
+	{ keys: 'Ctrl+Shift+M',       desc: 'Minimap display (toggle)' },
 	{ keys: 'Ctrl+P',       desc: 'Preferences' },
 	{ keys: 'Ctrl+R',       desc: 'Always Run (toggle)' },
 	{ keys: 'Ctrl+Shift+I', desc: 'Inventory new (6 max)' },
@@ -43,7 +44,7 @@ const cameraRows = [
 	<FloaterWindow
 		id="movement-help"
 		title="Movement &amp; Shortcuts"
-		:wrap-style="{ width: '35rem' }"
+		:wrap-style="{ width: '31rem' }"
 		:default-pos="{ left: '28vw', top: '5vh' }"
 		@close="ui.showMovementHelp = false"
 	>

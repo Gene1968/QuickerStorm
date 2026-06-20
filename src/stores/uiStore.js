@@ -10,16 +10,16 @@ import { computeAutoGeomCacheMb } from '@/lib/geomCache.js'
 // row 3: #4+#5 full; row 4: #6 half-offset. User drag overrides defaultPos.
 export const MAX_INVENTORY = 6
 const INV_ROW_TOP = [
-	'calc(100vh - 2.575rem - 46vh)',
-	'calc(100vh - 2.575rem - 92vh - 0.125rem)',
+	'calc(100vh - 2.175rem - 46vh)',
+	'calc(100vh - 2.175rem - 92vh - 0.125rem)',
 ]
 export const INVENTORY_DEFAULT_POS = [
 	{ left: '0.0625vw', top: INV_ROW_TOP[0] },// #1
-	{ left: '16.0625vw', top: INV_ROW_TOP[0] },// #2
+	{ left: '15.5625vw', top: INV_ROW_TOP[0] },// #2
 	{ left: '8.3125vw', top: INV_ROW_TOP[1] },// #3
-	{ left: '32.0625vw', top: INV_ROW_TOP[0] },// #4
-	{ left: '24.3125vw', top: INV_ROW_TOP[1] },// #5
-	{ left: '48.0625vw', top: INV_ROW_TOP[0] },// #6
+	{ left: '31.0625vw', top: INV_ROW_TOP[0] },// #4
+	{ left: '23.8125vw', top: INV_ROW_TOP[1] },// #5
+	{ left: '46.5625vw', top: INV_ROW_TOP[0] },// #6
 ]
 
 export const useUiStore = defineStore('ui', () => {

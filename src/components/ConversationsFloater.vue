@@ -230,7 +230,7 @@ async function submitChat() {
 	<FloaterWindow
 		id="conversations"
 		:title="floaterTitle"
-		:wrap-style="{ width: '35.25vw', height: '40vh', resize: 'both' }"
+		:wrap-style="{ width: '33vw', height: '39vh', resize: 'both' }"
 		:default-pos="{ left: '0.0625vw', top: '7vh' }"
 		@close="ui.toggleChat()"
 	>
@@ -238,7 +238,7 @@ async function submitChat() {
 		<div class="flex flex-1 min-h-0">
 
 			<!-- Vertical tab strip -->
-			<nav class="vtabs w-[13rem]">
+			<nav class="vtabs w-[12rem]">
 				<div
 					v-for="tab in tabs"
 					:key="tab.id"

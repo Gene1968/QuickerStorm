@@ -135,8 +135,8 @@ onUnmounted(() => window.removeEventListener('mouseup', globalUp))
 	<FloaterWindow
 		id="camera"
 		title="🎥 Camera"
-		:wrap-style="{ width: '19rem', resize: 'both' }"
-		:default-pos="{ left: '17.25vw', top: 'calc(100vh - 2.5rem - 12.25vw)' }"
+		:wrap-style="{ width: '15.75rem', resize: 'both' }"
+		:default-pos="{ left: '18.45vw', top: 'calc(100vh - 2.175rem - 10.65vw)' }"
 		@close="ui.toggleCameraControls()"
 	>
 		<div class="containerQ flex flex-col gap-[3px] p-[5px] select-none">
