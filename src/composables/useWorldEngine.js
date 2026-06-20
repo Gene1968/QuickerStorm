@@ -2985,6 +2985,12 @@ export function useWorldEngine(canvasRef) {
 		const { layerType, patchSize = 16, patches } = payload
 		if (layerType === 'WATER') return  // water plane height fixed at 20 for Phase 1
 
+		// Size the collision heightmap to the region BEFORE storing, so var-regions (>512m) cover the
+		// whole region instead of a fixed 512 quadrant (else sampleTerrainHeight reads ≈0 past 512 and
+		// the avatar falls through while the terrain renders fine). No-op once correctly sized. regionSize
+		// is established at region entry (login / TeleportFinish) before terrain patches process.
+		worldStore.ensureTerrainGrid(Math.max(sessionStore.regionSizeX, sessionStore.regionSizeY))
+
 		// WHY: always store + count patches regardless of whether the Three.js scene is ready.
 		// Terrain packets arrive during the login sequence, before Vue has mounted the canvas and
 		// initScene() has created terrainMesh. The old guard `if (!terrainMesh) return` dropped

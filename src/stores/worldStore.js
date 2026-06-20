@@ -118,11 +118,14 @@ export const useWorldStore = defineStore('world', () => {
 	function setSpawnPos(x, y, z) { spawnPos.value = [x, y, z] }
 
 	// WHY: Terrain heights survive remount (HMR, navigation away/back).
-	// 513×513 = 263,169 floats — supports var regions up to 512×512m as well as standard 256×256.
-	// Heights stored with stride=513; useWorldEngine reads only regionSizeX+1 × regionSizeY+1
-	// vertices when rebuilding geometry from this array.
-	const TERRAIN_STRIDE = 513
-	const terrainHeights = ref(new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE))
+	// Collision/persistence heightmap — SEPARATE from the rendered terrain plane (which reads patch
+	// payloads directly, full-region). sampleTerrainHeight() reads THIS for gravity/ground, so it must
+	// be sized to the region: a fixed 513² array on a 1024 var-region left collisionH≈0 past 512 →
+	// avatar fell through to z=1 while the terrain rendered fine (2026-06-20). Stride = regionDim+1,
+	// reallocated by ensureTerrainGrid on region entry; capped so a huge var-region can't over-allocate.
+	const MAX_TERRAIN_DIM = 2048
+	const terrainStride = ref(513)   // exposed as TERRAIN_STRIDE; = active regionDim + 1
+	const terrainHeights = ref(new Float32Array(terrainStride.value * terrainStride.value))
 	// WHY: Float32Array element mutations don't trigger Vue reactivity. Increment this
 	// counter on every patch write so consumers (e.g. ResyncBanner) can react to terrain
 	// data arriving without resorting to polling. Also useful as a diagnostic.
@@ -132,16 +135,36 @@ export const useWorldStore = defineStore('world', () => {
 	// expected 16×16 grid (or 32×32 for var-region) post-RegionHandshake to find holes.
 	const patchReceived = ref(new Set())
 
+	// Pure: heightmap row stride for a region dimension (metres) → regionDim+1 vertices, clamped to a
+	// sane [256, MAX_TERRAIN_DIM] band. Exported for unit tests.
+	function resolveTerrainStride(regionDim, max = MAX_TERRAIN_DIM) {
+		const dim = Math.min(Math.max(Math.round(regionDim) || 256, 256), max)
+		return dim + 1
+	}
+
+	// Resize the collision heightmap to the region (region entry / var-region TP) so sampleTerrainHeight
+	// covers the whole region, not just a fixed 512 quadrant. Reallocating clears it — patches re-arrive
+	// for the new region. No-op when already correctly sized (called per terrain patch as a cheap guard).
+	function ensureTerrainGrid(regionDim) {
+		const stride = resolveTerrainStride(regionDim)
+		if (stride === terrainStride.value) return
+		terrainStride.value = stride
+		terrainHeights.value = new Float32Array(stride * stride)
+		patchReceived.value = new Set()
+		terrainPatchCount.value = 0
+	}
+
 	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per
 	// TERRAIN_PATCH message). Stores raw 16×16 patch data; seam-fill handled in useWorldEngine.
-	// stride=TERRAIN_STRIDE supports up to 512m wide region.
+	// Bounds = the active (regionDim+1)² grid (see ensureTerrainGrid); coords outside it are dropped.
 	function setTerrainPatch(px, py, heights, patchSize = 16) {
+		const stride = terrainStride.value
 		for (let j = 0; j < patchSize; j++) {
 			for (let i = 0; i < patchSize; i++) {
 				const slX = px * patchSize + i  // SL X coord (column)
 				const slY = py * patchSize + j  // SL Y coord (row)
-				if (slX >= 512 || slY >= 512) continue  // max var-region bound
-				terrainHeights.value[slY * TERRAIN_STRIDE + slX] = heights[j * patchSize + i]
+				if (slX >= stride || slY >= stride) continue  // outside the region grid
+				terrainHeights.value[slY * stride + slX] = heights[j * patchSize + i]
 			}
 		}
 		patchReceived.value.add(`${px},${py}`)
@@ -175,7 +198,8 @@ export const useWorldStore = defineStore('world', () => {
 		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
-		terrainHeights, TERRAIN_STRIDE, terrainPatchCount, setTerrainPatch, clearTerrain,
+		terrainHeights, TERRAIN_STRIDE: terrainStride, terrainPatchCount, setTerrainPatch, clearTerrain,
+		ensureTerrainGrid, resolveTerrainStride,
 		patchReceived, getMissingPatches,
 	}
 })
