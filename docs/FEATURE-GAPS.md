@@ -130,7 +130,7 @@ All shape params already decoded server-side. The following are geometry-generat
 
 - [ ] System trees and plants (PCode 0x01 / 0x04) — 0%; need billboard or fixed geometry treatment
 - [ ] flexi, flutter anim?
-- [ ] Particle systems (PSBlock) — fields decoded but skipped; need THREE.Points emitter per object; extended 192-byte OpenSim format causes tail-OOB on some prims
+- [~] Particle systems (PSBlock) — ⭐ v1 IMPLEMENTED 2026-06-20 (UNCOMMITTED, telemetry-verified live; visual confirm pending). Full pipeline: bounded decode `server/lib/particleCodec.ts` (layout from Firestorm `llpartdata.cpp`, fixes the old tail-OOB) → `psys` on obj_upd → pure FS-faithful sim `src/lib/particleSim.js` (DROP/EXPLODE/ANGLE/ANGLE_CONE, age color/alpha/scale, additive vs alpha) → `src/composables/useParticles.js` (THREE.Points pool, runtime radial-sprite fallback + real texture via cache, GLOBAL_PARTICLE_CAP=20k/PER_EMITTER_CAP=512, 96m distance cull, heap-aware) → wired in useWorldEngine (register/unregister/step/telemetry). Emitter follows the mesh WORLD position (linkset-child fix). Live: server `[PSys]` decode lines + client `[Drain] ps=E/L in=I near=Dm`; peak 49 live confirmed when within 96m. Specs/plan: docs/superpowers/{specs,plans}/2026-06-20-particle-systems*. Built subagent-driven (T1–T8). OPEN: visual eyeball on a light region; `ObjectUpdateCompressed` particle path (v1 = full ObjectUpdate only); deferred sim flags (target/beam/ribbon, wind, bounce); 96m cull is a tunable. mem [[particle-systems-feature]]
 - [ ] Particle Editor / Inject, Particle Explorer, Rip
 
 ---

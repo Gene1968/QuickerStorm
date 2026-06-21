@@ -19,6 +19,7 @@ import { gltfToDescriptor } from '@/lib/gltfMaterial.js'
 import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt, getSculptStats } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
+import { useParticles } from './useParticles.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
@@ -286,6 +287,8 @@ export function useWorldEngine(canvasRef) {
 	const { requestTeleport } = useTeleport()
 
 	let renderer, labelRenderer, scene, camera, animId, ro
+	let particles = null
+	const _psSrcVec = new THREE.Vector3()   // reused scratch for emitter world-position reads
 	const meshMap = new Map()  // localId → THREE.Mesh
 	// ── FEATURE-GAPS #6 draw-call instancing (gated on uiStore.instancing) ──
 	const _lastMoveAt = new Map()   // localId → performance.now() of last upsert/move (settle clock)
@@ -1489,6 +1492,7 @@ export function useWorldEngine(canvasRef) {
 	// ── Scene setup ──────────────────────────────────────────────────────────
 	function initScene() {
 		scene = new THREE.Scene()
+		particles = useParticles(scene)
 		scene.background = new THREE.Color(0x87ceeb)
 		// WHY: FogExp2 0.002 fades to ~0 by ~700m which clipped neighbor-region objects in
 		// horizon view. 0.0006 keeps haze visible without truncating distant objects past
@@ -2398,9 +2402,27 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 		if (obj.pcode !== PCODE_AVATAR) applyHoverText(mesh, obj)
+		// Particle system: (re)register an emitter for any object carrying psys; runs on every
+		// upsert (new AND update). The emitter follows the object's WORLD position via the mesh's
+		// world matrix (so linkset CHILD emitters — e.g. fireplace smoke on a house — emit at the
+		// right place, not at their local offset). Converted Three→SL ((X,Y,Z)→(X,-Z,Y)) because
+		// the sim runs in SL space; useParticles converts particle positions back to Three at draw.
+		if (obj.psys) {
+			const lid = obj.localId
+			particles?.register(lid, obj.psys, () => {
+				const m = meshMap.get(lid)
+				if (!m) return null
+				m.getWorldPosition(_psSrcVec)
+				const o = worldStore.objects.get(lid)
+				return { pos: [_psSrcVec.x, -_psSrcVec.z, _psSrcVec.y], rot: o?.rot || [0, 0, 0, 1] }
+			})
+		} else {
+			particles?.unregister(obj.localId)
+		}
 	}
 
 	function removeMesh(localId) {
+		particles?.unregister(localId)
 		// WHY: a sim KillObject (object deleted) routes through removeMesh, but the object may now be
 		// instanced (not in meshMap). Drop the instance so it doesn't linger as a pool ghost.
 		if (_instancePool && _instancePool.has(localId)) { _instancePool.remove(localId); return }
@@ -2826,6 +2848,7 @@ export function useWorldEngine(canvasRef) {
 		orphansByParent.clear()
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
+		particles?.dispose()
 		worldStore.clearTerrain()
 		// New region: revert the mesh to the vertex-color material (never blank) and drop the
 		// shader so the next RegionHandshake rebuilds it fresh for the new region's textures.
@@ -4230,7 +4253,7 @@ export function useWorldEngine(canvasRef) {
 	let _fpsFrames = 0, _fpsWindowStart = 0, _lowFpsSince = 0, _litAutoDropped = false
 	let _loadBusyUntil = 0, _lastLtTotalMs = 0
 	// Render-exception quarantine state (see the try/catch around renderer.render).
-	let _lastDrawMesh = null, _renderFailN = 0
+	let _lastDrawMesh = null, _renderFailN = 0, _lastParticleT = 0
 	function _noteDraw() { _lastDrawMesh = this }
 	function updateFps(time) {
 		_fpsFrames++
@@ -4514,6 +4537,12 @@ export function useWorldEngine(canvasRef) {
 		// the build queue here so freshly-uploaded textures are GPU-resident before render() and
 		// the per-frame upload count is bounded (no burst spike).
 		timed('texbuild', pumpTextureBuilds)   // #11 attribution: texture decode (createImageBitmap) + GPU upload
+		// Particle simulation: advance + write buffers each frame (after the unfocused-frame skip
+		// above, so particles pause when the tab is unfocused). dt clamped inside step().
+		const _pNow = time || 0
+		const _pdt = _lastParticleT ? (_pNow - _lastParticleT) / 1000 : 0
+		_lastParticleT = _pNow
+		particles?.step(_pdt, camera.position)
 
 		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
 		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
@@ -4804,7 +4833,8 @@ export function useWorldEngine(canvasRef) {
 			if (_drainBuilt) {
 				const dline = `[Drain] built=${_drainBuilt} (${(_drainBuilt / 5).toFixed(0)}/s) avg=${(_drainMs / _drainBuilt).toFixed(1)}ms max=${_drainMaxMs.toFixed(1)}ms queued=${pendingMeshIds.size} hidden=${typeof document !== 'undefined' && document.hidden ? 1 : 0}` +
 					` | ticks=${_dtTicks} empty=${_dtEmpty} gov=${_dtGov} brkCap=${_dtBrkCap} brkBudget=${_dtBrkBudget}` +
-					(() => { const _ts = getTextureStats(), _wb = getTextureWriteBufStats(); return ` texBuildQ=${_ts.buildQueued} texUpQ=${_ts.uploadQueued} texDec=${_ts.decodeOutstanding} texWB=${Math.round(_wb.bytes / 1048576)}MB texWBdrop=${_wb.dropped}` })()
+					(() => { const _ts = getTextureStats(), _wb = getTextureWriteBufStats(); return ` texBuildQ=${_ts.buildQueued} texUpQ=${_ts.uploadQueued} texDec=${_ts.decodeOutstanding} texWB=${Math.round(_wb.bytes / 1048576)}MB texWBdrop=${_wb.dropped}` })() +
+					(particles ? (() => { const p = particles.stats(); return ` ps=${p.emitters}/${p.live} in=${p.inRange} near=${p.nearest}m` })() : '')
 				debugStore.push('info', dline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: dline, stack: '' }) } catch { /* ignore */ }
 				_drainBuilt = 0; _drainMs = 0; _drainMaxMs = 0
@@ -4953,6 +4983,7 @@ export function useWorldEngine(canvasRef) {
 		clearTextureCache()     // dispose cached GPU textures (slice 1 asset fetch)
 		worldStore.clearTerrain()
 		worldStore.clearAll()
+		particles?.dispose()
 	})
 
 	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }

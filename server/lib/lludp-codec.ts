@@ -33,6 +33,8 @@ const MSG_ID = {
   ImprovedTerseObjectUpdate: Buffer.from([0x0F]),                     // High #15 (received from sim)
 }
 
+import { decodeParticleSystem, type ParticleSys } from './particleCodec.ts'
+
 // ── UUID helpers ─────────────────────────────────────────────────────────
 export function uuidToBytes(uuid: string): Buffer {
   return Buffer.from(uuid.replace(/-/g, ''), 'hex')
@@ -1071,6 +1073,7 @@ export interface ObjectData {
   sculptId?:        string              // legacy sculpt-map texture UUID (sculptType&7 == 1..4)
   sculptType?:      number              // raw sculpt type byte (1 sphere..4 cylinder, 5 mesh)
   text?:         string   // hovertext (Variable1)
+  psys?: ParticleSys   // particle system (PSBlock) — present only when the object emits particles
   textColor?:    [number, number, number, number]  // RGBA 0..1
   physical?:     boolean  // PrimFlags bit 0x01 — physics enabled
   phantom?:      boolean  // PrimFlags bit 0x400 — avatar passes through; skip collision
@@ -1484,6 +1487,7 @@ export function decodeObjectUpdate(
       let text = ''
       let textColor: [number, number, number, number] | undefined
       let textureAnim: TextureAnim | undefined
+      let psys: ParticleSys | undefined
       let tailOk = false
       let _silentTail = false
       try {
@@ -1533,7 +1537,15 @@ export function decodeObjectUpdate(
           off += 4
         }
         skipVar1('MediaURL')
-        skipVar1('PSBlock')      // particle system data, Variable1 (OpenSim extended can reach 192+)
+		// PSBlock (Variable1) — decode the particle system instead of skipping it.
+		{
+			if (off >= buf.length) throw new Error(`PSBlock prefix OOB at off=${off}`)
+			const psLen = buf[off++]
+			_diag += ` PSBlock=${psLen}`
+			if (off + psLen > buf.length) { off = buf.length; throw new Error(`PSBlock length ${psLen} exceeds buffer`) }
+			if (psLen > 0) psys = decodeParticleSystem(buf, off, psLen) ?? undefined
+			off += psLen
+		}
         // ExtraParams (Variable1) — parse for type 0x80 (PBR material UUIDs); advance like skipVar1.
         {
           if (off >= buf.length) throw new Error(`ExtraParams prefix OOB at off=${off}`)
@@ -1571,6 +1583,7 @@ export function decodeObjectUpdate(
       }
       objects.push({
         localId, fullId, pcode,
+        ...(psys ? { psys } : {}),
         scale: [sx, sy, sz], pos, rot, nameValue,
         parentId, crc,
         shape,

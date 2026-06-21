@@ -316,7 +316,8 @@
       "PowerShell(\"=== Free Apartments first 35s: non-spammy events 16:55:53-16:56:28 ===\"; Select-String -Path server-watch.log -Pattern '16:5[56]:' | Where-Object { $_.Line -match '16:55:5[3-9]|16:56:[0-2][0-9]' -and $_.Line -notmatch 'PrimDiag|terrain|MOVE|UDP RX' } | Select-Object -First 40 | ForEach-Object { $_.Line })",
       "PowerShell(Start-Sleep -Seconds 20; \"=== newest handshake / login ===\"; Select-String -Path server-watch.log -Pattern 'RegionHandshake|AgentMovementComplete' | Select-Object -Last 3 | ForEach-Object { $_.Line }; \"=== newest [InvGate] ===\"; Select-String -Path server-watch.log -Pattern '\\\\[InvGate\\\\]' | Select-Object -Last 3 | ForEach-Object { $_.Line }; \"=== log tail ===\"; Get-Content server-watch.log -Tail 3)",
       "PowerShell(\"=== Aspen terrain + regionSize clues \\(19:09+\\) ===\"; Select-String -Path server-watch.log -Pattern '\\\\[terrain\\\\]|regionSize|var.?region|RegionHandshake|512' | Select-Object -Last 12 | ForEach-Object { $_.Line })",
-      "Bash(./node_modules/.bin/vitest run *)"
+      "Bash(./node_modules/.bin/vitest run *)",
+      "Bash(sort -t/ -k2 -n)"
     ]
   }
 }

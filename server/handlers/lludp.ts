@@ -695,6 +695,14 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					}
 				}
 			}
+			// DEV: dump decoded particle systems for live layout verification. Off by default.
+			if (process.env.PS_BYTE_DUMP === '1') for (const o of objects) {
+				if (!o.psys || typeof o.localId !== 'number') continue
+				const pkey = `psdump:${o.localId}`
+				if (session.loggedTypes.has(pkey)) continue
+				session.loggedTypes.add(pkey)
+				slog.info(session.ws, `[PSys] localId=${o.localId} pattern=${o.psys.pattern} burst=${o.psys.burstPartCount}@${o.psys.burstRate}s life=${o.psys.partMaxAge} tex=${o.psys.texture ?? '-'} flags=0x${o.psys.partFlags.toString(16)}`)
+			}
 			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
 			session.objRelayedCount += objects.length
 		} else {
