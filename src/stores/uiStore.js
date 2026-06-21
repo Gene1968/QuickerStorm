@@ -10,16 +10,16 @@ import { computeAutoGeomCacheMb } from '@/lib/geomCache.js'
 // row 3: #4+#5 full; row 4: #6 half-offset. User drag overrides defaultPos.
 export const MAX_INVENTORY = 6
 const INV_ROW_TOP = [
-	'calc(100vh - 2.175rem - 46vh)',
-	'calc(100vh - 2.175rem - 92vh - 0.125rem)',
+	'calc(100vh - 2.175rem - 31rem)',
+	'calc(100vh - 2.175rem - 62rem - 0.125rem)',
 ]
 export const INVENTORY_DEFAULT_POS = [
-	{ left: '0.0625vw', top: INV_ROW_TOP[0] },// #1
-	{ left: '15.5625vw', top: INV_ROW_TOP[0] },// #2
-	{ left: '8.3125vw', top: INV_ROW_TOP[1] },// #3
-	{ left: '31.0625vw', top: INV_ROW_TOP[0] },// #4
-	{ left: '23.8125vw', top: INV_ROW_TOP[1] },// #5
-	{ left: '46.5625vw', top: INV_ROW_TOP[0] },// #6
+	{ left: '0.0625rem', top: INV_ROW_TOP[0] },// #1
+	{ left: '18.6625rem', top: INV_ROW_TOP[0] },// #2
+	{ left: '9.30625rem', top: INV_ROW_TOP[1] },// #3
+	{ left: '37.2625rem', top: INV_ROW_TOP[0] },// #4
+	{ left: '28.03125rem', top: INV_ROW_TOP[1] },// #5
+	{ left: '55.925rem', top: INV_ROW_TOP[0] },// #6
 ]
 
 export const useUiStore = defineStore('ui', () => {
@@ -83,9 +83,13 @@ export const useUiStore = defineStore('ui', () => {
 	const instancing         = ref(localStorage.getItem('qs-instancing') === '1')
 	// FPS readout in the top-right tray (FS lag-meter stand-in). Persisted, default ON.
 	const showFps            = ref(localStorage.getItem('qs-show-fps') !== '0')
+	// Kill-switch for the off-main-thread cache I/O worker (qs-geom + qs-mesh). Default ON; turning
+	// it off forces the main-thread cache path (sync fallback). See useCacheIO / geomCache client.
+	const cacheWorker        = ref(localStorage.getItem('qs-cache-worker') !== '0')
 	watch(litShading, (v) => localStorage.setItem('qs-lit-shading', v ? '1' : '0'))
 	watch(instancing, (v) => localStorage.setItem('qs-instancing',  v ? '1' : '0'))
 	watch(showFps,    (v) => localStorage.setItem('qs-show-fps',    v ? '1' : '0'))
+	watch(cacheWorker, (v) => localStorage.setItem('qs-cache-worker', v ? '1' : '0'))
 	// Live FPS + inbound WS bandwidth (kbps) — written by useWorldEngine's animate loop at ~1 Hz
 	// (not every frame). Displayed in the AudioControlsWidget top-bar stats cluster.
 	const fps                = ref(0)
@@ -345,7 +349,7 @@ export const useUiStore = defineStore('ui', () => {
 		flying, setFlying,
 		sceneRebuildTick, requestSceneRebuild,
 		textureRefreshReq, requestTextureRefresh,
-		litShading, instancing, showFps, fps, setFps, netKbps, setNetKbps,
+		litShading, instancing, showFps, cacheWorker, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		geomCacheRamMb, setGeomCacheRamMb,
 		vramBudgetMb, setVramBudgetMb,

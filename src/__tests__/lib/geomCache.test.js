@@ -405,3 +405,12 @@ describe('per-region manifest prefetch', () => {
 		expect(geomMemGet('grw2')).not.toBeNull()   // the grown key is now prefetched
 	})
 })
+
+it('geomCacheStore hands out a copy that does not alias the cached arrays', async () => {
+	const { geomCacheStore, geomMemGet } = await import('@/lib/geomCache.js')
+	const pos = new Float32Array([1, 2, 3])
+	const handed = geomCacheStore('p1:1:owntest', { position: pos, groups: [] })
+	handed.position[0] = 999
+	const cached = geomMemGet('p1:1:owntest')
+	expect(cached.position[0]).toBe(1)
+})

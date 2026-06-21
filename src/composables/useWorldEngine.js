@@ -20,6 +20,7 @@ import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt, getSculptStats } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
 import { useParticles } from './useParticles.js'
+import { useCacheIO } from './useCacheIO.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
@@ -370,6 +371,20 @@ export function useWorldEngine(canvasRef) {
 	const GEOM_MEM_HEAP_RELEASE_AT = 0.68            // ...and the ratio that releases it
 	const GEOM_MEM_CAP_FLOOR       = 96 * 1024 * 1024 // bytes: shrink the mem tier to this under pressure
 	let _effNear = DRAW_DIST_DEFAULT   // governor-managed effective radius (replaces the old fixed R_NEAR)
+	// Frame-time AutoTune cap (FS AutoTune parity, FEATURE-GAPS #13): the memory governor grows the draw
+	// radius on free MEMORY, but once the geom cache makes geometry cheap the real ceiling is RENDER cost
+	// (WebGLRenderer traverses every in-radius root each frame). On a dense region a large target (e.g.
+	// the user's slider at hundreds of m) renders thousands of objects → 1.7–2.7s/window render → main
+	// thread pinned (which ALSO starves the cache worker's reply delivery → idb degrades). `_renderCap`
+	// bounds the EFFECTIVE radius by measured FPS: step down when frames are over budget, recover toward
+	// the user's target when smooth. Both renderRadius() and _effNear's target clamp to it, so render,
+	// eviction, and the load badge all settle at a frame-rate-sustainable radius. Wide FPS hysteresis +
+	// slow cadence (see cullTick) so it converges to a stable value instead of flickering.
+	let _renderCap = DRAW_DIST_DEFAULT
+	let _renderCapTick = 0
+	const RENDERCAP_FPS_LOW = 45    // below this → shrink the rendered radius
+	const RENDERCAP_FPS_OK  = 58    // above this (and below target) → grow it back
+	const RENDERCAP_CADENCE = 6     // step at most once per N cullTicks (~1s) — avoids flicker
 	// "Major load" badge preface is triggered by DURATION, not object count — a dense but already-cached
 	// area reloads in 1-2s as you move and must NOT warn. Only a load still streaming after this long
 	// (a genuinely big/uncached scene) prepends "Major new scenery to cache". Tunable.
@@ -413,24 +428,18 @@ export function useWorldEngine(canvasRef) {
 	// the per-prim-transaction storm is the exact pattern that starved texCacheGet. Same trick
 	// as useMeshBaker's flush.
 	let _geomLookupBatch = []
-	// WHY watchdog: geomCacheGetMany resolves on tx.oncomplete, but during a heavy region-load write
-	// storm the readonly lookup txn can be starved for many seconds and effectively never settle — so
-	// its .then never runs and _geomPending never decrements for that batch. Once the leak pushes
-	// _geomPending past BAKE_INFLIGHT_CAP (300), drainMeshQueue's backpressure breaks EVERY tick and
-	// mesh building halts (measured live: scene wedged at ~609/13,338 meshes ≈ 3%, pend frozen at
-	// 301). Racing a timeout that degrades the batch to an all-miss bake guarantees _geomPending
-	// always drains, so a slow/starved cache read can never brick the drain. Mirrors the texCacheGet
-	// watchdog (commit 4b9155c). Healthy warm reads resolve in well under 1s; only genuinely starved
-	// batches trip this.
-	const GEOM_LOOKUP_WATCHDOG_MS = 4000
-	let _geomLookupWatchdogN = 0   // lookup batches that timed out → degraded to bake (telemetry)
+	// No re-bake watchdog: geomCacheGetMany serves an L1 sync tier and delegates misses to the cache
+	// worker (off-main IDB), returns a Map of hits, and NEVER rejects (degrades to a partial/empty Map)
+	// and NEVER hangs (useCacheIO has a 30s fallback-to-core backstop on its own thread). The old 4s
+	// "degrade to all-miss → re-bake" watchdog eagerly re-baked already-cached geometry under a slow
+	// read — the saturation spiral. We now wait for the real hit/miss verdict and bake ONLY true misses.
 	function requestGeometry(key, jobThunk, applySwap) {
 		_regionGeomKeys.add(key)
 		_geomPending++
 		_geomLookupBatch.push({ key, jobThunk, applySwap })
 		if (_geomLookupBatch.length === 1) queueMicrotask(_flushGeomLookups)
 	}
-	function _flushGeomLookups() {
+	async function _flushGeomLookups() {
 		if (!_geomLookupBatch.length) return
 		const batch = _geomLookupBatch
 		_geomLookupBatch = []
@@ -440,43 +449,34 @@ export function useWorldEngine(canvasRef) {
 		// cross-contaminate each other's geometry. Each sibling therefore pulls its own fresh clone
 		// from the memory tier (geomMemGet clones per call), never a shared or cache-owned buffer.
 		const byKey = new Map()
-		for (const b of batch) {
-			const list = byKey.get(b.key)
-			if (list) list.push(b)
-			else byKey.set(b.key, [b])
-		}
-		// settled guard: the watchdog and the real getMany race; whichever lands first processes the
-		// batch, the loser is ignored. A late getMany resolve after a watchdog bake is harmless — its
-		// keys are already baking and its mem-tier promotion is idempotent (keys are content hashes).
-		let settled = false
-		const processHits = (hits) => {
-			if (settled) return
-			settled = true
-			// WHY: post-unmount batches would sync-bake on the disposed baker + mutate orphaned meshes.
-			if (_engineDead) { _geomPending -= batch.length; return }
-			for (const [key, entries] of byKey) {
-				const arrays = hits.get(key)
-				if (!arrays) { _bakeGeomGroup(key, entries); continue }
-				// IDB hit: getMany promoted the key into the memory tier and returned one clone — it
-				// serves the first entry; every additional entry gets its own fresh clone via geomMemGet.
-				_geomHitIdb++; _geomPending--
-				entries[0].applySwap(arrays)
-				let evictedSiblings = null
-				for (let i = 1; i < entries.length; i++) {
-					const clone = geomMemGet(key)
-					if (clone) { _geomHitIdb++; _geomPending--; entries[i].applySwap(clone) }
-					// Mem tier evicted the key between promote and read (rare) → real miss path.
-					else (evictedSiblings ??= []).push(entries[i])
-				}
-				if (evictedSiblings) _bakeGeomGroup(key, evictedSiblings)
+		for (const b of batch) { const l = byKey.get(b.key); if (l) l.push(b); else byKey.set(b.key, [b]) }
+		let hits
+		try {
+			// geomCacheGetMany serves L1 sync + worker IDB off-thread; it NEVER rejects (degrades to a
+			// partial/empty Map) and never hangs (useCacheIO has a fallback-to-core backstop). No re-bake
+			// watchdog: a slow read waits for the real hit/miss verdict instead of re-baking cached
+			// geometry (the saturation spiral). We bake ONLY the keys the cache reports as missing.
+			hits = await geomCacheGetMany([...byKey.keys()])
+		} catch { hits = new Map() }
+		if (_engineDead) { _geomPending -= batch.length; return }
+		for (const [key, entries] of byKey) {
+			const arrays = hits.get(key)
+			if (!arrays) { _bakeGeomGroup(key, entries); continue }
+			// LEAK-PROOF: release _geomPending for the entry BEFORE applySwap, and GUARD applySwap.
+			// applySwap → geometryFromArrays/computeVertexNormals can throw on a malformed array; since
+			// this flush is async, an unguarded throw becomes a silent rejection that aborts the loop and
+			// strands every remaining entry's _geomPending → the counter latches ≥ BAKE_INFLIGHT_CAP and
+			// drainMeshQueue breaks every tick (frozen load). A throwing entry just keeps its placeholder.
+			_geomHitIdb++; _geomPending--
+			try { entries[0].applySwap(arrays) } catch { geoNaNCount++ }
+			let evicted = null
+			for (let i = 1; i < entries.length; i++) {
+				const clone = geomMemGet(key)
+				if (clone) { _geomHitIdb++; _geomPending--; try { entries[i].applySwap(clone) } catch { geoNaNCount++ } }
+				else (evicted ??= []).push(entries[i])
 			}
+			if (evicted) _bakeGeomGroup(key, evicted)
 		}
-		const wd = setTimeout(() => {
-			if (settled) return
-			_geomLookupWatchdogN++
-			processHits(new Map())   // degrade to all-miss: bake everything so _geomPending drains
-		}, GEOM_LOOKUP_WATCHDOG_MS)
-		geomCacheGetMany([...byKey.keys()]).then(hits => { clearTimeout(wd); processHits(hits) })
 	}
 	// Miss path for one key's entries: ONE real bake (entries[0]'s thunk), siblings served as fresh
 	// clones from the just-stored memory-tier entry. Siblings must NEVER receive the raw worker
@@ -3750,7 +3750,19 @@ export function useWorldEngine(canvasRef) {
 		// Draw-distance recovery (FS progressive-stepping equivalent): grow _effNear back toward the
 		// user's target when there's real headroom; snap down at once if the user lowered the target.
 		// Hysteresis (shrink at >CULL_TARGET, grow at <CULL_RESUME) prevents boundary oscillation.
-		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
+		// Frame-time AutoTune (see _renderCap): bound the draw radius by measured FPS so RENDER never
+		// saturates the main thread, regardless of free memory. Slow cadence + wide FPS hysteresis so the
+		// radius converges to a stable, render-sustainable value instead of flickering each tick.
+		const _userTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
+		if ((_renderCapTick++ % RENDERCAP_CADENCE) === 0 && uiStore.fps > 0) {
+			if (uiStore.fps < RENDERCAP_FPS_LOW && _renderCap > DRAW_DIST_MIN) _renderCap = Math.max(DRAW_DIST_MIN, _renderCap - DRAW_DIST_STEP)
+			else if (uiStore.fps > RENDERCAP_FPS_OK && _renderCap < _userTarget) _renderCap = Math.min(_userTarget, _renderCap + DRAW_DIST_STEP)
+		}
+		if (_renderCap > _userTarget) _renderCap = _userTarget   // snap down if user lowered the slider
+		// Effective target = the smaller of the user's slider and what the frame rate can sustain. Both
+		// _effNear (memory/eviction + badge denominator) and renderRadius() clamp to this, so render,
+		// eviction, and the load badge all settle at the same frame-rate-bounded radius.
+		const ddTarget = Math.min(_userTarget, _renderCap)
 		if (_effNear > ddTarget) _effNear = ddTarget
 		// Grow back ONLY when app AND heap both have headroom. The prior app-only gate grew dd every tick
 		// under pure heap pressure (app low, heap pinned), canceling the step-down → dd never shrank.
@@ -3783,7 +3795,7 @@ export function useWorldEngine(canvasRef) {
 	// The render/draw-distance horizon (m) — what the user wants to SEE. The visibility cull hides roots
 	// beyond it, and the build path skips fetching diffuse textures beyond it (near-aware, FEATURE-GAPS
 	// #13). STABLE (user slider), distinct from the oscillating memory-eviction radius _effNear.
-	function renderRadius() { return Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT) }
+	function renderRadius() { return Math.max(DRAW_DIST_MIN, Math.min(uiStore.drawDistance ?? DRAW_DIST_DEFAULT, _renderCap)) }
 
 	// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling). Hide ROOT meshes beyond the
 	// draw-distance target so WebGLRenderer.render stops traversing them every frame; show them again
@@ -4823,7 +4835,7 @@ export function useWorldEngine(canvasRef) {
 				const wb = getGeomWriteBufStats()
 				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
 					`${throttleSeg} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())} wBuf=${mb(wb.bytes)}MB${wb.dropped ? ` drop=${wb.dropped}` : ''}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size + (_instancePool?.count() ?? 0)} inst=${_instancePool?.count() ?? 0} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m`
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size + (_instancePool?.count() ?? 0)} inst=${_instancePool?.count() ?? 0} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m rcap=${_renderCap}m fps=${uiStore.fps}`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
 					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }
@@ -4862,7 +4874,7 @@ export function useWorldEngine(canvasRef) {
 			const bs = meshBaker.takeStats()
 			if (bs.jobs || _applyN || _geomHitMem || _geomHitIdb || _geomMiss) {
 				const bline = `[Bake] worker jobs=${bs.jobs} batches=${bs.batches} bakeMs=${bs.bakeMs.toFixed(0)} (avg ${(bs.jobs ? bs.bakeMs / bs.jobs : 0).toFixed(1)}ms/job) | apply n=${_applyN} avg=${(_applyN ? _applyMs / _applyN : 0).toFixed(1)}ms max=${_applyMaxMs.toFixed(1)}ms | outstanding=${meshBaker.outstanding()}` +
-					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending} wdog=${_geomLookupWatchdogN}`
+					` | geomCache hit=${_geomHitMem + _geomHitIdb} (mem=${_geomHitMem} idb=${_geomHitIdb}) miss=${_geomMiss} pend=${_geomPending} wkr=${useCacheIO().outstanding()}`
 				debugStore.push('info', bline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'info', msg: bline, stack: '' }) } catch { /* ignore */ }
 				_applyN = 0; _applyMs = 0; _applyMaxMs = 0
