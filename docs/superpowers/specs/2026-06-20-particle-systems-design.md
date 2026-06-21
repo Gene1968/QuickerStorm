@@ -11,6 +11,11 @@ render as **nothing**. The particle block (`PSBlock`) arrives in every full `Obj
 currently skipped unparsed (`skipVar1('PSBlock')`, `server/lib/lludp-codec.ts:1536`); no field is
 forwarded and no client consumer exists.
 
+> **Update 2026-06-21:** the particle block also arrives via **`ObjectUpdateCompressed`** (the path
+> OpenSim uses for most cache-miss prims), where v1 originally skipped it. Now decoded there too —
+> see plan Follow-up #1. Emitters that arrive compressed (which previously showed as pastel planes
+> with no particles) are now handled.
+
 **Scope decision (brainstorm):** v1 = *common-case faithful*. Simulate the patterns and flags that
 produce the vast majority of visible effects; defer exotica. Real particle textures via the existing
 texture cache, bundled sparkle/flame fallback while loading or on 404.
