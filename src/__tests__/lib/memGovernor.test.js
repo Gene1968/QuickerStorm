@@ -55,9 +55,9 @@ describe('app/VRAM budget — raised default + user override', () => {
 	const setHeap = (limMB) => { globalThis.performance.memory = { usedJSHeapSize: 0, jsHeapSizeLimit: limMB * MB } }
 	const clearHeap = () => { try { delete globalThis.performance.memory } catch { globalThis.performance.memory = undefined } }
 
-	it('default is min(2048MB cap, 0.50 × heap)', () => {
-		setHeap(3072); try { expect(Math.round(appBudgetBytes() / MB)).toBe(1536) } finally { clearHeap() }  // 0.50×3072
-		setHeap(8192); try { expect(Math.round(appBudgetBytes() / MB)).toBe(2048) } finally { clearHeap() }  // capped
+	it('default is min(3072MB cap, 0.65 × heap)', () => {
+		setHeap(3072); try { expect(Math.round(appBudgetBytes() / MB)).toBe(1997) } finally { clearHeap() }  // 0.65×3072=1996.8→1997
+		setHeap(8192); try { expect(Math.round(appBudgetBytes() / MB)).toBe(3072) } finally { clearHeap() }  // capped at 3072
 	})
 	it('user override clamped to [512MB, 0.6 × heap] on Chrome (heap-safe ceiling)', () => {
 		try {
@@ -74,7 +74,7 @@ describe('app/VRAM budget — raised default + user override', () => {
 		} finally { setAppBudgetOverride(null); clearHeap() }
 	})
 	it('override of null restores the heap-scaled default', () => {
-		try { setHeap(3072); setAppBudgetOverride(3000 * MB); setAppBudgetOverride(null); expect(Math.round(appBudgetBytes() / MB)).toBe(1536) } finally { clearHeap() }
+		try { setHeap(3072); setAppBudgetOverride(3000 * MB); setAppBudgetOverride(null); expect(Math.round(appBudgetBytes() / MB)).toBe(1997) } finally { clearHeap() }
 	})
 })
 

@@ -58,6 +58,20 @@ export function shouldEvictForBudget(appRatio, cullTarget) {
 	return appRatio > cullTarget
 }
 
+// True when the RESIDENT scene is itself the heap problem, so evicting it WILL help. Gated on
+// appRatio >= appStanddown to EXCLUDE the transient-garbage regime (heap high, app low) that
+// 2026-06-18 proved eviction cannot relieve — there the heap is bake/decode churn + the build
+// backlog, and shedding resident assets just craters draw distance for zero relief (handled
+// instead by PAUSING build via memGovernor.memUnderPressure). This complements shouldEvictForBudget:
+// budget-exceeded fires on appRatio alone; this adds the case where a raised budget keeps appRatio
+// under 1.0 while the resident scene has already pushed the process heap to the emergency band.
+// heapRatio is null on browsers without performance.memory → no heap pressure (false).
+// See docs/superpowers/specs/2026-06-21-load-governor-render-decouple-design.md +
+//     docs/superpowers/specs/2026-06-18-heap-graceful-stability-design.md.
+export function shouldEvictForHeap(appRatio, heapRatio, heapEmergency, appStanddown) {
+	return heapRatio != null && heapRatio >= heapEmergency && appRatio >= appStanddown
+}
+
 // True when the dead-scene auto-rebuild (which re-queues EVERY object) should fire. Requires the
 // dead-scan count to have reached its threshold AND the engine not to be under memory pressure: a scene
 // the heap brake has intentionally paused looks "dead" (no build progress) but must not be re-queued —

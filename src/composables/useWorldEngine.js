@@ -21,8 +21,8 @@ import { getSculpt, getSculptStats } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
 import { useParticles } from './useParticles.js'
 import { useCacheIO } from './useCacheIO.js'
-import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled } from '@/lib/memGovernor.js'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
+import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled, EMERGENCY_HEAP_RATIO, SOFT_HEAP_APP_STANDDOWN } from '@/lib/memGovernor.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild, shouldEvictForHeap } from '@/lib/cullPolicy.js'
 import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
@@ -371,20 +371,10 @@ export function useWorldEngine(canvasRef) {
 	const GEOM_MEM_HEAP_RELEASE_AT = 0.68            // ...and the ratio that releases it
 	const GEOM_MEM_CAP_FLOOR       = 96 * 1024 * 1024 // bytes: shrink the mem tier to this under pressure
 	let _effNear = DRAW_DIST_DEFAULT   // governor-managed effective radius (replaces the old fixed R_NEAR)
-	// Frame-time AutoTune cap (FS AutoTune parity, FEATURE-GAPS #13): the memory governor grows the draw
-	// radius on free MEMORY, but once the geom cache makes geometry cheap the real ceiling is RENDER cost
-	// (WebGLRenderer traverses every in-radius root each frame). On a dense region a large target (e.g.
-	// the user's slider at hundreds of m) renders thousands of objects → 1.7–2.7s/window render → main
-	// thread pinned (which ALSO starves the cache worker's reply delivery → idb degrades). `_renderCap`
-	// bounds the EFFECTIVE radius by measured FPS: step down when frames are over budget, recover toward
-	// the user's target when smooth. Both renderRadius() and _effNear's target clamp to it, so render,
-	// eviction, and the load badge all settle at a frame-rate-sustainable radius. Wide FPS hysteresis +
-	// slow cadence (see cullTick) so it converges to a stable value instead of flickering.
-	let _renderCap = DRAW_DIST_DEFAULT
-	let _renderCapTick = 0
-	const RENDERCAP_FPS_LOW = 45    // below this → shrink the rendered radius
-	const RENDERCAP_FPS_OK  = 58    // above this (and below target) → grow it back
-	const RENDERCAP_CADENCE = 6     // step at most once per N cullTicks (~1s) — avoids flicker
+	// Draw radius is governed by MEMORY only (see cullTick + memGovernor) — NOT frame rate. The former
+	// fps-driven _renderCap conflated load-stutter with render cost and floored the build radius; removed
+	// 2026-06-21 (docs/superpowers/specs/2026-06-21-load-governor-render-decouple-design.md). Phase-2 LOD
+	// renders the far field cheaply so a large radius stays smooth.
 	// "Major load" badge preface is triggered by DURATION, not object count — a dense but already-cached
 	// area reloads in 1-2s as you move and must NOT warn. Only a load still streaming after this long
 	// (a genuinely big/uncached scene) prepends "Major new scenery to cache". Tunable.
@@ -3648,14 +3638,20 @@ export function useWorldEngine(canvasRef) {
 		} else if (heapR == null || heapR < GEOM_MEM_HEAP_RELEASE_AT) {
 			setGeomMemPressureCap(null)                 // clear: restore the configured RAM budget
 		}
-		// EVICTION + texture-prune + draw-distance step-down trigger = resident/VRAM (app) budget exceeded
-		// ONLY. Heap pressure does NOT trigger eviction: evicting resident assets cannot relieve heap held
-		// by transient bake/decode garbage + the build backlog, not the resident scene. At heap 99%/app 5%
-		// (live 2026-06-18, Never Depot 10.9k objs) the old `|| emergencyHeap()` clause just cratered draw
-		// distance to the 32m floor, wiped near textures, and churned evict→reload for zero heap relief.
-		// Heap pressure is handled by PAUSING intake/build (memUnderPressure), letting GC reclaim the
-		// garbage. See docs/superpowers/specs/2026-06-18-heap-graceful-stability-design.md.
+		// EVICTION + texture-prune + draw-distance step-down trigger = the resident/VRAM (app) budget is
+		// exceeded (appRatio>1) OR the resident scene has itself pushed the process heap into the emergency
+		// band (raised-budget case 2026-06-21: a higher budget keeps appRatio<1 while resident still drives
+		// heap to 0.92). The heap clause (shouldEvictForHeap) is gated on appRatio>=standdown so it fires
+		// ONLY when resident genuinely explains the heap. It deliberately does NOT fire in the inverse
+		// regime — heap high but app LOW — where the heap is transient bake/decode garbage + the build
+		// backlog, not the resident scene: at heap 99%/app 5% (live 2026-06-18, Never Depot 10.9k objs) the
+		// old unconditional `|| emergencyHeap()` clause just cratered draw distance to the 32m floor, wiped
+		// near textures, and churned evict→reload for zero heap relief. That regime is instead handled by
+		// PAUSING intake/build (memUnderPressure), letting GC reclaim the garbage. See
+		// docs/superpowers/specs/2026-06-21-load-governor-render-decouple-design.md +
+		// docs/superpowers/specs/2026-06-18-heap-graceful-stability-design.md.
 		const over = shouldEvictForBudget(r, CULL_TARGET)
+			|| shouldEvictForHeap(r, heapR, EMERGENCY_HEAP_RATIO, SOFT_HEAP_APP_STANDDOWN)
 		// Linkset unit-handling: the culler only ranks ROOTS (child pos is parent-relative → its
 		// distance is meaningless) and moves each root's children with it via this per-tick index.
 		// Built once per tick, only when there is cull work to do.
@@ -3747,19 +3743,9 @@ export function useWorldEngine(canvasRef) {
 		// Draw-distance recovery (FS progressive-stepping equivalent): grow _effNear back toward the
 		// user's target when there's real headroom; snap down at once if the user lowered the target.
 		// Hysteresis (shrink at >CULL_TARGET, grow at <CULL_RESUME) prevents boundary oscillation.
-		// Frame-time AutoTune (see _renderCap): bound the draw radius by measured FPS so RENDER never
-		// saturates the main thread, regardless of free memory. Slow cadence + wide FPS hysteresis so the
-		// radius converges to a stable, render-sustainable value instead of flickering each tick.
-		const _userTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
-		if ((_renderCapTick++ % RENDERCAP_CADENCE) === 0 && uiStore.fps > 0) {
-			if (uiStore.fps < RENDERCAP_FPS_LOW && _renderCap > DRAW_DIST_MIN) _renderCap = Math.max(DRAW_DIST_MIN, _renderCap - DRAW_DIST_STEP)
-			else if (uiStore.fps > RENDERCAP_FPS_OK && _renderCap < _userTarget) _renderCap = Math.min(_userTarget, _renderCap + DRAW_DIST_STEP)
-		}
-		if (_renderCap > _userTarget) _renderCap = _userTarget   // snap down if user lowered the slider
-		// Effective target = the smaller of the user's slider and what the frame rate can sustain. Both
-		// _effNear (memory/eviction + badge denominator) and renderRadius() clamp to this, so render,
-		// eviction, and the load badge all settle at the same frame-rate-bounded radius.
-		const ddTarget = Math.min(_userTarget, _renderCap)
+		// Draw target = the user's slider, period. Memory (eviction + step-down below) is the ONLY thing
+		// that shrinks the effective radius; frame rate never caps how much builds or renders.
+		const ddTarget = Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT)
 		if (_effNear > ddTarget) _effNear = ddTarget
 		// Grow back ONLY when app AND heap both have headroom. The prior app-only gate grew dd every tick
 		// under pure heap pressure (app low, heap pinned), canceling the step-down → dd never shrank.
@@ -3792,7 +3778,9 @@ export function useWorldEngine(canvasRef) {
 	// The render/draw-distance horizon (m) — what the user wants to SEE. The visibility cull hides roots
 	// beyond it, and the build path skips fetching diffuse textures beyond it (near-aware, FEATURE-GAPS
 	// #13). STABLE (user slider), distinct from the oscillating memory-eviction radius _effNear.
-	function renderRadius() { return Math.max(DRAW_DIST_MIN, Math.min(uiStore.drawDistance ?? DRAW_DIST_DEFAULT, _renderCap)) }
+	// Render everything within the user's draw distance — no fps clamp (see _renderCap removal). The
+	// selectVisibility boundary at this radius is the Phase-2 LOD seam ("hide beyond" → "impostor beyond").
+	function renderRadius() { return Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT) }
 
 	// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling). Hide ROOT meshes beyond the
 	// draw-distance target so WebGLRenderer.render stops traversing them every frame; show them again
@@ -4832,7 +4820,7 @@ export function useWorldEngine(canvasRef) {
 				const wb = getGeomWriteBufStats()
 				const line = `[Mem] app ${mb(texB + meshB + geomB)}/${mb(appBudgetBytes())}MB (${(appRatio() * 100).toFixed(0)}%) ${heapSeg}` +
 					`${throttleSeg} | texMB=${mb(texB)} meshCacheMB=${mb(meshB)} geomMB=${mb(geomB)} geomCacheMB=${mb(geomCacheB)}/${mb(getGeomMemBudget())} wBuf=${mb(wb.bytes)}MB${wb.dropped ? ` drop=${wb.dropped}` : ''}` +
-					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size + (_instancePool?.count() ?? 0)} inst=${_instancePool?.count() ?? 0} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m rcap=${_renderCap}m fps=${uiStore.fps}`
+					` | tex q=${t.queued} cache=${t.cached} | mesh q=${m.queued} cache=${m.cached} | objs=${meshMap.size + (_instancePool?.count() ?? 0)} inst=${_instancePool?.count() ?? 0} evicted=${evicted.size} buildQ=${pendingMeshIds.size} dd=${_effNear}m rcap=${renderRadius()}m fps=${uiStore.fps}`
 				debugStore.push(pressure ? 'warn' : 'info', line)
 				if (_relay || pressure) {
 					try { wsEmit(C.CLIENT_LOG, { level: pressure ? 'warn' : 'info', msg: line, stack: '' }) } catch { /* ignore */ }

@@ -19,8 +19,12 @@
 // headroom (~28%). The heap-aware governor now backstops CPU heap, so we can hold more resident for a
 // larger visible radius. VRAM is unqueryable, so the default stays moderate and a user override
 // (Prefs slider) lets capable GPUs go higher; live-verify is the only real VRAM check.
-const APP_BUDGET_CAP      = 2048 * 1048576  // hard cap on the resident-asset budget (bytes)
-const APP_BUDGET_FRACTION = 0.50            // ...or this fraction of the heap limit, when known
+// Raised 2026-06-21 (2048→3072 / 0.50→0.65) to USE available RAM: the old cap settled heavy regions
+// at ~50% of the scene with most of the tab heap idle. Safe to raise because shouldEvictForHeap now
+// sheds the far field when resident pushes the heap to 0.92 — the budget no longer has to sit below the
+// heap brake to avoid a wedge. Tuned live on Aspen; emergencyHeap (0.92) / CRITICAL (0.95) still backstop.
+const APP_BUDGET_CAP      = 3072 * 1048576  // hard cap on the resident-asset budget (bytes)
+const APP_BUDGET_FRACTION = 0.65            // ...or this fraction of the heap limit, when known
 const APP_BUDGET_FALLBACK = 1024 * 1048576  // budget when the heap limit is unmeasurable
 const APP_BUDGET_OVERRIDE_MIN = 512  * 1048576   // user-override clamp (bytes)
 const APP_BUDGET_OVERRIDE_MAX = 6144 * 1048576

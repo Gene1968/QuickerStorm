@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild } from '@/lib/cullPolicy.js'
+import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild, shouldEvictForHeap } from '@/lib/cullPolicy.js'
 
 // FEATURE-GAPS #13: the draw-distance governor must only GROW the radius when BOTH app-budget AND heap
 // have headroom — the old recovery (appRatio-only) grew dd back every tick even under heap pressure.
@@ -172,5 +172,22 @@ describe('shouldAutoRebuild', () => {
 	it('does NOT fire below the dead-scan threshold', () => {
 		expect(shouldAutoRebuild(2, 3, false)).toBe(false)
 		expect(shouldAutoRebuild(0, 3, false)).toBe(false)
+	})
+})
+
+describe('shouldEvictForHeap', () => {
+	it('evicts when heap is at emergency AND appRatio is high (resident IS the heap)', () => {
+		expect(shouldEvictForHeap(0.98, 0.93, 0.92, 0.85)).toBe(true)
+		expect(shouldEvictForHeap(0.85, 0.92, 0.92, 0.85)).toBe(true)
+	})
+	it('does NOT evict when heap is high but appRatio is low (transient garbage)', () => {
+		expect(shouldEvictForHeap(0.05, 0.99, 0.92, 0.85)).toBe(false)
+		expect(shouldEvictForHeap(0.50, 0.96, 0.92, 0.85)).toBe(false)
+	})
+	it('does NOT evict below the emergency heap ratio', () => {
+		expect(shouldEvictForHeap(0.98, 0.80, 0.92, 0.85)).toBe(false)
+	})
+	it('treats null heapRatio (non-Chrome) as no heap pressure', () => {
+		expect(shouldEvictForHeap(0.98, null, 0.92, 0.85)).toBe(false)
 	})
 })
