@@ -71,7 +71,7 @@ onMounted(async () => {
 			v-if="splashUrl"
 			:key="splashUrl"
 			:src="splashUrl"
-			class="absolute top-0 right-0 border-0 w-[80vw] h-full"
+			class="absolute top-0 right-0 border-0 h-full"
 			tabindex="-1"
 			aria-hidden="true"
 			referrerpolicy="no-referrer"
@@ -88,10 +88,10 @@ onMounted(async () => {
 
 		<!-- ── Login strip — 1rem from all edges, rounded-sm, dark bg ───────── -->
 		<div
-			class="absolute inset-x-3 bottom-3 bg-panel-alt/80 w-[18.75vw] rounded-2xl overflow-y-auto"
+			class="absolute inset-x-3 bottom-3 bg-panel-alt/80 w-[22.5rem] rounded-2xl overflow-y-auto"
 			style="backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08);"
 		>
-			<div class="flex flex-col items-start gap-5 px-5 py-4">
+			<div class="flex flex-col items-start gap-5 p-4 pb-2">
 
 				<!-- Brand + disclaimer -->
 				<div class="shrink-0 flex flex-col gap-1 w-full pt-0.5">
@@ -155,3 +155,9 @@ onMounted(async () => {
 
 	</div>
 </template>
+
+<style scoped>
+	iframe {
+		width: calc(100vw - 24.15rem);
+	}
+</style>

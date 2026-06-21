@@ -62,7 +62,7 @@ function onChange(e) {
 			:href="store.selectedGrid?.about ?? store.selectedGrid?.loginPage"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="px-2 py-2 rounded-sm border border-edge bg-accent-dark text-white hover:opacity-80 transition-colors text-sm"
+			class="btn py-2 px-3 rounded-sm border border-edge bg-accent text-white hover:opacity-80 transition-colors text-lg"
 			title="Visit the grid's website"
 		>↗</a>
 	</div>
