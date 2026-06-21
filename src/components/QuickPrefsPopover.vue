@@ -25,7 +25,7 @@ function openPreferences() {
 		id="quickprefs"
 		title="Quick Preferences"
 		:wrap-style="{ width: '18rem' }"
-		:default-pos="{ right: '1.45vw', bottom: '2.65rem' }"
+		:default-pos="{ right: 'calc(1.3vw + 0.25rem)', bottom: '2.625rem' }"
 		caret-dir="down"
 		@close="close"
 	>

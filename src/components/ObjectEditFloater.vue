@@ -429,7 +429,7 @@ function close() {
 		id="object-edit"
 		title="Build Tools"
 		:wrap-style="{ width: '22rem', height: '42rem', resize: 'both' }"
-		:default-pos="{ right: '0.0625vw', top: 'calc(100vh - 2.65rem - 42rem' }"
+		:default-pos="{ right: '0.0625rem', top: 'calc(100vh - 2.3125rem - 42rem' }"
 		@close="close"
 	>
 		<div class="relative flex flex-col h-full text-xs">

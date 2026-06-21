@@ -19,7 +19,7 @@ const title = computed(() => view.value.title)
 <template>
 	<div
 		v-if="show"
-		class="absolute top-14 right-2 z-20 -mt-1.5 py-1 px-3 max-w-[9.2vw] rounded-sm bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
+		class="absolute top-14 right-2 z-20 -mt-1.5 py-1 px-3 max-w-[12.5rem] rounded-sm bg-black/60 text-2xs font-mono text-orange-300 pointer-events-none select-none"
 		:title="title"
 	>
 		{{ label }}

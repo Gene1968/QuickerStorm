@@ -2003,21 +2003,18 @@ export function useWorldEngine(canvasRef) {
 			}
 			// WHY: Both avatars AND prims use MeshBasicMaterial (unlit). MeshStandardMaterial
 			// caused directional-light flicker as the mesh rotated with yaw.
-			// WHY hashed-HSL fallback: legacy stand-in when TE decode produces no defaultColor.
-			// Real TE color preferred; fall back keeps prims visually distinct rather than uniform grey.
-			// WHY: Compressed-decoded prims (most of scene after Phase 2 prim fix) lack a real
-			// TextureEntry, so they all fall back to hashedColor. Saturation 0.35 produced
-			// near-white pastels that made the scene unreadable wall-to-wall. Bump to 0.6 for
-			// distinguishable colors so user can tell prims apart at walking distance.
-			const hashedColor = new THREE.Color().setHSL(
-				((obj.localId * 2654435761) >>> 0) / 0xffffffff,
-				0.6,
-				0.55,
-			)
+			// WHY white fallback: when TE decode produces no defaultColor, render white — the SL
+			// "Blank" semantic (an untextured, untinted prim IS white in Firestorm). A prim is
+			// allowed to be intentionally untextured/transparent; real alpha (when a defaultColor
+			// IS decoded) still applies via the transparency block below. We previously used a
+			// hashed-HSL pastel here as a pre-real-data stand-in, but it falsely colored legitimate
+			// blank prims (e.g. particle emitters whose ObjectUpdateCompressed TE we don't yet decode
+			// — see FEATURE-GAPS particle compressed-path). Hot pink stays reserved for truly broken
+			// objects (bad pos/scale/NaN geom) so it keeps signaling "find and inspect me".
 			const teColor = obj.defaultColor
 				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
 				: null
-			const primColor = (obj._placeholder || geoBad) ? PLACEHOLDER_COLOR : (teColor ?? hashedColor)
+			const primColor = (obj._placeholder || geoBad) ? PLACEHOLDER_COLOR : (teColor ?? 0xffffff)
 			// ── Slice 2: hybrid lit materials ───────────────────────────────────
 			// Only prims that carry a material (legacy material_id / PBR ExtraParam 0x80) switch to a
 			// lit MeshStandardMaterial; plain prims + avatars keep the fast unlit MeshBasicMaterial
