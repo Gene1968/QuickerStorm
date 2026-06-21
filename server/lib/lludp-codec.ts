@@ -1151,16 +1151,19 @@ export function decodeObjectUpdateCompressed(
       let sculptType: number | undefined
       let text = ''
       let textColor: [number, number, number, number] | undefined
+      let psys: ParticleSys | undefined
       try {
         if (off + 4 > dataEnd) throw new Error('cflags OOB')
         const cflags = buf.readUInt32LE(off); off += 4
         off += 16                                    // OwnerID — always present
         if (cflags & 0x80) off += 12                 // AngularVelocity
         if (cflags & 0x20) { parentId = buf.readUInt32LE(off); off += 4 }  // ParentID
-        // WHY bail on these: ScratchPad/Tree/ParticlesLegacy/ParticlesNew use raw blobs with no
-        // length prefix we can trust here → skipping risks desync. Emit pos/rot/scale only (cube)
-        // for the rare prims that set them rather than mis-parse the TE of every following object.
-        const RARE = cflags & (0x01 | 0x02 | 0x08 | 0x400)
+        // WHY bail on these: ScratchPad (0x01) / Tree (0x02) are raw blobs with no length prefix we
+        // can frame → emit pos/rot/scale only (cube) rather than mis-parse this object's TE. Particle
+        // blocks (0x08 legacy / 0x400 new) are NOW handled below — they ARE deterministically framed
+        // (legacy = fixed 86B before ExtraParams; new = self-describing, last field after TE). Their
+        // blast radius is one object anyway (each object is length-framed; `off = dataEnd` resets).
+        const RARE = cflags & (0x01 | 0x02)
         if (!RARE) {
           if (cflags & 0x04) {                       // HasText: null-terminated string + RGBA
             const ts = off; while (off < dataEnd && buf[off] !== 0) off++
@@ -1171,6 +1174,15 @@ export function decodeObjectUpdateCompressed(
             }
           }
           if (cflags & 0x200) { while (off < dataEnd && buf[off] !== 0) off++; off++ }  // MediaURL
+          // HasParticlesLegacy (0x08): raw fixed-86-byte legacy particle system, written BEFORE
+          // ExtraParams (CreateCompressedUpdateBlockZC). The legacy LLPartSysData pack is always
+          // exactly 86B (no length prefix on the wire), so consume exactly 86 — getting this wrong
+          // desyncs the shape/TE that follow within THIS object.
+          if (cflags & 0x08) {
+            if (off + 86 > dataEnd) throw new Error('PSLegacy 86B OOB')
+            psys = decodeParticleSystem(buf, off, 86) ?? undefined
+            off += 86
+          }
           // ExtraParams — always present: count U8, then [type U16, size U32, data]×count.
           // Capture type 0x80 (MaterialsEP → per-face GLTF PBR material UUIDs); skip the rest.
           if (off < dataEnd) {
@@ -1227,6 +1239,13 @@ export function decodeObjectUpdateCompressed(
                 if (off + taLen <= dataEnd) textureAnim = parseTextureAnim(buf, off, taLen) ?? undefined
                 off += taLen
               }
+              // HasParticlesNew (0x400): self-describing particle system (s32 syssize + sys + s32
+              // partsize + part + opt glow/blend), written LAST — after TE + TexAnim. No length
+              // prefix; it runs to dataEnd. decodeParticleSystem reads only the format-dictated
+              // bytes and rejects len > 104 (PS_MAX_DATA_BLOCK_SIZE), so cap the window at 104.
+              if ((cflags & 0x400) && off < dataEnd) {
+                psys = decodeParticleSystem(buf, off, Math.min(dataEnd - off, 104)) ?? undefined
+              }
             }
           }
         }
@@ -1243,6 +1262,7 @@ export function decodeObjectUpdateCompressed(
         rot:   [rx, ry, rz, rw],
         nameValue: '',
         parentId, crc,
+        ...(psys ? { psys } : {}),
         ...(shape ? { shape } : {}),
         ...(te.defaultColor   ? { defaultColor:   te.defaultColor }   : {}),
         ...(te.faceColors     ? { faceColors:     te.faceColors }     : {}),
