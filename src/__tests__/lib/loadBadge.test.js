@@ -88,4 +88,35 @@ describe('loadBadgeView', () => {
 		const v = loadBadgeView({ ...base, pct: 72 }, false, 5)
 		expect(v.title).not.toMatch(/fail/i)
 	})
+
+	// Approach A: distinguish CPU baking from network download, and warm (cache) from cold rebuilds.
+	it('warm region, geometry loading → "Rebuilding from cache — N%"', () => {
+		const v = loadBadgeView({ ...base, pct: 60, warm: true }, false, 5)
+		expect(v.label).toBe('Rebuilding from cache — 60%')
+	})
+
+	it('cold region, geometry loading → unchanged "Nearby scene N% loaded"', () => {
+		const v = loadBadgeView({ ...base, pct: 60, warm: false }, false, 5)
+		expect(v.label).toBe('Nearby scene 60% loaded')
+	})
+
+	it('pct 100, build backlog, no network → "Building scene — N objects" (cold)', () => {
+		const v = loadBadgeView({ ...base, pct: 100, buildPending: 320, netInflight: 0, objPending: 0 }, false, 5)
+		expect(v.label).toBe('Building scene — 320 objects')
+	})
+
+	it('pct 100, build backlog, no network, warm → "Rebuilding from cache — N objects"', () => {
+		const v = loadBadgeView({ ...base, pct: 100, buildPending: 320, netInflight: 0, warm: true }, false, 5)
+		expect(v.label).toBe('Rebuilding from cache — 320 objects')
+	})
+
+	it('network fetches in flight → still "Objects N downloading"', () => {
+		const v = loadBadgeView({ ...base, pct: 100, buildPending: 50, netInflight: 12, objPending: 460 }, false, 5)
+		expect(v.label).toBe('Objects 460 downloading')
+	})
+
+	it('build backlog alone keeps the badge shown', () => {
+		const v = loadBadgeView({ ...base, pct: 100, buildPending: 5, objPending: 0, texPending: 0 }, false, 5)
+		expect(v.show).toBe(true)
+	})
 })

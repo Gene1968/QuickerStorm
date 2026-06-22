@@ -430,6 +430,9 @@ export function useWorldEngine(canvasRef) {
 	let _regionGeomKeys = new Set()
 	let _currentRegionKey = null
 	let _wasLoading = false   // settle-edge detector: re-record the manifest on each loading true→false
+	// Approach A: true when this region had a persisted geom manifest at entry (prefetch warmed keys),
+	// so the load badge can read "Rebuilding from cache" instead of "Building scene". Best-effort.
+	let _regionWarm = false
 
 	// WHY microtask batching: every requestGeometry() call within one synchronous burst (one
 	// drainMeshQueue tick, one evict re-stream pass…) coalesces into ONE qs-geom readonly txn —
@@ -3488,6 +3491,9 @@ export function useWorldEngine(canvasRef) {
 			texFailed: tx.hardFail,
 			objPending: (mx.queued ?? 0) + (mx.inflight ?? 0) + (sx.queued ?? 0) + (sx.inflight ?? 0),
 			objFailed: (mx.failed ?? 0) + (sx.failed ?? 0),
+			buildPending: pendingMeshIds.size,
+			netInflight: (mx.inflight ?? 0) + (sx.inflight ?? 0) + (tx.inflight ?? 0),
+			warm: _regionWarm,
 		})
 		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
@@ -3665,7 +3671,8 @@ export function useWorldEngine(canvasRef) {
 			_currentRegionKey = regionKey
 			_regionGeomKeys = new Set()
 			_wasLoading = true   // entering a region = loading; the next loading→false is its first settle edge
-			geomManifestPrefetch(regionKey)   // fire-and-forget; warms the mem tier
+			_regionWarm = false
+			geomManifestPrefetch(regionKey).then(n => { _regionWarm = (n || 0) > 0 })   // warms the mem tier; flag warm if a manifest existed
 		}
 		// Drive geomCache write-deferral from the same load signal the lit/badge logic uses. While
 		// loading, geomCache suspends IDB flushes so warm getMany reads aren't starved.

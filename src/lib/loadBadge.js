@@ -20,16 +20,26 @@ export function loadBadgeView(cs, entering, terrainPatchCount = 0) {
 	const pct = cs?.pct ?? 100
 	const objPending = cs?.objPending ?? 0
 	const texPending = cs?.texPending ?? 0
+	const buildPending = cs?.buildPending ?? 0
+	const netInflight = cs?.netInflight ?? 0
+	const warm = !!cs?.warm
 
-	const show = !!entering || pct < 100 || objPending > 0 || texPending > 0
+	const show = !!entering || pct < 100 || objPending > 0 || texPending > 0 || buildPending > 0
 
 	let label
 	if (entering) {
 		label = terrainPatchCount > 0 ? 'Loading terrain…' : 'Entering region…'
 	} else if (pct < 100) {
-		const phase = cs?.atTarget ? 'Overall scene' : 'Nearby scene'
-		const preface = cs?.massive ? 'Major new scenery to cache: ' : ''
-		label = `${preface}${phase} ${pct}% loaded`
+		if (warm) {
+			label = `Rebuilding from cache — ${pct}%`
+		} else {
+			const phase = cs?.atTarget ? 'Overall scene' : 'Nearby scene'
+			const preface = cs?.massive ? 'Major new scenery to cache: ' : ''
+			label = `${preface}${phase} ${pct}% loaded`
+		}
+	} else if (buildPending > 0 && netInflight === 0) {
+		// Build backlog with nothing on the wire = CPU baking, not downloading.
+		label = warm ? `Rebuilding from cache — ${buildPending} objects` : `Building scene — ${buildPending} objects`
 	} else if (objPending > 0) {
 		label = `Objects ${objPending} downloading`
 	} else if (texPending > 0) {
