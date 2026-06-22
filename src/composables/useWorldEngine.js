@@ -387,7 +387,23 @@ export function useWorldEngine(canvasRef) {
 	// so movement + the circuit stay healthy; the scene still converges over a few seconds.
 	const MAX_EVICT_PER_TICK = 32
 	const MAX_RELOAD_PER_TICK = 48
-	const MAX_LOD_RESTREAM_PER_TICK = 16   // bound LOD-change re-streams/tick (smoothness; mesh-only)
+	// 0 = dynamic LOD re-stream DISABLED. It removeMesh→reloads a root when its LOD band changes as the
+	// camera moves, which leaves a visible gap (objects blink out/in) AND yields no benefit on warm regions
+	// (the warm-high fallback already serves high geometry). Belongs in the future background-refine pass
+	// (swap LOD in place, no gap). Build-time LOD selection still applies; only the live re-stream is off.
+	const MAX_LOD_RESTREAM_PER_TICK = 0    // (was 16) re-streams/tick — disabled, see above
+	// Load-time render pacing (starvation fix, 2026-06-21): while the build queue is large, render only a
+	// near bubble so the cache worker's reply macrotasks get main-thread time — heavy 192m render was
+	// starving them (warm idb→0 → re-bake spiral). Gated on buildQ (NOT fps) so it ALWAYS restores; a
+	// stall failsafe lifts it if buildQ stops dropping, so it can never latch the view small (unlike the
+	// old fps cap). See renderRadius + docs/superpowers/specs/2026-06-21-load-render-pacing-design.md.
+	const LOAD_RENDER_RADIUS = 64      // metres rendered while load-active (64 = smooth fps; 96 dropped to ~6fps)
+	const LOAD_ON  = 400               // engage clamp when pendingMeshIds.size rises above this
+	const LOAD_OFF = 64                // release when it falls below this (hysteresis vs LOAD_ON)
+	const LOAD_STALL_MS = 10000        // ...or release if buildQ hasn't decreased for this long (anti-latch)
+	let _loadActive = false
+	let _loadLastQ = 0                 // last observed buildQ size (stall detector)
+	let _loadLastProgressAt = 0        // ms timestamp of the last buildQ DECREASE
 	const EVICT_AFTER_TICKS = 3  // require N consecutive over-target ticks before evicting (spike debounce)
 	let _overTicks = 0
 	let _lastGeomB = 0           // live-geometry bytes, refreshed by the 3s telemetry scan (O(n))
@@ -2047,6 +2063,11 @@ export function useWorldEngine(canvasRef) {
 			if ((hasMaterial || wantLit) && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
 			if (obj.meshId) mesh.userData.meshLod = meshLod
+			// Hide the placeholder cube until real geometry arrives (FS-faithful — FS shows nothing, not a
+			// cube). Skipping these nodes' render traversal during load frees the main thread so cache-worker
+			// replies flow and the build accelerates; built objects stay visible regardless of camera position
+			// (no tunnel). Cleared + shown in applySwap. Avatar/cache-hit meshes already have real geometry.
+			if (!isAvatar && !obj._placeholder && !cachedArrays) { mesh.userData.awaitingGeom = true; mesh.visible = false }
 			mesh.onBeforeRender = _noteDraw   // render-exception forensics: see the quarantine catch in animate()
 
 			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
@@ -2111,6 +2132,9 @@ export function useWorldEngine(canvasRef) {
 				mesh.geometry = baked
 				old.dispose()
 				finishGeom()
+				// Real geometry is in — reveal the object (was hidden as a placeholder cube). visibilityTick
+				// takes over distance culling from here (it skips awaitingGeom meshes while the flag is set).
+				if (mesh.userData.awaitingGeom) { mesh.userData.awaitingGeom = false; mesh.visible = true }
 				const _dt = performance.now() - _t0
 				_applyN++; _applyMs += _dt; if (_dt > _applyMaxMs) _applyMaxMs = _dt
 			}
@@ -3662,6 +3686,21 @@ export function useWorldEngine(canvasRef) {
 			geomManifestRecord(_currentRegionKey, [..._regionGeomKeys])
 		}
 		_wasLoading = loading
+		// Load-time render pacing: clamp the RENDERED radius (renderRadius) to a near bubble while the
+		// build queue is large so frames stay cheap and the cache worker's replies get delivered. Hysteresis
+		// on buildQ + a stall failsafe (release if buildQ hasn't dropped in LOAD_STALL_MS) → always recovers.
+		{
+			const q = pendingMeshIds.size
+			const tNow = performance.now()
+			if (q < _loadLastQ) _loadLastProgressAt = tNow   // buildQ decreased → real progress
+			_loadLastQ = q
+			if (_loadActive) {
+				if (q < LOAD_OFF || (tNow - _loadLastProgressAt) > LOAD_STALL_MS) _loadActive = false
+			} else if (q > LOAD_ON) {
+				_loadActive = true
+				_loadLastProgressAt = tNow
+			}
+		}
 		const r = appRatio()
 		const heapR = memRatio()
 		// Heap-pressure cap on the geom RAM cache (FEATURE-GAPS #13): the mem tier is plain tab-heap
@@ -3845,6 +3884,12 @@ export function useWorldEngine(canvasRef) {
 	// #13). STABLE (user slider), distinct from the oscillating memory-eviction radius _effNear.
 	// Render everything within the user's draw distance — no fps clamp (see _renderCap removal). The
 	// selectVisibility boundary at this radius is the Phase-2 LOD seam ("hide beyond" → "impostor beyond").
+	// Full user draw distance — no load-time bubble. The load-pacing bubble was reverted: on a heavy
+	// region the build takes minutes, so a render bubble became a multi-minute moving "tunnel" (only a
+	// near radius ever visible, dragging with the camera) = unusable. The render wall is scene-graph NODE
+	// traversal (24k nodes), which only HIDING reduces — that IS the tunnel. Real fix = far-field
+	// static-merge (fewer nodes), not a render cap. _loadActive is still computed (telemetry) but unused
+	// here. See docs/superpowers/specs/2026-06-21-load-render-pacing-design.md (superseded).
 	function renderRadius() { return Math.max(DRAW_DIST_MIN, uiStore.drawDistance ?? DRAW_DIST_DEFAULT) }
 
 	// Render-distance visibility cull (FEATURE-GAPS #13, render ceiling). Hide ROOT meshes beyond the
@@ -3875,6 +3920,7 @@ export function useWorldEngine(canvasRef) {
 			if ((obj.parentId ?? 0) !== 0) continue     // children ride their root's visibility
 			if (obj.pcode === PCODE_AVATAR) continue    // never hide avatars
 			if (id === ownAvatarLocalId || id === editId) continue  // never hide own/edited
+			if (mesh.userData.awaitingGeom) { if (mesh.visible) mesh.visible = false; continue }  // placeholder cube — stay hidden until built (applySwap reveals it)
 			cands.push({ id, dist: camDistToObj(obj), visible: mesh.visible })
 		}
 		const { show, hide } = selectVisibility(cands, ddTarget, VIS_CULL_HYSTERESIS)
