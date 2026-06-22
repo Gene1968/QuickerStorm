@@ -49,7 +49,11 @@ export function geomMemGet(key) {
 	return e ? _cloneArrays(e) : null
 }
 export function getGeomMemBytes() { return _l1.bytes() }
-export function geomMemClear() { _l1.clear() }
+// Clear BOTH memory tiers: the thin-client L1 and the core mem tier. WHY both: geomCacheGetMany now
+// serves the core mem tier before IDB (Approach A), so clearing only _l1 would leave core._mem serving
+// stale/should-be-gone entries (e.g. tests that corrupt IDB then expect a miss). In worker mode core is
+// the rarely-used fallback, so clearing it is harmless; in no-worker mode it's the live read tier.
+export function geomMemClear() { _l1.clear(); core.geomMemClear() }
 
 function _send(msg, transfer, fallback) {
 	if (!_useWorker()) return Promise.resolve().then(fallback)
@@ -96,10 +100,14 @@ export function geomCacheStore(key, arrays, now) {
 export function setGeomCacheLoading(v) { if (_useWorker()) _send({ op: 'setLoading', v }, [], () => core.setGeomCacheLoading(v)); else core.setGeomCacheLoading(v) }
 export function geomManifestRecord(regionKey, keys) { return _send({ op: 'geomManifestRecord', regionKey, keys }, [], () => core.geomManifestRecord(regionKey, keys)) }
 export async function geomManifestPrefetch(regionKey) {
-	if (_useWorker()) return useCacheIO().request({ op: 'geomManifestPrefetch', regionKey }, [], () => core.geomManifestPrefetch(regionKey))
+	if (_useWorker()) {
+		const r = await useCacheIO().request({ op: 'geomManifestPrefetch', regionKey }, [], () => core.geomManifestPrefetch(regionKey))
+		return (typeof r === 'number') ? r : (r?.warmed ?? 0)
+	}
 	// No-worker fallback: read manifest keys via core then prefetch into _l1 via client's geomCacheGetMany
 	const keys = await core.geomManifestGetKeys(regionKey)
-	if (keys?.length) await geomCacheGetMany(keys)
+	if (keys?.length) { await geomCacheGetMany(keys); return keys.length }
+	return 0
 }
 export function geomCacheEvict(key) { _l1.delete(key); return _send({ op: 'geomEvict', key }, [], () => core.geomCacheEvict(key)) }
 export async function getGeomCacheStats() { const r = await _send({ op: 'geomStats' }, [], () => core.getGeomCacheStats()); return r?.stats || r }

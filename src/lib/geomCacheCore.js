@@ -437,13 +437,25 @@ export async function __flushGeomTouchesNow() { await _flushTouches() }
 export async function geomCacheGetMany(keys, now = Date.now()) {
 	const out = new Map()
 	if (!keys.length) return out
+	// Approach A keystone: serve the in-memory tier FIRST. The warm-region working set (manifest
+	// prefetch + IDB-hit promotion) lives in _mem, so a warm revisit returns from RAM and never issues
+	// the IDB read that starves under main-thread saturation (idb=0 → re-bake spiral). Only true mem
+	// misses fall through to IDB. _mem.get touches LRU recency, so the actively-read warm set stays hot
+	// and in-session bakes evict genuinely-cold entries instead — no explicit pinning needed.
+	const misses = []
+	for (const key of keys) {
+		const e = _mem.get(key)
+		if (e) { out.set(key, cloneArrays(e)); _touchLater(key, now) }
+		else misses.push(key)
+	}
+	if (!misses.length) return out
 	_readsInFlight++   // read-priority gate (see _flushNow); always paired with the finally below
 	try {
 		const db = await openDb()
 		await new Promise((resolve) => {
 			const tx = db.transaction(STORE, 'readonly')
 			const st = tx.objectStore(STORE)
-			for (const key of keys) {
+			for (const key of misses) {
 				const g = st.get(key)
 				g.onsuccess = () => {
 					const r = g.result
@@ -516,7 +528,7 @@ export async function geomManifestRecord(regionKey, keys, now = Date.now()) {
 }
 
 export async function geomManifestPrefetch(regionKey) {
-	if (!regionKey) return
+	if (!regionKey) return 0
 	let keys = null
 	try {
 		const db = await openDb()
@@ -527,9 +539,10 @@ export async function geomManifestPrefetch(regionKey) {
 			tx.onerror = () => resolve(null)
 			tx.onabort = () => resolve(null)
 		})
-	} catch { return }
+	} catch { return 0 }
 	// getMany promotes hits into the mem tier (the point); the returned Map is discarded.
-	if (keys?.length) await geomCacheGetMany(keys)
+	if (keys?.length) { await geomCacheGetMany(keys); return keys.length }
+	return 0
 }
 
 /** Read the stored manifest key list for a region without prefetching into the mem tier.

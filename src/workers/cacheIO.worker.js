@@ -24,7 +24,7 @@ self.onmessage = async (e) => {
 			}
 			case 'geomStore': { geom.geomCacheStore(e.data.key, e.data.arrays); self.postMessage({ id, ok: true }); break }
 			case 'geomManifestRecord': { await geom.geomManifestRecord(e.data.regionKey, e.data.keys); self.postMessage({ id, ok: true }); break }
-			case 'geomManifestPrefetch': { await geom.geomManifestPrefetch(e.data.regionKey); self.postMessage({ id, ok: true }); break }
+			case 'geomManifestPrefetch': { const warmed = await geom.geomManifestPrefetch(e.data.regionKey); self.postMessage({ id, warmed }); break }
 			case 'geomEvict': { await geom.geomCacheEvict(e.data.key); self.postMessage({ id, ok: true }); break }
 			case 'setLoading': { geom.setGeomCacheLoading(e.data.v); self.postMessage({ id, ok: true }); break }
 			case 'setMemBudget': { geom.setGeomMemBudget(e.data.bytes); self.postMessage({ id, ok: true }); break }
