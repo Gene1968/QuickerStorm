@@ -47,8 +47,12 @@ export function primGeomKey(shape, scale) {
 // every serve (applySwap ratio path / bakePrimScale on sync hits). Per-scale copies were 11.7k
 // of 14.4k qs-geom entries (97% of a 2GB cap after two regions). Old m1/s1 entries are
 // unreachable garbage that ages out via the lastUsed LRU — no migration needed.
-export function meshGeomKey(meshId) {
-	return `m2:${GEOM_VERSION}:${meshId}`
+// LOD rides the key (per-level): a mesh baked at high vs lowest must not collide. CRITICAL: lod 0
+// (high) keeps the ORIGINAL bare-uuid format — pre-LOD warm caches (qs-geom/qs-mesh, thousands of
+// entries keyed by m2:VER:uuid = the high bake) MUST stay hittable, else every mesh re-downloads
+// from the grid on a warm region (the cube-storm regression). Only lod>0 gets a :lod suffix.
+export function meshGeomKey(meshId, lod = 0) {
+	return lod === 0 ? `m2:${GEOM_VERSION}:${meshId}` : `m2:${GEOM_VERSION}:${meshId}:${lod}`
 }
 
 // sculptType is part of the key because getSculpt(sculptId, sculptType) decodes differently

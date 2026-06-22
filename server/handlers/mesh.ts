@@ -3,12 +3,13 @@
 // flat arrays. Cap URLs stay server-side; the client gets clean JSON it turns into a BufferGeometry.
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
-import { parseMeshHeader, decodeMeshLOD } from '../lib/meshDecode'
+import { parseMeshHeader, decodeMeshLOD, pickLodRef } from '../lib/meshDecode'
 import { createAssetMemo } from '../lib/assetMemo'
 import { S } from '../../shared/protocol.js'
 
 // Tier-2 decoded-mesh cache + request coalescing (same rationale as assets.ts: retries used to
-// refire the grid fetch AND the LOD decode). Keyed by meshId — mesh bytes are global by UUID.
+// refire the grid fetch AND the LOD decode). Keyed by `meshId:lod` — mesh bytes are global by UUID,
+// and each LOD level decodes to its own submesh payload (see pickLodRef / the per-level fetch).
 type MeshPayload = { submeshes: { positions: string; normals: string; uvs: string; indices: string }[] }
 const MESH_MEMO_BUDGET = 256 * 1048576
 let _meshLogN = 0
@@ -17,21 +18,23 @@ const meshMemo = createAssetMemo<MeshPayload>({
 	sizeOf: v => v.submeshes.reduce((b, sm) => b + sm.positions.length + sm.normals.length + sm.uvs.length + sm.indices.length, 0),
 })
 
-export async function handleMeshFetch(circuitId: string, req: { meshId: string }): Promise<void> {
+export async function handleMeshFetch(circuitId: string, req: { meshId: string; lod?: number }): Promise<void> {
 	const s = getSession(circuitId)
 	if (!s) return
 	const meshId = req?.meshId
-	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.MESH_DATA, d: { meshId, ...d } }))
+	const wantLod = Math.max(0, Math.min(3, (req?.lod ?? 0) | 0))
+	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.MESH_DATA, d: { meshId, lod: wantLod, ...d } }))
 	const cap = s.caps.get('ViewerAsset') || s.caps.get('GetMesh2') || s.caps.get('GetMesh')
 	if (!cap || !meshId) { send({ error: 'cap_unavailable' }); return }
 	try {
-		const payload = await meshMemo.memo(meshId, async () => {
+		const payload = await meshMemo.memo(`${meshId}:${wantLod}`, async () => {
 			const res = await fetch(`${cap}/?mesh_id=${meshId}`, { headers: { Accept: 'application/vnd.ll.mesh' }, signal: AbortSignal.timeout(25_000) })
 			if (!res.ok) throw new Error(`http_${res.status}`)
 			const buf = Buffer.from(await res.arrayBuffer())
 			const h = parseMeshHeader(buf)
-			const lod = h.lods.high ?? h.lods.medium ?? h.lods.low ?? h.lods.lowest
-			if (!lod) throw new Error('no_lod')
+			const picked = pickLodRef(h.lods, wantLod)
+			if (!picked) throw new Error('no_lod')
+			const lod = picked.ref
 			// WHY base64 typed arrays (not number[]): a high-LOD mesh has tens of thousands of floats;
 			// JSON number[] is ~3× larger and JSON.stringify of huge arrays blocks the event loop long
 			// enough to stall AgentUpdate → sim drops the circuit ("no response 65s"). base64 of the raw

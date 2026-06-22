@@ -8,6 +8,11 @@ import { createByteLRU } from '@/lib/byteLRU.js'
 import { heapPush, heapPop } from '@/lib/priorityQueue.js'
 import { C, S } from '@shared/protocol.js'
 
+// Cache/dedup key per LOD level — the IDB store keyPath is an opaque string, so "uuid:lod" just works.
+// CRITICAL: lod 0 (high) keeps the BARE uuid so pre-LOD warm qs-mesh entries (keyed by uuid = the
+// high decode) still hit — else every mesh re-downloads from the grid on a warm region (cube storm).
+const mkKey = (uuid, lod) => (lod === 0 ? uuid : `${uuid}:${lod}`)
+
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_INFLIGHT = 12       // concurrent network mesh fetches (was 6; 0 timeouts at 6 → headroom)
 // WHY bounded: unbounded, this cache hit ~1.1GB on a 24k-object region and pinned the heap above
@@ -42,8 +47,9 @@ function b64ToTyped(s, Type) {
 }
 
 function _on(d) {
-	const resolve = pending.get(d?.meshId)
-	if (resolve) pending.delete(d.meshId)
+	const key = d?.meshId != null ? mkKey(d.meshId, d.lod ?? 0) : null
+	const resolve = key ? pending.get(key) : null
+	if (resolve) pending.delete(key)
 	else if (!d?.meshId) return
 	if (d.error || !d.submeshes) { stats.failed++; resolve?.(null); return }
 	stats.done++
@@ -54,30 +60,26 @@ function _on(d) {
 		indices:   b64ToTyped(s.indices, Uint16Array),
 	}))
 	if (resolve) { resolve(subs); return }
-	// Late arrival (request already timed out): keep the decode anyway — cache in RAM + IDB and
-	// clear the failure mark so the next getMesh (cull stream-in re-bake, reload) succeeds without
-	// refetching. Mesh timeouts have NO soft retry, so without this a single slow grid response
-	// blanked that mesh for the whole session. Mirrors the texture-side late-arrival fix.
+	// Late arrival (request already timed out): cache under the composite key + clear the failure mark.
 	stats.late++
-	failed.delete(d.meshId)
-	mem.set(d.meshId, subs)
-	meshCachePut(d.meshId, subs)
+	failed.delete(key)
+	mem.set(key, subs)
+	meshCachePut(key, subs)
 }
 
 // Send one network request, respecting the in-flight cap; queue (min-heap, nearest first) if full.
 // priority = distance to the viewer (smaller = nearer = fetched sooner); Infinity for non-near callers.
-function _netFetch(uuid, priority = Infinity) {
+function _netFetch(uuid, lod, priority = Infinity) {
+	const key = mkKey(uuid, lod)
 	return new Promise(resolve => {
 		const run = async () => {
 			active++
-			// Late arrivals land in RAM/IDB while this request waits in the queue — settle from
-			// cache when the slot opens instead of burning a 30s timeout (mirrors useTextureFetch).
-			const cached = mem.has(uuid) ? mem.get(uuid) : await meshCacheGet(uuid).catch(() => null)
+			const cached = mem.has(key) ? mem.get(key) : await meshCacheGet(key).catch(() => null)
 			if (cached) { _done(); resolve(cached); return }
 			const { emit } = useRealtimeSocket()
-			const timer = setTimeout(() => { stats.timeout++; pending.delete(uuid); _done(); resolve(null) }, FETCH_TIMEOUT_MS)
-			pending.set(uuid, v => { clearTimeout(timer); _done(); resolve(v) })
-			emit(C.MESH_FETCH, { meshId: uuid })
+			const timer = setTimeout(() => { stats.timeout++; pending.delete(key); _done(); resolve(null) }, FETCH_TIMEOUT_MS)
+			pending.set(key, v => { clearTimeout(timer); _done(); resolve(v) })
+			emit(C.MESH_FETCH, { meshId: uuid, lod })
 		}
 		if (active < MAX_INFLIGHT) run(); else heapPush(queue, { run, priority })
 	})
@@ -94,21 +96,22 @@ export function getMeshBytes() {
 	return mem.bytes()
 }
 
-export function getMesh(uuid, priority = Infinity) {
+export function getMesh(uuid, lod = 0, priority = Infinity) {
 	if (!uuid) return Promise.resolve(null)
-	if (mem.has(uuid)) return Promise.resolve(mem.get(uuid))
-	if (failed.has(uuid)) return Promise.resolve(null)
-	if (inflight.has(uuid)) return inflight.get(uuid)
+	const key = mkKey(uuid, lod)
+	if (mem.has(key)) return Promise.resolve(mem.get(key))
+	if (failed.has(key)) return Promise.resolve(null)
+	if (inflight.has(key)) return inflight.get(key)
 	_wire()
 	stats.requested++
 	const p = (async () => {
-		const cached = await meshCacheGet(uuid)
-		if (cached) { mem.set(uuid, cached); return cached }
-		const net = await _netFetch(uuid, priority)
-		if (net) { mem.set(uuid, net); meshCachePut(uuid, net); return net }
-		failed.add(uuid)
+		const cached = await meshCacheGet(key)
+		if (cached) { mem.set(key, cached); return cached }
+		const net = await _netFetch(uuid, lod, priority)
+		if (net) { mem.set(key, net); meshCachePut(key, net); return net }
+		failed.add(key)
 		return null
-	})().then(r => { inflight.delete(uuid); return r })
-	inflight.set(uuid, p)
+	})().then(r => { inflight.delete(key); return r })
+	inflight.set(key, p)
 	return p
 }

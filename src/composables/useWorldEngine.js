@@ -40,6 +40,7 @@ import {
 import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeomCacheCap, setGeomMemBudget, getGeomMemBudget, setGeomMemPressureCap, setGeomCacheLoading, geomManifestRecord, geomManifestPrefetch, getGeomWriteBufStats } from '@/lib/geomCache.js'
 import { setTexCacheLoading, getTextureWriteBufStats } from '@/lib/textureCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
+import { selectLod } from '@/lib/lodPolicy.js'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 import { createInstancePool } from '@/lib/instancePool.js'
 import { splitParts } from '@/lib/geomParts.js'
@@ -386,6 +387,7 @@ export function useWorldEngine(canvasRef) {
 	// so movement + the circuit stay healthy; the scene still converges over a few seconds.
 	const MAX_EVICT_PER_TICK = 32
 	const MAX_RELOAD_PER_TICK = 48
+	const MAX_LOD_RESTREAM_PER_TICK = 16   // bound LOD-change re-streams/tick (smoothness; mesh-only)
 	const EVICT_AFTER_TICKS = 3  // require N consecutive over-target ticks before evicting (spike debounce)
 	let _overTicks = 0
 	let _lastGeomB = 0           // live-geometry bytes, refreshed by the 3s telemetry scan (O(n))
@@ -423,10 +425,13 @@ export function useWorldEngine(canvasRef) {
 	// and NEVER hangs (useCacheIO has a 30s fallback-to-core backstop on its own thread). The old 4s
 	// "degrade to all-miss → re-bake" watchdog eagerly re-baked already-cached geometry under a slow
 	// read — the saturation spiral. We now wait for the real hit/miss verdict and bake ONLY true misses.
-	function requestGeometry(key, jobThunk, applySwap) {
+	// fallbackKey (optional): a SECOND cache key to serve when `key` misses — used for mesh LOD, where a
+	// far object's desired lod>0 bake may be absent but the warm HIGH (bare-uuid) bake is cached. Serving
+	// the fallback avoids a re-bake + raw-asset re-fetch (the warm-region cube-storm / main-thread starve).
+	function requestGeometry(key, jobThunk, applySwap, fallbackKey = null) {
 		_regionGeomKeys.add(key)
 		_geomPending++
-		_geomLookupBatch.push({ key, jobThunk, applySwap })
+		_geomLookupBatch.push({ key, jobThunk, applySwap, fallbackKey })
 		if (_geomLookupBatch.length === 1) queueMicrotask(_flushGeomLookups)
 	}
 	async function _flushGeomLookups() {
@@ -439,18 +444,33 @@ export function useWorldEngine(canvasRef) {
 		// cross-contaminate each other's geometry. Each sibling therefore pulls its own fresh clone
 		// from the memory tier (geomMemGet clones per call), never a shared or cache-owned buffer.
 		const byKey = new Map()
-		for (const b of batch) { const l = byKey.get(b.key); if (l) l.push(b); else byKey.set(b.key, [b]) }
+		const fallbackOf = new Map()   // desired key → warm-high fallback key (mesh LOD), when provided
+		for (const b of batch) {
+			const l = byKey.get(b.key); if (l) l.push(b); else byKey.set(b.key, [b])
+			if (b.fallbackKey && !fallbackOf.has(b.key)) fallbackOf.set(b.key, b.fallbackKey)
+		}
+		// Look up desired keys AND their warm-high fallbacks in ONE batch (see requestGeometry): a mesh
+		// whose lod>0 bake isn't cached is then served the cached HIGH bake instead of re-baking +
+		// re-fetching its raw asset — the warm-region spiral that starves the main thread.
+		const lookupKeys = new Set(byKey.keys())
+		for (const fb of fallbackOf.values()) lookupKeys.add(fb)
 		let hits
 		try {
 			// geomCacheGetMany serves L1 sync + worker IDB off-thread; it NEVER rejects (degrades to a
 			// partial/empty Map) and never hangs (useCacheIO has a fallback-to-core backstop). No re-bake
 			// watchdog: a slow read waits for the real hit/miss verdict instead of re-baking cached
 			// geometry (the saturation spiral). We bake ONLY the keys the cache reports as missing.
-			hits = await geomCacheGetMany([...byKey.keys()])
+			hits = await geomCacheGetMany([...lookupKeys])
 		} catch { hits = new Map() }
 		if (_engineDead) { _geomPending -= batch.length; return }
 		for (const [key, entries] of byKey) {
-			const arrays = hits.get(key)
+			let arrays = hits.get(key)
+			let hitKey = key
+			if (!arrays) {
+				// Desired LOD missed → try the warm-high fallback before baking (mesh LOD).
+				const fb = fallbackOf.get(key)
+				if (fb) { const fa = hits.get(fb); if (fa) { arrays = fa; hitKey = fb } }
+			}
 			if (!arrays) { _bakeGeomGroup(key, entries); continue }
 			// LEAK-PROOF: release _geomPending for the entry BEFORE applySwap, and GUARD applySwap.
 			// applySwap → geometryFromArrays/computeVertexNormals can throw on a malformed array; since
@@ -461,7 +481,7 @@ export function useWorldEngine(canvasRef) {
 			try { entries[0].applySwap(arrays) } catch { geoNaNCount++ }
 			let evicted = null
 			for (let i = 1; i < entries.length; i++) {
-				const clone = geomMemGet(key)
+				const clone = geomMemGet(hitKey)
 				if (clone) { _geomHitIdb++; _geomPending--; try { entries[i].applySwap(clone) } catch { geoNaNCount++ } }
 				else (evicted ??= []).push(entries[i])
 			}
@@ -1969,11 +1989,16 @@ export function useWorldEngine(canvasRef) {
 			// scale-linear).
 			const isAsset = !isAvatar && !obj._placeholder && !!(obj.meshId || obj.sculptId)
 			const bakeScale = isAsset ? [1, 1, 1] : (obj.scale ? obj.scale.slice() : [1, 1, 1])
+			const meshLod = obj.meshId ? desiredMeshLod(obj) : 0
 			const geomKey = (isAvatar || obj._placeholder) ? null
-				: obj.meshId   ? meshGeomKey(obj.meshId)
+				: obj.meshId   ? meshGeomKey(obj.meshId, meshLod)
 				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
 				: primGeomKey(obj.shape, bakeScale)
-			const cachedArrays = geomKey ? geomMemGet(geomKey) : null
+			// Warm-high fallback (mesh LOD): if the desired-LOD bake isn't in the L1 tier, use the cached
+			// HIGH (bare-uuid) bake rather than dropping to placeholder→fetch→bake. Mirrors the async
+			// fallback in _flushGeomLookups; the warm-high bake is the bulk of a revisited region.
+			let cachedArrays = geomKey ? geomMemGet(geomKey) : null
+			if (!cachedArrays && obj.meshId && meshLod !== 0) cachedArrays = geomMemGet(meshGeomKey(obj.meshId, 0))
 			if (cachedArrays) _geomHitMem++
 			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
@@ -2021,6 +2046,7 @@ export function useWorldEngine(canvasRef) {
 					: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
 			if ((hasMaterial || wantLit) && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
+			if (obj.meshId) mesh.userData.meshLod = meshLod
 			mesh.onBeforeRender = _noteDraw   // render-exception forensics: see the quarantine catch in animate()
 
 			// ── Slice 2: alpha (#17) — TE color alpha < 1 → translucent prim (even untextured) ──
@@ -2117,13 +2143,13 @@ export function useWorldEngine(canvasRef) {
 					// WHY thunk: a mesh/sculpt cache hit must skip getMesh/getSculpt entirely — the
 					// raw-submesh fetch only happens when the baked cache truly misses.
 					const jobThunk = obj.meshId
-						? () => getMesh(obj.meshId, nearRefDist(obj)).then(subs =>
+						? () => getMesh(obj.meshId, meshLod, nearRefDist(obj)).then(subs =>
 							(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
 						: obj.sculptId
 							? () => getSculpt(obj.sculptId, obj.sculptType ?? 1, nearRefDist(obj)).then(subs =>
 								(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
 							: () => meshBaker.bake({ kind: 'prim', shape: plainShape, scale: bakeScale })
-					requestGeometry(geomKey, jobThunk, applySwap)
+					requestGeometry(geomKey, jobThunk, applySwap, obj.meshId && meshLod !== 0 ? meshGeomKey(obj.meshId, 0) : null)
 				}
 			}
 
@@ -3379,6 +3405,16 @@ export function useWorldEngine(canvasRef) {
 		return Math.sqrt(dx * dx + dy * dy + dz * dz)
 	}
 
+	// Desired mesh LOD (0=high…3=lowest) for an object, by apparent size from the avatar ref point.
+	// radius = half the object's max scale extent (cheap bounding-sphere proxy). Prims/sculpts always
+	// build at high (LOD is mesh-only this phase); currentLod biases hysteresis (-1 = fresh build).
+	function desiredMeshLod(obj, currentLod = -1) {
+		if (!obj || !obj.meshId) return 0
+		const sc = obj.scale || [1, 1, 1]
+		const radius = 0.5 * Math.max(sc[0] || 0, sc[1] || 0, sc[2] || 0)
+		return selectLod(radius, nearRefDist(obj), uiStore.lodFactor ?? 1.125, currentLod)
+	}
+
 	// Recompute scene-load telemetry → worldStore for the badge/Prefs. WHY %-within-_effNear: with the
 	// dynamic draw distance the culler deliberately won't load past _effNear, so measuring against a
 	// fixed 192m span would peg the badge below 100% forever (nothing beyond _effNear will ever build).
@@ -3473,7 +3509,7 @@ export function useWorldEngine(canvasRef) {
 	// Re-derive the geomKey exactly as upsertMesh does (the prim path bakes scale into geometry).
 	function geomKeyFor(obj) {
 		const bakeScale = (obj.meshId || obj.sculptId) ? [1, 1, 1] : (obj.scale || [1, 1, 1])
-		return obj.meshId ? meshGeomKey(obj.meshId)
+		return obj.meshId ? meshGeomKey(obj.meshId, desiredMeshLod(obj))
 			: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
 			: primGeomKey(obj.shape, bakeScale)
 	}
@@ -3738,6 +3774,35 @@ export function useWorldEngine(canvasRef) {
 				const dline = `[Cull] over budget (${(r * 100).toFixed(0)}%) for ${_overTicks} ticks → draw distance ↓ ${_effNear}m (was ${_effNear + DRAW_DIST_STEP}m)`
 				debugStore.push('warn', dline)
 				try { wsEmit(C.CLIENT_LOG, { level: 'warn', msg: dline, stack: '' }) } catch { /* ignore */ }
+			}
+		}
+		// LOD re-stream: a resident MESH root whose desired LOD crossed a band (hysteresis in selectLod)
+		// is removed + queued for reload, so the existing nearest-first stream-in rebuilds it at the new
+		// level (textures come from cache; the (uuid,lod) geom cache makes repeat crossings instant).
+		// Reuses evict→reload — no parallel re-bake path. Bounded per tick; skips protected ids.
+		if (meshMap.size) {
+			const editId = uiStore.editObjectId
+			// SCAN first (read-only), then mutate — never delete from meshMap while iterating it
+			// (mirrors the eviction block above). Collect up to the per-tick cap of roots to re-stream.
+			const _lodRestream = []
+			for (const [id, m] of meshMap) {
+				if (_lodRestream.length >= MAX_LOD_RESTREAM_PER_TICK) break
+				if (m.userData.meshLod == null) continue          // mesh roots only (prims/sculpts/avatars skip)
+				if (id === ownAvatarLocalId || id === editId) continue
+				const obj = worldStore.objects.get(id)
+				if (!obj || (obj.parentId ?? 0) !== 0) continue    // roots only
+				if (desiredMeshLod(obj, m.userData.meshLod) !== m.userData.meshLod) _lodRestream.push(id)
+			}
+			if (_lodRestream.length) {
+				const _lodKids = kids ?? groupChildrenByRoot(worldStore.objects)   // build the child index at most once
+				for (const id of _lodRestream) {
+					// Re-stream at the new LOD: drop the root + its children, queue the root back via `evicted`
+					// (selectReloads rebuilds nearest-first; children re-queue from the root index on reload).
+					for (const cid of (_lodKids.get(id) ?? [])) { removeMesh(cid); pendingMeshIds.delete(cid) }
+					removeMesh(id)
+					pendingMeshIds.delete(id)
+					evicted.add(id)
+				}
 			}
 		}
 		// Draw-distance recovery (FS progressive-stepping equivalent): grow _effNear back toward the

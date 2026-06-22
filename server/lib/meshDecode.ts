@@ -33,6 +33,28 @@ export function parseMeshHeader(buf: Buffer): MeshHeader {
 	}
 }
 
+/**
+ * Choose the LOD ref for the wanted level (0=high…3=lowest), falling back to the nearest
+ * available level when a mesh omits one (some assets ship only high). Returns the chosen
+ * level index alongside the ref so the caller can report what was actually served.
+ */
+export function pickLodRef(
+	lods: { high?: LodRef; medium?: LodRef; low?: LodRef; lowest?: LodRef },
+	want: number,
+): { lod: number; ref: LodRef } | null {
+	const order = [lods.high, lods.medium, lods.low, lods.lowest]
+	const clamped = Math.max(0, Math.min(3, want | 0))
+	// Search outward from the wanted level. On a tie (exact level missing) prefer the COARSER neighbour
+	// (higher index) over the finer one — cheaper to render and matches Firestorm's fallback to the
+	// simplest available LOD. At d=0, lo===hi===clamped (the exact level), so it's returned first.
+	for (let d = 0; d < 4; d++) {
+		const lo = clamped - d, hi = clamped + d
+		if (hi <= 3 && order[hi]) return { lod: hi, ref: order[hi]! }
+		if (lo >= 0 && order[lo]) return { lod: lo, ref: order[lo]! }
+	}
+	return null
+}
+
 function inflateLod(slice: Buffer): Buffer {
 	try { return inflateSync(slice) } catch { return inflateRawSync(slice) }
 }

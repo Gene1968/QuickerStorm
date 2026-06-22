@@ -45,11 +45,24 @@ describe('primGeomKey', () => {
 describe('meshGeomKey / sculptGeomKey', () => {
 	it('embed asset id + version, scale-FREE (unscaled bakes, m2/s2 prefixes)', () => {
 		const k = meshGeomKey('aaaa-bbbb')
-		expect(k).toBe(`m2:${GEOM_VERSION}:aaaa-bbbb`)
+		expect(k).toBe(`m2:${GEOM_VERSION}:aaaa-bbbb`)   // lod 0 = bare-uuid (warm-cache back-compat)
 		expect(meshGeomKey('xxxx')).not.toBe(meshGeomKey('yyyy'))
 	})
 	it('sculpt key includes sculptType (type changes decode output)', () => {
 		expect(sculptGeomKey('ssss', 1)).not.toBe(sculptGeomKey('ssss', 2))
 		expect(sculptGeomKey('ssss', 1)).toBe(`s2:${GEOM_VERSION}:ssss:1`)
+	})
+})
+
+describe('meshGeomKey with LOD', () => {
+	it('different LODs of the same mesh produce different keys', () => {
+		const uuid = '0123abcd-0000-0000-0000-000000000000'
+		expect(meshGeomKey(uuid, 0)).not.toBe(meshGeomKey(uuid, 2))
+	})
+	it('embeds the lod in the key', () => {
+		expect(meshGeomKey('abc', 3).endsWith(':3')).toBe(true)
+	})
+	it('defaults to high (0) when lod omitted (back-compat call shape)', () => {
+		expect(meshGeomKey('abc')).toBe(meshGeomKey('abc', 0))
 	})
 })
