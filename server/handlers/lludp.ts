@@ -31,7 +31,7 @@ import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendP
 import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
 import { decodeLayerData } from '../lib/terrain-codec.js'
-import { replayCachedWorld } from '../lib/resync'
+import { replayCachedWorld, replayTerrain } from '../lib/resync'
 import { parseLLSD } from '../lib/llsd'
 import { startEventQueue, stopEventQueue } from '../lib/eventQueue'
 
@@ -1295,6 +1295,13 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: [session.ownAvatarUpdate] } }))
 			slog.info(session.ws, `→ own-avatar re-sent on probe-resync (engine ready)`)
 		}
+		// Same pre-mount loss applies to TERRAIN: the resume's replayCachedWorld TERRAIN_PATCH frames
+		// arrive before the engine's handler mounts, so worldStore.terrainHeights stays zeroed → the
+		// collision sampler returns ~0 → client gravity floors the avatar at z≈1 (the "fall through to
+		// 1m" bug; focus-dependent, fixed only by a manual resync until now). Re-send terrain NOW (engine
+		// ready) so the collision heightmap rebuilds — automatic resync, no user action needed.
+		const tPatches = replayTerrain(session)
+		if (tPatches > 0) slog.info(session.ws, `→ terrain re-sent on probe-resync (${tPatches} patches, engine ready)`)
 		return
 	}
 
