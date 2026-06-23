@@ -22,7 +22,14 @@ export function loadBadgeView(cs, entering, terrainPatchCount = 0) {
 	const texPending = cs?.texPending ?? 0
 	const buildPending = cs?.buildPending ?? 0
 	const netInflight = cs?.netInflight ?? 0
-	const warm = !!cs?.warm
+	// "From cache" is decided by the LIVE geom hit/miss rate, not the coarse `warm` flag. WHY: `warm`
+	// only means a manifest existed at entry — but the geometry may have been evicted from best-effort
+	// IDB, so the region cold-BAKES despite warm=true (idb=0, miss dominant). The rate reflects what's
+	// actually happening and self-corrects as the load runs. Fall back to `warm` only when no geom build
+	// activity is in the window (hits+miss===0), where there's nothing better to go on.
+	const geomHits = cs?.geomHits ?? 0
+	const geomMiss = cs?.geomMiss ?? 0
+	const fromCache = (geomHits + geomMiss) > 0 ? geomHits >= geomMiss : !!cs?.warm
 
 	const show = !!entering || pct < 100 || objPending > 0 || texPending > 0 || buildPending > 0
 
@@ -30,7 +37,7 @@ export function loadBadgeView(cs, entering, terrainPatchCount = 0) {
 	if (entering) {
 		label = terrainPatchCount > 0 ? 'Loading terrain…' : 'Entering region…'
 	} else if (pct < 100) {
-		if (warm) {
+		if (fromCache) {
 			label = `Rebuilding from cache — ${pct}%`
 		} else {
 			const phase = cs?.atTarget ? 'Overall scene' : 'Nearby scene'
@@ -38,8 +45,8 @@ export function loadBadgeView(cs, entering, terrainPatchCount = 0) {
 			label = `${preface}${phase} ${pct}% loaded`
 		}
 	} else if (buildPending > 0 && netInflight === 0) {
-		// Build backlog with nothing on the wire = CPU baking, not downloading.
-		label = warm ? `Rebuilding from cache — ${buildPending} objects` : `Building scene — ${buildPending} objects`
+		// Build backlog with nothing on the wire = CPU baking (cache rebuild OR cold bake), not downloading.
+		label = fromCache ? `Rebuilding from cache — ${buildPending} objects` : `Building scene — ${buildPending} objects`
 	} else if (objPending > 0) {
 		label = `Objects ${objPending} downloading`
 	} else if (texPending > 0) {

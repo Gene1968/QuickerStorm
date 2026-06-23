@@ -119,4 +119,29 @@ describe('loadBadgeView', () => {
 		const v = loadBadgeView({ ...base, pct: 100, buildPending: 5, objPending: 0, texPending: 0 }, false, 5)
 		expect(v.show).toBe(true)
 	})
+
+	// Live geom hit/miss rate overrides the coarse warm flag. WHY: `warm` only means "a manifest
+	// existed at entry" — but the geometry may have been evicted from disk (best-effort IDB), so the
+	// region cold-BAKES despite warm=true (Bountiful 2026-06-22: warm yet idb=0, miss=213). The label
+	// must reflect what's ACTUALLY happening: misses dominant → "Building scene", hits dominant →
+	// "Rebuilding from cache". The rate self-corrects as the load runs.
+	it('warm flag but misses dominate (evicted → cold bake) → "Building scene", NOT "from cache"', () => {
+		const v = loadBadgeView({ ...base, pct: 100, buildPending: 2944, netInflight: 0, warm: true, geomHits: 5, geomMiss: 213 }, false, 5)
+		expect(v.label).toBe('Building scene — 2944 objects')
+	})
+
+	it('hits dominate → "Rebuilding from cache" even when warm flag is unset', () => {
+		const v = loadBadgeView({ ...base, pct: 100, buildPending: 320, netInflight: 0, warm: false, geomHits: 300, geomMiss: 10 }, false, 5)
+		expect(v.label).toBe('Rebuilding from cache — 320 objects')
+	})
+
+	it('pct<100 with misses dominant → cold "Nearby scene N% loaded" despite warm flag', () => {
+		const v = loadBadgeView({ ...base, pct: 60, warm: true, geomHits: 5, geomMiss: 213 }, false, 5)
+		expect(v.label).toBe('Nearby scene 60% loaded')
+	})
+
+	it('no recent build activity → falls back to the warm flag', () => {
+		const v = loadBadgeView({ ...base, pct: 60, warm: true, geomHits: 0, geomMiss: 0 }, false, 5)
+		expect(v.label).toBe('Rebuilding from cache — 60%')
+	})
 })

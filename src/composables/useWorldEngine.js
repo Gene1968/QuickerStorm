@@ -3494,6 +3494,11 @@ export function useWorldEngine(canvasRef) {
 			buildPending: pendingMeshIds.size,
 			netInflight: (mx.inflight ?? 0) + (sx.inflight ?? 0) + (tx.inflight ?? 0),
 			warm: _regionWarm,
+			// Live geom cache hit/miss over the current telemetry window (reset ~5s by the asset-stats
+			// timer; read-only here). The badge uses hits-vs-miss to label "Rebuilding from cache" only
+			// when the region is actually serving from cache — not just because a manifest existed.
+			geomHits: _geomHitMem + _geomHitIdb,
+			geomMiss: _geomMiss,
 		})
 		// Dead-scene backstop: hundreds known in range but NOTHING resident for several consecutive
 		// scans = the culler death-spiral end state (should be unreachable since the app-budget +
