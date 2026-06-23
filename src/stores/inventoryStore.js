@@ -105,10 +105,19 @@ export const useInventoryStore = defineStore('inventory', () => {
 	}
 
 	// First folder with the given preferred type (e.g. Favorites=23, Current Outfit=46).
+	// WHY: prefer the copy that is a direct child of the agent root. OpenSim's GetRootFolder (and
+	// every HG suitcase) creates a full system-folder set under "My Suitcase" (type 100), so two
+	// folders can match a type — the real /Favorites and /My Suitcase/Favorites. The real system
+	// folders sit directly under root, so anchor on that and ignore skeleton insertion order.
+	// Fall back to any match for HG-outbound sessions where root IS the suitcase.
 	function findSystemFolder(typeDefault) {
-		let found = ''
-		folders.value.forEach(f => { if (!found && Number(f.typeDefault) === typeDefault) found = f.folderId })
-		return found
+		let found = '', fallback = ''
+		folders.value.forEach(f => {
+			if (Number(f.typeDefault) !== typeDefault) return
+			if (!fallback) fallback = f.folderId
+			if (!found && f.parentId === rootId.value) found = f.folderId
+		})
+		return found || fallback
 	}
 
 	function select(id) { selectedId.value = id }
@@ -131,8 +140,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	// Local-only: insert item into the Favorites folder's in-memory list (no server cap yet).
 	function addToFavorites(item) {
-		let favId = ''
-		folders.value.forEach(f => { if (!favId && Number(f.typeDefault) === 23) favId = f.folderId })
+		const favId = findSystemFolder(23)
 		if (!favId) return
 		const list = items.value.get(favId) || []
 		if (list.some(i => i.itemId === item.itemId)) return
