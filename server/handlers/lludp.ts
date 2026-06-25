@@ -35,8 +35,8 @@ import { replayCachedWorld, replayTerrain } from '../lib/resync'
 import { parseLLSD } from '../lib/llsd'
 import { startEventQueue, stopEventQueue } from '../lib/eventQueue'
 import {
-	interestEnabled, interestRadius, withinInterest, effectivePos, isAvatar,
-	reconcileInterest, type ObjLike,
+	interestEnabled, withinInterest, effectivePos, isAvatar,
+	reconcileInterest, resolveRadius, type ObjLike,
 } from '../lib/interestFilter'
 
 // Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
@@ -1118,6 +1118,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			camLeft: [number, number, number]
 			camUp: [number, number, number]
 			far: number
+			interestRadius?: number
 		}
 		// WHY: Client sometimes sends nulls in cam vectors before camera fully initializes
 		// (e.g. first MOVE after login, before WorldEngine has computed yaw/pos). Coerce to
@@ -1137,6 +1138,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		d.camLeft   = safeVec(d.camLeft)
 		d.camUp     = safeVec(d.camUp)
 		if (typeof d.far !== 'number') d.far = 512   // draw distance → sim interest radius (region-wide)
+		if (typeof d.interestRadius !== 'number') d.interestRadius = undefined
 		// Save for heartbeat retransmit when client is idle
 		session.lastAgentParams    = d
 		session.lastAgentUpdateAt  = Date.now()
@@ -1828,7 +1830,7 @@ function filterForwardObjects(s: CircuitState, objects: unknown[]): unknown[] {
 	if (!interestEnabled()) return objects
 	const cam = interestCam(s)
 	if (!cam) return objects   // no idea where the avatar is yet → don't cull
-	const r = interestRadius()
+	const r = resolveRadius(s.lastAgentParams?.interestRadius)
 	const getObj = (id: number) => s.objCache.get(id) as ObjLike | undefined
 	const fwd: unknown[] = []
 	for (const o of objects) {
@@ -1852,7 +1854,7 @@ function reconcileInterestTick(s: CircuitState): void {
 	if (!interestEnabled()) return
 	const cam = interestCam(s)
 	if (!cam) return
-	const r = interestRadius()
+	const r = resolveRadius(s.lastAgentParams?.interestRadius)
 	const objCache = s.objCache as unknown as Map<number, ObjLike>
 	const { enter, leave } = reconcileInterest(objCache, s.sentToClient, cam, r)
 

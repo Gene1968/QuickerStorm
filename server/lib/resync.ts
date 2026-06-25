@@ -8,7 +8,7 @@
 import type { CircuitState } from '../state/sessions'
 import { S } from '../../shared/protocol.js'
 import { slog } from './serverLog'
-import { interestEnabled, interestRadius, withinInterest, effectivePos, isAvatar, type ObjLike } from './interestFilter'
+import { interestEnabled, resolveRadius, withinInterest, effectivePos, isAvatar, type ObjLike } from './interestFilter'
 
 // Patch and object payloads can be large — chunk to keep WS frames small and
 // avoid blocking the event loop with one giant JSON.stringify.
@@ -59,7 +59,7 @@ export function replayCachedWorld(session: CircuitState): void {
 	if (interestEnabled()) {
 		const cam = session.lastAgentParams?.camCenter ?? session.cachedSpawnPos ?? null
 		if (cam) {
-			const r = interestRadius()
+			const r = resolveRadius(session.lastAgentParams?.interestRadius)
 			const getObj = (id: number) => session.objCache.get(id) as ObjLike | undefined
 			objs = objs.filter(o => {
 				const obj = o as ObjLike

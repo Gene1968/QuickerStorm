@@ -88,6 +88,7 @@ export interface CircuitState {
 		camLeft:   [number, number, number]
 		camUp:     [number, number, number]
 		far:       number
+		interestRadius?: number   // client-desired interest radius (m); server clamps via resolveRadius
 	} | null
 	// Capability URLs negotiated from seed cap (populated 3s after login)
 	caps: Map<string, string>
