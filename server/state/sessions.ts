@@ -146,6 +146,14 @@ export interface CircuitState {
 	// established by an ObjectUpdate, so the cache is what makes the scene reconstitutable.
 	// objCache stores the raw decoded obj payload as forwarded to the browser.
 	objCache: Map<number, unknown>   // localId → obj record (shape matches decodeObjectUpdate output)
+	// ── Interest filter (Phase 0 spike, INTEREST_FILTER=1) ──────────────────
+	// WHY: localIds currently forwarded to the browser. The forward path only sends objects
+	// inside the camera interest volume; the 500ms reconcile tick streams the rest in (ENTER)
+	// and KillObjects them out (LEAVE) as the camera moves. Distinct from distinctLocalIds
+	// (ever-received) and objCache (everything cached server-side) — this is what the browser
+	// is holding RIGHT NOW, the set we keep bounded so the tab heap stays bounded.
+	sentToClient: Set<number>
+	lastInterestLogAt?: number   // throttle the [Interest] telemetry line
 	// The own avatar's last full ObjectUpdate (pcode 47, fullId == agentId), captured at receive time.
 	// WHY: on session resume the sim won't re-broadcast the avatar (agent already present) and a
 	// duplicate CompleteAgentMovement is ignored, so without this the own avatar is lost on reload

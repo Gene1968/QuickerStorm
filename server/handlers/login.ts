@@ -228,6 +228,7 @@ export async function handleLogin(
 		terrainCache:       new Map(),
 		coveredLandPatches: new Set(),
 		objCache:           new Map(),
+		sentToClient:       new Set<number>(),
 	}
 
 	// WHY: wsId is the first WS's per-connection UUID — used as both the circuitId and

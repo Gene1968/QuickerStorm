@@ -34,6 +34,10 @@ import { decodeLayerData } from '../lib/terrain-codec.js'
 import { replayCachedWorld, replayTerrain } from '../lib/resync'
 import { parseLLSD } from '../lib/llsd'
 import { startEventQueue, stopEventQueue } from '../lib/eventQueue'
+import {
+	interestEnabled, interestRadius, withinInterest, effectivePos, isAvatar,
+	reconcileInterest, type ObjLike,
+} from '../lib/interestFilter'
 
 // Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
 // WHY: High-freq = 1-byte prefix. Medium-freq = 0xFF + 1-byte ID. Low-freq = 0xFF 0xFF + U16LE.
@@ -592,8 +596,11 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 						if (idx >= 0) session.cacheMissPending.splice(idx, 1)
 					}
 				}
-				session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
-				session.objRelayedCount += objects.length
+				const cfwd = filterForwardObjects(session, objects)
+				if (cfwd.length > 0) {
+					session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: cfwd } }))
+					session.objRelayedCount += cfwd.length
+				}
 				if (!session.loggedTypes.has('objcompressed')) {
 					session.loggedTypes.add('objcompressed')
 					slog.info(session.ws, `[ObjCompressed] first decode: ${objects.length} objects, localIds=${objects.slice(0,3).map(o=>o.localId).join(',')}`)
@@ -703,8 +710,11 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.loggedTypes.add(pkey)
 				slog.info(session.ws, `[PSys] localId=${o.localId} pattern=${o.psys.pattern} burst=${o.psys.burstPartCount}@${o.psys.burstRate}s life=${o.psys.partMaxAge} tex=${o.psys.texture ?? '-'} flags=0x${o.psys.partFlags.toString(16)}`)
 			}
-			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects } }))
-			session.objRelayedCount += objects.length
+			const fwd = filterForwardObjects(session, objects)
+			if (fwd.length > 0) {
+				session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: fwd } }))
+				session.objRelayedCount += fwd.length
+			}
 		} else {
 			slog.warn(session.ws, `[ObjUpd] decode returned 0 objects (bufLen=${buf.length})`)
 		}
@@ -721,7 +731,13 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					const cached = session.objCache.get(o.localId) as { pos?: [number, number, number] } | undefined
 					if (cached) cached.pos = o.pos
 				}
-				session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects } }))
+				// WHY: When the interest filter is on, a terse position delta is only meaningful for
+				// objects the browser is holding — sending one for a culled object would re-create it
+				// (avatars exempt: always forwarded, always present client-side).
+				const tfwd = interestEnabled()
+					? objects.filter(o => session.sentToClient.has(o.localId))
+					: objects
+				if (tfwd.length > 0) session.ws.send(JSON.stringify({ t: S.TERSE_UPDATE, d: { objects: tfwd } }))
 			}
 		} catch (e) { slog.warn(session.ws, `terseObjectUpdate decode error: ${(e as Error).message}`) }
 		return
@@ -735,7 +751,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			if (ids.length > 0) {
 				slog.info(session.ws, `[KillObj] removing ${ids.length} localIds: ${ids.slice(0, 4).join(',')}${ids.length > 4 ? '…' : ''}`)
 				// Drop from object cache too — otherwise resync would re-add killed objects.
-				for (const id of ids) session.objCache.delete(id)
+				for (const id of ids) { session.objCache.delete(id); session.sentToClient.delete(id) }
 				session.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids } }))
 			}
 		} catch (e) { slog.warn(session.ws, `KillObject decode error: ${(e as Error).message}`) }
@@ -1794,6 +1810,73 @@ function drainProbeResync(s: CircuitState): void {
 	}, TICK_MS)
 }
 
+// ── Interest filter (Phase 0 spike, INTEREST_FILTER=1) ──────────────────────
+// See server/lib/interestFilter.ts for the pure core + rationale.
+
+/** Best-known camera centre for interest tests: live camera, else cached spawn (pre-first-MOVE). */
+function interestCam(s: CircuitState): [number, number, number] | null {
+	return s.lastAgentParams?.camCenter ?? s.cachedSpawnPos ?? null
+}
+
+/**
+ * Gate the forward path: return only the objects inside the camera interest volume, and record
+ * them in sentToClient. Filter OFF (or camera unknown) → forward everything untouched. Objects
+ * that don't pass are still cached server-side (objCache) and stream in later via the reconcile
+ * tick when the camera approaches. Avatars are never culled.
+ */
+function filterForwardObjects(s: CircuitState, objects: unknown[]): unknown[] {
+	if (!interestEnabled()) return objects
+	const cam = interestCam(s)
+	if (!cam) return objects   // no idea where the avatar is yet → don't cull
+	const r = interestRadius()
+	const getObj = (id: number) => s.objCache.get(id) as ObjLike | undefined
+	const fwd: unknown[] = []
+	for (const o of objects) {
+		const obj = o as ObjLike
+		if (!isAvatar(obj) && !withinInterest(effectivePos(obj, getObj), cam, r)) continue
+		fwd.push(o)
+		if (typeof obj.localId === 'number') s.sentToClient.add(obj.localId)
+	}
+	return fwd
+}
+
+/** Pace browser builds — stream at most this many newly-entered objects per 500ms tick. */
+const INTEREST_ENTER_CAP = 600
+
+/**
+ * Reconcile the browser's held set against the current interest volume (called every 500ms).
+ * Forwards objects that just ENTERED the volume (replayed from objCache) and KillObjects those
+ * that LEFT — FS-like streaming as the avatar/camera moves.
+ */
+function reconcileInterestTick(s: CircuitState): void {
+	if (!interestEnabled()) return
+	const cam = interestCam(s)
+	if (!cam) return
+	const r = interestRadius()
+	const objCache = s.objCache as unknown as Map<number, ObjLike>
+	const { enter, leave } = reconcileInterest(objCache, s.sentToClient, cam, r)
+
+	const toEnter = enter.slice(0, INTEREST_ENTER_CAP)
+	if (toEnter.length > 0) {
+		const objs = toEnter.map(id => s.objCache.get(id)).filter(Boolean)
+		for (const id of toEnter) s.sentToClient.add(id)
+		s.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: objs } }))
+	}
+	if (leave.length > 0) {
+		for (const id of leave) s.sentToClient.delete(id)
+		s.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids: leave } }))
+	}
+
+	// Heartbeat the interest state every ~3s regardless of activity, so the steady-state
+	// (and leave/enter churn as the avatar moves) is observable — not just the busy moments.
+	const now = Date.now()
+	if (now - (s.lastInterestLogAt ?? 0) > 3000) {
+		s.lastInterestLogAt = now
+		const queued = enter.length - toEnter.length
+		slog.info(s.ws, `[Interest] R=${r} cam=[${cam.map(v => v.toFixed(0)).join(',')}] sent=${s.sentToClient.size}/${s.objCache.size} enter=${toEnter.length}${queued > 0 ? `(+${queued} queued)` : ''} leave=${leave.length}`)
+	}
+}
+
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */
 function sendHeartbeat(s: CircuitState): void {
 	const now = Date.now()
@@ -1853,6 +1936,7 @@ export function startCircuitTimers(sessionId: string): () => void {
 		sendHeartbeat(s)
 		drainCacheMissQueue(s)
 		drainProbeResync(s)
+		reconcileInterestTick(s)
 	}, 500)
 	return () => clearInterval(timer)
 }

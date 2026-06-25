@@ -8,6 +8,7 @@
 import type { CircuitState } from '../state/sessions'
 import { S } from '../../shared/protocol.js'
 import { slog } from './serverLog'
+import { interestEnabled, interestRadius, withinInterest, effectivePos, isAvatar, type ObjLike } from './interestFilter'
 
 // Patch and object payloads can be large — chunk to keep WS frames small and
 // avoid blocking the event loop with one giant JSON.stringify.
@@ -50,7 +51,26 @@ export function replayCachedWorld(session: CircuitState): void {
 
 	const nPatches = replayTerrain(session)
 
-	const objs = [...session.objCache.values()]
+	// The browser's scene is empty after a reload, so reset what we think it holds. When the
+	// interest filter is on, replay only the interest-volume subset (the reconcile tick streams
+	// the rest in as the camera moves) and rebuild sentToClient from it.
+	session.sentToClient.clear()
+	let objs = [...session.objCache.values()]
+	if (interestEnabled()) {
+		const cam = session.lastAgentParams?.camCenter ?? session.cachedSpawnPos ?? null
+		if (cam) {
+			const r = interestRadius()
+			const getObj = (id: number) => session.objCache.get(id) as ObjLike | undefined
+			objs = objs.filter(o => {
+				const obj = o as ObjLike
+				return isAvatar(obj) || withinInterest(effectivePos(obj, getObj), cam, r)
+			})
+		}
+	}
+	for (const o of objs) {
+		const lid = (o as ObjLike).localId
+		if (typeof lid === 'number') session.sentToClient.add(lid)
+	}
 	if (objs.length > 0) {
 		for (let i = 0; i < objs.length; i += OBJECTS_PER_FRAME) {
 			ws.send(JSON.stringify({
