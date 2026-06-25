@@ -1875,7 +1875,7 @@ function reconcileInterestTick(s: CircuitState): void {
 	if (now - (s.lastInterestLogAt ?? 0) > 3000) {
 		s.lastInterestLogAt = now
 		const queued = enter.length - toEnter.length
-		slog.info(s.ws, `[Interest] R=${r} cam=[${cam.map(v => v.toFixed(0)).join(',')}] sent=${s.sentToClient.size}/${s.objCache.size} enter=${toEnter.length}${queued > 0 ? `(+${queued} queued)` : ''} leave=${leave.length}`)
+		slog.info(s.ws, `[Interest] R=${r} cam=[${cam.map(v => v.toFixed(0)).join(',')}] sent=${s.sentToClient.size}/${s.objCache.size} enter=${toEnter.length}${queued > 0 ? `(+${queued} queued)` : ''} cull=${leave.length}`)
 	}
 }
 
