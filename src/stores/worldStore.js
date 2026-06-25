@@ -148,10 +148,22 @@ export const useWorldStore = defineStore('world', () => {
 	function ensureTerrainGrid(regionDim) {
 		const stride = resolveTerrainStride(regionDim)
 		if (stride === terrainStride.value) return
+		// WHY preserve (not clear): the true region size can be discovered mid-stream from terrain
+		// patch coverage when the grid omits RegionSizeX on a cross-region TP (see src/lib/terrainSize.js).
+		// A grow must keep heights already ingested for THIS region — on a cross-TP they won't re-arrive.
+		// Copy the overlapping (min-stride) block into the resized array; region CHANGE clears separately
+		// via clearTerrain(). A shrink copies the surviving block and drops the rest.
+		const oldStride = terrainStride.value
+		const old = terrainHeights.value
+		const next = new Float32Array(stride * stride)
+		const copy = Math.min(stride, oldStride)
+		for (let y = 0; y < copy; y++) {
+			for (let x = 0; x < copy; x++) {
+				next[y * stride + x] = old[y * oldStride + x]
+			}
+		}
 		terrainStride.value = stride
-		terrainHeights.value = new Float32Array(stride * stride)
-		patchReceived.value = new Set()
-		terrainPatchCount.value = 0
+		terrainHeights.value = next
 	}
 
 	// WHY: Per-patch update instead of full-grid replace — patches arrive incrementally (one per

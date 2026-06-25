@@ -47,6 +47,7 @@ import { createInstancePool } from '@/lib/instancePool.js'
 import { splitParts } from '@/lib/geomParts.js'
 import { materialKey } from '@/lib/instanceKey.js'
 import { computeInterestRadius } from '@/lib/interestRadiusClient.js'
+import { terrainRegionDim } from '@/lib/terrainSize.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
@@ -2942,6 +2943,12 @@ export function useWorldEngine(canvasRef) {
 						sessionStore.regionSizeX = blk.sizeX || 256
 						sessionStore.regionSizeY = blk.sizeY || 256
 					} else {
+						// Reset to the 256 floor — do NOT inherit the previous region's size (that left a
+						// 1024 destination clamped to 255,255 with terrain only out to 256m). Terrain patch
+						// coverage (onTerrainPatch) derives the true size grid-agnostically; the map block, if
+						// it lands, applies it sooner via onEngineMapBlocks.
+						sessionStore.regionSizeX = 256
+						sessionStore.regionSizeY = 256
 						_pendingRegionSizeLookup = true
 						sendMapQuery(cellX, cellX, cellY, cellY)
 					}
@@ -3059,10 +3066,22 @@ export function useWorldEngine(canvasRef) {
 		const { layerType, patchSize = 16, patches } = payload
 		if (layerType === 'WATER') return  // water plane height fixed at 20 for Phase 1
 
+		// WHY: derive the true region size from terrain patch coverage (grid-agnostic). Some grids omit
+		// RegionSizeX in the cross-region TeleportFinish/EnableSimulator events AND deliver no early map
+		// block, leaving regionSize stuck at 256 → teleport clamps to 255,255 and the terrain/collision
+		// grid only spans 256m on a 1024m region. Terrain LayerData is universal: the highest patch index
+		// gives the size (index 63 → 1024m). Grow only (never shrink mid-load — a region change resets the
+		// floor in onTeleportFinish); the grid grows preserving ingested heights (worldStore.ensureTerrainGrid).
+		const coverageDim = terrainRegionDim(patches, patchSize)
+		if (coverageDim > sessionStore.regionSizeX || coverageDim > sessionStore.regionSizeY) {
+			sessionStore.regionSizeX = Math.max(coverageDim, sessionStore.regionSizeX)
+			sessionStore.regionSizeY = Math.max(coverageDim, sessionStore.regionSizeY)
+			debugStore.push('info', `[3D] Region size from terrain coverage: ${sessionStore.regionSizeX}×${sessionStore.regionSizeY}`)
+		}
+
 		// Size the collision heightmap to the region BEFORE storing, so var-regions (>512m) cover the
 		// whole region instead of a fixed 512 quadrant (else sampleTerrainHeight reads ≈0 past 512 and
-		// the avatar falls through while the terrain renders fine). No-op once correctly sized. regionSize
-		// is established at region entry (login / TeleportFinish) before terrain patches process.
+		// the avatar falls through while the terrain renders fine). No-op once correctly sized.
 		worldStore.ensureTerrainGrid(Math.max(sessionStore.regionSizeX, sessionStore.regionSizeY))
 
 		// WHY: always store + count patches regardless of whether the Three.js scene is ready.

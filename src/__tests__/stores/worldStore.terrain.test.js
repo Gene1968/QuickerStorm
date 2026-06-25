@@ -50,6 +50,16 @@ describe('terrain collision heightmap sizing', () => {
 		expect(s.terrainHeights[640 * 513 + 640] ?? 0).toBe(0)
 	})
 
+	it('preserves already-ingested heights when the grid grows (mid-stream size discovery)', () => {
+		const s = useWorldStore()
+		s.ensureTerrainGrid(256)                       // small region first → stride 257
+		s.setTerrainPatch(2, 3, heights16(11), 16)     // slX 32..47, slY 48..63
+		expect(s.terrainHeights[48 * 257 + 32]).toBe(11)
+		s.ensureTerrainGrid(1024)                      // grow → stride 1025; must NOT discard the patch
+		expect(s.TERRAIN_STRIDE).toBe(1025)
+		expect(s.terrainHeights[48 * 1025 + 32]).toBe(11)   // same (slX,slY), new layout, preserved
+	})
+
 	it('still stores coords within the region grid', () => {
 		const s = useWorldStore()
 		s.ensureTerrainGrid(1024)
