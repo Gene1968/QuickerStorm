@@ -46,6 +46,7 @@ import { useMeshBaker } from '@/composables/useMeshBaker.js'
 import { createInstancePool } from '@/lib/instancePool.js'
 import { splitParts } from '@/lib/geomParts.js'
 import { materialKey } from '@/lib/instanceKey.js'
+import { computeInterestRadius } from '@/lib/interestRadiusClient.js'
 
 // SL uses Z-up; Three.js uses Y-up. Convert: THREE.Vector3(sl.x, sl.z, -sl.y)
 function slToThree(x, y, z) { return new THREE.Vector3(x, z, -y) }
@@ -777,6 +778,8 @@ export function useWorldEngine(canvasRef) {
 	// ── Own avatar tracking ───────────────────────────────────────────────────
 	// Set from first ObjectUpdate where fullId == agentId
 	let ownAvatarLocalId = null
+	// Interest-radius arrival ramp: reset on login/TP arrival so the volume re-ramps from the vicinity.
+	let _interestArrivalAt = (typeof performance !== 'undefined' ? performance.now() : 0)
 	// WHY: avatarSLPos is sim-authoritative [slX, slY, slZ], updated from every TerseUpdate and
 	// ObjectUpdate for own avatar. Drives third-person follow camera in animate().
 	// Replacing old snap (ownAvatarSnapPos/ownAvatarPosNeedsApply) with lerp-based follow.
@@ -1341,6 +1344,11 @@ export function useWorldEngine(canvasRef) {
 				// 512 reaches the whole standard region from any spawn so the sim satisfies region-wide
 				// cache-miss requests. Sim caps draw distance server-side, so over-asking is safe.
 				far:       512,
+				interestRadius: computeInterestRadius({
+					drawDistance: uiStore.drawDistance,
+					underPressure: memUnderPressure(),
+					arrivalElapsedMs: performance.now() - _interestArrivalAt,
+				}),
 		})
 	}
 
@@ -2765,6 +2773,7 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function onAgentSpawnPos(payload) {
+		_interestArrivalAt = performance.now()
 		// WHY: Two AgentSpawnPos arrive after a cross-region TP attempt:
 		//   1. Source sim responds to our proactive CompleteAgentMovement (~100ms) — scene not arrived
 		//   2. Destination sim confirms arrival (only if TP succeeds)

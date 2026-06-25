@@ -16,6 +16,7 @@ export function useLLUDP() {
 	 * @param {number[]} p.camLeft       [x,y,z]
 	 * @param {number[]} p.camUp         [x,y,z]
 	 * @param {number}   p.far           view distance
+	 * @param {number}   p.interestRadius  desired Bun-side interest radius (m); server clamps
 	 */
 	function sendMove(p) {
 		emit(C.MOVE, p)
