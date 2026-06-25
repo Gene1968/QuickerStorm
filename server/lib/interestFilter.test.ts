@@ -3,6 +3,10 @@ import {
 	withinInterest,
 	effectivePos,
 	reconcileInterest,
+	clampRadius,
+	resolveRadius,
+	R_MIN,
+	R_MAX,
 	type ObjLike,
 } from './interestFilter'
 
@@ -121,5 +125,27 @@ describe('reconcileInterest — enter/leave diff', () => {
 		])
 		const { enter } = reconcileInterest(cache, new Set(), cam, 96)
 		expect(enter.sort()).toEqual([1, 2])
+	})
+})
+
+describe('clampRadius', () => {
+	it('clamps to [R_MIN, R_MAX]', () => {
+		expect(clampRadius(10)).toBe(R_MIN)
+		expect(clampRadius(99999)).toBe(R_MAX)
+		expect(clampRadius(96)).toBe(96)
+	})
+	it('rejects non-finite values to R_MIN', () => {
+		expect(clampRadius(NaN)).toBe(R_MIN)
+		expect(clampRadius(undefined as unknown as number)).toBe(R_MIN)
+	})
+})
+
+describe('resolveRadius', () => {
+	it('uses the clamped client radius when provided', () => {
+		expect(resolveRadius(120)).toBe(120)
+		expect(resolveRadius(5)).toBe(R_MIN)
+	})
+	it('falls back to the env/default radius when client radius is absent', () => {
+		expect(resolveRadius(undefined)).toBe(96)
 	})
 })

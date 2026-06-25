@@ -35,6 +35,24 @@ export function interestRadius(): number {
 	return Number.isFinite(r) && r > 0 ? r : 96
 }
 
+/** Hard bounds on the interest radius. The client drives R, but the server clamps so a buggy
+ *  or hostile client cannot request an unbounded radius that re-floods the tab. */
+export const R_MIN = 32
+export const R_MAX = 512
+
+/** Clamp an arbitrary number into [R_MIN, R_MAX]; non-finite → R_MIN. */
+export function clampRadius(r: number): number {
+	if (!Number.isFinite(r)) return R_MIN
+	return Math.max(R_MIN, Math.min(R_MAX, r))
+}
+
+/** Resolve the effective radius: the client-sent radius (clamped), or the env/default fallback
+ *  (interestRadius()) when the client hasn't sent one yet (pre-first-MOVE). */
+export function resolveRadius(clientR: number | undefined): number {
+	if (typeof clientR === 'number' && Number.isFinite(clientR)) return clampRadius(clientR)
+	return interestRadius()
+}
+
 /**
  * Is `pos` within `r` metres of the camera? Uses squared distance (no sqrt — hot path).
  * A null position means we don't know where the object is yet → treat as in-interest so we
