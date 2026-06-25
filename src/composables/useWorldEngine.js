@@ -41,6 +41,7 @@ import { geomMemGet, geomCacheGetMany, geomCacheStore, getGeomMemBytes, initGeom
 import { setTexCacheLoading, getTextureWriteBufStats } from '@/lib/textureCache.js'
 import { primGeomKey, meshGeomKey, sculptGeomKey } from '@/lib/geomKey.js'
 import { selectLod } from '@/lib/lodPolicy.js'
+import { shouldEvictOnKill } from '@/lib/killPolicy'
 import { useMeshBaker } from '@/composables/useMeshBaker.js'
 import { createInstancePool } from '@/lib/instancePool.js'
 import { splitParts } from '@/lib/geomParts.js'
@@ -2996,16 +2997,17 @@ export function useWorldEngine(canvasRef) {
 			worldStore.objects.forEach((o, lid) => { if (o.parentId === id) all.add(lid) })
 		}
 		const key = regionCacheKey()
-		const keepOnKill = import.meta.env.VITE_KEEP_CACHE_ON_KILL === 'true'
+		const keepCacheEnv = import.meta.env.VITE_KEEP_CACHE_ON_KILL === 'true'
+		// WHY: an interest-driven leave (cull:true) is a temporary cull, not a delete — keep the
+		// qs-objects descriptor so re-enter is cheap and the warm-reload cache survives touring.
+		// A genuine sim delete (cull:false / absent) evicts. See src/lib/killPolicy.js.
+		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv })
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
 			evicted.delete(id)
 			removeMesh(id)
 			worldStore.removeObject(id)
-			// WHY: stock OpenSim has ObjectsCullingByDistance=false, so KillObject = genuine
-			// delete → evict the cached entry. Grids that enable culling can set
-			// VITE_KEEP_CACHE_ON_KILL=true so a cull-kill does not drop the cached object.
-			if (key && !keepOnKill) objCacheEvict(key, id)
+			if (key && evict) objCacheEvict(key, id)
 		}
 		if (ids.length > 0) {
 			// If own avatar was killed (region cross / sim kick), clear tracking
