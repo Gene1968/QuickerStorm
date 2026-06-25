@@ -1345,7 +1345,7 @@ export function useWorldEngine(canvasRef) {
 				// cache-miss requests. Sim caps draw distance server-side, so over-asking is safe.
 				far:       512,
 				interestRadius: computeInterestRadius({
-					drawDistance: uiStore.drawDistance,
+					drawDistance: uiStore.drawDistance ?? DRAW_DIST_DEFAULT,
 					underPressure: memUnderPressure(),
 					arrivalElapsedMs: performance.now() - _interestArrivalAt,
 				}),
