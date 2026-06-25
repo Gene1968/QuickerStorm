@@ -317,7 +317,9 @@
       "PowerShell(Start-Sleep -Seconds 20; \"=== newest handshake / login ===\"; Select-String -Path server-watch.log -Pattern 'RegionHandshake|AgentMovementComplete' | Select-Object -Last 3 | ForEach-Object { $_.Line }; \"=== newest [InvGate] ===\"; Select-String -Path server-watch.log -Pattern '\\\\[InvGate\\\\]' | Select-Object -Last 3 | ForEach-Object { $_.Line }; \"=== log tail ===\"; Get-Content server-watch.log -Tail 3)",
       "PowerShell(\"=== Aspen terrain + regionSize clues \\(19:09+\\) ===\"; Select-String -Path server-watch.log -Pattern '\\\\[terrain\\\\]|regionSize|var.?region|RegionHandshake|512' | Select-Object -Last 12 | ForEach-Object { $_.Line })",
       "Bash(./node_modules/.bin/vitest run *)",
-      "Bash(sort -t/ -k2 -n)"
+      "Bash(sort -t/ -k2 -n)",
+      "Read(//f//**)",
+      "Read(//c//**)"
     ]
   }
 }
