@@ -752,7 +752,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				slog.info(session.ws, `[KillObj] removing ${ids.length} localIds: ${ids.slice(0, 4).join(',')}${ids.length > 4 ? '…' : ''}`)
 				// Drop from object cache too — otherwise resync would re-add killed objects.
 				for (const id of ids) { session.objCache.delete(id); session.sentToClient.delete(id) }
-				session.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids } }))
+				session.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids, cull: false } }))
 			}
 		} catch (e) { slog.warn(session.ws, `KillObject decode error: ${(e as Error).message}`) }
 		return
@@ -1866,7 +1866,7 @@ function reconcileInterestTick(s: CircuitState): void {
 	}
 	if (leave.length > 0) {
 		for (const id of leave) s.sentToClient.delete(id)
-		s.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids: leave } }))
+		s.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids: leave, cull: true } }))
 	}
 
 	// Heartbeat the interest state every ~3s regardless of activity, so the steady-state
