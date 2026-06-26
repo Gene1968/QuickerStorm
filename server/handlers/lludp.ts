@@ -35,7 +35,7 @@ import { replayCachedWorld, replayTerrain } from '../lib/resync'
 import { parseLLSD } from '../lib/llsd'
 import { startEventQueue, stopEventQueue } from '../lib/eventQueue'
 import {
-	interestEnabled, withinInterest, effectivePos, isAvatar,
+	interestEnabled, inInterest,
 	reconcileInterest, resolveRadius, type ObjLike,
 } from '../lib/interestFilter'
 
@@ -121,6 +121,14 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	session.reliableOut.clear()
 	session.pendingAcks.length = 0
 	session.objCache.clear()
+	// WHY: the cached own-avatar update belongs to the OLD region. Without clearing it, the post-TP
+	// OBJ_PROBE_RESYNC re-sends it into the new region → a stale duplicate (tube-only, no attachments)
+	// at the arrival point, and own-avatar tracking gets confused (no avatarSLPos → near-first build
+	// stalls, `near=-1m`). The destination sim re-broadcasts the real avatar via CompleteAgentMovement,
+	// which repopulates this. (The reload-resume case has no circuit swap, so its re-send is unaffected.)
+	session.ownAvatarUpdate = undefined
+	// New region = browser cleared its scene; reset what we think it holds (mirrors objCache.clear).
+	session.sentToClient.clear()
 	session.terrainCache.clear()
 	session.coveredLandPatches.clear()
 	session.caps.clear()
@@ -267,6 +275,11 @@ export function applyTeleportFinish(
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		if (!sameRegion) {
+			// Same root cause as the cross-sim path: the cached own-avatar update is from the OLD region.
+			// Clear it (+ the per-region interest set) so OBJ_PROBE_RESYNC doesn't re-send a stale dupe;
+			// the sim's re-sent CompleteAgentMovement repopulates the avatar for the new region.
+			session.ownAvatarUpdate = undefined
+			session.sentToClient.clear()
 			session.ws.send(JSON.stringify({ t: S.TELEPORT_FINISH, d: { simIp, simPort, regionHandle: regionHandle.toString(), seedCap, simAccess, regionSizeX, regionSizeY } }))
 			slog.info(session.ws, `→ CompleteAgentMovement re-sent (same sim, new region handle=${regionHandle}) — browser notified to clear scene`)
 		} else {
@@ -1835,7 +1848,9 @@ function filterForwardObjects(s: CircuitState, objects: unknown[]): unknown[] {
 	const fwd: unknown[] = []
 	for (const o of objects) {
 		const obj = o as ObjLike
-		if (!isAvatar(obj) && !withinInterest(effectivePos(obj, getObj), cam, r)) continue
+		// Hold children with an unresolved root (see inInterest) — the reconcile tick forwards them
+		// once the root arrives, instead of inflating the working set during a cold load.
+		if (!inInterest(obj, getObj, cam, r)) continue
 		fwd.push(o)
 		if (typeof obj.localId === 'number') s.sentToClient.add(obj.localId)
 	}

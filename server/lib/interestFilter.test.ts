@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import {
 	withinInterest,
 	effectivePos,
+	inInterest,
 	reconcileInterest,
 	clampRadius,
 	resolveRadius,
@@ -62,8 +63,38 @@ describe('effectivePos — linkset root resolution', () => {
 	})
 })
 
+describe('inInterest — hold children with an unresolved root', () => {
+	const cam: [number, number, number] = [100, 100, 20]
+	const none = () => undefined
+
+	it('always keeps avatars regardless of distance/position', () => {
+		expect(inInterest({ localId: 1, pcode: 47, parentId: 0, pos: [9999, 9999, 20] }, none, cam, 96)).toBe(true)
+	})
+
+	it('keeps an in-range root and drops an out-of-range root', () => {
+		const cache = new Map<number, ObjLike>([[1, { localId: 1, parentId: 0, pos: [105, 100, 20] }]])
+		expect(inInterest(cache.get(1)!, id => cache.get(id), cam, 96)).toBe(true)
+		const out = { localId: 2, parentId: 0, pos: [400, 100, 20] } as ObjLike
+		expect(inInterest(out, none, cam, 96)).toBe(false)
+	})
+
+	it('HOLDS a child whose linkset root is not yet cached (no blind forward)', () => {
+		const child: ObjLike = { localId: 2, parentId: 99, pos: [0.5, 0, 1] }   // root 99 missing
+		const cache = new Map<number, ObjLike>([[2, child]])
+		expect(inInterest(child, id => cache.get(id), cam, 96)).toBe(false)
+	})
+})
+
 describe('reconcileInterest — enter/leave diff', () => {
 	const cam: [number, number, number] = [100, 100, 20]
+
+	it('does not enter a child whose root has not arrived, then enters it once the in-range root is cached', () => {
+		const child: ObjLike = { localId: 2, parentId: 99, pos: [0.5, 0, 1] }
+		const cache = new Map<number, ObjLike>([[2, child]])
+		expect(reconcileInterest(cache, new Set(), cam, 96).enter).toEqual([])   // held
+		cache.set(99, { localId: 99, parentId: 0, pos: [105, 100, 20] })          // root arrives, in range
+		expect(reconcileInterest(cache, new Set(), cam, 96).enter.sort()).toEqual([2, 99])
+	})
 
 	it('reports in-range, not-yet-sent objects as enters', () => {
 		const cache = new Map<number, ObjLike>([

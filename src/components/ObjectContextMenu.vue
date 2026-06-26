@@ -91,5 +91,6 @@ onUnmounted(() => {
 		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take (to do)</button>
 		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take Copy (to do)</button>
 		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Buy (to do)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Delete (to do) enable if mine or perms</button>
 	</div>
 </template>

@@ -24,9 +24,11 @@ export interface ObjLike {
 /** SL/OpenSim primitive code for an avatar. Avatars are never culled. */
 const PCODE_AVATAR = 47
 
-/** Is the Bun-side interest filter enabled? Flag-gated, default OFF (validation spike). */
+/** Is the Bun-side interest filter enabled? DEFAULT ON for all clients (validated on Aspen: heavy
+ *  24.5k-object region held the working set to ~2.8k and heap to ~10%). Opt-out kill-switch only:
+ *  set INTEREST_FILTER=0 to disable. */
 export function interestEnabled(): boolean {
-	return process.env.INTEREST_FILTER === '1'
+	return process.env.INTEREST_FILTER !== '0'
 }
 
 /** Interest radius in metres. Tunable live via INTEREST_R; default 96m. */
@@ -93,6 +95,26 @@ export function isAvatar(obj: ObjLike): boolean {
 	return obj.pcode === PCODE_AVATAR
 }
 
+/**
+ * Is this object inside the interest volume right now? Avatars are always kept. A linkset CHILD whose
+ * root isn't cached yet has no resolvable region position (effectivePos → null) — HOLD it (return false)
+ * rather than forward blind. WHY: during a heavy cold load thousands of children arrive before their
+ * roots; forwarding them regardless of radius inflated the working set (Aspen: ~13k forwarded at R=80
+ * where ~2-3k was expected) and they can't even be placed without their root. The reconcile tick
+ * re-evaluates once the root arrives — roots always carry a position, so nothing stays stuck.
+ */
+export function inInterest(
+	obj: ObjLike,
+	getObj: (id: number) => ObjLike | undefined,
+	cam: Vec3,
+	r: number,
+): boolean {
+	if (isAvatar(obj)) return true
+	const pos = effectivePos(obj, getObj)
+	if (pos === null) return false
+	return withinInterest(pos, cam, r)
+}
+
 export interface ReconcileResult {
 	/** localIds now in-interest but not yet forwarded → forward (replay from objCache). */
 	enter: number[]
@@ -125,16 +147,12 @@ export function reconcileInterest(
 	const getObj = (id: number) => objCache.get(id)
 
 	for (const [localId, obj] of objCache) {
-		const shown = sent.has(localId)
-		if (isAvatar(obj)) {
-			if (!shown) enter.push(localId)   // avatars: always in, never leave
-			continue
-		}
-		const pos = effectivePos(obj, getObj)
-		if (shown) {
-			if (!withinInterest(pos, cam, rLeave)) leave.push(localId)
+		// inInterest keeps avatars (always) and holds children with an unresolved root (never enters
+		// them blind). Enter uses the tight radius; leave uses the wider hysteresis band.
+		if (sent.has(localId)) {
+			if (!inInterest(obj, getObj, cam, rLeave)) leave.push(localId)
 		} else {
-			if (withinInterest(pos, cam, r)) enter.push(localId)
+			if (inInterest(obj, getObj, cam, r)) enter.push(localId)
 		}
 	}
 

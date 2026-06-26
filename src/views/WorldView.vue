@@ -95,7 +95,7 @@ watch(
 </script>
 
 <template>
-	<div class="w-screen h-screen flex flex-col overflow-hidden bg-surface">
+	<div class="w-screen h-screen flex flex-col overflow-hidden">
 
 		<!-- 2D fallback -->
 		<template v-if="show2D">

@@ -256,7 +256,10 @@ function saveNotes() {
 
 				<!-- Photo + remaining fields -->
 				<div class="flex gap-4">
-					<div class="w-28 h-28 shrink-0 rounded-sm bg-white/10 border border-edge flex items-center justify-center text-fg select-none overflow-hidden" title="default profile image"><span class="text-8xl -mt-1">👤</span></div>
+					<div class="w-28 h-28 shrink-0 rounded-sm bg-white/10 border border-edge flex items-center justify-center text-fg select-none overflow-hidden" title="default profile image">
+						<span title="default/unknown profile image" class="text-8xl mt-2">👤</span>
+						<!-- else real image here -->
+					</div>
 					<div class="flex flex-col gap-1 pt-0.5 min-w-0">
 						<div class="flex items-baseline gap-2">
 							<span class="text-end text-2xs text-fg w-14 shrink-0">Birthdate: </span>

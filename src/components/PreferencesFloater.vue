@@ -25,6 +25,10 @@ import { useCacheStats } from '@/composables/useCacheStats.js'
 import { formatBytes } from '@/utils/formatBytes.js'
 
 const ui            = useUiStore()
+// WHY: live label value WHILE dragging the draw-distance slider, but the store (which drives the
+// Bun interest radius via MOVE) only commits on release. Committing on every @input re-sent a new
+// radius each drag tick → the relay re-culled/re-streamed the whole region every tick → UI froze.
+const ddDrag        = ref(null)
 const theme         = useTheme()
 const avatarStore   = useAvatarStore()
 const accountsStore = useAccountsStore()
@@ -353,13 +357,14 @@ onUnmounted(() => {
 
 						<div class="pf-row pf-row--slider">
 							<div class="pf-row-info">
-								<span class="pf-row-label">Draw Distance: {{ ui.drawDistance }} m</span>
+								<span class="pf-row-label">Draw Distance: {{ ddDrag ?? ui.drawDistance }} m</span>
 								<span class="pf-row-hint">How far objects stay visible (32–512 m).</span>
 							</div>
 							<input
 								type="range" min="32" max="512" step="16"
 								:value="ui.drawDistance"
-								@input="e => ui.setDrawDistance(e.target.value)"
+								@input="e => ddDrag = Number(e.target.value)"
+								@change="e => { ui.setDrawDistance(e.target.value); ddDrag = null }"
 								class="w-32 accent-accent"
 							/>
 						</div>
