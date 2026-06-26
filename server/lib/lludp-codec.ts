@@ -2,120 +2,26 @@
 // Reference: http://wiki.secondlife.com/wiki/LLUDP
 // Message IDs: verify against phoenix-firestorm/indra/newview/app_settings/message.xml
 
-// ── Flags — LLUDP spec (wiki.secondlife.com/wiki/LLUDP, LibOpenMetaverse) ──
-// WHY: Flags are bit-significant. Previous values (0x10/0x40/0x01) were wrong:
-//   0x10 = MSG_APPENDED_ACKS (not Reliable!) → sim crashed with IndexOutOfRange
-//   parsing appended acks from our reliable packet bodies.
-const FLAG_ZERO_CODED  = 0x80  // body is zero-coded
-const FLAG_RELIABLE    = 0x40  // packet must be ACKed by receiver
-const FLAG_RESEND      = 0x20  // retransmit of a reliable packet
-const FLAG_HAS_ACKS    = 0x10  // appended ACK list at end of packet
-
-// ── Message ID bytes (verify against message.xml) ─────────────────────────
-const MSG_ID = {
-  AgentUpdate:               Buffer.from([0x04]),                     // High #4
-  UseCircuitCode:            Buffer.from([0xFF, 0xFF, 0x00, 0x03]),   // Low #3
-  CompleteAgentMovement:     Buffer.from([0xFF, 0xFF, 0x00, 0xF9]),   // Low #249
-  AgentThrottle:             Buffer.from([0xFF, 0xFF, 0x00, 0x51]),   // Low #81
-  AgentHeightWidth:          Buffer.from([0xFF, 0xFF, 0x00, 0x18]),   // Low #24
-  LogoutRequest:             Buffer.from([0xFF, 0xFF, 0x00, 0xFC]),   // Low #252
-  PacketAck:                 Buffer.from([0xFF, 0xFF, 0xFF, 0xFB]),   // Fixed #251
-  StartPingCheck:            Buffer.from([0x01]),                     // High #1 (received from sim)
-  CompletePingCheck:         Buffer.from([0x02]),                     // High #2 (we send back)
-  RegionHandshake:           Buffer.from([0xFF, 0xFF, 0x00, 0x94]),   // Low #148 (received from sim)
-  RegionHandshakeReply:      Buffer.from([0xFF, 0xFF, 0x00, 0x95]),   // Low #149 (we send back)
-  AgentMovementComplete:     Buffer.from([0xFF, 0xFF, 0x00, 0xFA]),   // Low #250 (received from sim)
-  // Verified from packet log: these arrive as High-frequency (1-byte prefix)
-  ChatFromViewer:            Buffer.from([0xFF, 0xFF, 0x00, 0x50]),   // Low #80 (we send)
-  SetAlwaysRun:              Buffer.from([0xFF, 0xFF, 0x00, 0x15]),   // Low #21 (we send) — sticky run state
-  ChatFromSimulator:         Buffer.from([0xFF, 0xFF, 0x00, 0x8B]),   // Low #139 (received)
-  ObjectUpdate:              Buffer.from([0x0C]),                     // High #12 (received from sim)
-  ImprovedTerseObjectUpdate: Buffer.from([0x0F]),                     // High #15 (received from sim)
+// Low-level wire helpers (UUID, zero-coding, header + flags) live in ./protocol/wire.ts.
+// Re-exported below so existing importers of these symbols keep working unchanged.
+import {
+  uuidToBytes, bytesToUuid, decodeZeroCoded, encodeZeroCoded,
+  buildHeader, parseHeader, type HeaderOpts, type ParsedHeader,
+} from './protocol/wire.ts'
+export {
+  uuidToBytes, bytesToUuid, decodeZeroCoded, encodeZeroCoded,
+  buildHeader, parseHeader, type HeaderOpts, type ParsedHeader,
 }
+
+// Message-id bytes are no longer hand-maintained here — the generic codec derives them from
+// message_template.msg (protocol/template.ts). The old MSG_ID table had several wrong entries
+// (e.g. AgentHeightWidth Low 24 vs correct Low 83, SetAlwaysRun Low 21 vs 88) — exactly the class
+// of bug the template eliminates.
 
 import { decodeParticleSystem, type ParticleSys } from './particleCodec.ts'
-
-// ── UUID helpers ─────────────────────────────────────────────────────────
-export function uuidToBytes(uuid: string): Buffer {
-  return Buffer.from(uuid.replace(/-/g, ''), 'hex')
-}
-
-export function bytesToUuid(buf: Buffer, offset = 0): string {
-  const h = buf.slice(offset, offset + 16).toString('hex')
-  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`
-}
-
-// ── Zero coding ──────────────────────────────────────────────────────────
-export function decodeZeroCoded(buf: Buffer): Buffer {
-  const out: number[] = []
-  for (let i = 0; i < buf.length; i++) {
-    if (buf[i] === 0x00) {
-      const count = buf[++i] ?? 1
-      // WHY: count=0 means 256 zeros per LLUDP spec (LibOpenMetaverse ZeroDecode).
-      // Without this, 00 00 produces 0 zeros instead of 256, truncating the decoded
-      // buffer and causing OOB errors in ObjectUpdate trailing fields (ExtraParams, Sound, etc.).
-      const zeros = count === 0 ? 256 : count
-      for (let z = 0; z < zeros; z++) out.push(0x00)
-    } else {
-      out.push(buf[i])
-    }
-  }
-  return Buffer.from(out)
-}
-
-export function encodeZeroCoded(buf: Buffer): Buffer {
-  const out: number[] = []
-  let i = 0
-  while (i < buf.length) {
-    if (buf[i] === 0x00) {
-      let count = 0
-      while (i < buf.length && buf[i] === 0x00 && count < 255) { count++; i++ }
-      out.push(0x00, count)
-    } else {
-      out.push(buf[i++])
-    }
-  }
-  return Buffer.from(out)
-}
-
-// ── Header ───────────────────────────────────────────────────────────────
-interface HeaderOpts { seq: number; reliable: boolean; hasAcks: boolean; zeroCoded: boolean }
-
-export function buildHeader(o: HeaderOpts): Buffer {
-  const flags = (o.reliable   ? FLAG_RELIABLE   : 0)
-              | (o.hasAcks    ? FLAG_HAS_ACKS    : 0)
-              | (o.zeroCoded  ? FLAG_ZERO_CODED  : 0)
-  const hdr = Buffer.alloc(6)
-  hdr[0] = flags
-  hdr.writeUInt32BE(o.seq, 1)
-  hdr[5] = 0  // no extra bytes
-  return hdr
-}
-
-export interface ParsedHeader {
-  flags:      number
-  reliable:   boolean
-  hasAcks:    boolean
-  zeroCoded:  boolean
-  seq:        number
-  extraBytes: number
-  bodyOffset: number // where body starts (after header + extra)
-}
-
-export function parseHeader(buf: Buffer): ParsedHeader {
-  const flags      = buf[0]
-  const seq        = buf.readUInt32BE(1)
-  const extraBytes = buf[5]
-  return {
-    flags,
-    reliable:   (flags & FLAG_RELIABLE)   !== 0,
-    hasAcks:    (flags & FLAG_HAS_ACKS)   !== 0,
-    zeroCoded:  (flags & FLAG_ZERO_CODED) !== 0,
-    seq,
-    extraBytes,
-    bodyOffset: 6 + extraBytes,
-  }
-}
+// Outbound encoders below are thin adapters over the generic template-driven codec —
+// the single encoding implementation. No hand-rolled byte math remains. See protocol/codec.ts.
+import { encode } from './protocol/codec.ts'
 
 // ── Message type detection ────────────────────────────────────────────────
 export function parseMsgType(buf: Buffer, bodyOffset: number): { type: string; dataOffset: number } {
@@ -145,23 +51,16 @@ export function parseMsgType(buf: Buffer, bodyOffset: number): { type: string; d
 interface CircuitParams { agentId: string; sessionId: string; circuitCode: number; seq: number }
 
 export function encodeUseCircuitCode(p: CircuitParams): Buffer {
-  // WHY: SL spec CircuitCode block order is Code(U32), SessionID(UUID), ID/AgentID(UUID)
-  // Previous version had wrong order (AgentID first) — sim silently rejected every packet.
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(4 + 16 + 16)
-  body.writeUInt32LE(p.circuitCode, 0)        // Code  (U32)   — FIRST
-  uuidToBytes(p.sessionId).copy(body, 4)      // SessionID     — SECOND
-  uuidToBytes(p.agentId).copy(body, 20)       // ID (AgentID)  — THIRD
-  return Buffer.concat([hdr, MSG_ID.UseCircuitCode, body])
+  // CircuitCode block order is Code(U32), SessionID(UUID), ID/AgentID(UUID) — from the template.
+  return encode('UseCircuitCode',
+    { CircuitCode: { Code: p.circuitCode, SessionID: p.sessionId, ID: p.agentId } },
+    { seq: p.seq, reliable: true })
 }
 
 export function encodeCompleteAgentMovement(p: CircuitParams): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 4)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  body.writeUInt32LE(p.circuitCode, 32)
-  return Buffer.concat([hdr, MSG_ID.CompleteAgentMovement, body])
+  return encode('CompleteAgentMovement',
+    { AgentData: { AgentID: p.agentId, SessionID: p.sessionId, CircuitCode: p.circuitCode } },
+    { seq: p.seq, reliable: true })
 }
 
 /** AgentThrottle — tell sim bandwidth allocation per category (bps).
@@ -171,29 +70,16 @@ export function encodeCompleteAgentMovement(p: CircuitParams): Buffer {
  *  Values are in bits/sec: resend, land, wind, cloud, task, texture, asset.
  */
 export function encodeAgentThrottle(p: { agentId: string; sessionId: string; circuitCode: number; seq: number }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  // 7 throttle categories × 4 bytes F32LE = 28 bytes
-  // Categories in order: Resend, Land, Wind, Cloud, Task, Texture, Asset (per Firestorm).
-  // WHY land 500kbps (was 162k): terrain patches drip in slowly at low alloc — distant
-  // patches stay at h=0 (flat ocean) for many seconds, making islands at region corner
-  // appear submerged. 500k matches FS "high" preset and pushes the full 16×16 patch grid
-  // in well under a minute.
+  // 7 throttle categories (bps) in order: Resend, Land, Wind, Cloud, Task, Texture, Asset (per Firestorm).
+  // WHY land 500kbps: terrain patches drip in slowly at low alloc — distant patches stay flat
+  // ocean for many seconds. 500k matches FS "high" preset and fills the 16×16 grid in under a minute.
   const THROTTLES = [150000, 500000, 20000, 20000, 700000, 1300000, 500000]
   const throttleBuf = Buffer.allocUnsafe(28)
   THROTTLES.forEach((v, i) => throttleBuf.writeFloatLE(v, i * 4))
-
-  // WHY: AgentThrottle has two blocks: AgentData(AgentID+SessionID+CircuitCode) and
-  // Throttle(GenCounter+Throttles). GenCounter is always 0 for the initial throttle set.
-  // Missing GenCounter shifts Throttles by 4 bytes → sim reads garbage throttle values.
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1 + 28)  // 69 bytes
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(p.circuitCode, off);   off += 4
-  body.writeUInt32LE(0, off);               off += 4  // GenCounter = 0
-  body[off++] = 28  // Variable1 length prefix for Throttle field
-  throttleBuf.copy(body, off)
-  return Buffer.concat([hdr, MSG_ID.AgentThrottle, body])
+  return encode('AgentThrottle', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, CircuitCode: p.circuitCode },
+    Throttle: { GenCounter: 0, Throttles: throttleBuf },  // GenCounter 0 for the initial set
+  }, { seq: p.seq, reliable: true })
 }
 
 /** AgentHeightWidth — tell sim viewport dimensions so it knows our field of view.
@@ -202,32 +88,20 @@ export function encodeAgentThrottle(p: { agentId: string; sessionId: string; cir
  *  Firestorm-typical values: 1024 × 768. GenCounter = 0 for initial send.
  */
 export function encodeAgentHeightWidth(p: { agentId: string; sessionId: string; circuitCode: number; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: false, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 2 + 2)  // 44 bytes
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);    off += 16
-  uuidToBytes(p.sessionId).copy(body, off);  off += 16
-  body.writeUInt32LE(p.circuitCode, off);    off += 4
-  body.writeUInt32LE(0, off);                off += 4   // GenCounter = 0
-  body.writeUInt16LE(768, off);              off += 2   // Height
-  body.writeUInt16LE(1024, off)                         // Width
-  return Buffer.concat([hdr, MSG_ID.AgentHeightWidth, body])
+  // GenCounter 0 for the initial send; FS-typical viewport 1024×768.
+  return encode('AgentHeightWidth', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, CircuitCode: p.circuitCode },
+    HeightWidthBlock: { GenCounter: 0, Height: 768, Width: 1024 },
+  }, { seq: p.seq, reliable: false })
 }
 
 export function encodePacketAck(ackIds: number[], seq: number): Buffer {
-  const hdr  = buildHeader({ seq, reliable: false, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(1 + ackIds.length * 4)
-  body[0] = ackIds.length
-  ackIds.forEach((id, i) => body.writeUInt32LE(id, 1 + i * 4))
-  return Buffer.concat([hdr, MSG_ID.PacketAck, body])
+  return encode('PacketAck', { Packets: ackIds.map(id => ({ ID: id })) }, { seq, reliable: false })
 }
 
-/** Respond to StartPingCheck (Low#1) with CompletePingCheck (Low#2) to keep circuit alive */
+/** Respond to StartPingCheck with CompletePingCheck to keep the circuit alive */
 export function encodeCompletePingCheck(pingId: number, seq: number): Buffer {
-  const hdr  = buildHeader({ seq, reliable: false, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(1)
-  body[0] = pingId
-  return Buffer.concat([hdr, MSG_ID.CompletePingCheck, body])
+  return encode('CompletePingCheck', { PingID: { PingID: pingId } }, { seq, reliable: false })
 }
 
 /** TeleportLocationRequest (Low #63) — teleport avatar to position within any region.
@@ -244,22 +118,11 @@ export function encodeTeleportLocationRequest(p: {
   y:            number   // SL Y (north) in metres [0..256]
   z:            number   // SL Z (height) in metres
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG  = Buffer.from([0xFF, 0xFF, 0x00, 0x3F])  // Low #63
-  // AgentData block (32) + TeleportData block (8+12+12=32) = 64 bytes
-  const body = Buffer.allocUnsafe(64)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeBigUInt64LE(p.regionHandle, off); off += 8
-  body.writeFloatLE(p.x, off); off += 4
-  body.writeFloatLE(p.y, off); off += 4
-  body.writeFloatLE(p.z, off); off += 4
-  // LookAt — face north (0, 1, 0) as default orientation
-  body.writeFloatLE(0, off); off += 4
-  body.writeFloatLE(1, off); off += 4
-  body.writeFloatLE(0, off); off += 4
-  return Buffer.concat([hdr, MSG, body])
+  // LookAt — face north (0, 1, 0) as default orientation.
+  return encode('TeleportLocationRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    Info: { RegionHandle: p.regionHandle, Position: [p.x, p.y, p.z], LookAt: [0, 1, 0] },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** CreateInventoryItem (Low #305) — ask the sim to create an inventory item.
@@ -276,27 +139,18 @@ export function encodeCreateInventoryItem(p: {
   nextOwnerMask?: number; type: number; invType: number; wearableType?: number
   name: string; description?: string
 }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x31])  // Low #305 = 0x131
-  const nameBuf = Buffer.from((p.name || '') + '\0', 'utf8')          // Variable1: null-terminated
+  // Name/Description are Variable1, null-terminated per SL convention.
+  const nameBuf = Buffer.from((p.name || '') + '\0', 'utf8')
   const descBuf = Buffer.from((p.description || '') + '\0', 'utf8')
   const txn = p.transactionId ?? '00000000-0000-0000-0000-000000000000'
-  const body = Buffer.allocUnsafe(32 + 4 + 16 + 16 + 4 + 1 + 1 + 1 + 1 + nameBuf.length + 1 + descBuf.length)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE((p.callbackId ?? 0) >>> 0, off); off += 4
-  uuidToBytes(p.folderId).copy(body, off);  off += 16
-  uuidToBytes(txn).copy(body, off);         off += 16
-  body.writeUInt32LE((p.nextOwnerMask ?? 0x7FFFFFFF) >>> 0, off); off += 4
-  body.writeInt8(p.type, off);    off += 1
-  body.writeInt8(p.invType, off); off += 1
-  body.writeUInt8(p.wearableType ?? 0, off); off += 1
-  body.writeUInt8(nameBuf.length, off); off += 1
-  nameBuf.copy(body, off); off += nameBuf.length
-  body.writeUInt8(descBuf.length, off); off += 1
-  descBuf.copy(body, off); off += descBuf.length
-  return Buffer.concat([hdr, MSG, body])
+  return encode('CreateInventoryItem', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    InventoryBlock: {
+      CallbackID: (p.callbackId ?? 0) >>> 0, FolderID: p.folderId, TransactionID: txn,
+      NextOwnerMask: (p.nextOwnerMask ?? 0x7FFFFFFF) >>> 0, Type: p.type, InvType: p.invType,
+      WearableType: p.wearableType ?? 0, Name: nameBuf, Description: descBuf,
+    },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** CreateInventoryFolder (Low #273) — create a new folder. Client generates the FolderID UUID
@@ -307,19 +161,11 @@ export function encodeCreateInventoryFolder(p: {
   agentId: string; sessionId: string; seq: number
   folderId: string; parentId: string; type?: number; name: string
 }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x11])  // Low #273 = 0x111
   const nameBuf = Buffer.from((p.name || '') + '\0', 'utf8')
-  const body = Buffer.allocUnsafe(32 + 16 + 16 + 1 + 1 + nameBuf.length)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  uuidToBytes(p.folderId).copy(body, off);  off += 16
-  uuidToBytes(p.parentId).copy(body, off);  off += 16
-  body.writeInt8(p.type ?? -1, off); off += 1
-  body.writeUInt8(nameBuf.length, off); off += 1
-  nameBuf.copy(body, off); off += nameBuf.length
-  return Buffer.concat([hdr, MSG, body])
+  return encode('CreateInventoryFolder', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    FolderData: { FolderID: p.folderId, ParentID: p.parentId, Type: p.type ?? -1, Name: nameBuf },
+  }, { seq: p.seq, reliable: true })
 }
 
 export interface CreatedInventoryItem {
@@ -392,19 +238,11 @@ export function encodeRequestMultipleObjects(p: {
   ids:           number[]   // localIds to request
   cacheMissType?: 0 | 1     // 0 = Full (we have nothing), 1 = CrcMismatch (we have stale)
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG  = Buffer.from([0xFF, 0x03])  // Medium #3
-  const body = Buffer.allocUnsafe(16 + 16 + 1 + p.ids.length * 5)
   const missType = p.cacheMissType ?? 0
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body[off++] = p.ids.length
-  for (const id of p.ids) {
-    body[off++] = missType
-    body.writeUInt32LE(id, off); off += 4
-  }
-  return Buffer.concat([hdr, MSG, body])
+  return encode('RequestMultipleObjects', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: p.ids.map(id => ({ CacheMissType: missType, ID: id })),
+  }, { seq: p.seq, reliable: true })
 }
 
 /** Decode ObjectUpdateCached (High #11) — sim sends this for objects viewer supposedly has.
@@ -428,11 +266,7 @@ export function decodeObjectUpdateCached(buf: Buffer, dataOffset: number): Array
 }
 
 export function encodeLogoutRequest(p: { agentId: string; sessionId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(32)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  return Buffer.concat([hdr, MSG_ID.LogoutRequest, body])
+  return encode('LogoutRequest', { AgentData: { AgentID: p.agentId, SessionID: p.sessionId } }, { seq: p.seq, reliable: true })
 }
 
 interface AgentUpdateParams {
@@ -450,26 +284,15 @@ interface AgentUpdateParams {
 }
 
 export function encodeAgentUpdate(p: AgentUpdateParams): Buffer {
-  // AgentUpdate: High freq, NOT reliable (sent at ~10Hz, dropped if lost)
-  const hdr = buildHeader({ seq: p.seq, reliable: false, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 12 + 12 + 1 + 12 + 12 + 12 + 12 + 4 + 4 + 1)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  // BodyRotation (3 floats = xyz of quaternion)
-  p.bodyRot.forEach(v => { body.writeFloatLE(v, off); off += 4 })
-  // HeadRotation
-  p.headRot.forEach(v => { body.writeFloatLE(v, off); off += 4 })
-  body[off++] = 0  // State
-  // Camera vectors
-  p.camCenter.forEach(v => { body.writeFloatLE(v, off); off += 4 })
-  p.camAt.forEach(v    => { body.writeFloatLE(v, off); off += 4 })
-  p.camLeft.forEach(v  => { body.writeFloatLE(v, off); off += 4 })
-  p.camUp.forEach(v    => { body.writeFloatLE(v, off); off += 4 })
-  body.writeFloatLE(p.far, off);         off += 4
-  body.writeUInt32LE(p.controlFlags, off); off += 4
-  body[off++] = 0  // Flags
-  return Buffer.concat([hdr, MSG_ID.AgentUpdate, body])
+  // AgentUpdate: High freq, NOT reliable (sent at ~10Hz, dropped if lost). State/Flags = 0.
+  return encode('AgentUpdate', {
+    AgentData: {
+      AgentID: p.agentId, SessionID: p.sessionId,
+      BodyRotation: p.bodyRot, HeadRotation: p.headRot, State: 0,
+      CameraCenter: p.camCenter, CameraAtAxis: p.camAt, CameraLeftAxis: p.camLeft, CameraUpAxis: p.camUp,
+      Far: p.far, ControlFlags: p.controlFlags, Flags: 0,
+    },
+  }, { seq: p.seq, reliable: false })
 }
 
 // ── ImprovedInstantMessage (Low #254) ────────────────────────────────────
@@ -490,7 +313,6 @@ export function encodeImprovedInstantMessage(p: {
   dialog?:        number      // 0 = MessageFromAgent
   messageId?:     string
 }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
   const fromBuf = Buffer.from(p.fromAgentName + '\0', 'utf8')
   const msgBuf  = Buffer.from(p.message + '\0', 'utf8')
   const regionId = p.regionId  ?? '00000000-0000-0000-0000-000000000000'
@@ -501,42 +323,31 @@ export function encodeImprovedInstantMessage(p: {
   // (symmetric, so both sides agree — see LLIMMgr::computeSessionID, llimview.cpp). A random id
   // here makes every message open a NEW IM tab on the recipient. For non-chat dialogs (e.g. 38
   // friendship offer) the ID is a transaction id the peer echoes back, so a fresh random is right.
-  let idBytes: Buffer
+  let idStr: string
   if (p.messageId) {
-    idBytes = uuidToBytes(p.messageId)
+    idStr = p.messageId
   } else if (dialog === 0) {
     const a = uuidToBytes(p.agentId)
     const b = uuidToBytes(p.toAgentId)
-    idBytes = Buffer.allocUnsafe(16)
-    for (let i = 0; i < 16; i++) idBytes[i] = a[i] ^ b[i]
+    const x = Buffer.allocUnsafe(16)
+    for (let i = 0; i < 16; i++) x[i] = a[i] ^ b[i]
+    idStr = bytesToUuid(x)
   } else {
-    idBytes = uuidToBytes(crypto.randomUUID())
+    idStr = crypto.randomUUID()
   }
-  const bucketLen = 0
-
-  const bodySize = 32 + 1 + 16 + 4 + 16 + 12 + 1 + 1 + 16 + 4 +
-                   1 + fromBuf.length + 2 + msgBuf.length + 2 + bucketLen
-  const body = Buffer.allocUnsafe(bodySize)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body[off++] = 0  // FromGroup = false
-  uuidToBytes(p.toAgentId).copy(body, off); off += 16
-  body.writeUInt32LE(0, off); off += 4      // ParentEstateID
-  uuidToBytes(regionId).copy(body, off);    off += 16
-  body.writeFloatLE(pos[0], off); off += 4
-  body.writeFloatLE(pos[1], off); off += 4
-  body.writeFloatLE(pos[2], off); off += 4
-  body[off++] = 0       // Offline = 0
-  body[off++] = dialog
-  idBytes.copy(body, off); off += 16
-  body.writeUInt32LE(Math.floor(Date.now() / 1000), off); off += 4
-  body[off++] = fromBuf.length
-  fromBuf.copy(body, off); off += fromBuf.length
-  body.writeUInt16LE(msgBuf.length, off); off += 2
-  msgBuf.copy(body, off); off += msgBuf.length
-  body.writeUInt16LE(bucketLen, off); off += 2
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0xFE]), body])
+  // NOTE: the template requires the trailing EstateBlock + MetaData blocks; the previous
+  // hand-written encoder omitted them (technically malformed). The generic codec includes them.
+  return encode('ImprovedInstantMessage', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    MessageBlock: {
+      FromGroup: false, ToAgentID: p.toAgentId, ParentEstateID: 0, RegionID: regionId,
+      Position: pos, Offline: 0, Dialog: dialog, ID: idStr,
+      Timestamp: Math.floor(Date.now() / 1000),
+      FromAgentName: fromBuf, Message: msgBuf, BinaryBucket: Buffer.alloc(0),
+    },
+    EstateBlock: { EstateID: 0 },
+    MetaData: [],
+  }, { seq: p.seq, reliable: true })
 }
 
 export interface ImprovedInstantMessageData {
@@ -581,27 +392,19 @@ export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): I
 export function encodeObjectSelect(p: {
   agentId: string; sessionId: string; seq: number; localIds: number[]
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 1 + p.localIds.length * 4)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body[off++] = p.localIds.length
-  for (const id of p.localIds) { body.writeUInt32LE(id, off); off += 4 }
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x6E]), body])  // Low 110
+  return encode('ObjectSelect', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
+  }, { seq: p.seq, reliable: true })
 }
 
 export function encodeObjectDeselect(p: {
   agentId: string; sessionId: string; seq: number; localIds: number[]
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 1 + p.localIds.length * 4)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body[off++] = p.localIds.length
-  for (const id of p.localIds) { body.writeUInt32LE(id, off); off += 4 }
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x6F]), body])  // Low 111
+  return encode('ObjectDeselect', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
+  }, { seq: p.seq, reliable: true })
 }
 
 // ── ObjectProperties (Medium #9) — sim → viewer per-object metadata ──────
@@ -697,30 +500,22 @@ export function decodeObjectProperties(buf: Buffer, dataOffset: number): ObjectP
 export function encodeObjectGrab(p: {
   agentId: string; sessionId: string; seq: number; localId: number
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 12 + 1)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(p.localId, off);       off += 4
-  body.writeFloatLE(0, off); off += 4   // GrabOffset.x
-  body.writeFloatLE(0, off); off += 4   // GrabOffset.y
-  body.writeFloatLE(0, off); off += 4   // GrabOffset.z
-  body[off++] = 0  // SurfaceInfo count = 0
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x75]), body])  // Low 117
+  return encode('ObjectGrab', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: { LocalID: p.localId, GrabOffset: [0, 0, 0] },
+    SurfaceInfo: [],
+  }, { seq: p.seq, reliable: true })
 }
 
 export function encodeObjectDeGrab(p: {
   agentId: string; sessionId: string; seq: number; localId: number
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 1)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(p.localId, off);       off += 4
-  body[off++] = 0  // SurfaceInfo count = 0
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x76]), body])  // Low 118
+  // FIX: was Low 118 (ObjectGrabUpdate); ObjectDeGrab is Low 119 per the template.
+  return encode('ObjectDeGrab', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: { LocalID: p.localId },
+    SurfaceInfo: [],
+  }, { seq: p.seq, reliable: true })
 }
 
 // ── AgentRequestSit (Low #122) — claim a target prim as the sit target ───
@@ -730,62 +525,39 @@ export function encodeAgentRequestSit(p: {
   agentId: string; sessionId: string; seq: number; targetId: string
   offset?: [number, number, number]
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const off3 = p.offset ?? [0, 0, 0]
-  const body = Buffer.allocUnsafe(16 + 16 + 16 + 12)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  uuidToBytes(p.targetId).copy(body, off);  off += 16
-  body.writeFloatLE(off3[0], off); off += 4
-  body.writeFloatLE(off3[1], off); off += 4
-  body.writeFloatLE(off3[2], off); off += 4
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x7A]), body])  // Low 122
+  // FIX: was Low 122; AgentRequestSit is High 6 per the template.
+  return encode('AgentRequestSit', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    TargetObject: { TargetID: p.targetId, Offset: p.offset ?? [0, 0, 0] },
+  }, { seq: p.seq, reliable: true })
 }
 
 export function encodeAgentSit(p: {
   agentId: string; sessionId: string; seq: number
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x7B]), body])  // Low 123
+  // FIX: was Low 123; AgentSit is High 7 per the template.
+  return encode('AgentSit', { AgentData: { AgentID: p.agentId, SessionID: p.sessionId } }, { seq: p.seq, reliable: true })
 }
 
-// WHY: SL/OpenSim track always-run as a sticky agent flag via SetAlwaysRun (Low #21),
-// NOT as a ControlFlags bit. Bit 20 (0x00100000) is AGENT_CONTROL_NUDGE_AT_NEG which
-// causes the sim to nudge the agent backward each tick — appears as auto-walk in viewer.
-// Body: AgentData { AgentID, SessionID, AlwaysRun BOOL (1 byte) }.
+// WHY: SL/OpenSim track always-run as a sticky agent flag via SetAlwaysRun (Low 88), NOT as a
+// ControlFlags bit. FIX: the previous hand-written encoder sent Low 21 (= UserReportInternal,
+// which the sim drops); the generic codec derives Low 88 from the template, so run state now sticks.
+// Body: AgentData { AgentID, SessionID, AlwaysRun BOOL }.
 export function encodeSetAlwaysRun(p: {
   agentId: string; sessionId: string; seq: number; alwaysRun: boolean
 }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 1)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body[off++] = p.alwaysRun ? 1 : 0
-  return Buffer.concat([hdr, MSG_ID.SetAlwaysRun, body])
+  return encode('SetAlwaysRun', { AgentData: { AgentID: p.agentId, SessionID: p.sessionId, AlwaysRun: p.alwaysRun } }, { seq: p.seq, reliable: true })
 }
 
 export function encodeChatFromViewer(p: {
   agentId: string; sessionId: string; seq: number
   message: string; chatType: number; channel: number
 }): Buffer {
-  // WHY: ChatData.Message is Variable2 (2-byte length prefix), not Variable1 (1-byte).
-  // Previous version used 1-byte prefix — chat was malformed and sim ignored it.
-  const hdr    = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const msgBuf = Buffer.from(p.message, 'utf8')
-  const body   = Buffer.allocUnsafe(16 + 16 + 2 + msgBuf.length + 1 + 4)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);     off += 16
-  uuidToBytes(p.sessionId).copy(body, off);   off += 16
-  body.writeUInt16LE(msgBuf.length, off);     off += 2  // Variable2 — 2-byte length
-  msgBuf.copy(body, off);                     off += msgBuf.length
-  body[off++] = p.chatType
-  body.writeInt32LE(p.channel, off)
-  return Buffer.concat([hdr, MSG_ID.ChatFromViewer, body])
+  // ChatData.Message is Variable2 (2-byte length prefix); not null-terminated.
+  return encode('ChatFromViewer', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ChatData: { Message: Buffer.from(p.message, 'utf8'), Type: p.chatType, Channel: p.channel },
+  }, { seq: p.seq, reliable: true })
 }
 
 // ── Incoming message decoders ─────────────────────────────────────────────
@@ -1980,16 +1752,9 @@ export function encodeMapLayerRequest(p: {
   seq:       number
   flags?:    number
 }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x95])  // Low #405 = 0x0195
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(p.flags ?? 0, off);    off += 4
-  body.writeUInt32LE(0, off);                off += 4
-  body[off++] = 0
-  return Buffer.concat([hdr, MSG, body])
+  return encode('MapLayerRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Flags: p.flags ?? 0, EstateID: 0, Godlike: false },
+  }, { seq: p.seq, reliable: true })
 }
 
 
@@ -2010,20 +1775,10 @@ export function encodeMapBlockRequest(p: {
   maxY:      number
   flags?:    number
 }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x97])  // Low #407 = 0x0197
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1 + 2 + 2 + 2 + 2)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(p.flags ?? 0x00010000, off); off += 4
-  body.writeUInt32LE(0, off);                     off += 4   // EstateID
-  body[off++] = 0                                              // Godlike
-  body.writeUInt16LE(p.minX, off);                off += 2
-  body.writeUInt16LE(p.maxX, off);                off += 2
-  body.writeUInt16LE(p.minY, off);                off += 2
-  body.writeUInt16LE(p.maxY, off);                off += 2
-  return Buffer.concat([hdr, MSG, body])
+  return encode('MapBlockRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Flags: p.flags ?? 0x00010000, EstateID: 0, Godlike: false },
+    PositionData: { MinX: p.minX, MaxX: p.maxX, MinY: p.minY, MaxY: p.maxY },
+  }, { seq: p.seq, reliable: true })
 }
 
 // MapNameRequest body per libomv / Firestorm llworldmap.cpp:
@@ -2037,19 +1792,11 @@ export function encodeMapNameRequest(p: {
   name:      string
   flags?:    number
 }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG = Buffer.from([0xFF, 0xFF, 0x01, 0x98])  // Low #408 = 0x0198
   const nameBuf = Buffer.from(p.name + '\0', 'utf8')
-  const body = Buffer.allocUnsafe(16 + 16 + 4 + 4 + 1 + 1 + nameBuf.length)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(p.flags ?? 0x00010000, off); off += 4
-  body.writeUInt32LE(0, off);                     off += 4
-  body[off++] = 0
-  body[off++] = nameBuf.length
-  nameBuf.copy(body, off)
-  return Buffer.concat([hdr, MSG, body])
+  return encode('MapNameRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Flags: p.flags ?? 0x00010000, EstateID: 0, Godlike: false },
+    NameData: { Name: nameBuf },
+  }, { seq: p.seq, reliable: true })
 }
 
 export interface MapBlock {
@@ -2168,38 +1915,22 @@ export function decodeTeleportFinish(buf: Buffer, dataOffset: number): {
  *  Body: AgentData(48) + WearableData(1=count) + ObjectData.TE(2=empty) + VisualParam(1=count)
  */
 export function encodeAgentSetAppearance(p: { agentId: string; sessionId: string; seq: number }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG = Buffer.from([0xFF, 0xFF, 0x00, 0x54])  // Low #84
-  // AgentData Single: AgentID(16) + SessionID(16) + SerialNum(4) + Size LLVector3(12)
-  // WearableData Variable: count(1) = 0 items
-  // ObjectData Single: TextureEntry Variable2(2) = empty
-  // VisualParam Variable: count(1) = 0 items
-  const body = Buffer.alloc(16 + 16 + 4 + 12 + 1 + 2 + 1)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  body.writeUInt32LE(1, off); off += 4  // SerialNum = 1
-  // WHY: Default avatar bounding box (width, depth, height) in SL metres.
-  // Sim uses this for collision detection. Approximate standard avatar size.
-  body.writeFloatLE(0.45, off); off += 4
-  body.writeFloatLE(0.60, off); off += 4
-  body.writeFloatLE(1.84, off); off += 4
-  body[off++] = 0          // WearableData count = 0
-  body.writeUInt16LE(0, off); off += 2  // ObjectData.TextureEntry length = 0
-  body[off++] = 0          // VisualParam count = 0
-  return Buffer.concat([hdr, MSG, body])
+  // Size = default avatar bounding box (width, depth, height) in SL metres for sim collision.
+  // Empty wearables/params (gray avatar) — minimal to unblock physics without the art pipeline.
+  return encode('AgentSetAppearance', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, SerialNum: 1, Size: [0.45, 0.60, 1.84] },
+    WearableData: [],
+    ObjectData: { TextureEntry: Buffer.alloc(0) },
+    VisualParam: [],
+  }, { seq: p.seq, reliable: true })
 }
 
 /** Reply to RegionHandshake — required, or avatar won't appear in-world */
 export function encodeRegionHandshakeReply(p: { agentId: string; sessionId: string; seq: number }): Buffer {
-  const hdr = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  // AgentData block: AgentID + SessionID
-  // RegionInfo block: Flags U32 = 0
-  const body = Buffer.allocUnsafe(16 + 16 + 4)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  body.writeUInt32LE(0, 32)  // Flags = 0
-  return Buffer.concat([hdr, MSG_ID.RegionHandshakeReply, body])
+  return encode('RegionHandshakeReply', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    RegionInfo: { Flags: 0 },
+  }, { seq: p.seq, reliable: true })
 }
 
 // ══ Social (Phase 3) — friends / profile / groups / parcel ════════════════
@@ -2226,12 +1957,9 @@ function readV2(buf: Buffer, off: number): [string, number] {
  *  the landmark ASSET's stored region+position, so we only send its asset UUID (LandmarkID).
  *  Info{AgentID, SessionID, LandmarkID}. A zero LandmarkID means "teleport home". */
 export function encodeTeleportLandmarkRequest(p: { agentId: string; sessionId: string; landmarkId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 16)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  uuidToBytes(p.landmarkId).copy(body, 32)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x41]), body])  // Low 65
+  return encode('TeleportLandmarkRequest', {
+    Info: { AgentID: p.agentId, SessionID: p.sessionId, LandmarkID: p.landmarkId },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** SetStartLocationRequest (Low 204) — set avatar home/last position.
@@ -2244,118 +1972,86 @@ export function encodeSetStartLocationRequest(p: {
   locationId: number   // 1 = home
   x: number; y: number; z: number
 }): Buffer {
-  const hdr      = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const MSG      = Buffer.from([0xFF, 0xFF, 0x00, 0xCC])  // Low 204
-  const nameBytes = Buffer.from(p.simName, 'utf8')
-  const body = Buffer.allocUnsafe(16 + 16 + 1 + nameBytes.length + 4 + 12 + 12)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);    off += 16
-  uuidToBytes(p.sessionId).copy(body, off);  off += 16
-  body.writeUInt8(nameBytes.length, off);    off += 1
-  nameBytes.copy(body, off);                 off += nameBytes.length
-  body.writeUInt32LE(p.locationId, off);     off += 4
-  body.writeFloatLE(p.x, off); off += 4
-  body.writeFloatLE(p.y, off); off += 4
-  body.writeFloatLE(p.z, off); off += 4
-  // LookAt — face north (0, 1, 0)
-  body.writeFloatLE(0, off); off += 4
-  body.writeFloatLE(1, off); off += 4
-  body.writeFloatLE(0, off); off += 4
-  return Buffer.concat([hdr, MSG, body])
+  // FIX: was Low 204; SetStartLocationRequest is Low 324 per the template. LookAt faces north.
+  return encode('SetStartLocationRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    StartLocationData: {
+      SimName: Buffer.from(p.simName, 'utf8'), LocationID: p.locationId,
+      LocationPos: [p.x, p.y, p.z], LocationLookAt: [0, 1, 0],
+    },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** AvatarPropertiesRequest (Low 169) — ask for an avatar's profile. Sim replies with
  *  AvatarPropertiesReply (+Interests +Groups). Body: AgentData{AgentID, SessionID, AvatarID}. */
 export function encodeAvatarPropertiesRequest(p: { agentId: string; sessionId: string; avatarId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 16)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  uuidToBytes(p.avatarId).copy(body, 32)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0xA9]), body])  // Low 169
+  return encode('AvatarPropertiesRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, AvatarID: p.avatarId },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** ParcelInfoRequest (Low 54). Body: AgentData{AgentID, SessionID}; Data{ParcelID}. */
 export function encodeParcelInfoRequest(p: { agentId: string; sessionId: string; parcelId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 16)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  uuidToBytes(p.parcelId).copy(body, 32)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x36]), body])  // Low 54
+  return encode('ParcelInfoRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    Data: { ParcelID: p.parcelId },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** UUIDNameRequest (Low 235) — resolve avatar UUIDs to names. UUIDNameBlock Variable{ID}×N.
  *  Note: no AgentData block in this message (per template). */
 export function encodeUUIDNameRequest(p: { ids: string[]; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const ids  = p.ids.slice(0, 255)  // U8 count cap
-  const body = Buffer.allocUnsafe(1 + ids.length * 16)
-  body[0] = ids.length
-  ids.forEach((id, i) => uuidToBytes(id).copy(body, 1 + i * 16))
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0xEB]), body])  // Low 235
+  const ids = p.ids.slice(0, 255)  // U8 count cap
+  return encode('UUIDNameRequest', {
+    UUIDNameBlock: ids.map(id => ({ ID: id })),
+  }, { seq: p.seq, reliable: true })
 }
 
 /** AcceptFriendship (Low 297). AgentData{AgentID,SessionID}; TransactionBlock{TransactionID};
  *  FolderData Variable{FolderID} — where the calling card goes. */
 export function encodeAcceptFriendship(p: { agentId: string; sessionId: string; transactionId: string; folderId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 16 + 1 + 16)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);       off += 16
-  uuidToBytes(p.sessionId).copy(body, off);     off += 16
-  uuidToBytes(p.transactionId).copy(body, off); off += 16
-  body[off++] = 1  // FolderData count = 1
-  uuidToBytes(p.folderId).copy(body, off)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x29]), body])  // Low 297
+  return encode('AcceptFriendship', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    TransactionBlock: { TransactionID: p.transactionId },
+    FolderData: [{ FolderID: p.folderId }],
+  }, { seq: p.seq, reliable: true })
 }
 
 /** DeclineFriendship (Low 298). AgentData{AgentID,SessionID}; TransactionBlock{TransactionID}. */
 export function encodeDeclineFriendship(p: { agentId: string; sessionId: string; transactionId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 16)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  uuidToBytes(p.transactionId).copy(body, 32)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x2A]), body])  // Low 298
+  return encode('DeclineFriendship', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    TransactionBlock: { TransactionID: p.transactionId },
+  }, { seq: p.seq, reliable: true })
 }
 
 /** TerminateFriendship (Low 300). AgentData{AgentID,SessionID}; ExBlock{OtherID}. */
 export function encodeTerminateFriendship(p: { agentId: string; sessionId: string; otherId: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 16 + 16)
-  uuidToBytes(p.agentId).copy(body, 0)
-  uuidToBytes(p.sessionId).copy(body, 16)
-  uuidToBytes(p.otherId).copy(body, 32)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x2C]), body])  // Low 300
+  return encode('TerminateFriendship', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ExBlock: { OtherID: p.otherId },
+  }, { seq: p.seq, reliable: true })
 }
 
-/** ChangeUserRights (Low 321) — change rights I grant a friend. AgentData{AgentID};
- *  Rights Variable{AgentRelated LLUUID, RelatedRights S32}. rights bits: 1=online,2=map,4=modify. */
-export function encodeChangeUserRights(p: { agentId: string; agentRelated: string; relatedRights: number; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
-  const body = Buffer.allocUnsafe(16 + 1 + 16 + 4)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off); off += 16
-  body[off++] = 1  // Rights count = 1
-  uuidToBytes(p.agentRelated).copy(body, off); off += 16
-  body.writeInt32LE(p.relatedRights, off)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x01, 0x41]), body])  // Low 321
+/** GrantUserRights (Low 320) — change rights I grant a friend. AgentData{AgentID,SessionID};
+ *  Rights Variable{AgentRelated LLUUID, RelatedRights S32}. rights bits: 1=online,2=map,4=modify.
+ *  FIX: the previous code sent ChangeUserRights (Low 321 — a sim→viewer notification) and omitted
+ *  SessionID, so the sim ignored it. GrantUserRights is the correct viewer→sim message. */
+export function encodeChangeUserRights(p: { agentId: string; sessionId: string; agentRelated: string; relatedRights: number; seq: number }): Buffer {
+  return encode('GrantUserRights', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    Rights: [{ AgentRelated: p.agentRelated, RelatedRights: p.relatedRights }],
+  }, { seq: p.seq, reliable: true })
 }
 
 /** AvatarPickerRequest (Low 26) — name search for Add-Friend.
  *  AgentData{AgentID, SessionID, QueryID}; Data{Name Variable 1 (NUL-terminated)}. */
 export function encodeAvatarPickerRequest(p: { agentId: string; sessionId: string; queryId: string; name: string; seq: number }): Buffer {
-  const hdr  = buildHeader({ seq: p.seq, reliable: true, hasAcks: false, zeroCoded: false })
   const name = Buffer.from((p.name || '') + '\0', 'utf8').subarray(0, 255)
-  const body = Buffer.allocUnsafe(16 + 16 + 16 + 1 + name.length)
-  let off = 0
-  uuidToBytes(p.agentId).copy(body, off);   off += 16
-  uuidToBytes(p.sessionId).copy(body, off); off += 16
-  uuidToBytes(p.queryId).copy(body, off);   off += 16
-  body[off++] = name.length
-  name.copy(body, off)
-  return Buffer.concat([hdr, Buffer.from([0xFF, 0xFF, 0x00, 0x1A]), body])  // Low 26
+  return encode('AvatarPickerRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, QueryID: p.queryId },
+    Data: { Name: name },
+  }, { seq: p.seq, reliable: true })
 }
 
 // ── Inbound decoders ──────────────────────────────────────────────────────

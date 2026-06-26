@@ -163,63 +163,37 @@ describe('generic codec field data matches hand-written encoders byte-for-byte',
 	}
 })
 
-// These five hand-written encoders used the WRONG message-id (the field data is identical,
-// only the id prefix was wrong). The template-driven encoder derives the correct id.
-describe('template corrects buggy message-ids', () => {
-	const A2 = A, S2 = S
-	it('SetAlwaysRun: Low 88 (hand-written sent Low 21 = UserReportInternal)', () => {
-		const gen = encode('SetAlwaysRun', { AgentData: { AgentID: A2, SessionID: S2, AlwaysRun: true } }, opt)
-		const bad = hand.encodeSetAlwaysRun({ agentId: A2, sessionId: S2, seq, alwaysRun: true })
-		expect(idBytes(gen)).toEqual([0xFF, 0xFF, 0x00, 0x58]) // 88
-		expect(idBytes(bad)).toEqual([0xFF, 0xFF, 0x00, 0x15]) // 21 — documents old bug
-		expect(fieldData(gen).equals(fieldData(bad))).toBe(true)
+// The encoders were gutted (T8) to delegate to the generic codec, so they now emit the CORRECT
+// template-derived message ids. These assert the fix on the actual shipping adapters. The old
+// (buggy) ids live in git history + code comments. Seven encoders were silently mis-numbered or
+// structurally wrong before the template-driven codec.
+describe('encoders now emit template-correct (formerly buggy) message ids', () => {
+	it('SetAlwaysRun → Low 88 (was Low 21 = UserReportInternal)', () => {
+		expect(idBytes(hand.encodeSetAlwaysRun({ agentId: A, sessionId: S, seq, alwaysRun: true }))).toEqual([0xFF, 0xFF, 0x00, 0x58])
 	})
-	it('AgentRequestSit: High 6 (hand-written sent Low 122)', () => {
-		const gen = encode('AgentRequestSit', { AgentData: { AgentID: A2, SessionID: S2 }, TargetObject: { TargetID: U, Offset: [0, 0, 0] } }, opt)
-		const bad = hand.encodeAgentRequestSit({ agentId: A2, sessionId: S2, seq, targetId: U })
-		expect(idBytes(gen)).toEqual([0x06])
-		expect(idBytes(bad)).toEqual([0xFF, 0xFF, 0x00, 0x7A])
-		expect(fieldData(gen).equals(fieldData(bad))).toBe(true)
+	it('AgentHeightWidth → Low 83 (was Low 24)', () => {
+		expect(idBytes(hand.encodeAgentHeightWidth({ agentId: A, sessionId: S, circuitCode: 1, seq }))).toEqual([0xFF, 0xFF, 0x00, 0x53])
 	})
-	it('AgentSit: High 7 (hand-written sent Low 123)', () => {
-		const gen = encode('AgentSit', { AgentData: { AgentID: A2, SessionID: S2 } }, opt)
-		const bad = hand.encodeAgentSit({ agentId: A2, sessionId: S2, seq })
-		expect(idBytes(gen)).toEqual([0x07])
-		expect(idBytes(bad)).toEqual([0xFF, 0xFF, 0x00, 0x7B])
-		expect(fieldData(gen).equals(fieldData(bad))).toBe(true)
+	it('AgentRequestSit → High 6 (was Low 122)', () => {
+		expect(idBytes(hand.encodeAgentRequestSit({ agentId: A, sessionId: S, seq, targetId: U }))).toEqual([0x06])
 	})
-	it('ObjectDeGrab: Low 119 (hand-written sent Low 118 = ObjectGrabUpdate)', () => {
-		const gen = encode('ObjectDeGrab', { AgentData: { AgentID: A2, SessionID: S2 }, ObjectData: { LocalID: 77 }, SurfaceInfo: [] }, opt)
-		const bad = hand.encodeObjectDeGrab({ agentId: A2, sessionId: S2, seq, localId: 77 })
-		expect(idBytes(gen)).toEqual([0xFF, 0xFF, 0x00, 0x77]) // 119
-		expect(idBytes(bad)).toEqual([0xFF, 0xFF, 0x00, 0x76]) // 118
-		expect(fieldData(gen).equals(fieldData(bad))).toBe(true)
+	it('AgentSit → High 7 (was Low 123)', () => {
+		expect(idBytes(hand.encodeAgentSit({ agentId: A, sessionId: S, seq }))).toEqual([0x07])
 	})
-	it('SetStartLocationRequest: Low 324 (hand-written sent Low 204)', () => {
-		const gen = encode('SetStartLocationRequest', { AgentData: { AgentID: A2, SessionID: S2 }, StartLocationData: { SimName: Buffer.from('Home', 'utf8'), LocationID: 1, LocationPos: [128, 128, 25], LocationLookAt: [0, 1, 0] } }, opt)
-		const bad = hand.encodeSetStartLocationRequest({ agentId: A2, sessionId: S2, seq, simName: 'Home', locationId: 1, x: 128, y: 128, z: 25 })
-		expect(idBytes(gen)).toEqual([0xFF, 0xFF, 0x01, 0x44]) // 324
-		expect(idBytes(bad)).toEqual([0xFF, 0xFF, 0x00, 0xCC]) // 204
-		expect(fieldData(gen).equals(fieldData(bad))).toBe(true)
+	it('ObjectDeGrab → Low 119 (was Low 118 = ObjectGrabUpdate)', () => {
+		expect(idBytes(hand.encodeObjectDeGrab({ agentId: A, sessionId: S, seq, localId: 77 }))).toEqual([0xFF, 0xFF, 0x00, 0x77])
 	})
-})
-
-// Two structural divergences: the hand-written encoders were not just mis-numbered, they
-// produced the wrong body. The generic versions are template-correct.
-describe('template corrects structurally-wrong encoders', () => {
-	it('GrantUserRights: Low 320 with SessionID (hand-written sent ChangeUserRights Low 321, no SessionID)', () => {
-		const gen = encode('GrantUserRights', { AgentData: { AgentID: A, SessionID: S }, Rights: [{ AgentRelated: U, RelatedRights: 1 }] }, opt)
-		expect(idBytes(gen)).toEqual([0xFF, 0xFF, 0x01, 0x40]) // 320
+	it('SetStartLocationRequest → Low 324 (was Low 204)', () => {
+		expect(idBytes(hand.encodeSetStartLocationRequest({ agentId: A, sessionId: S, seq, simName: 'Home', locationId: 1, x: 1, y: 2, z: 3 }))).toEqual([0xFF, 0xFF, 0x01, 0x44])
+	})
+	it('GrantUserRights → Low 320 with SessionID (was ChangeUserRights Low 321, no SessionID)', () => {
+		const buf = hand.encodeChangeUserRights({ agentId: A, sessionId: S, agentRelated: U, relatedRights: 1, seq })
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x01, 0x40]) // 320
 		// field data = AgentID(16) + SessionID(16) + count(1) + AgentRelated(16) + RelatedRights(4)
-		expect(fieldData(gen).length).toBe(16 + 16 + 1 + 16 + 4)
+		expect(fieldData(buf).length).toBe(16 + 16 + 1 + 16 + 4)
 	})
-	it('ImprovedInstantMessage: Low 254, includes required EstateBlock + MetaData blocks', () => {
-		const gen = encode('ImprovedInstantMessage', {
-			AgentData: { AgentID: A, SessionID: S },
-			MessageBlock: { FromGroup: false, ToAgentID: U, ParentEstateID: 0, RegionID: '00000000-0000-0000-0000-000000000000', Position: [0, 0, 0], Offline: 0, Dialog: 0, ID: U, Timestamp: 0, FromAgentName: Buffer.from('Me\0', 'utf8'), Message: Buffer.from('hi\0', 'utf8'), BinaryBucket: Buffer.alloc(0) },
-			EstateBlock: { EstateID: 0 },
-			MetaData: [],
-		}, opt)
-		expect(idBytes(gen)).toEqual([0xFF, 0xFF, 0x00, 0xFE]) // 254
+	it('ImprovedInstantMessage → Low 254 with required EstateBlock + MetaData (old encoder omitted them)', () => {
+		const buf = hand.encodeImprovedInstantMessage({ agentId: A, sessionId: S, seq, toAgentId: U, fromAgentName: 'Me', message: 'hi', dialog: 0 })
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x00, 0xFE]) // 254
 	})
 })

@@ -5,7 +5,7 @@
 // CONTENTS are parsed by the blob sub-parsers under ./blobs/, which the dispatcher calls.
 import { loadTemplate } from './template.ts'
 import { readField, writeField, sizeOfField } from './fields.ts'
-import { buildHeader, parseHeader, encodeZeroCoded, decodeZeroCoded } from '../lludp-codec.ts'
+import { buildHeader, parseHeader, encodeZeroCoded, decodeZeroCoded } from './wire.ts'
 import type { MsgDef } from './types.ts'
 
 const proto = loadTemplate()

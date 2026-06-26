@@ -3,7 +3,7 @@
 // hand-written encoders in ../lludp-codec.ts: all integers little-endian, BOOL = 1 byte,
 // LLQuaternion = 3 floats (w derived), Variable length-prefix is LE.
 import type { FieldDef } from './types.ts'
-import { uuidToBytes, bytesToUuid } from '../lludp-codec.ts'
+import { uuidToBytes, bytesToUuid } from './wire.ts'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 

@@ -1508,7 +1508,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { agentId: string; rights: number }
 		if (!d.agentId) return
 		const seq = nextSeq(session)
-		const pkt = encodeChangeUserRights({ agentId: session.agentId, seq, agentRelated: d.agentId, relatedRights: d.rights | 0 })
+		const pkt = encodeChangeUserRights({ agentId: session.agentId, sessionId: session.sessionId, seq, agentRelated: d.agentId, relatedRights: d.rights | 0 })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ChangeUserRights ${d.agentId.slice(0, 8)}… rights=${d.rights}`)
