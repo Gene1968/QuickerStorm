@@ -39,7 +39,9 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 | Minimap | 🟡 ~75% |
 | Nearby chat | 🟡 ~75% |
 | Instant Messaging | 🟡 ~70% |
-| Inventory (view/browse) | 🟡 ~70% |
+| Inventory (view/browse/filter) | 🟡 ~70% |
+| Inventory (manage/modify/rezz) | 🔜 |
+| Inventory (take/copy/share) | 🔜 |
 | Friends / Contacts | 🟡 ~70% |
 | Profile floater | 🟡 ~60% |
 | Places floater | 🟡 ~65% |
@@ -49,9 +51,13 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 | Voice (WebRTC) | 🔜 signaling done, gateway TODO |
 | Groups + Group IM | 🔜 |
 | Environment (sky, day/night) | 🔜 |
+| UI sounds | 🟡 ~25% |
 | Media (sounds, parcel audio, video) | 🔜 |
 | Web-on-prim | 🔜 |
 | Publicly live open for Beta (NAS or VPS backend) | 🔜 |
+| 2D view for mobile, slow, low-end or optional | 🟡 ~10% |
+| Collision? | 🟡 ~10% |
+| Sit - object, land, etc? | 🟡 ~25% |
 
 See [`docs/FEATURE-GAPS.md`](docs/FEATURE-GAPS.md) for detailed per-feature gap tracking.
 

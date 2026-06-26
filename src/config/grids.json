@@ -331,6 +331,20 @@
 		"search": "http://vidadupla.com.br/ossearch/query.php",
 		"loginIdentifierTypes": ["agent", "account"]
 	},
+	"dreamlife": {
+		"nick": "dreamlife",
+		"name": "Dream Life",
+		"loginURI": "http://dreamlife.opensim.fun:58002",
+		"slurlBase": "hop://dreamlife.opensim.fun:58002/",
+		"platform": "OpenSim",
+		"system": false,
+		"gatekeeper": "dreamlife.opensim.fun:58002",
+		"loginPage": "http://dreamlife.opensim.fun:58002/wifi/index.html",
+		"about": "http://dreamlife.opensim.fun:58002",
+		"register": "http://dreamlife.opensim.fun:58002/wifi/user/account/",
+		"password": "http://dreamlife.opensim.fun:58002/wifi/forgotpassword?",
+		"loginIdentifierTypes": ["agent", "account"]
+	},
 	"localhost": {
 		"nick": "localhost",
 		"name": "Local OpenSim (port 9000)",

@@ -71,7 +71,7 @@ onMounted(async () => {
 			v-if="splashUrl"
 			:key="splashUrl"
 			:src="splashUrl"
-			class="absolute top-0 right-0 border-0 h-full"
+			class="hidden md:block absolute top-0 right-0 border-0 h-full"
 			tabindex="-1"
 			aria-hidden="true"
 			referrerpolicy="no-referrer"
@@ -82,13 +82,13 @@ onMounted(async () => {
 		/>
 
 		<!-- WHY: iframes steal wheel/click events even when a position:fixed element
-		     sits on top. This transparent shield at z-49 (below floaters at z-50+)
-		     absorbs those events while any floater is open. -->
+			sits on top. This transparent shield at z-49 (below floaters at z-50+)
+			absorbs those events while any floater is open. -->
 		<div v-if="ui.floaterStack.length > 0" class="absolute inset-0" style="z-index: 49" />
 
 		<!-- ── Login strip — 1rem from all edges, rounded-sm, dark bg ───────── -->
 		<div
-			class="absolute inset-x-3 bottom-3 bg-panel-alt/80 w-[22.5rem] rounded-2xl overflow-y-auto"
+			class="absolute inset-x-3 bottom-3 bg-panel-alt/80 w-full md:w-[22.5rem] max-w-[94vw] max-h-[95vh] rounded-2xl overflow-y-auto"
 			style="backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08);"
 		>
 			<div class="flex flex-col items-start gap-5 p-4 pb-2">
