@@ -351,6 +351,27 @@ const defaultMapping = computed(() => {
 	}
 })
 const shinyLabel = computed(() => ['None', 'Low', 'Medium', 'High'][obj.value?.defaultShiny ?? 0] ?? 'None')
+// Legacy bumpmap type (TE bump byte bits 4:0) — labels mirror LLStandardBumpmap / FS Bumpiness combo.
+const BUMP_LABELS = ['None', 'Brightness', 'Darkness', 'Woodgrain', 'Bark', 'Bricks', 'Checker', 'Concrete', 'Crustytile', 'Cutstone', 'Discs', 'Gravel', 'Petridish', 'Siding', 'Stonetile', 'Stucco', 'Suction', 'Weave']
+const bumpLabel = computed(() => BUMP_LABELS[obj.value?.defaultBump ?? 0] ?? 'None')
+// Prim material code (mcode) — drives physics friction/restitution + collision sound.
+const MATERIAL_LABELS = ['Stone', 'Metal', 'Glass', 'Wood', 'Flesh', 'Plastic', 'Rubber', 'Light']
+const materialLabel = computed(() => MATERIAL_LABELS[obj.value?.material ?? 0] ?? '—')
+// Flexible-path params (ExtraParam 0x10) — null when the prim isn't flexi.
+const flexiLabel = computed(() => {
+	const f = obj.value?.flexi
+	if (!f) return null
+	return `softness ${f.softness} · tension ${f.tension.toFixed(1)} · gravity ${f.gravity.toFixed(1)} · drag ${f.drag.toFixed(1)} · wind ${f.wind.toFixed(1)}`
+})
+// Light params (ExtraParam 0x20) — null when the prim isn't a light source.
+const lightRgb = computed(() => (obj.value?.light?.color ?? [1, 1, 1]).map(v => Math.round(v * 255)).join(', '))
+// Reflection-probe params (ExtraParam 0x90) — null when the prim isn't a probe.
+const reflectionProbeLabel = computed(() => {
+	const r = obj.value?.reflectionProbe
+	if (!r) return null
+	const kind = [r.isBox ? 'box' : 'sphere', r.isDynamic ? 'dynamic' : null, r.isMirror ? 'mirror' : null].filter(Boolean).join(', ')
+	return `${kind} · ambiance ${r.ambiance.toFixed(1)} · clip ${r.clipDistance.toFixed(1)}m`
+})
 
 // PBR
 const distinctPbr = computed(() => {
@@ -721,25 +742,31 @@ function close() {
 
 				<!-- Features ────────────────────────────────────────────── -->
 				<!-- WHY: FS-parity LLPanelVolume layout — Flexible Path, Light, Reflection Probe and
-					Physics. None of these are carried in the ObjectUpdate we decode today, so each
-					section shows its FS structure with a "not decoded" note instead of the misplaced
-					prim-shape params that used to live here (those now sit on the Object tab). -->
+					Physics. Material (mcode), Flexi (0x10), Light (0x20) and Reflection Probe (0x90)
+					are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the Phase 3
+					ObjectPhysicsProperties work, so it still shows "not decoded". -->
 				<template v-else-if="activeTab === 'features'">
 					<div class="grid grid-cols-[8rem,1fr] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-fg/50">Flexible Path</div>
-						<div class="text-fg/40 italic">not decoded</div>
+						<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
+						<div v-else class="text-fg/40 italic">Off</div>
 						<div class="text-fg/50">Light</div>
-						<div class="text-fg/40 italic">not decoded</div>
+						<div v-if="obj.light" class="flex items-center gap-2 text-fg text-2xs">
+							<span class="w-4 h-4 shrink-0 rounded-sm border border-edge" :style="{ background: `rgb(${lightRgb})` }"></span>
+							<span>intensity {{ obj.light.intensity.toFixed(2) }} · radius {{ obj.light.radius.toFixed(1) }}m · falloff {{ obj.light.falloff.toFixed(1) }}</span>
+						</div>
+						<div v-else class="text-fg/40 italic">Off</div>
 						<div class="text-fg/50">Reflection Probe</div>
-						<div class="text-fg/40 italic">not decoded</div>
+						<div v-if="reflectionProbeLabel" class="text-fg text-2xs">{{ reflectionProbeLabel }}</div>
+						<div v-else class="text-fg/40 italic">Off</div>
 						<div class="text-fg/50">Physics Shape</div>
 						<div class="text-fg/40 italic">not decoded</div>
 						<div class="text-fg/50">Material (physics)</div>
-						<div class="text-fg/40 italic">not decoded</div>
+						<div class="text-fg">{{ materialLabel }}</div>
 					</div>
 					<div class="text-2xs text-fg/30 italic pt-1">
-						Flexi / light / physics flags aren't carried in the object update we decode yet —
-						they arrive with the Phase 3 ExtraParams + physics-flags work.
+						Physics-shape type isn't carried in the object update — it arrives in a separate
+						ObjectPhysicsProperties packet (Phase 3 physics-flags work).
 					</div>
 				</template>
 
@@ -824,7 +851,7 @@ function close() {
 							<div class="text-fg/50 self-center">Mask cutoff</div>
 							<div class="text-fg">to-do</div>
 							<div class="text-fg/50 self-center">Bumpiness</div>
-							<div class="text-fg">to-do</div>
+							<div class="text-fg">{{ bumpLabel }}</div>
 							<div class="text-fg/50 self-center">Shininess</div>
 							<div class="text-fg">{{ shinyLabel }}</div>
 							<div class="text-fg/50 self-center">Glossiness</div>

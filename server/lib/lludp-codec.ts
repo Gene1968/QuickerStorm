@@ -857,6 +857,7 @@ interface TEFields {
   defaultGlow?:      number            // 0..1 (TE field 10)
   defaultShiny?:     number            // 0..3 (bump byte bits 7:6)
   defaultFullbright?: boolean          // bump byte bit 5
+  defaultBump?:      number            // 0..31 (bump byte bits 4:0) — legacy bumpmap type
   defaultMaterialId?: string           // TE field 11 — legacy LLMaterial UUID (omitted if null)
   defaultTexGen?:    number            // TexGen mapping mode: 0=default, 1=planar (MediaFlags bits 1:2)
   faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
@@ -867,6 +868,20 @@ interface TEFields {
 // expressed per-half-meter, i.e. FS displays them ×2). Bit 0 is the media-present flag (ignored here).
 export function texGenFromMediaByte(b: number): number {
   return (b >> 1) & 0x03
+}
+
+// The TE "bump" byte (field 8) packs the legacy bumpmap type in bits 0-4 (TEM_BUMP_MASK 0x1f),
+// fullbright in bit 5, and shininess in bits 6-7. bumpFromTEByte returns just the 5-bit bumpmap
+// type (0=None,1=Brightness,2=Darkness,3=Woodgrain,…17=Weave) — shiny/fullbright are read elsewhere.
+export function bumpFromTEByte(b: number): number {
+  return b & 0x1f
+}
+
+// The ObjectData material byte carries the prim material code (mcode) in its low 4 bits
+// (LL_MCODE_MASK 0x0f): 0=Stone,1=Metal,2=Glass,3=Wood,4=Flesh,5=Plastic,6=Rubber,7=Light.
+// High bits are flags we don't surface.
+export function mcodeFromMaterialByte(b: number): number {
+  return b & 0x0f
 }
 
 // Read one TextureEntry field: a default value, then [faceBitfield + value]* overrides, then the
@@ -954,6 +969,7 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     res.defaultGlow       = glow.def
     res.defaultShiny      = (bump.def >> 6) & 0x03
     res.defaultFullbright = ((bump.def >> 5) & 0x01) === 1
+    res.defaultBump       = bumpFromTEByte(bump.def)
     res.defaultTexGen     = texGenFromMediaByte(media.def)
     if (media.faces) {
       const ft = media.faces.map(m => (m == null ? null : texGenFromMediaByte(m)))
@@ -1019,6 +1035,75 @@ export function parseSculptExtraParam(buf: Buffer, start: number, len: number): 
   return { uuid: bytesToUuid(buf, start), sculptType: buf[start + 16] }
 }
 
+export interface FlexiData {
+  softness: number               // 0..3
+  tension:  number               // 0..10
+  drag:     number               // 0..10
+  gravity:  number               // -10..10
+  wind:     number               // 0..10
+  force:    [number, number, number]   // LLVector3 constant force
+}
+
+// ExtraParam type 0x10 (Flexible / LLFlexibleObjectData), 16 bytes. Layout per libomv
+// FlexibleData.FromBytes: softness is split across the top bits of the tension and drag bytes;
+// gravity is offset-encoded ((byte/10)-10); force is a 3×f32le LLVector3.
+export function parseFlexiExtraParam(buf: Buffer, start: number, len: number): FlexiData | null {
+  if (len < 16 || start + 16 > buf.length) return null
+  const b0 = buf[start], b1 = buf[start + 1]
+  return {
+    softness: ((b0 & 0x80) >> 6) | ((b1 & 0x80) >> 7),
+    tension:  (b0 & 0x7f) / 10,
+    drag:     (b1 & 0x7f) / 10,
+    gravity:  buf[start + 2] / 10 - 10,
+    wind:     buf[start + 3] / 10,
+    force:    [buf.readFloatLE(start + 4), buf.readFloatLE(start + 8), buf.readFloatLE(start + 12)],
+  }
+}
+
+export interface LightData {
+  color:     [number, number, number]   // RGB 0..1
+  intensity: number                      // 0..1 (carried in the wire alpha channel)
+  radius:    number                      // metres
+  cutoff:    number
+  falloff:   number
+}
+
+// ExtraParam type 0x20 (Light / LLLightParams), 16 bytes. Layout per libomv LightData.FromBytes:
+// RGBA bytes (the A channel carries intensity, not opacity) then radius/cutoff/falloff as 3×f32le.
+export function parseLightExtraParam(buf: Buffer, start: number, len: number): LightData | null {
+  if (len < 16 || start + 16 > buf.length) return null
+  return {
+    color:     [buf[start] / 255, buf[start + 1] / 255, buf[start + 2] / 255],
+    intensity: buf[start + 3] / 255,
+    radius:    buf.readFloatLE(start + 4),
+    cutoff:    buf.readFloatLE(start + 8),
+    falloff:   buf.readFloatLE(start + 12),
+  }
+}
+
+export interface ReflectionProbeData {
+  ambiance:     number    // 0..100
+  clipDistance: number    // 0..1024 metres
+  isBox:        boolean    // box (vs sphere) influence volume
+  isDynamic:    boolean    // renders dynamic objects (avatars) into the probe
+  isMirror:     boolean    // realtime-mirror probe
+}
+
+// ExtraParam type 0x90 (Reflection Probe / LLReflectionProbeParams), 9 bytes. Layout per FS
+// LLReflectionProbeParams::unpack: F32 ambiance, F32 clip_distance, U8 flags
+// (bit0=box volume, bit1=dynamic, bit2=mirror).
+export function parseReflectionProbeExtraParam(buf: Buffer, start: number, len: number): ReflectionProbeData | null {
+  if (len < 9 || start + 9 > buf.length) return null
+  const flags = buf[start + 8]
+  return {
+    ambiance:     buf.readFloatLE(start),
+    clipDistance: buf.readFloatLE(start + 4),
+    isBox:        (flags & 0x01) !== 0,
+    isDynamic:    (flags & 0x02) !== 0,
+    isMirror:     (flags & 0x04) !== 0,
+  }
+}
+
 export interface PrimShape {
   pathCurve:        number  // U8 — 16=line/box, 32=circle, 33=half-circle (sphere top), etc.
   profileCurve:     number  // U8 — low nibble: 0=circle, 1=square, 2=isoTri, 3=eqTri, 4=rightTri, 5=halfCircle
@@ -1064,6 +1149,7 @@ export interface ObjectData {
   defaultGlow?:      number             // TE glow 0..1
   defaultShiny?:     number             // TE shiny 0..3
   defaultFullbright?: boolean           // TE fullbright
+  defaultBump?:      number             // TE legacy bumpmap type 0..17 (omitted when 0=None)
   defaultTexGen?:    number             // TE TexGen mapping mode: 0=default, 1=planar
   faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
   defaultMaterialId?: string            // TE legacy LLMaterial UUID (RenderMaterials cap)
@@ -1080,6 +1166,10 @@ export interface ObjectData {
   temporary?:    boolean  // PrimFlags bit 0x2000 — auto-delete on rez
   handleTouch?:  boolean  // PrimFlags bit 0x80 — object has a touch event handler script
   clickAction?:  number   // U8: 0=Touch,1=Sit,2=Buy,3=Pay,4=Open,5=PlayAnim,6=Zoom,7=Disabled
+  material?:     number   // prim material code (mcode): 0=Stone,1=Metal,2=Glass,3=Wood,4=Flesh,5=Plastic,6=Rubber,7=Light (omitted when 0=Stone)
+  flexi?:        FlexiData   // Flexible-path params (ExtraParam 0x10) — present only on flexi prims
+  light?:        LightData   // point-light params (ExtraParam 0x20) — present only on light-emitting prims
+  reflectionProbe?: ReflectionProbeData   // reflection-probe params (ExtraParam 0x90) — present only on probe prims
 }
 
 /**
@@ -1116,7 +1206,7 @@ export function decodeObjectUpdateCompressed(
       const pcode    = buf[off++]
       off += 1   // state
       const crc = buf.readUInt32LE(off); off += 4   // PseudoCRC (was skipped)
-      off += 1                        // material (not stored)
+      const material = mcodeFromMaterialByte(buf[off++])  // prim material code (mcode)
       const clickAction = buf[off++]  // ClickAction U8
       const sx = buf.readFloatLE(off);     off += 4
       const sy = buf.readFloatLE(off);     off += 4
@@ -1149,6 +1239,9 @@ export function decodeObjectUpdateCompressed(
       let meshId: string | undefined
       let sculptId: string | undefined
       let sculptType: number | undefined
+      let flexi: FlexiData | undefined
+      let light: LightData | undefined
+      let reflectionProbe: ReflectionProbeData | undefined
       let text = ''
       let textColor: [number, number, number, number] | undefined
       let psys: ParticleSys | undefined
@@ -1195,6 +1288,9 @@ export function decodeObjectUpdateCompressed(
                 const sc = parseSculptExtraParam(buf, off, epSize)
                 if (sc) { sculptType = sc.sculptType; const t = sc.sculptType & 0x07; if (t === 5) meshId = sc.uuid; else if (t >= 1 && t <= 4) sculptId = sc.uuid }
               }
+              else if (epType === 0x10 && off + epSize <= dataEnd) flexi = parseFlexiExtraParam(buf, off, epSize) ?? undefined
+              else if (epType === 0x20 && off + epSize <= dataEnd) light = parseLightExtraParam(buf, off, epSize) ?? undefined
+              else if (epType === 0x90 && off + epSize <= dataEnd) reflectionProbe = parseReflectionProbeExtraParam(buf, off, epSize) ?? undefined
               off += epSize
             }
           }
@@ -1277,6 +1373,7 @@ export function decodeObjectUpdateCompressed(
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultBump ? { defaultBump: te.defaultBump } : {}),
         ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
         ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
@@ -1293,6 +1390,10 @@ export function decodeObjectUpdateCompressed(
         ...((cUpdateFlags & 0x2000) ? { temporary: true } : {}),
         ...((cUpdateFlags & 0x80)   ? { handleTouch: true } : {}),
         ...(clickAction !== 0 ? { clickAction } : {}),
+        ...(material ? { material } : {}),
+        ...(flexi ? { flexi } : {}),
+        ...(light ? { light } : {}),
+        ...(reflectionProbe ? { reflectionProbe } : {}),
       })
     } catch (e) {
       onError?.(`compressedObj[${i}/${count}] failOff=${off}: ${(e as Error).message}`)
@@ -1362,7 +1463,7 @@ export function decodeObjectUpdate(
         }
         break
       }
-      off += 1                        // material (not stored)
+      const material = mcodeFromMaterialByte(buf[off++])  // prim material code (mcode)
       const clickAction = buf[off++]  // ClickAction U8
       const sx = buf.readFloatLE(off); off += 4  // Scale
       const sy = buf.readFloatLE(off); off += 4
@@ -1484,6 +1585,9 @@ export function decodeObjectUpdate(
       let meshId: string | undefined
       let sculptId: string | undefined
       let sculptType: number | undefined
+      let flexi: FlexiData | undefined
+      let light: LightData | undefined
+      let reflectionProbe: ReflectionProbeData | undefined
       // WHY: unified onto the generic parser shared with the compressed path so the full
       // update gets full UV transform (repeats/offset/rotation, default + per-face), glow,
       // shiny, fullbright, material_id — not just textures + colors. Bounded to [off, _teEnd]
@@ -1584,6 +1688,9 @@ export function decodeObjectUpdate(
                 const sc = parseSculptExtraParam(buf, q, sz)
                 if (sc) { sculptType = sc.sculptType; const t = sc.sculptType & 0x07; if (t === 5) meshId = sc.uuid; else if (t >= 1 && t <= 4) sculptId = sc.uuid }
               }
+              else if (t === 0x10 && q + sz <= epEnd) flexi = parseFlexiExtraParam(buf, q, sz) ?? undefined
+              else if (t === 0x20 && q + sz <= epEnd) light = parseLightExtraParam(buf, q, sz) ?? undefined
+              else if (t === 0x90 && q + sz <= epEnd) reflectionProbe = parseReflectionProbeExtraParam(buf, q, sz) ?? undefined
               q += sz
             }
           }
@@ -1620,6 +1727,7 @@ export function decodeObjectUpdate(
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
+        ...(te.defaultBump ? { defaultBump: te.defaultBump } : {}),
         ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
         ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
@@ -1635,6 +1743,10 @@ export function decodeObjectUpdate(
         ...((updateFlags & 0x2000) ? { temporary: true } : {}),
         ...((updateFlags & 0x80)   ? { handleTouch: true } : {}),
         ...(clickAction !== 0 ? { clickAction } : {}),
+        ...(material ? { material } : {}),
+        ...(flexi ? { flexi } : {}),
+        ...(light ? { light } : {}),
+        ...(reflectionProbe ? { reflectionProbe } : {}),
       })
       // WHY: A tail OOB means `off` is no longer aligned to the next object's start.
       // Subsequent objects in this packet can't be safely decoded — break out cleanly so
