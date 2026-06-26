@@ -4,7 +4,7 @@
 // including the ones whose hand-written message-id was buggy (only the prefix differs there).
 // Six hand-written encoders had latent bugs the template corrects; each is asserted explicitly.
 import { describe, it, expect } from 'bun:test'
-import { encode } from './codec.ts'
+import { encode, decode } from './codec.ts'
 import * as hand from '../lludp-codec.ts'
 
 const A = '11111111-1111-1111-1111-111111111111'
@@ -195,5 +195,32 @@ describe('encoders now emit template-correct (formerly buggy) message ids', () =
 	it('ImprovedInstantMessage → Low 254 with required EstateBlock + MetaData (old encoder omitted them)', () => {
 		const buf = hand.encodeImprovedInstantMessage({ agentId: A, sessionId: S, seq, toAgentId: U, fromAgentName: 'Me', message: 'hi', dialog: 0 })
 		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x00, 0xFE]) // 254
+	})
+})
+
+// New object-edit sends wired on top of the codec (rename / describe / delete). Verify correct
+// message id and that they decode back to the expected fields.
+describe('object-edit encoders', () => {
+	it('ObjectName → Low 107, round-trips localId + name', () => {
+		const buf = hand.encodeObjectName({ agentId: A, sessionId: S, seq, localId: 4242, name: 'Bench' })
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x00, 0x6B]) // 107
+		const m = decode(buf)
+		expect(m.name).toBe('ObjectName')
+		expect(m.blocks.ObjectData[0].LocalID).toBe(4242)
+		expect((m.blocks.ObjectData[0].Name as Buffer).toString('utf8').replace(/\0/g, '')).toBe('Bench')
+	})
+	it('ObjectDescription → Low 108, round-trips localId + description', () => {
+		const buf = hand.encodeObjectDescription({ agentId: A, sessionId: S, seq, localId: 7, description: 'a seat' })
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x00, 0x6C]) // 108
+		const m = decode(buf)
+		expect(m.blocks.ObjectData[0].LocalID).toBe(7)
+		expect((m.blocks.ObjectData[0].Description as Buffer).toString('utf8').replace(/\0/g, '')).toBe('a seat')
+	})
+	it('ObjectDelete → Low 89, Force=false, round-trips localId', () => {
+		const buf = hand.encodeObjectDelete({ agentId: A, sessionId: S, seq, localId: 99 })
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x00, 0x59]) // 89
+		const m = decode(buf)
+		expect(m.blocks.AgentData[0].Force).toBe(false)
+		expect(m.blocks.ObjectData[0].ObjectLocalID).toBe(99)
 	})
 })

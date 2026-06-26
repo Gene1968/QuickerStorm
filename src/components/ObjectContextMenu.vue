@@ -6,10 +6,11 @@ import { useLLUDP }      from '@/composables/useLLUDP'
 
 const ui    = useUiStore()
 const world = useWorldStore()
-const { sendTouch, sendSit } = useLLUDP()
+const { sendTouch, sendSit, sendDelete } = useLLUDP()
 
 const menu = computed(() => ui.objectMenu)
 const showInspect = ref(false)
+const confirmDelete = ref(false)
 
 const style = computed(() => {
 	if (!menu.value) return {}
@@ -20,7 +21,16 @@ const style = computed(() => {
 	return { left: `${x}px`, top: `${y}px` }
 })
 
-function close() { ui.closeObjectMenu(); showInspect.value = false }
+function close() { ui.closeObjectMenu(); showInspect.value = false; confirmDelete.value = false }
+
+// Two-step delete: first click arms (button turns red "Confirm?"), second click sends ObjectDelete.
+// Avoids a native confirm() dialog. The sim enforces permissions, so an unowned object is a no-op.
+function del() {
+	if (!menu.value) return
+	if (!confirmDelete.value) { confirmDelete.value = true; return }
+	sendDelete(menu.value.localId)
+	close()
+}
 
 function touch() {
 	if (!menu.value) return
@@ -91,6 +101,10 @@ onUnmounted(() => {
 		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take (to do)</button>
 		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take Copy (to do)</button>
 		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Buy (to do)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Delete (to do) enable if mine or perms</button>
+		<button
+			class="block w-full text-left px-3 py-1.5 hover:bg-white/10"
+			:class="confirmDelete ? 'text-red-400 font-medium' : ''"
+			@click="del"
+		>{{ confirmDelete ? 'Confirm Delete?' : 'Delete' }}</button>
 	</div>
 </template>

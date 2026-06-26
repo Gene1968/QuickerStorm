@@ -518,6 +518,38 @@ export function encodeObjectDeGrab(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+/** ObjectName (Low 107) — rename an object. Name is Variable1 (null-terminated per SL convention).
+ *  Sim replies with ObjectProperties carrying the new name. */
+export function encodeObjectName(p: {
+  agentId: string; sessionId: string; seq: number; localId: number; name: string
+}): Buffer {
+  return encode('ObjectName', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: [{ LocalID: p.localId, Name: Buffer.from((p.name || '') + '\0', 'utf8') }],
+  }, { seq: p.seq, reliable: true })
+}
+
+/** ObjectDescription (Low 108) — set an object's description (Variable1, null-terminated). */
+export function encodeObjectDescription(p: {
+  agentId: string; sessionId: string; seq: number; localId: number; description: string
+}): Buffer {
+  return encode('ObjectDescription', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: [{ LocalID: p.localId, Description: Buffer.from((p.description || '') + '\0', 'utf8') }],
+  }, { seq: p.seq, reliable: true })
+}
+
+/** ObjectDelete (Low 89) — delete an object (sim routes to Trash). Force=false = normal owner delete
+ *  (Force=true is the god/estate path). The sim enforces permissions regardless. */
+export function encodeObjectDelete(p: {
+  agentId: string; sessionId: string; seq: number; localId: number
+}): Buffer {
+  return encode('ObjectDelete', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Force: false },
+    ObjectData: [{ ObjectLocalID: p.localId }],
+  }, { seq: p.seq, reliable: true })
+}
+
 // ── AgentRequestSit (Low #122) — claim a target prim as the sit target ───
 // Followed by AgentSit (Low #123) which actually sits. Sim broadcasts the result via
 // ObjectUpdate carrying the avatar's new parent + offset. Phase 2: send both immediately.

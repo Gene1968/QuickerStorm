@@ -53,6 +53,18 @@ export function useLLUDP() {
 		emit(C.OBJECT_DESELECT, { localIds: ids })
 	}
 
+	function sendRename(localId, name) {
+		emit(C.OBJECT_RENAME, { localId, name })
+	}
+
+	function sendDescription(localId, description) {
+		emit(C.OBJECT_SET_DESC, { localId, description })
+	}
+
+	function sendDelete(localId) {
+		emit(C.OBJECT_DELETE, { localId })
+	}
+
 	function sendSetAlwaysRun(alwaysRun) {
 		emit(C.SET_ALWAYS_RUN, { alwaysRun: !!alwaysRun })
 	}
@@ -69,5 +81,5 @@ export function useLLUDP() {
 		emit(C.MAP_TELEPORT, { regionX, regionY, x, y, z })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendRename, sendDescription, sendDelete, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
 }

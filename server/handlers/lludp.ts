@@ -18,6 +18,7 @@ import {
 	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
+	encodeObjectName, encodeObjectDescription, encodeObjectDelete,
 	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
 	encodeSetAlwaysRun,
 	encodeMapBlockRequest, encodeMapNameRequest, decodeMapBlockReply,
@@ -1406,6 +1407,36 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seqB, sit)
 		session.udpSocket.send(sit, session.simPort, session.simIp)
 		slog.info(session.ws, `→ AgentRequestSit+AgentSit target=${d.targetId.slice(0,8)}…`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_RENAME) {
+		const d = msg.d as { localId: number; name: string }
+		const seq = nextSeq(session)
+		const pkt = encodeObjectName({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId, name: d.name })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectName localId=${d.localId} name="${d.name}"`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_SET_DESC) {
+		const d = msg.d as { localId: number; description: string }
+		const seq = nextSeq(session)
+		const pkt = encodeObjectDescription({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId, description: d.description })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectDescription localId=${d.localId}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_DELETE) {
+		const d = msg.d as { localId: number }
+		const seq = nextSeq(session)
+		const pkt = encodeObjectDelete({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectDelete localId=${d.localId}`)
 		return
 	}
 

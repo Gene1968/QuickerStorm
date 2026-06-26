@@ -5,6 +5,7 @@ import { useWorldStore } from '@/stores/worldStore'
 import { getTextureUrl } from '@/composables/useTextureFetch.js'
 import { setObjectAlphaMode } from '@/composables/useWorldEngine.js'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
+import { useLLUDP } from '@/composables/useLLUDP'
 import { C } from '@shared/protocol.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
@@ -41,6 +42,37 @@ const gizmoOps = [
 	{ id: 'scale',  label: 'Stretch', hint: 'Scale handles (Ctrl+Shift)' },
 ]
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
+
+// ── Editable Name / Description (General tab) → ObjectName (107) / ObjectDescription (108) ──
+const { sendRename, sendDescription } = useLLUDP()
+const editName = ref('')
+const editDesc = ref('')
+// Reseed editable fields whenever the selected object — or its sim-provided name/desc — changes,
+// so a fresh ObjectProperties reply (or selecting another prim) isn't clobbered by a stale value.
+watch(() => [ui.editObjectId, obj.value?.name, obj.value?.description], () => {
+	editName.value = obj.value?.name ?? ''
+	editDesc.value = obj.value?.description ?? ''
+}, { immediate: true })
+// Owner Modify bit (1<<13). If perms aren't known yet, allow — the sim is the authority and rejects
+// edits we're not permitted to make.
+const canModify = computed(() => obj.value?.ownerMask == null || !!(obj.value.ownerMask & (1 << 13)))
+function commitName() {
+	const o = obj.value
+	if (!o) return
+	const v = editName.value.trim()
+	if (v && v !== o.name) sendRename(o.localId, v)
+}
+function commitDesc() {
+	const o = obj.value
+	if (!o) return
+	if (editDesc.value !== (o.description ?? '')) sendDescription(o.localId, editDesc.value)
+}
+// FS-feel: select the whole field on focus and after Enter so it's ready to retype.
+function selectAll(e) { e?.target?.select?.() }
+function onEnter(commit, e) { commit(); e?.target?.select?.() }
+// Commit on blur ONLY for in-app focus moves (Tab, clicking another field/the scene). Skip when the
+// whole window lost focus (e.g. alt-tabbing to Firestorm) — FS doesn't re-send on deactivation.
+function onBlur(commit) { if (document.hasFocus()) commit() }
 
 // Alpha-mode override (#17b): live render lever, local-only (NOT sent to the sim — the legacy TE
 // has no alpha-mode field; the real one lives in RenderMaterials, #16). '' = auto: blend when the
@@ -576,9 +608,9 @@ function close() {
 				<template v-if="activeTab === 'general'">
 					<div class="grid grid-cols-[4.5rem_auto] gap-x-2 gap-y-1.5 text-xs">
 						<div class="text-fg/50 text-end" title="63 chars, ASCII-7 + pipe.">Name:</div>
-						<input :value="obj.name || '(Object)'" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
+						<input v-model="editName" :readonly="!canModify" maxlength="63" :title="canModify ? 'Enter or Tab to apply (ObjectName)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitName, $event)" @blur="onBlur(commitName)" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
 						<div class="text-fg/50 text-end" title="127 chars. May get used in hover tips or scripting">Description:</div>
-						<input :value="obj.description || ''" readonly placeholder="—" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" />
+						<input v-model="editDesc" :readonly="!canModify" maxlength="127" placeholder="—" :title="canModify ? 'Enter or Tab to apply (ObjectDescription)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitDesc, $event)" @blur="onBlur(commitDesc)" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
 						<div class="text-fg/50 text-end">UUID:</div>
 						<input :value="obj.fullId" readonly class="px-1.5 py-0.5 text-fg font-mono text-2xs" />
 						<div class="text-fg/50 text-end">Type:</div>
