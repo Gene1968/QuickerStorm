@@ -3,6 +3,10 @@ import * as dgram from 'dgram'
 import * as fs from 'fs'
 import { getSession, deleteSession } from '../state/sessions'
 import type { CircuitState } from '../state/sessions'
+// Generic template-driven codec: messageName() routes new inbound messages by name; decode()
+// (same module) walks any message's fields by name — pass { alreadyExpanded: true } since the
+// dispatcher pre-expands the body. Import decode where a new-message case actually uses it.
+import { messageName } from '../lib/protocol/codec.ts'
 import {
 	parseHeader, parseMsgType,
 	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
@@ -1105,11 +1109,21 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	// ── Generic front-door for NEW inbound (sim→viewer) messages ─────────────────────────────
+	// The branches above are the existing hand-tuned decoders, kept as-is. To handle a NEW message
+	// there is no offset math: the generic codec walks the template by field name. `buf` is already
+	// ack-stripped + zero-decoded here, so pass { alreadyExpanded: true }. Example:
+	//   if (name === 'SomeNewMessage') {
+	//     const m = decode(buf, { alreadyExpanded: true })
+	//     session.ws.send(JSON.stringify({ t: S.SOMETHING, d: { x: m.blocks.SomeBlock[0].SomeField } }))
+	//     return
+	//   }
+	const name = messageName(buf)
+
 	// WHY: Log each unknown packet type once so we can detect unhandled messages.
-	// Handled: high:1,11,12,14,15,16 med:6 low:64,69,139,148,152,250 fixed:251.
 	if (!session.loggedTypes.has(type)) {
 		session.loggedTypes.add(type)
-		slog.info(session.ws, `[UDP] first-seen unhandled type=${type} size=${rawBuf.length}b`)
+		slog.info(session.ws, `[UDP] first-seen unhandled type=${type}${name ? ` (${name})` : ''} size=${rawBuf.length}b`)
 	}
 
 	// Flush any pending acks after processing

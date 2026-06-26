@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test'
-import { encode, decode } from './codec.ts'
-import { parseHeader } from '../lludp-codec.ts'
+import { encode, decode, messageName } from './codec.ts'
+import { parseHeader, decodeZeroCoded } from './wire.ts'
 
 const AGENT = '11111111-1111-1111-1111-111111111111'
 const SESS  = '22222222-2222-2222-2222-222222222222'
@@ -53,5 +53,26 @@ describe('generic codec', () => {
 		const fake = Buffer.from([0x00, 0, 0, 0, 1, 0, 0xFF, 0xFF, 0x7F, 0xFF]) // Low 0x7FFF unused
 		const msg = decode(fake)
 		expect(msg.unknown).toBe(true)
+	})
+
+	it('messageName identifies a packet cheaply without zero-decoding', () => {
+		const buf = encode('SetAlwaysRun', { AgentData: { AgentID: AGENT, SessionID: SESS, AlwaysRun: true } }, { seq: 1, reliable: true })
+		expect(messageName(buf)).toBe('SetAlwaysRun')
+		const fake = Buffer.from([0x00, 0, 0, 0, 1, 0, 0xFF, 0xFF, 0x7F, 0xFF])
+		expect(messageName(fake)).toBeUndefined()
+	})
+
+	it('decode with alreadyExpanded skips the (already-done) zero-decode', () => {
+		// Simulate a dispatcher that expanded the body itself: build a zero-coded packet, then
+		// hand decode a buffer whose body is already expanded but whose header still flags zeroCoded.
+		const zc = encode('AgentThrottle', {
+			AgentData: { AgentID: AGENT, SessionID: SESS, CircuitCode: 999 },
+			Throttle: { GenCounter: 0, Throttles: Buffer.alloc(28) },
+		}, { seq: 3, reliable: true, zeroCoded: true })
+		const hdr = parseHeader(zc)
+		// Expand exactly as the LLUDP dispatcher does (whole body from bodyOffset, id included).
+		const expanded = Buffer.concat([zc.slice(0, hdr.bodyOffset), decodeZeroCoded(zc.slice(hdr.bodyOffset))])
+		const msg = decode(expanded, { alreadyExpanded: true })
+		expect(msg.blocks.AgentData[0].CircuitCode).toBe(999)
 	})
 })

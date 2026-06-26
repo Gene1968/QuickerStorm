@@ -45,10 +45,11 @@ export function encode(name: string, blocks: BlocksInput, opts: EncodeOpts): Buf
 		for (const inst of insts) for (const f of block.fields) off = writeField(body, off, f, inst[f.name])
 	}
 
-	// Zero-coding (opt-in): applies to body AFTER the id bytes per LLUDP; id bytes stay raw.
+	// Zero-coding (opt-in): per LLUDP the message id IS part of the zero-coded body, so we code
+	// id+fields as one unit. (decode reverses this by expanding before reading the id.)
 	const zc = !!opts.zeroCoded
 	const payload = zc
-		? Buffer.concat([def.idBytes, encodeZeroCoded(body)])
+		? encodeZeroCoded(Buffer.concat([def.idBytes, body]))
 		: Buffer.concat([def.idBytes, body])
 	const hdr = buildHeader({ seq: opts.seq, reliable: !!opts.reliable, hasAcks: !!opts.hasAcks, zeroCoded: zc })
 	return Buffer.concat([hdr, payload])
@@ -76,15 +77,29 @@ function lookup(body: Buffer): { def?: MsgDef; freqId: string; idLen: number } {
 	return { def: proto.byFreqId.get(hex), freqId: hex, idLen: 4 }
 }
 
-export function decode(buf: Buffer): DecodedMsg {
+// Cheap message identification from the id-prefix bytes alone — no zero-decode, no field walk.
+// Use this to route in a dispatcher that has already expanded/ack-stripped the buffer.
+export function messageName(buf: Buffer): string | undefined {
 	const hdr = parseHeader(buf)
-	const body = buf.slice(hdr.bodyOffset)
+	return lookup(buf.slice(hdr.bodyOffset)).def?.name
+}
+
+export interface DecodeOpts {
+	// Set when the caller has ALREADY zero-decoded the body (e.g. the LLUDP dispatcher expands
+	// the body before parsing). Prevents a double zero-decode that would corrupt field data.
+	alreadyExpanded?: boolean
+}
+
+export function decode(buf: Buffer, opts?: DecodeOpts): DecodedMsg {
+	const hdr = parseHeader(buf)
+	// Expand the whole body (id + fields) first when zero-coded, since the message id is part of
+	// the zero-coded unit — unless the caller already expanded it (e.g. the LLUDP dispatcher).
+	const body = (hdr.zeroCoded && !opts?.alreadyExpanded)
+		? decodeZeroCoded(buf.slice(hdr.bodyOffset))
+		: buf.slice(hdr.bodyOffset)
 	const { def, freqId, idLen } = lookup(body)
 	if (!def) return { unknown: true, freqId, blocks: {} }
-
-	// Field data is everything after the id bytes. Zero-decode it if the header flagged it
-	// (only the post-id region is zero-coded; the id bytes themselves never are).
-	const fieldData = hdr.zeroCoded ? decodeZeroCoded(body.slice(idLen)) : body.slice(idLen)
+	const fieldData = body.slice(idLen)
 
 	const out: DecodedMsg = { name: def.name, freqId, blocks: {} }
 	let off = 0
