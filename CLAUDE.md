@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 quickerSTORM — web-based 3D viewer for OpenSimulator and Second Life. Users see their avatar in a Three.js scene, move around, chat, use proximity voice, interact with objects, teleport, and cross regions — without installing a thick client.
 
+## Working Approach (follow by default)
+
+- **Reference-first.** Before writing any LLUDP/protocol/viewer/asset behavior, read the working source and port its structure — don't hand-derive. Sibling checkouts: `../phoenix-firestorm` (primary), `../opensim`, libopenmetaverse. Prefer their data-driven tables (e.g. `server/lib/protocol/message_template.msg`) over hand-coded constants. Don't add a protocol constant without citing the reference.
+- **Framework-first for feature families.** For a family (inventory, object-edit, appearance), build the reusable data-driven system first — validated vs. the reference + tests — then wire features as thin call sites. Model: `server/lib/protocol/` — adding a message is `encode('Name', {...})`, no byte math.
+- **Complete the feature across surfaces.** When you learn what a feature needs, wire every surface it belongs on in the same pass: MenuBar + `ObjectContextMenu`/`AvatarContextMenu`/`LandContextMenu` + `InventoryContextMenu` + the relevant floater. No new disabled "(to do)" control without a dated `docs/FEATURE-GAPS.md` entry.
+- **Batch server edits.** `bun run --watch` hot-restarts on every server save and DROPS the user's circuit. Make all server-side edits in one burst (or stop `--watch`, edit, restart once), tell the user "server settled — reconnect," then do client edits (Vite HMR keeps the circuit). Never interleave server saves with live testing.
+- **Parallel sessions = separate worktrees.** Big rollout and small-gap work run in separate git worktrees on separate `ai/*` branches, partitioned by subsystem. `shared/protocol.js` and `server/lib/lludp-codec.ts` are collision hot-spots — one session owns them at a time. Only ONE session runs Bun (8787) + Vite (5174); the other is code-only or uses alt ports.
+
 ## Commands
 
 ```sh

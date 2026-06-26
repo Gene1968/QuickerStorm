@@ -319,7 +319,8 @@
       "Bash(./node_modules/.bin/vitest run *)",
       "Bash(sort -t/ -k2 -n)",
       "Read(//f//**)",
-      "Read(//c//**)"
+      "Read(//c//**)",
+      "Skill(claude-md-management:revise-claude-md)"
     ]
   }
 }
