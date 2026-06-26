@@ -104,7 +104,8 @@ Always import config as: `import { config } from '@/config/configuration.js'`
 | `server/lib/llsd.ts` | LLSD-XML parser (map/array/all leaf types) for cap responses |
 | `server/lib/xmlrpc.ts` | Login proxy + login-response parse, incl. `parseInventorySkeleton`/`parseInventoryRoot` (folder tree comes free at login) |
 | `server/handlers/lludp.ts` | UDP → WS relay: decodes incoming LLUDP, forwards to browser; receives outgoing messages |
-| `server/lib/lludp-codec.ts` | Wire-format encoders/decoders for every LLUDP message we speak |
+| `server/lib/protocol/` | Template-driven LLUDP codec (the single encoding impl): `template.ts` parses `message_template.msg`, `fields.ts` = wire-type primitives, `codec.ts` = `encode`/`decode`/`messageName`, `wire.ts` = UUID/zero-coding/header. Adding a message is data, not byte math. |
+| `server/lib/lludp-codec.ts` | Outbound encoders (thin adapters over `protocol/codec.ts`) + inbound decoders + opaque-blob parsers (ObjectUpdate/TextureEntry/Compressed/Terse) |
 | `server/lib/terrain-codec.ts` | LayerData terrain patch decoder (libomv BitPack format, prefix-code coefficients) |
 | `server/lib/circuit.ts` | Reliable-ack tracking, retransmit, seq counters |
 | `shared/protocol.js` | Shared `S` (server→client) / `C` (client→server) WS message constants |
