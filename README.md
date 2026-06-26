@@ -11,6 +11,7 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 **Phase 3 ~70% complete.** Full asset pipeline live: server-side J2C→WebP transcode, IndexedDB texture + geometry-bake caches, worker-thread mesh bake. Warm reloads skip all re-fetching. Firestorm-style CRC object cache restores the full scene from disk on reload without re-asking the sim. Inventory browse, friends/contacts, saved accounts, and profile floater wired. Remaining: inventory management, appearance/bake, groups, voice gateway, environment.
 
 **✨ Standouts:**
+- Camera-driven interest streaming: the relay forwards only objects inside a camera-centred volume and streams them in/out as you move, so heavy regions (tested ~24k objects on Aspen) hold a bounded working set — the browser tab stays around ~10% heap instead of OOMing on the full region
 - Session resumes on network blip (15-second circuit hold); clean logout that actually works
 - Persistent CRC object cache — full scene from IDB on reload, zero sim re-fetch
 - Scenery loading badge gives better insight into redraws as you navigate new areas
@@ -31,6 +32,7 @@ Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
 | Prim geometry + linksets + per-face textures | ✅ ~80% |
 | Mesh geometry (GetMesh, worker bake, IDB cache) | ✅ ~70% |
 | CRC object cache (instant scene reload) | ✅ |
+| Camera-driven interest streaming (bounded heap on heavy regions) | ✅ |
 | Texture + geometry IDB cache | ✅ |
 | Cross-region teleport | ✅ |
 | Map 2D | 🟡 ~80% |

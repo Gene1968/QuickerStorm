@@ -64,7 +64,7 @@ onMounted(async () => {
 </script>
 
 <template>
-	<div class="fixed inset-0 overflow-hidden">
+	<div class="fixed inset-0 bg-accent-dark/70 overflow-hidden">
 
 		<!-- ── Full-screen splash ─────────────────────────────────────────── -->
 		<iframe
