@@ -39,6 +39,26 @@ const REQUESTED_CAPS = [
 	'RebakeAvatarTextures',
 	'AgentPreferences',
 	'UpdateAgentInformation',
+	// Broader roadmap set (inventory mgmt, object interaction, profile, region, appearance).
+	// Requesting is free — OpenSim omits caps it doesn't implement (→ cap_unavailable, handled gracefully).
+	'AgentProfile',
+	'CopyInventoryFromNotecard',
+	'CreateInventoryCategory',
+	'GetDisplayNames',
+	'GetObjectCost',
+	'GetObjectPhysicsData',
+	'IncrementCOFVersion',
+	'InventoryThumbnailUpload',
+	'ObjectMedia',
+	'ObjectMediaNavigate',
+	'ParcelPropertiesUpdate',
+	'ParcelVoiceInfoRequest',
+	'RemoteParcelRequest',
+	'RequestTaskInventory',
+	'ResourceCostSelected',
+	'SimulatorFeatures',
+	'UpdateAvatarAppearance',
+	'UserInfo',
 ]
 
 export async function handleLogin(
