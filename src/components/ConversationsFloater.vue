@@ -111,6 +111,10 @@ const activeConv = computed(() => im.conversations.value.get(activeTab.value) ??
 
 watch(() => im.activeId.value, (id) => { if (id) activeTab.value = id })
 
+// WHY: Comm ▸ Friends (MenuBar) requests a tab via ui.chatActiveTab; select it then clear
+// so re-clicking the same menu item re-fires even when the floater is already open.
+watch(() => ui.chatActiveTab, (t) => { if (t) { activeTab.value = t; ui.chatActiveTab = null } }, { immediate: true })
+
 // ── IM conversation action bar (FS-style, atop each IM tab) ────────────────
 const imIsFriend = computed(() => {
 	const c = activeConv.value

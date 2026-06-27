@@ -27,6 +27,9 @@ export const useUiStore = defineStore('ui', () => {
 	const showAvatarList = ref(true)
 	const showMinimap    = ref(true)
 	const showChat       = ref(true)
+	// WHY: Comm ▸ Friends opens Conversations straight to a named vertical tab (e.g. 'contacts').
+	// ConversationsFloater watches this, selects the tab, then clears it so a re-click re-fires.
+	const chatActiveTab  = ref(null)   // null | 'contacts' | 'nearby' | <imAgentId>
 	// WHY: Inventory is multi-instance — array of indices currently open (0..MAX_INVENTORY-1).
 	// showInventory kept as a computed for legacy callers (toolbar/menu active state); they
 	// reflect whether instance #0 is open. Suitcase button inside floater #N opens floater #N+1.
@@ -144,6 +147,8 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleAvatarList()  { showAvatarList.value  = !showAvatarList.value }
 	function toggleMinimap()     { showMinimap.value     = !showMinimap.value }
 	function toggleChat()        { showChat.value        = !showChat.value }
+	// WHY: open Conversations and land on a specific vertical tab (Comm ▸ Friends → 'contacts').
+	function openChatOnTab(tabId) { showChat.value = true; chatActiveTab.value = tabId }
 	function openInventoryAt(idx) {
 		if (idx < 0 || idx >= MAX_INVENTORY) return
 		if (inventoryInstances.value.includes(idx)) return
@@ -331,7 +336,7 @@ export const useUiStore = defineStore('ui', () => {
 	function toggleObjectEdit()      { showObjectEdit.value = !showObjectEdit.value }
 
 	return {
-		mode, showAvatarList, showMinimap, showChat,
+		mode, showAvatarList, showMinimap, showChat, chatActiveTab, openChatOnTab,
 		showInventory, showMap, showNotifications, showSettings, showDebug,
 		showPreferences, showQuickPrefs,
 		showVoiceControls, showMoveControls, showCameraControls,
