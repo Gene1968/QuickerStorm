@@ -274,7 +274,7 @@ async function submitChat() {
 
 				<!-- Contacts (Firestorm-style rights table) ─────────── -->
 				<template v-if="activeTab === 'contacts'">
-					<!-- To do: add tabs here for Friends, Groups and Contact Sets -->
+					<!-- To-do: add tabs here for Friends, Groups and Contact Sets -->
 					<!-- Begin Friends tab -->
 					<div class="flex flex-row">
 						<div class="flex-1 min-w-0">

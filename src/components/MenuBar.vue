@@ -3,8 +3,14 @@
  * MenuBar — Firestorm-style top menu bar with dropdown menus.
  * Sits to the left of LocationBar in WorldView's top row.
  *
- * Menus adapted from FS menu_viewer.xml — only items relevant to
- * a Phase 1 web viewer are enabled; everything else is disabled (greyed).
+ * Structure + ordering mirror FS menu_viewer.xml (Avatar / quickerSTORM / Comm /
+ * World / Build / Help / Advanced — FS's top-level order, minus the Search/RLVa/
+ * Develop menus that don't apply to a web viewer) so the menu is "ahead" of the
+ * feature work: items with working backing today are wired; the rest ship DISABLED
+ * (greyed) as roadmap placeholders — many unlock with the HTTP-caps layer (inventory
+ * mgmt, object take/copy/edit, upload, scripts) currently in progress. See
+ * docs/FEATURE-GAPS.md → "MenuBar roadmap stubs". Rows render via the recursive
+ * <MenuDropdownItem> so FS's 3-level nesting works.
  */
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -15,6 +21,7 @@ import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
 import { useAudio }			from '@/composables/useAudio.js'
 import { useTeleport }		from '@/composables/useTeleport.js'
 import { C }					from '@shared/protocol.js'
+import MenuDropdownItem		from '@/components/MenuDropdownItem.vue'
 
 const ui			= useUiStore()
 const session	= useSessionStore()
@@ -50,7 +57,15 @@ function onKey(e) {
 		rebake()
 		return
 	}
-	// Ctrl+Alt+F1 — Toggle UI visibility (render all floaters/bars off for clean screenshot)
+	// Toggle UI visibility (render all floaters/bars off for clean screenshot). FS binds the
+	// app-level "Show User Interface" toggle to Alt+Shift+U and the render-feature "UI" bit to
+	// Ctrl+Alt+F1 — we have one underlying state, so accept BOTH combos so users who know either
+	// FS shortcut get what they expect.
+	if (e.altKey && e.shiftKey && !e.ctrlKey && (e.key === 'u' || e.key === 'U' || e.code === 'KeyU')) {
+		e.preventDefault()
+		ui.toggleUiVisible()
+		return
+	}
 	if (e.ctrlKey && e.altKey && e.key === 'F1') {
 		e.preventDefault()
 		ui.toggleUiVisible()
@@ -143,30 +158,92 @@ function rebuildScene() {
 }
 
 // ── Menu definitions ──────────────────────────────────────────────────────
-// item: { label, kbd?, action?, disabled?, sep?, submenu?, title? }
-// sep: true → divider. submenu: Item[] → nested dropdown (hover to open, CSS-only).
-// title: native tooltip on hover — use for items whose effect isn't obvious from the label.
+// item: { label, kbd?, action?, disabled?, sep?, submenu?, title?, checked? }
+//   sep: true       → divider
+//   submenu: Item[] → nested flyout (hover to open; renders recursively)
+//   checked: ()=>bool → ✓ in a reserved column when true (toggle/open state)
+//   disabled: true  → greyed roadmap placeholder (no backing yet / needs caps)
+//   title           → native tooltip; use when the effect isn't obvious from the label
+//
+// CONVENTION: an item is enabled ONLY when a real backing exists today (a store
+// toggle, composable, or rendered floater). Everything cap-dependent or unbuilt
+// stays disabled so we never wire a control to nothing.
+//
+// ORDER: top-level menus and their items follow FS menu_viewer.xml ordering, so the
+// muscle memory of FS users carries over. Our own (non-FS) tools lead each menu's
+// enabled cluster where FS has no equivalent (e.g. Advanced ▸ Resync/Rebuild).
 
 const MENUS = [
 	{
 		id: 'avatar', label: 'Avatar',
 		items: [
-			{ label: 'Preferences…',		kbd: 'Ctrl+P',	action: () => act(() => ui.openPreferences()) },
-			{ sep: true },
 			{ label: 'Inventory',							action: () => act(() => ui.toggleInventory()) },
+			{ label: 'New inventory window',	kbd: 'Ctrl+⇧+I',	action: () => act(() => ui.openNextInventory()) },
+			{ label: 'Picks',				disabled: true },
+			{ label: 'Experiences',			disabled: true },
+			{ sep: true },
 			{ label: 'My profile…',							action: () => act(() => ui.openProfile()) },
 			{ sep: true },
 			{ label: 'Now wearing…',						action: () => act(() => ui.openAppearanceOnTab('wearing')) },
 			{ label: 'Outfits',				kbd: 'Ctrl+O',	checked: () => ui.showAppearance && ui.appearanceActiveTab === 'outfits', action: () => act(() => ui.toggleAppearanceOnTab('outfits')) },
-			{ label: 'Move Controls',		checked: () => ui.showMoveControls,		action: () => ui.toggleMoveControls() },
-				{ label: 'Camera Controls',		checked: () => ui.showCameraControls,	action: () => ui.toggleCameraControls() },
+			{
+				label: 'Take Off',
+				submenu: [
+					{
+						label: 'Clothes',
+						submenu: [
+							{ label: 'Shirt',		disabled: true },
+							{ label: 'Pants',		disabled: true },
+							{ label: 'Skirt',		disabled: true },
+							{ label: 'Shoes',		disabled: true },
+							{ label: 'Socks',		disabled: true },
+							{ label: 'Jacket',		disabled: true },
+							{ label: 'Gloves',		disabled: true },
+							{ label: 'Undershirt',	disabled: true },
+							{ label: 'Underpants',	disabled: true },
+							{ label: 'Tattoo',		disabled: true },
+							{ label: 'Physics',		disabled: true },
+							{ label: 'Alpha',		disabled: true },
+							{ sep: true },
+							{ label: 'All clothes',	disabled: true },
+						],
+					},
+					{ label: 'HUD',							disabled: true },
+					{ label: 'Detach all',					disabled: true },
+					{ label: 'Remove selected attachments',	disabled: true },
+				],
+			},
+			{ label: 'Hover height',		disabled: true },
 			{ sep: true },
 			{
-				label: 'Avatar Health',
+				label: 'Movement',
 				submenu: [
-					{ label: 'Force Appearance Update (Rebake)', kbd: 'Ctrl+Alt+R', action: () => act(rebake) },
-					{ label: 'Undeform Avatar',						disabled: true },
+					{ label: 'Sit down',				disabled: true },
+					{ label: 'Stand up',				disabled: true },
+					{ sep: true },
+					{ label: 'Fly',						disabled: true },
+					{ label: 'Stop flying',				disabled: true },
+					{ label: 'Always run',	kbd: 'Ctrl+R',	checked: () => ui.alwaysRun, action: () => ui.toggleAlwaysRun() },
+					{ label: 'Force ground Sit',		disabled: true },
+					{ sep: true },
+					{ label: 'Movelock',				disabled: true },
+					{ label: 'Quickjump',				disabled: true },
+					{ label: 'Face nearest avatar',		disabled: true },
+				],
+			},
+			{ label: 'Move controls',		checked: () => ui.showMoveControls,		action: () => ui.toggleMoveControls() },
+			{ label: 'Camera controls',		checked: () => ui.showCameraControls,	action: () => ui.toggleCameraControls() },
+			{ sep: true },
+			{
+				label: 'Avatar health',
+				submenu: [
+					{ label: 'Force appearance update (Rebake)', kbd: 'Ctrl+Alt+R', action: () => act(rebake) },
+					{ label: 'Stop avatar animations',				disabled: true },
+					{ label: 'Undeform avatar',						disabled: true },
 					{ label: 'Reset skeleton',						disabled: true },
+					{ label: 'Reset skeleton and animations',		disabled: true },
+					{ label: 'Refresh Attachments',					disabled: true },
+					{ sep: true },
 					{ label: 'Show Avatar Complexity Information',	disabled: true },
 					{ label: 'Scripts',								disabled: true },
 					{ label: 'Lag meter',							disabled: true },
@@ -175,91 +252,347 @@ const MENUS = [
 			},
 			{ sep: true },
 			{ label: 'Snapshot…',			disabled: true },
+			{ label: '360° Snapshot',		disabled: true },
+			{ label: 'Money tracker',		disabled: true },
 			{ sep: true },
-			{ label: 'Logout avatar',						action: logout },
+			{ label: 'Preferences…',		kbd: 'Ctrl+P',	action: () => act(() => ui.openPreferences()) },
+			{ label: 'Toolbar buttons',		disabled: true },
+			{ label: 'Show HUD attachments',	disabled: true },
+			{ label: 'Show user interface',	kbd: 'Alt+⇧+U',	checked: () => ui.uiVisible, action: () => act(() => ui.toggleUiVisible()) },
+			{ sep: true },
+			{ label: 'Logout avatar 👋🏽',						action: logout },
+		],
+	},
+	{
+		// quickerSTORM — our brand take on FS's "ShareStorm!" power-tools menu: object
+		// export/import, upload, selected-object ops, and movement extras. Almost all are
+		// cap-/asset-pipeline-dependent so they ship disabled; FS-internal/dangerous items
+		// (godmode, explode, mass-delete region objects, message builder) are intentionally
+		// dropped rather than mirrored.
+		id: 'quickerstorm', label: 'quickerSTORM',
+		items: [
+			{
+				label: 'Save / Export object',
+				submenu: [
+					{ label: 'Export as Collada (DAE)',	disabled: true },
+					{ label: 'Export as GLTF (GLB)…',		disabled: true },
+					{ label: 'Backup object as OXP',		disabled: true },
+					{ sep: true },
+					{ label: 'Export as OBJ',				disabled: true },
+					{ label: 'Export as XML',				disabled: true },
+					{ label: 'Save texture as…',			disabled: true },
+				],
+			},
+			{
+				label: 'Import / Upload',
+				submenu: [
+					{ label: 'Mesh model…',					disabled: true },
+					{ label: 'OXP linkset…',				disabled: true },
+					{ label: 'Import XML',					disabled: true },
+					{ label: 'Import OBJ',					disabled: true },
+					{ sep: true },
+					{ label: 'Image…',						disabled: true },
+					{ label: 'Sound…',						disabled: true },
+					{ label: 'Animation…',					disabled: true },
+					{ label: 'Material (glTF)…',			disabled: true },
+					{ label: 'Wearable…',					disabled: true },
+					{ label: 'Bulk…',						disabled: true },
+					{ sep: true },
+					{ label: 'Import wearables…',			disabled: true },
+				],
+			},
+			{
+				label: 'Import environment',
+				submenu: [
+					{ label: 'Water settings',				disabled: true },
+					{ label: 'Sky settings',				disabled: true },
+					{ label: 'Day cycle settings',			disabled: true },
+				],
+			},
+			{ label: 'Set default permissions…',	disabled: true },
+			{ sep: true },
+			{
+				label: 'Selected objects',
+				submenu: [
+					{ label: 'Buy',							disabled: true },
+					{ label: 'Take',						disabled: true },
+					{ label: 'Take copy',					disabled: true },
+					{ label: 'Delete',						disabled: true },
+					{ label: 'Duplicate',					disabled: true },
+					{ sep: true },
+					{ label: 'Add particles',				disabled: true },
+					{ label: 'Edit particles',				disabled: true },
+					{ sep: true },
+					{ label: 'Save back to object contents',	disabled: true },
+					{ label: 'Save back to inventory',		disabled: true },
+					{ label: 'Return object',				disabled: true },
+				],
+			},
+			{
+				label: 'Movement extras',
+				submenu: [
+					{ label: 'Movelock (Phantom mode)',		disabled: true },
+					{ label: 'Force ground sit',			disabled: true },
+					{ label: 'Phantom',						disabled: true },
+					{ label: 'Teleport to safety (up)',		disabled: true },
+					{ label: 'Teleport to ground level',	disabled: true },
+					{ label: 'DoubleClick to Teleport',		disabled: true },
+					{ label: 'Fly Override',				disabled: true },
+				],
+			},
+			{ sep: true },
+			{ label: 'Sound explorer',			disabled: true },
+			{ label: 'Animation explorer',		disabled: true },
+			{ label: 'Gestures',				disabled: true },
+			{ label: 'Region texture explorer',	disabled: true },
+			{ sep: true },
+			{ label: 'Close window',		kbd: 'Ctrl+W',	action: () => act(() => ui.closeActiveFloater()) },
+			{ label: 'Close all windows',	disabled: true },
 		],
 	},
 	{
 		id: 'comm', label: 'Comm',
 		items: [
-			{ label: 'Conversations',						action: () => act(() => ui.toggleChat()) },
+			{
+				label: 'Online status',
+				submenu: [
+					{ label: 'Away',							disabled: true },
+					{ label: 'Unavailable',						disabled: true },
+					{ label: 'Autorespond',						disabled: true },
+					{ label: 'Autorespond to non-friends',		disabled: true },
+					{ sep: true },
+					{ label: 'Reject teleport offers and requests',	disabled: true },
+					{ label: 'Reject all group invites',			disabled: true },
+					{ label: 'Reject all friendship requests',		disabled: true },
+				],
+			},
 			{ sep: true },
 			{ label: 'Friends',								action: () => act(() => ui.openChatOnTab('contacts')) },
 			{ label: 'Groups',				disabled: true },
-			{ label: 'Contact Sets',		disabled: true },
+			{ label: 'Contact sets',		disabled: true },
+			{ label: 'Conversations',		checked: () => ui.showChat,	action: () => act(() => ui.toggleChat()) },
+			{ label: 'Nearby people',		checked: () => ui.showAvatarList,	action: () => act(() => ui.toggleAvatarList()) },
 			{ sep: true },
-			{ label: 'Nearby Voice',		disabled: true },
-			{ label: 'Block List',			disabled: true },
+			{ label: 'Gestures',			disabled: true },
+			{ sep: true },
+			{ label: 'Flickr…',				disabled: true },
+			{ label: 'Discord…',			disabled: true },
+			{ sep: true },
+			{ label: 'Conversation log…',	disabled: true },
+			{ sep: true },
+			{ label: 'Nearby voice',		disabled: true },
+			{ label: 'Block list',			disabled: true },
+			{ label: 'Notifications',		checked: () => ui.showNotifications,	action: () => act(() => ui.toggleNotifications()) },
+			{ label: 'Show on-screen chat console',	disabled: true },
 		],
 	},
 	{
 		id: 'world', label: 'World',
 		items: [
-			{ label: 'Mini-Map',			kbd: 'Ctrl+⇧+M',			action: () => act(() => ui.toggleMinimap()) },
-			{ label: 'World Map',			kbd: 'Ctrl+M',				action: () => act(() => ui.toggleMap()) },
-			{ label: 'Nearby Avatars',									action: () => act(() => ui.toggleAvatarList()) },
-			{ label: 'Places…',											action: () => act(() => ui.togglePlaces()) },
+			{ label: 'Nearby avatars',							checked: () => ui.showAvatarList,	action: () => act(() => ui.toggleAvatarList()) },
+			{ label: 'Teleport History',	kbd: 'Alt+H',	action: () => act(() => { if (ui.showPlaces) ui.togglePlaces(); else ui.openPlacesOnTab('history') }) },
+			{ label: 'Places…',				checked: () => ui.showPlaces,	action: () => act(() => ui.togglePlaces()) },
+			{ label: 'Destinations',		disabled: true },
+			{ label: 'Events',				disabled: true },
+			{ label: 'Mini-Map',			kbd: 'Ctrl+⇧+M',	checked: () => ui.showMinimap,	action: () => act(() => ui.toggleMinimap()) },
+			{ label: 'World Map',			kbd: 'Ctrl+M',		checked: () => ui.showMap,		action: () => act(() => ui.toggleMap()) },
+			{ label: 'Region tracker',		disabled: true },
+			{ sep: true },
+			{ label: 'Landmark this place',				action: () => act(() => ui.openCreateLandmark({ name: session.regionName })) },
+			{ label: 'Location profile',	disabled: true },
+			{ label: 'Parcel details',		disabled: true },
+			{ label: 'Region details',		disabled: true },
+			{ label: 'Set Home to here',					action: () => act(setHomeHere) },
+			{ sep: true },
+			{ label: 'Buy this land',		disabled: true },
+			{ label: 'Show owned land',		disabled: true },
+			{ sep: true },
+			{
+				label: 'Show more',
+				submenu: [
+					{ label: 'Hide ban lines',			disabled: true },
+					{ label: 'Beacons',					disabled: true },
+					{ label: 'Property lines',			disabled: true },
+					{ label: 'Land owners',				disabled: true },
+					{ label: 'Coordinates',				disabled: true },
+					{ label: 'Parcel permissions',		disabled: true },
+					{ sep: true },
+					{ label: 'Show navigation bar',		disabled: true },
+					{ label: 'Show Favorites bar',		disabled: true },
+				],
+			},
 			{ sep: true },
 			{ label: 'Teleport Home',		kbd: 'Ctrl+⇧+H',	action: () => act(requestHomeTeleport) },
-			{ label: 'Teleport History',	kbd: 'Alt+H',	action: () => act(() => { if (ui.showPlaces) ui.togglePlaces(); else ui.openPlacesOnTab('history') }) },
-			{ label: 'Landmark This Place',				action: () => act(() => ui.openCreateLandmark({ name: session.regionName })) },
-			{ label: 'Set Home to Here',					action: () => act(setHomeHere) },
 			{ sep: true },
-			{ label: 'Region Details',		disabled: true },
-			{ label: 'Parcel Details',		disabled: true },
-			{ label: 'Location Profile',	disabled: true },
+			{
+				label: 'Environment',
+				submenu: [
+					{ label: 'Sunrise',					disabled: true },
+					{ label: 'Midday',					disabled: true },
+					{ label: 'Sunset',					disabled: true },
+					{ label: 'Midnight',				disabled: true },
+					{ label: 'Use shared environment',	disabled: true },
+					{ sep: true },
+					{ label: 'My environments…',		disabled: true },
+					{ label: 'Personal lighting…',		disabled: true },
+					{ label: 'Environment editor',		disabled: true },
+				],
+			},
 			{ sep: true },
-			{ label: 'Area Search',			disabled: true },
-			{ label: 'Environment…',		disabled: true },
+			{ label: 'Area search',			disabled: true },
+			{ label: 'Sound explorer',		disabled: true },
+			{ label: 'Animation explorer',	disabled: true },
+			{ sep: true },
+			{ label: 'Avatar render settings',	disabled: true },
 		],
 	},
 	{
 		id: 'build', label: 'Build',
 		items: [
 			{ label: 'Build',				checked: () => ui.showObjectEdit,	action: () => act(() => ui.toggleObjectEdit()),
-					title: 'Open the Build Tools / object inspector for the selected object' },
-			{ sep: true },
+				title: 'Open the Build Tools / object inspector for the selected object' },
+			{
+				label: 'Select build tool',
+				submenu: [
+					{ label: 'Focus tool',		disabled: true },
+					{ label: 'Move tool',		disabled: true },
+					{ label: 'Edit tool',		disabled: true },
+					{ label: 'Create tool',		disabled: true },
+					{ label: 'Land tool',		disabled: true },
+				],
+			},
 			{ label: 'Link',				disabled: true },
 			{ label: 'Unlink',				disabled: true },
-			{ label: 'Edit Linked',			checked: () => ui.editLinked,		action: () => ui.setEditLinked(!ui.editLinked),
-					title: 'When on, clicking a prim selects that individual part instead of the whole linkset' },
+			{ label: 'Edit linked',			checked: () => ui.editLinked,		action: () => ui.setEditLinked(!ui.editLinked),
+				title: 'When on, clicking a prim selects that individual part instead of the whole linkset' },
+			{
+				label: 'Select Linked Parts',
+				submenu: [
+					{ label: 'Select next part or face',		disabled: true },
+					{ label: 'Select previous part or face',	disabled: true },
+					{ label: 'Include next part or face',		disabled: true },
+					{ label: 'Include previous part or face',	disabled: true },
+				],
+			},
 			{ sep: true },
-			{ label: 'Upload…',				disabled: true },
+			{ label: 'Focus on selection',	disabled: true },
+			{ label: 'Zoom to selection',	disabled: true },
+			{ sep: true },
+			{
+				label: 'Object',
+				submenu: [
+					{ label: 'Buy',							disabled: true },
+					{ label: 'Take',						disabled: true },
+					{ label: 'Take copy',					disabled: true },
+					{ label: 'Duplicate',					disabled: true },
+					{ sep: true },
+					{ label: 'Edit particles',				disabled: true },
+					{ label: 'Return object',				disabled: true },
+					{ sep: true },
+					{
+						label: 'Save as',
+						submenu: [
+							{ label: 'Backup OXP',		disabled: true },
+							{ label: 'Collada DAE',		disabled: true },
+						],
+					},
+				],
+			},
+			{
+				label: 'Scripts',
+				submenu: [
+					{ label: 'Recompile scripts (Mono)',		disabled: true },
+					{ label: 'Recompile scripts (LSL)',			disabled: true },
+					{ label: 'Reset scripts',					disabled: true },
+					{ label: 'Set scripts to running',			disabled: true },
+					{ label: 'Set scripts to not running',		disabled: true },
+					{ label: 'Remove scripts from selection',	disabled: true },
+				],
+			},
+			{ sep: true },
+			{
+				label: 'Upload',
+				submenu: [
+					{ label: 'Image…',			disabled: true },
+					{ label: 'Sound…',			disabled: true },
+					{ label: 'Animation…',		disabled: true },
+					{ label: 'Mesh Model…',		disabled: true },
+					{ label: 'Bulk…',			disabled: true },
+				],
+			},
+			{ sep: true },
 			{ label: 'Undo',				kbd: 'Ctrl+Z',	disabled: true },
 			{ label: 'Redo',				kbd: 'Ctrl+Y',	disabled: true },
 		],
 	},
 	{
-		id: 'advanced', label: 'Advanced',
+		id: 'help', label: 'Help',
 		items: [
-			{ label: 'Resync World',										action: resyncWorld,
-				title: 'Quick: replay the relay server\'s cached world (terrain, objects, position) — fixes missed packets after a reconnect' },
-			{ label: 'Rebuild Scene',										action: rebuildScene,
-				title: 'Thorough: restore memory-evicted objects, rebuild every known mesh, then resync — use when objects are missing (slower)' },
-			{ label: 'Rebake Textures',	kbd: 'Ctrl+Alt+R',	action: () => act(rebake),
-					title: 'Force the sim to rebuild and re-send your avatar bake textures' },
+			{ label: 'Movement & shortcuts', action: () => act(() => { ui.showMovementHelp = true }) },
 			{ sep: true },
-			{ label: '✅ Render UI menus',				kbd: 'Ctrl+Alt+F1',	action: () => act(() => ui.toggleUiVisible()) },
+			{ label: 'quickerSTORM wiki',	disabled: true },
+			{ label: 'Guidebook',			disabled: true },
+			{ label: 'Knowledge base',		disabled: true },
+			{ label: 'Community forums',	disabled: true },
 			{ sep: true },
-			{ label: 'Debug Panel',						kbd: 'Ctrl+⇧+4',	action: () => act(() => ui.toggleDebug()) },
-			{ label: 'Debug Settings',	disabled: true },
+			{ label: 'Report issue',		disabled: true },
+			{ label: 'Report abuse',		disabled: true },
 			{ sep: true },
-			{ label: 'Performance…',						action: () => act(() => ui.openPreferencesOnTab('graphics')) },
-			{ label: 'Rendering Types', disabled: true },
+			{ label: 'Grid help',			disabled: true },
+			{ label: 'About current grid',	disabled: true },
+			{ sep: true },
+			{ label: 'About quickerSTORM',	disabled: true },
 		],
 	},
 	{
-		id: 'help', label: 'Help',
+		id: 'advanced', label: 'Advanced / Dev',
 		items: [
-			{ label: 'Movement & Shortcuts', action: () => act(() => { ui.showMovementHelp = true }) },
+			{ label: 'Resync world',										action: resyncWorld,
+				title: 'Quick: replay the relay server\'s cached world (terrain, objects, position) — fixes missed packets after a reconnect' },
+			{ label: 'Rebuild scene',										action: rebuildScene,
+				title: 'Thorough: restore memory-evicted objects, rebuild every known mesh, then resync — use when objects are missing (slower)' },
+			{ label: 'Rebake textures',	kbd: 'Ctrl+Alt+R',	action: () => act(rebake),
+				title: 'Force the sim to rebuild and re-send your avatar bake textures' },
 			{ sep: true },
-			{ label: 'quickerSTORM Wiki',	disabled: true },
-			{ label: 'Report Issue',		disabled: true },
+			{ label: 'Performance…',						action: () => act(() => ui.openPreferencesOnTab('graphics')) },
+			{ label: 'Quick Preferences',	checked: () => ui.showQuickPrefs,	action: () => ui.toggleQuickPrefs() },
+			{
+				label: 'Rendering Types',
+				submenu: [
+					{ label: 'Simple',		disabled: true },
+					{ label: 'Alpha',		disabled: true },
+					{ label: 'Tree',		disabled: true },
+					{ label: 'Avatars',		disabled: true },
+					{ label: 'Surface patch',	disabled: true },
+					{ label: 'Sky',			disabled: true },
+					{ label: 'Water',		disabled: true },
+					{ label: 'Volume',		disabled: true },
+					{ label: 'Grass',		disabled: true },
+					{ label: 'Clouds',		disabled: true },
+					{ label: 'Particles',	disabled: true },
+					{ label: 'Bump',		disabled: true },
+					{ label: 'PBR',			disabled: true },
+				],
+			},
+			{
+				label: 'Rendering features',
+				submenu: [
+					{ label: 'UI',	kbd: 'Ctrl+Alt+F1',	checked: () => ui.uiVisible, action: () => act(() => ui.toggleUiVisible()) },
+					{ label: 'Selected',		disabled: true },
+					{ label: 'Highlighted',		disabled: true },
+					{ label: 'Foot shadows',	disabled: true },
+					{ label: 'Fog',				disabled: true },
+					{ label: 'Flexible objects',	disabled: true },
+				],
+			},
+			{ label: 'Set UI size to default',	disabled: true },
 			{ sep: true },
-			{ label: 'Grid Help',			disabled: true },
-			{ label: 'About Current Grid',	disabled: true },
-			{ sep: true },
-			{ label: 'About quickerSTORM',	disabled: true },
+			{ label: 'Debug panel',						kbd: 'Ctrl+⇧+4',	checked: () => ui.showDebug, action: () => act(() => ui.toggleDebug()) },
+			{ label: 'Debug settings',		disabled: true },
+			{ label: 'Statistics bar',		disabled: true },
+			{ label: 'Scene load statistics',	disabled: true },
+			{ label: 'Texture console',		disabled: true },
+			{ label: 'Capabilities info to debug console',	disabled: true },
 		],
 	},
 ]
@@ -285,52 +618,18 @@ const MENUS = [
 				@mouseenter="openOnHover(menu.id)"
 			>{{ menu.label }}</button>
 
-			<!-- Dropdown — anchors below this wrapper -->
+			<!-- Dropdown — anchors below this wrapper; items render recursively -->
 			<Transition name="mb-drop">
 				<div v-if="openMenu === menu.id" class="mb-dropdown">
-					<template v-for="(item, i) in menu.items" :key="i">
-						<div v-if="item.sep" class="mb-sep" />
-
-						<!-- Submenu item (hover to reveal nested dropdown) -->
-						<div v-else-if="item.submenu" class="mb-sub-wrap">
-							<button class="mb-item mb-item--has-sub" @click="playSound('tick.mp3', 0.6)">
-								<span class="mb-item-label">{{ item.label }}</span>
-								<span class="mb-item-arrow">›</span>
-							</button>
-							<div class="mb-submenu">
-								<template v-for="(sub, j) in item.submenu" :key="j">
-									<div v-if="sub.sep" class="mb-sep" />
-									<button
-										v-else
-										class="mb-item"
-										:class="{ 'mb-item--disabled': sub.disabled }"
-										:disabled="sub.disabled"
-										:title="sub.title"
-										@click="playSound('tick.mp3', 0.6); sub.action && sub.action()"
-									>
-										<span class="mb-item-label">{{ sub.label }}</span>
-										<span v-if="sub.kbd" class="mb-item-kbd">{{ sub.kbd }}</span>
-									</button>
-								</template>
-							</div>
-						</div>
-
-						<!-- Regular item -->
-						<button
-							v-else
-							class="mb-item"
-							:class="{ 'mb-item--disabled': item.disabled }"
-							:disabled="item.disabled"
-							:title="item.title"
-							@click="playSound('tick.mp3', 0.6); item.action && item.action()"
-						>
-							<span class="mb-item-label"><span v-if="item.checked" class="mb-item-check">{{ item.checked() ? '✓' : '' }}</span>{{ item.label }}</span>
-							<span v-if="item.kbd" class="mb-item-kbd">{{ item.kbd }}</span>
-						</button>
-					</template>
+					<MenuDropdownItem
+						v-for="(item, i) in menu.items"
+						:key="i"
+						:item="item"
+					/>
 				</div>
 			</Transition>
 		</div>
+		<input class="flex-1 bg-fg/10 rounded-xl my-1 ms-2 px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter menus&#8230; (to-do)" type="search" />
 	</div>
 </template>
 
@@ -349,7 +648,7 @@ const MENUS = [
 .mb-label {
 	display: flex;
 	align-items: center;
-	padding: 0 1rem;
+	padding: 0 0.75rem;
 	height: 100%;
 	font-size: 0.6875rem;
 	font-weight: 500;
@@ -379,106 +678,15 @@ const MENUS = [
 	border-top: none;
 	border-radius: 0 0 0.375rem 0.375rem;
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-	padding: 0.25rem 0;
+	padding: 0;
 	z-index: 800;
 	display: flex;
 	flex-direction: column;
 }
 
-/* ── Item ────────────────────────────────────────────────────────────────── */
-.mb-item {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 1.5rem;
-	padding: 0.3125rem 0.875rem;
-	font-size: 0.75rem;
-	color: rgba(255, 255, 255, 0.85);
-	background: none;
-	border: none;
-	cursor: pointer;
-	text-align: left;
-	transition: background 0.08s;
-	width: 100%;
-}
-
-.mb-item:hover:not(.mb-item--disabled) {
-	background: rgba(255, 255, 255, 0.1);
-	color: #fff;
-}
-
-.mb-item--disabled {
-	opacity: 0.35;
-	cursor: not-allowed;
-}
-
-.mb-item-label { flex: 1; white-space: nowrap; }
-
-/* Reserve a fixed check column so toggling on/off doesn't shift the label. */
-.mb-item-check {
-	display: inline-block;
-	width: 1.1em;
-	margin-left: -0.25rem;
-	color: var(--accent, #6cf);
-	font-weight: 700;
-}
-
-.mb-item-kbd {
-	font-size: 0.625rem;
-	color: rgba(255, 255, 255, 0.4);
-	font-family: monospace;
-	white-space: nowrap;
-	flex-shrink: 0;
-}
-
-/* ── Nested submenu ──────────────────────────────────────────────────────── */
-/* WHY: Pure CSS hover — no extra Vue state. mb-sub-wrap is position:relative so
-   mb-submenu anchors to its right edge. Sibling hover keeps submenu open while
-   moving mouse rightward into it. */
-.mb-sub-wrap {
-	position: relative;
-}
-
-.mb-item--has-sub {
-	cursor: default;
-}
-
-.mb-item-arrow {
-	font-size: 0.75rem;
-	color: rgba(255, 255, 255, 0.4);
-	flex-shrink: 0;
-	line-height: 1;
-}
-
-.mb-submenu {
-	display: none;
-	position: absolute;
-	top: 0;
-	left: 100%;
-	min-width: 13rem;
-	background: rgba(14, 18, 28, 0.97);
-	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 0 0.375rem 0.375rem 0.375rem;
-	box-shadow: 4px 8px 24px rgba(0, 0, 0, 0.6);
-	padding: 0.25rem 0;
-	z-index: 801;
-	flex-direction: column;
-}
-
-.mb-sub-wrap:hover .mb-submenu {
-	display: flex;
-}
-
-/* ── Separator ───────────────────────────────────────────────────────────── */
-.mb-sep {
-	height: 1px;
-	background: rgba(255, 255, 255, 0.1);
-	margin: 0.2rem 0;
-}
-
 /* ── Transition ──────────────────────────────────────────────────────────── */
-.mb-drop-enter-active { transition: opacity 0.1s, transform 0.1s; }
-.mb-drop-leave-active { transition: opacity 0.08s; }
-.mb-drop-enter-from	{ opacity: 0; transform: translateY(-4px); }
+.mb-drop-enter-active	{ transition: opacity 0.1s, transform 0.1s; }
+.mb-drop-leave-active	{ transition: opacity 0.08s; }
+.mb-drop-enter-from		{ opacity: 0; transform: translateY(-4px); }
 .mb-drop-leave-to		{ opacity: 0; }
 </style>

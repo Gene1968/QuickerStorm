@@ -84,15 +84,15 @@ onUnmounted(() => {
 	>
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="startIM">Send IM…</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="viewProfile">View Profile</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="faceToward">Face Toward</button>
+		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="viewProfile">View profile</button>
+		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="faceToward">Face towards avatar</button>
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="refreshTextures">Texture refresh</button>
 		<button
 			v-if="!social.isFriend(menu.agentId)"
 			class="block w-full text-left px-3 py-1.5 hover:bg-white/10"
 			@click="addFriend"
 		>Add Friend</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Mute (Phase 3)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Follow (Phase 3)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Mute (to-do)</button>
+		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Follow (to-do)</button>
 	</div>
 </template>

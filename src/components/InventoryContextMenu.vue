@@ -72,9 +72,9 @@ onUnmounted(() => {
 		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="properties">Properties…</button>
 		<template v-if="menu.kind === 'item'">
 			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="addFav">Add to Favorites</button>
-			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="copy(menu.obj.itemId)">Copy Item UUID</button>
+			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="copy(menu.obj.itemId)">Copy item UUID</button>
 			<!-- grey = disabled for context (item has no asset), NOT unimplemented -->
-			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" :class="{ 'text-fg/40 cursor-not-allowed': !menu.obj.assetId }" :disabled="!menu.obj.assetId" @click="copy(menu.obj.assetId)">Copy Asset UUID</button>
+			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" :class="{ 'text-fg/40 cursor-not-allowed': !menu.obj.assetId }" :disabled="!menu.obj.assetId" @click="copy(menu.obj.assetId)">Copy asset UUID</button>
 			<!-- red = not yet implemented -->
 			<button v-if="menu.obj.assetType == 1 || menu.obj.assetType == 20 || menu.obj.assetType == 21" class="block w-full text-left px-3 py-1.5 inv-todo" disabled>Play {{ assetTypeName(menu.obj.assetType) }}</button>
 			<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>Wear / Attach</button>
@@ -82,8 +82,8 @@ onUnmounted(() => {
 			<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>Delete</button>
 		</template>
 		<template v-else>
-			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="newFolder">New Folder</button>
-			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="copy(menu.obj.folderId)">Copy Folder UUID</button>
+			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="newFolder">New folder</button>
+			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="copy(menu.obj.folderId)">Copy folder UUID</button>
 			<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="toggleFolder">{{ inv.isExpanded(menu.obj.folderId) ? 'Collapse' : 'Expand' }}</button>
 			<!-- red = not yet implemented -->
 			<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>Rename</button>
