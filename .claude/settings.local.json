@@ -320,7 +320,11 @@
       "Bash(sort -t/ -k2 -n)",
       "Read(//f//**)",
       "Read(//c//**)",
-      "Skill(claude-md-management:revise-claude-md)"
+      "Skill(claude-md-management:revise-claude-md)",
+      "Bash(grep -rln \"buildCapabilityNames\\\\|capabilityNames.append\" indra/newview/llviewerregion.cpp)",
+      "Bash(ls indra/newview/llviewerregion.cpp)",
+      "Bash(pkill -f \"dev:server\")",
+      "Bash(pkill -f \"bun.*server/index\")"
     ]
   }
 }

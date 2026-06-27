@@ -50,6 +50,7 @@ export const C = {
 	AVATAR_PICKER_REQ: 'avatar_picker_req', // { query, queryId } — AvatarPickerRequest (Low 26) for Add-Friend name search
 	OBJ_CACHE_MISS:   'obj_cache_miss',   // { ids:number[] } — client cache lacks/mismatches these probed localIds; request full updates
 	OBJ_PROBE_RESYNC: 'obj_probe_resync', // {} — engine mounted; replay the session's buffered ObjectUpdateCached probes (initial flood predates handler registration)
+	CAP_CALL:       'cap_call',     // { id, cap, params, method? } — generic HTTP capability call by name
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -94,6 +95,8 @@ export const S = {
 	AVATAR_PICKER_REPLY:  'avatar_picker_reply',  // { queryId, avatars:[{ id, name }] } — AvatarPickerReply (Low 28)
 	FRIEND_RIGHTS_CHANGED:'friend_rights_changed',// { agentId, relatedId, rights } — inbound ChangeUserRights (Low 321)
 	OBJ_CACHE_PROBE:      'obj_cache_probe',      // { probes:[{localId,crc}] } — sim's ObjectUpdateCached; client decides hit/miss vs its IDB cache
+	CAP_RESULT:     'cap_result',   // { id, cap, ok, result?, error?, status? } — generic cap reply, correlated by id
+	EQ_EVENT:       'eq_event',     // { name, body } — EventQueue event with no dedicated server handler, forwarded raw
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

@@ -10,6 +10,7 @@ import { join, normalize, extname } from 'path'
 import { handleLogin, handleLogout } from './handlers/login'
 import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
+import { invokeCap } from './lib/caps/invoke'
 import { handleInventoryFetch } from './handlers/inventory'
 import { handleAssetFetch } from './handlers/assets'
 import { handleMaterialFetch } from './handlers/materials'
@@ -220,6 +221,11 @@ const server = Bun.serve<WSData>({
 				case C.CAPS_FETCH: {
 					const d = msg.d as { id: string; url: string; method?: string; body?: string }
 					handleCapsFetch(ws, d.id, d.url, d.method, d.body)
+					break
+				}
+				case C.CAP_CALL: {
+					const d = msg.d as { id: string; cap: string; params?: any; method?: 'POST' | 'GET' }
+					invokeCap(circuitId, d.id, d.cap, d.params, d.method)
 					break
 				}
 				case C.INV_FETCH_FOLDER: {

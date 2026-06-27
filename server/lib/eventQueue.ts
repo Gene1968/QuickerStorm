@@ -182,53 +182,51 @@ async function pollLoop(sessionId: string, eqUrl: string, gen: number, signal: A
 	}
 }
 
+type EqHandler = (sessionId: string, body: LLSDValue) => void
+
+export const eqRegistry = new Map<string, EqHandler>([
+	['TeleportFinish', (sessionId, body) => {
+		const s = getSession(sessionId); if (!s) return
+		const f = decodeTeleportFinishLLSD(body)
+		if (!f || !f.simIp) { slog.warn(s.ws, `[EQ] TeleportFinish: undecodable body`); return }
+		slog.info(s.ws, `[EQ] ✓ TeleportFinish ${f.simIp}:${f.simPort} handle=${f.regionHandle} cap=${f.seedCap.slice(0, 40)}…`)
+		applyTeleportFinish(sessionId, f)
+	}],
+	['TeleportFailed', (sessionId) => {
+		const s = getSession(sessionId); if (!s) return
+		slog.warn(s.ws, `[EQ] TeleportFailed event`)
+		const now = Date.now()
+		if (!s.lastTeleportFailedAt || now - s.lastTeleportFailedAt > 5000) {
+			s.lastTeleportFailedAt = now
+			s.pendingTpHandle = undefined
+			s.tpDebugUntil = 0
+			s.ws.send(JSON.stringify({ t: S.TELEPORT_FAILED, d: { reason: 'sim reported teleport failed (EQ)' } }))
+		}
+	}],
+	['EnableSimulator', (sessionId, body) => {
+		const s = getSession(sessionId); if (!s) return
+		try {
+			const info = (body as Record<string, LLSDValue>)?.SimulatorInfo
+			const e = (Array.isArray(info) ? info[0] : info) as Record<string, LLSDValue> | undefined
+			if (e) {
+				const sx = llsdNum(e.RegionSizeX), sy = llsdNum(e.RegionSizeY)
+				const hb = typeof e.Handle === 'string' ? b64bytes(e.Handle) : Buffer.alloc(0)
+				const handle = hb.length >= 8 ? hb.readBigUInt64BE(0) : 0n
+				slog.info(s.ws, `[EQ] EnableSimulator handle=${handle} size=${sx || '?'}×${sy || '?'}`)
+			} else {
+				slog.info(s.ws, `[EQ] (unhandled) EnableSimulator (no SimulatorInfo)`)
+			}
+		} catch { slog.info(s.ws, `[EQ] (unhandled) EnableSimulator`) }
+	}],
+])
+
 function dispatchEvent(sessionId: string, message: string, body: LLSDValue): void {
 	const s = getSession(sessionId)
 	if (!s) return
-	switch (message) {
-		case 'TeleportFinish': {
-			const f = decodeTeleportFinishLLSD(body)
-			if (!f || !f.simIp) { slog.warn(s.ws, `[EQ] TeleportFinish: undecodable body`); return }
-			slog.info(s.ws, `[EQ] ✓ TeleportFinish ${f.simIp}:${f.simPort} handle=${f.regionHandle} cap=${f.seedCap.slice(0, 40)}…`)
-			applyTeleportFinish(sessionId, f)
-			break
-		}
-		case 'TeleportFailed': {
-			slog.warn(s.ws, `[EQ] TeleportFailed event`)
-			const now = Date.now()
-			if (!s.lastTeleportFailedAt || now - s.lastTeleportFailedAt > 5000) {
-				s.lastTeleportFailedAt = now
-				s.pendingTpHandle = undefined
-				s.tpDebugUntil = 0
-				s.ws.send(JSON.stringify({ t: S.TELEPORT_FAILED, d: { reason: 'sim reported teleport failed (EQ)' } }))
-			}
-			break
-		}
-		// Region-crossing / neighbour events — logged for now, handled in a later bundle.
-		case 'EnableSimulator': {
-			// Instrumentation (var-region size source): OpenSim's EnableSimulator SimulatorInfo block
-			// can carry RegionSizeX/RegionSizeY for a neighbour OR the destination. Log it so we can
-			// confirm whether this grid delivers the current-region size via TeleportFinish (preferred,
-			// already wired) or only here — informs whether a follow-up needs to consume it.
-			try {
-				const info = (body as Record<string, LLSDValue>)?.SimulatorInfo
-				const e = (Array.isArray(info) ? info[0] : info) as Record<string, LLSDValue> | undefined
-				if (e) {
-					const sx = llsdNum(e.RegionSizeX), sy = llsdNum(e.RegionSizeY)
-					const hb = typeof e.Handle === 'string' ? b64bytes(e.Handle) : Buffer.alloc(0)
-					const handle = hb.length >= 8 ? hb.readBigUInt64BE(0) : 0n
-					slog.info(s.ws, `[EQ] EnableSimulator handle=${handle} size=${sx || '?'}×${sy || '?'}`)
-				} else {
-					slog.info(s.ws, `[EQ] (unhandled) EnableSimulator (no SimulatorInfo)`)
-				}
-			} catch { slog.info(s.ws, `[EQ] (unhandled) EnableSimulator`) }
-			break
-		}
-		case 'EstablishAgentCommunication':
-		case 'CrossedRegion':
-			slog.info(s.ws, `[EQ] (unhandled) ${message}`)
-			break
-		default:
-			slog.info(s.ws, `[EQ] event: ${message}`)
-	}
+	const handler = eqRegistry.get(message)
+	if (handler) { handler(sessionId, body); return }
+	// No dedicated server-side logic → forward raw to the client (LLSD already decoded to JSON).
+	// Reacting to a new EQ event becomes client-only work — no server restart.
+	slog.info(s.ws, `[EQ] → client (generic) ${message}`)
+	s.ws.send(JSON.stringify({ t: S.EQ_EVENT, d: { name: message, body } }))
 }
