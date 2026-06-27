@@ -23,7 +23,7 @@ import { useParticles } from './useParticles.js'
 import { useCacheIO } from './useCacheIO.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled, EMERGENCY_HEAP_RATIO, SOFT_HEAP_APP_STANDDOWN } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild, shouldEvictForHeap } from '@/lib/cullPolicy.js'
-import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion } from '@/lib/objectCache.js'
+import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePruneRegions, objCacheFlush, objCacheClearRegion, objCacheDedupRegion } from '@/lib/objectCache.js'
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
@@ -324,6 +324,7 @@ export function useWorldEngine(canvasRef) {
 	// synchronously (FEATURE-GAPS #11 / TP-into-heavy wedge). Raw prim objects land here and are
 	// drained by pumpIngest() on the paced drain interval so the WS handler never blocks rAF.
 	const _ingestQueue = []  // { o, persist } — persist:false for preseed (already cached)
+	let _fullIdDedupN = 0    // sampled log counter for live fullId-dedup evictions
 	// Orphan index: parentLocalId → Set(childLocalId) waiting for that root to build. Replaces an
 	// O(n) meshMap scan per build (was O(n²) overall — the dominant mesh-build cost on big regions).
 	const orphansByParent = new Map()
@@ -608,7 +609,7 @@ export function useWorldEngine(canvasRef) {
 				requestProbeResync()
 				return
 			}
-			const cached = await objCacheGetAll(key)
+			const cached = await objCacheDedupRegion(key)   // collapse stale-localId dups (same fullId) + clean IDB
 			let n = 0
 			for (const o of (cached ?? [])) {
 				if (o.pcode === PCODE_AVATAR || typeof o.localId !== 'number') continue
@@ -629,14 +630,6 @@ export function useWorldEngine(canvasRef) {
 			_crcMapP = Promise.resolve(seeded)
 			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)}, crcMap=${seeded.size})`)
 			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
-			// Report the localIds we just painted so the server can diff them against the sim's
-			// enumeration and KillObject ghosts (objects deleted while we were offline). Skipped on
-			// the purge path above (nothing painted → server clientCached stays null → no reconcile).
-			const cachedIds = []
-			for (const o of (cached ?? [])) {
-				if (typeof o?.localId === 'number' && o.pcode !== PCODE_AVATAR) cachedIds.push(o.localId)
-			}
-			try { wsEmit(C.OBJ_CLIENT_CACHED, { ids: cachedIds }) } catch { /* not connected — reconciles next session */ }
 			requestProbeResync()
 		}
 		// WHY: the sim floods ObjectUpdateCached probes in the first seconds after login — before this
@@ -3039,7 +3032,7 @@ export function useWorldEngine(canvasRef) {
 		// WHY: an interest-driven leave (cull:true) is a temporary cull, not a delete — keep the
 		// qs-objects descriptor so re-enter is cheap and the warm-reload cache survives touring.
 		// A genuine sim delete (cull:false / absent) evicts. See src/lib/killPolicy.js.
-		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv, deleted: payload?.deleted })
+		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv })
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
 			evicted.delete(id)
@@ -4012,6 +4005,25 @@ export function useWorldEngine(canvasRef) {
 			maxItems: hidden ? 4096 : INGEST_MAX,
 			budgetMs: hidden ? 250 : INGEST_BUDGET_MS,
 			processOne: ({ o, persist }) => {
+				// fullId reconciliation: a prim arriving under a NEW localId for a fullId we already hold
+				// (localId churned across sim restart / re-rez) must evict the STALE twin first — scene
+				// mesh, store record, and its now-dead cache entry — or the old-localId copy lingers
+				// forever (the sim never KillObjects a localId it no longer uses). See
+				// docs/superpowers/specs/2026-06-27-fullid-dedup-design.md.
+				if (o.fullId && o.pcode !== PCODE_AVATAR) {
+					const prev = worldStore.localIdForFullId(o.fullId)
+					if (prev != null && prev !== o.localId) {
+						pendingMeshIds.delete(prev)
+						evicted.delete(prev)
+						removeMesh(prev)
+						worldStore.removeObject(prev)
+						const dkey = regionCacheKey()
+						if (dkey) objCacheEvict(dkey, prev)
+						if (++_fullIdDedupN <= 10 || _fullIdDedupN % 25 === 0) {
+							debugStore.push('info', `[3D] fullId-dedup: evicted stale localId ${prev} for ${String(o.fullId).slice(0, 8)} (now ${o.localId})`)
+						}
+					}
+				}
 				worldStore.upsertObject(o)
 				if (persist) {
 					// Persist the MERGED record (never the raw update) — same semantics as the old

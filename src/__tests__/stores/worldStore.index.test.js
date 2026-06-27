@@ -68,3 +68,30 @@ describe('worldStore avatars/prims incremental index', () => {
 		expect(s.objects.size).toBe(1)                      // still tracked in objects
 	})
 })
+
+describe('fullId index', () => {
+	it('localIdForFullId returns the localId of an upserted prim', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 5, fullId: 'aaa', pcode: PCODE_PRIM })
+		expect(s.localIdForFullId('aaa')).toBe(5)
+	})
+	it('does not index avatars', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 7, fullId: 'av1', pcode: PCODE_AVATAR })
+		expect(s.localIdForFullId('av1')).toBeUndefined()
+	})
+	it('removeObject clears the fullId entry', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 5, fullId: 'aaa', pcode: PCODE_PRIM })
+		s.removeObject(5)
+		expect(s.localIdForFullId('aaa')).toBeUndefined()
+	})
+	it('removeObject of a stale localId does not clobber a fullId reclaimed by a newer localId', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 5, fullId: 'aaa', pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 9, fullId: 'aaa', pcode: PCODE_PRIM })   // reclaim
+		expect(s.localIdForFullId('aaa')).toBe(9)
+		s.removeObject(5)                                                  // remove OLD localId
+		expect(s.localIdForFullId('aaa')).toBe(9)                         // index untouched
+	})
+})
