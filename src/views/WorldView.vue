@@ -4,6 +4,7 @@ import { useRouter }		from 'vue-router'
 import { use2DFallback }	from '@/composables/use2DFallback'
 import { useProximityVoice }from '@/composables/useProximityVoice.js'
 import { useInventory }		from '@/composables/useInventory'
+import { useCaps }			from '@/composables/useCaps'
 import { useSocial }			from '@/composables/useSocial'
 import { useUiStore }		from '@/stores/uiStore'
 import { useGridStore }		from '@/stores/gridStore'
@@ -55,6 +56,10 @@ const voice        = useProximityVoice()
 // WHY: register inventory cap handlers (S.INV_FOLDER / S.CAPS_READY) for the whole session so
 // folder items load when caps arrive even before the Inventory floater is opened.
 useInventory()
+// WHY: register the generic cap front door (S.CAP_RESULT handler) session-long so any
+// cap('Name').post/get() call resolves. DEV: expose window.__cap for console live-verify.
+const { cap: capCall } = useCaps()
+if (import.meta.env.DEV) window.__cap = capCall
 // WHY: register grid-social handlers (friend status, groups, profile, parcel, names) for the
 // whole session so live updates (OnlineNotification, AgentGroupDataUpdate) land regardless of
 // which floater is open.

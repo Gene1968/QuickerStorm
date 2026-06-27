@@ -324,7 +324,11 @@
       "Bash(grep -rln \"buildCapabilityNames\\\\|capabilityNames.append\" indra/newview/llviewerregion.cpp)",
       "Bash(ls indra/newview/llviewerregion.cpp)",
       "Bash(pkill -f \"dev:server\")",
-      "Bash(pkill -f \"bun.*server/index\")"
+      "Bash(pkill -f \"bun.*server/index\")",
+      "Bash(netstat -ano)",
+      "Bash(tasklist /FI \"PID eq 103020\")",
+      "Bash(taskkill /PID 103020 /F)",
+      "PowerShell($p = Get-Process -Id 103020 -ErrorAction SilentlyContinue; if \\($p\\) { \"holder: $\\($p.ProcessName\\) \\(PID $\\($p.Id\\)\\)\"; Stop-Process -Id 103020 -Force; \"killed 103020\" } else { \"103020 not found\" }; Start-Sleep -Milliseconds 800; $still = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($still\\) { \"STILL LISTENING: PID $\\($still.OwningProcess -join ','\\)\" } else { \"8787 is now free\" })"
     ]
   }
 }
