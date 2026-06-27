@@ -328,7 +328,13 @@
       "Bash(netstat -ano)",
       "Bash(tasklist /FI \"PID eq 103020\")",
       "Bash(taskkill /PID 103020 /F)",
-      "PowerShell($p = Get-Process -Id 103020 -ErrorAction SilentlyContinue; if \\($p\\) { \"holder: $\\($p.ProcessName\\) \\(PID $\\($p.Id\\)\\)\"; Stop-Process -Id 103020 -Force; \"killed 103020\" } else { \"103020 not found\" }; Start-Sleep -Milliseconds 800; $still = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($still\\) { \"STILL LISTENING: PID $\\($still.OwningProcess -join ','\\)\" } else { \"8787 is now free\" })"
+      "PowerShell($p = Get-Process -Id 103020 -ErrorAction SilentlyContinue; if \\($p\\) { \"holder: $\\($p.ProcessName\\) \\(PID $\\($p.Id\\)\\)\"; Stop-Process -Id 103020 -Force; \"killed 103020\" } else { \"103020 not found\" }; Start-Sleep -Milliseconds 800; $still = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($still\\) { \"STILL LISTENING: PID $\\($still.OwningProcess -join ','\\)\" } else { \"8787 is now free\" })",
+      "Bash(bun x *)",
+      "Bash(xargs echo \"[Mesh] grid-fetch lines so far:\")",
+      "Bash(dotnet --version)",
+      "Bash(\"/c/Program Files/dotnet/dotnet\" --list-sdks)",
+      "Bash(cat)",
+      "Bash(bun /c/Users/gene1/AppData/Local/Temp/claude/C--Users-gene1-Downloads-Pages-git-QuickerStorm/79e4b009-4e52-4877-a9ae-1f0cc1d59c04/scratchpad/inspect.mjs)"
     ]
   }
 }

@@ -603,7 +603,7 @@ function close() {
 				Right-click a prim → Edit to inspect properties.
 			</div>
 
-			<div v-else class="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+			<div v-else class="flex-1 overflow-y-auto px-2 py-2 space-y-3">
 				<!-- General ─────────────────────────────────────────────── -->
 				<template v-if="activeTab === 'general'">
 					<div class="grid grid-cols-[4.5rem_auto] gap-x-2 gap-y-1.5 text-xs">
@@ -676,99 +676,105 @@ function close() {
 					prim-shape params + the building-block / mesh / sculpt type. The type row is how
 					you tell a mesh from a sculpt from a plain prim. -->
 				<template v-else-if="activeTab === 'object'">
-					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Modify permission — object is locked against edits"><input type="checkbox" :checked="!(obj.ownerMask & 0x4000)" disabled class="accent-accent" /> Locked</label>
-					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" :checked="!!obj.physical" disabled class="accent-accent" /> Physical</label>
-					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" :checked="!!obj.temporary" disabled class="accent-accent" /> Temporary</label>
-					<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" :checked="!!obj.phantom" disabled class="accent-accent" /> Phantom</label>
-					<button title="Copy Object Parameters to Clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
-					<button title="Paste Object Parameters from Clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
-					<!-- Identity / linkset -->
-					<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-fg/50">Building Block</div>
-						<div class="text-fg">{{ typeInfo.label }}</div>
-						<template v-if="typeInfo.detail">
-							<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
-							<div class="flex items-center gap-1.5 min-w-0">
-								<button
-									class="w-10 h-10 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
-									:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
-									@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
-								>
-									<span>{{ typeInfo.kind === 'mesh' ? '◰' : '⛰' }}</span>
-								</button>
-								<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+					<div class="flex gap-2">
+						<div class="w-2/5">
+							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Modify permission — object is locked against edits"><input type="checkbox" :checked="!(obj.ownerMask & 0x4000)" disabled class="accent-accent" /> Locked</label>
+							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" :checked="!!obj.physical" disabled class="accent-accent" /> Physical</label>
+							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" :checked="!!obj.temporary" disabled class="accent-accent" /> Temporary</label>
+							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" :checked="!!obj.phantom" disabled class="accent-accent" /> Phantom</label>
+							<!-- Transform -->
+							<div class="my-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide">Position (meters)</div>
+								<div class="grid gap-1 text-xs">
+									<div><span class="text-red-500 font-bold">X</span> <span class="text-fg font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
+									<div><span class="text-green-500 font-bold">Y</span> <span class="text-fg font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
+									<div><span class="text-blue-500 font-bold">Z</span> <span class="text-fg font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
+								</div>
 							</div>
-							LOD: Num Triangles
-							High: ####
-							Medium: ###
-							Low: ##
-							Lowest: ##
-						</template>
-						<div class="text-fg/50">LocalID</div>
-						<div class="text-fg font-mono">{{ obj.localId }}</div>
-						<div class="text-fg/50">Parent ID</div>
-						<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
-						<div class="text-fg/50">Link Count</div>
-						<div class="text-fg">{{ linkCount }}</div>
-					</div>
-
-					<!-- Transform -->
-					<div class="border-t border-edge pt-2">
-						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Position (meters)</div>
-						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-red-500 font-bold">X</span> <span class="text-fg font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-green-500 font-bold">Y</span> <span class="text-fg font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-blue-500 font-bold">Z</span> <span class="text-fg font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
+							<div class="mb-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide">Size (meters)</div>
+								<div class="grid gap-1 text-xs">
+									<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
+									<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
+									<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
+								</div>
+							</div>
+							<div class="mb-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide">Rotation (degrees)</div>
+								<div class="grid gap-1 text-xs">
+									<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
+									<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
+									<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
+								</div>
+							</div>
 						</div>
-					</div>
-					<div>
-						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Size (meters)</div>
-						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
-							<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
+						<div class="w-3/5">
+							<div class="flex justify-end">
+								<button title="Copy object parameters to clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
+								<button title="Paste object parameters from clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
+							</div>
+							<!-- Identity / linkset -->
+							<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+								<div class="text-fg/50">Building Block</div>
+								<div class="text-fg">{{ typeInfo.label }}</div>
+								<template v-if="typeInfo.detail">
+									<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
+									<div class="flex items-center gap-1.5 min-w-0">
+										<button
+											class="w-10 h-10 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
+											:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
+											@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
+										>
+											<span>{{ typeInfo.kind === 'mesh' ? '◰' : '⛰' }}</span>
+										</button>
+										<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+									</div>
+									LOD: Num Triangles
+									High: ####
+									Medium: ###
+									Low: ##
+									Lowest: ##
+								</template>
+								<div class="text-fg/50">LocalID</div>
+								<div class="text-fg font-mono">{{ obj.localId }}</div>
+								<div class="text-fg/50">Parent ID</div>
+								<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
+								<div class="text-fg/50">Link Count</div>
+								<div class="text-fg">{{ linkCount }}</div>
+							</div>
+							<!-- Parametric prim shape (FS: lives on the Object tab) -->
+							<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
+								<div class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+									<div class="text-fg/50">Profile</div>
+									<div class="text-fg">{{ profileCurveLabel }}</div>
+									<div class="text-fg/50">Path Cut (B/E)</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
+									<div class="text-fg/50">Profile Cut (B/E)</div>
+									<div class="text-fg font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
+									<div class="text-fg/50">Hollow</div>
+									<div class="text-fg font-mono">{{ obj.shape.profileHollow }}</div>
+									<div class="text-fg/50">Twist (B/E)</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
+									<div class="text-fg/50">Taper X/Y</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
+									<div class="text-fg/50">Top Shear X/Y</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
+									<div class="text-fg/50">Hole Size X/Y</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
+									<div class="text-fg/50">Revolutions</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathRevolutions }}</div>
+									<div class="text-fg/50">Radius Offset</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathRadiusOffset }}</div>
+									<div class="text-fg/50">Skew</div>
+									<div class="text-fg font-mono">{{ obj.shape.pathSkew }}</div>
+								</div>
+							</div>
+							<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
+								Geometry comes from the mesh asset above. LOD triangle counts arrive with the
+								mesh-info decode (Phase 3).
+							</div>
 						</div>
-					</div>
-					<div>
-						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Rotation (degrees)</div>
-						<div class="grid grid-cols-3 gap-1 text-xs">
-							<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
-							<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
-							<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
-						</div>
-					</div>
-
-					<!-- Parametric prim shape (FS: lives on the Object tab) -->
-					<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
-						<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
-						<div class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-							<div class="text-fg/50">Profile</div>
-							<div class="text-fg">{{ profileCurveLabel }}</div>
-							<div class="text-fg/50">Path Cut (B/E)</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
-							<div class="text-fg/50">Profile Cut (B/E)</div>
-							<div class="text-fg font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
-							<div class="text-fg/50">Hollow</div>
-							<div class="text-fg font-mono">{{ obj.shape.profileHollow }}</div>
-							<div class="text-fg/50">Twist (B/E)</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
-							<div class="text-fg/50">Taper X/Y</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
-							<div class="text-fg/50">Top Shear X/Y</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
-							<div class="text-fg/50">Hole Size X/Y</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
-							<div class="text-fg/50">Revolutions</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathRevolutions }}</div>
-							<div class="text-fg/50">Radius Offset</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathRadiusOffset }}</div>
-							<div class="text-fg/50">Skew</div>
-							<div class="text-fg font-mono">{{ obj.shape.pathSkew }}</div>
-						</div>
-					</div>
-					<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
-						Geometry comes from the mesh asset above. LOD triangle counts arrive with the
-						mesh-info decode (Phase 3).
 					</div>
 				</template>
 

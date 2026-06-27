@@ -629,6 +629,14 @@ export function useWorldEngine(canvasRef) {
 			_crcMapP = Promise.resolve(seeded)
 			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)}, crcMap=${seeded.size})`)
 			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
+			// Report the localIds we just painted so the server can diff them against the sim's
+			// enumeration and KillObject ghosts (objects deleted while we were offline). Skipped on
+			// the purge path above (nothing painted → server clientCached stays null → no reconcile).
+			const cachedIds = []
+			for (const o of (cached ?? [])) {
+				if (typeof o?.localId === 'number' && o.pcode !== PCODE_AVATAR) cachedIds.push(o.localId)
+			}
+			try { wsEmit(C.OBJ_CLIENT_CACHED, { ids: cachedIds }) } catch { /* not connected — reconciles next session */ }
 			requestProbeResync()
 		}
 		// WHY: the sim floods ObjectUpdateCached probes in the first seconds after login — before this
@@ -2113,7 +2121,9 @@ export function useWorldEngine(canvasRef) {
 			// Post-geometry finishing shared by the hot-swap path and the sync cache-hit path:
 			// planar-face UV regen + per-face material array (both need the final grouped geometry).
 			const finishGeom = () => {
-				const faceMap = obj.meshId ? null : primFaceMap(obj.shape)
+				// Identity for both meshes and prims: prim geometry now emits groups whose materialIndex
+				// IS the (compacted) SL face index (PrimMesher port), so no group→face remap is needed.
+				const faceMap = null
 				applyPlanarUVs(mesh, obj, faceMap)
 				if (meshMulti) buildFaceMaterials(mesh, obj)
 				else if (primMulti) buildFaceMaterials(mesh, obj, faceMap)
@@ -2154,19 +2164,31 @@ export function useWorldEngine(canvasRef) {
 
 			// WHY: the worker's postMessage structured-clones its payload, and Vue/Pinia reactive
 			// Proxies (obj.shape from worldStore, decoded subs) are NOT cloneable → DataCloneError.
-			// Send PLAIN snapshots: the 6 scalar shape fields buildPrimGeometry/applyShapeDeformation
-			// read, and a plain {positions,normals,uvs,indices} per submesh (inner arrays are plain
-			// typed arrays from the decode cache, so they clone fine once the proxy wrapper is dropped).
+			// Send PLAIN snapshots: ALL shape fields the PrimMesher tessellator reads (buildPrimGeometry),
+			// and a plain {positions,normals,uvs,indices} per submesh (inner arrays are plain typed arrays
+			// from the decode cache, so they clone fine once the proxy wrapper is dropped).
 			const plainSubs = (subs) => subs.map(s => ({
 				positions: s.positions, normals: s.normals, uvs: s.uvs, indices: s.indices,
 			}))
 			const plainShape = obj.shape ? {
-				pathCurve:      obj.shape.pathCurve,
-				profileCurve:   obj.shape.profileCurve,
-				pathTwist:      obj.shape.pathTwist,
-				pathTwistBegin: obj.shape.pathTwistBegin,
-				pathTaperX:     obj.shape.pathTaperX,
-				pathTaperY:     obj.shape.pathTaperY,
+				pathCurve:        obj.shape.pathCurve,
+				profileCurve:     obj.shape.profileCurve,
+				pathBegin:        obj.shape.pathBegin,
+				pathEnd:          obj.shape.pathEnd,
+				pathScaleX:       obj.shape.pathScaleX,
+				pathScaleY:       obj.shape.pathScaleY,
+				pathShearX:       obj.shape.pathShearX,
+				pathShearY:       obj.shape.pathShearY,
+				pathTwist:        obj.shape.pathTwist,
+				pathTwistBegin:   obj.shape.pathTwistBegin,
+				pathRadiusOffset: obj.shape.pathRadiusOffset,
+				pathTaperX:       obj.shape.pathTaperX,
+				pathTaperY:       obj.shape.pathTaperY,
+				pathRevolutions:  obj.shape.pathRevolutions,
+				pathSkew:         obj.shape.pathSkew,
+				profileBegin:     obj.shape.profileBegin,
+				profileEnd:       obj.shape.profileEnd,
+				profileHollow:    obj.shape.profileHollow,
 			} : undefined
 
 			if (!isAvatar && !obj._placeholder) {
@@ -3017,7 +3039,7 @@ export function useWorldEngine(canvasRef) {
 		// WHY: an interest-driven leave (cull:true) is a temporary cull, not a delete — keep the
 		// qs-objects descriptor so re-enter is cheap and the warm-reload cache survives touring.
 		// A genuine sim delete (cull:false / absent) evicts. See src/lib/killPolicy.js.
-		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv })
+		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv, deleted: payload?.deleted })
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
 			evicted.delete(id)
@@ -4325,7 +4347,7 @@ export function useWorldEngine(canvasRef) {
 			const mesh = meshMap.get(id)
 			if (!mesh) continue
 			if (Array.isArray(mesh.material)) {
-				buildFaceMaterials(mesh, o, o.meshId ? null : primFaceMap(o.shape))
+				buildFaceMaterials(mesh, o, null)   // identity: groups already SL-numbered (mesh + PrimMesher prim)
 			} else if (mesh.material) {
 				mesh.material.map = null
 				mesh.material.needsUpdate = true
@@ -4370,7 +4392,7 @@ export function useWorldEngine(canvasRef) {
 			if (on && !mesh.geometry?.attributes?.normal) mesh.geometry?.computeVertexNormals?.()
 			if (Array.isArray(mesh.material)) {
 				const old = mesh.material
-				buildFaceMaterials(mesh, obj, obj.meshId ? null : primFaceMap(obj.shape))
+				buildFaceMaterials(mesh, obj, null)   // identity: groups already SL-numbered (mesh + PrimMesher prim)
 				old.forEach(m => m.dispose())
 				mesh.userData.relit = true   // in-flight bake applySwap: not stale, accept geometry
 				swapped++

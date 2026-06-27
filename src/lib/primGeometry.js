@@ -1,79 +1,61 @@
 // src/lib/primGeometry.js — shared prim/mesh geometry helpers used by the world engine and workers.
 import * as THREE from 'three'
+import { buildPrimMeshArrays } from '@/lib/primMesher.js'
 
 // WHY: cache-buster for the persistent baked-geometry cache (qs-geom). Bump whenever any
 // function in this file changes its OUTPUT for the same inputs (new deform support, segment
 // count changes, axis-map fixes…). Old entries become unreachable and age out via LRU.
-export const GEOM_VERSION = 1
+// v2: real PrimMesher tessellation (hollow/cut/twist/taper/shear/radius/revolutions/skew)
+// replaces the Three.js-primitive stand-ins.
+export const GEOM_VERSION = 2
 
-// WHY: Map SL prim PathCurve+ProfileCurve to a Three.js geometry. Reference table
-// (libomv Primitive.cs PrimType): box/cylinder/prism use PathCurve=16 (Line);
-// sphere/torus/tube/ring use PathCurve=32 (Circle). ProfileCurve low nibble: 0=Circle,
-// 1=Square, 2=IsoTri, 3=EqualTri, 4=RightTri, 5=HalfCircle. Default unit-scale geometry;
-// bakePrimScale() then bakes the prim's sx/sy/sz into the geometry. Hollow deferred to Phase 3
-// (true CSG needed); Twist + Taper applied as per-vertex deformation below.
-export function buildPrimGeometry(shape) {
-	const pc = shape?.pathCurve ?? 16
-	const pf = (shape?.profileCurve ?? 1) & 0x0F
-	let geom
-	if (pc === 16) {
-		// HeightSegments=8 so Twist/Taper deformation has enough vertices to look smooth.
-		if (pf === 0)      geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 8)
-		else if (pf === 3) geom = new THREE.CylinderGeometry(0.5, 0.5, 1, 3, 8)   // prism
-		else               geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
-	} else if (pc === 32 || pc === 33) {
-		if (pf === 5) geom = new THREE.SphereGeometry(0.5, 16, 12)
-		// torus / tube / ring — Three TorusGeometry stand-in; full profile sweep is Phase 3
-		else          geom = new THREE.TorusGeometry(0.35, 0.15, 12, 24)
-	} else {
-		geom = new THREE.BoxGeometry(1, 1, 1, 2, 8, 2)
-	}
-	return applyShapeDeformation(geom, shape)
-}
+// WHY: tessellate an SL prim from its full shape via the PrimMesher port (src/lib/primMesher.js),
+// faithful to OpenSim's Meshmerizer. Replaces the old Box/Cylinder/Sphere/Torus stand-ins so
+// hollow, profile cut, path cut, hole size, twist, taper, top shear, radius offset, revolutions
+// and skew all render correctly. The mesher returns SL-space triangle soup with a per-triangle SL
+// face number; here we convert SL→Three (slToThree(x,y,z)=(x,z,−y)), preserve the mesher's
+// per-vertex normals (so flat box faces stay flat and round faces stay smooth), and emit one
+// geometry group per SL face — compacted to a contiguous 0..N-1 materialIndex so the per-face
+// texture path (buildFaceMaterials) can index TextureEntry by group materialIndex directly, the
+// same identity contract as the mesh path. bakePrimScale() then bakes sx/sy/sz into the geometry.
+export function buildPrimGeometry(shape, opts) {
+	const a = buildPrimMeshArrays(shape, opts)
+	const triCount = a.faceNumbers.length
+	const geom = new THREE.BufferGeometry()
+	if (triCount === 0) return geom   // degenerate shape → caller's finite-verts guard substitutes a placeholder
 
-// WHY: SL Twist + Taper applied per-vertex. Twist rotates around the path axis (Three.js
-// local Y for our PathCurve=16/32 geometries) by an angle that lerps from PathTwistBegin
-// at the bottom to PathTwist at the top. Taper shrinks XZ scale linearly from bottom to
-// top. Both encoded as S8 with 0.01 quantization (libomv Primitive.cs TWIST_QUANTA).
-// Skip torus (PathCurve=32 + non-half-circle profile) — deformation doesn't follow the
-// same axis convention and would mangle the geometry.
-export function applyShapeDeformation(geom, shape) {
-	if (!shape) return geom
-	const pc = shape.pathCurve ?? 16
-	const isTorusLike = (pc === 32 || pc === 33) && (shape.profileCurve & 0x0F) !== 5
-	if (isTorusLike) return geom
-	const twist      = (shape.pathTwist      || 0) * 0.01   // turns: -1..1
-	const twistBegin = (shape.pathTwistBegin || 0) * 0.01
-	const taperX     = (shape.pathTaperX     || 0) * 0.01
-	const taperY     = (shape.pathTaperY     || 0) * 0.01
-	if (twist === 0 && twistBegin === 0 && taperX === 0 && taperY === 0) return geom
-	const pos = geom.attributes.position
-	const TWO_PI = Math.PI * 2
-	for (let i = 0; i < pos.count; i++) {
-		let x = pos.getX(i)
-		const y = pos.getY(i)
-		let z = pos.getZ(i)
-		// t in [0, 1] from bottom (y=-0.5) to top (y=+0.5)
-		const t = y + 0.5
-		// Taper: pinches/expands at top (positive value = narrow at top, SL convention)
-		const sX = 1 - t * taperX
-		const sZ = 1 - t * taperY
-		x *= sX
-		z *= sZ
-		// Twist: rotation around Y axis, lerps begin → end across height
-		const angle = ((1 - t) * twistBegin + t * twist) * TWO_PI
-		if (angle !== 0) {
-			const ca = Math.cos(angle)
-			const sa = Math.sin(angle)
-			const xr = x * ca - z * sa
-			const zr = x * sa + z * ca
-			pos.setXYZ(i, xr, y, zr)
-		} else {
-			pos.setXYZ(i, x, y, z)
+	// Compact the mesher's (possibly gappy) SL face numbers to contiguous 0..N-1, then order the
+	// triangles by face so each face is one contiguous group.
+	const uniq = [...new Set(a.faceNumbers)].sort((x, y) => x - y)
+	const remap = new Map(uniq.map((f, i) => [f, i]))
+	const order = [...Array(triCount).keys()].sort(
+		(i, j) => (remap.get(a.faceNumbers[i]) - remap.get(a.faceNumbers[j])) || (i - j),
+	)
+
+	const pos = new Float32Array(triCount * 9)
+	const nor = new Float32Array(triCount * 9)
+	const uv = new Float32Array(triCount * 6)
+	let curFace = -1, groupStart = 0
+	for (let t = 0; t < triCount; t++) {
+		const src = order[t]
+		for (let k = 0; k < 3; k++) {
+			const so = src * 9 + k * 3, su = src * 6 + k * 2, d = (t * 3 + k) * 3, du = (t * 3 + k) * 2
+			// slToThree: Three (x = SL x, y = SL z, z = −SL y)
+			pos[d] = a.positions[so]; pos[d + 1] = a.positions[so + 2]; pos[d + 2] = -a.positions[so + 1]
+			nor[d] = a.normals[so]; nor[d + 1] = a.normals[so + 2]; nor[d + 2] = -a.normals[so + 1]
+			uv[du] = a.uvs[su]; uv[du + 1] = a.uvs[su + 1]
+		}
+		const cf = remap.get(a.faceNumbers[src])
+		if (cf !== curFace) {
+			if (curFace !== -1) geom.addGroup(groupStart, t * 3 - groupStart, curFace)
+			curFace = cf; groupStart = t * 3
 		}
 	}
-	pos.needsUpdate = true
-	geom.computeVertexNormals()
+	if (curFace !== -1) geom.addGroup(groupStart, triCount * 3 - groupStart, curFace)
+
+	geom.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+	geom.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
+	geom.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
 	return geom
 }
 
