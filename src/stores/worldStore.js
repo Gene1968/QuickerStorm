@@ -17,12 +17,18 @@ export const useWorldStore = defineStore('world', () => {
 	// computeds depend only on the small per-kind set; prim updates no longer invalidate `avatars`.
 	const _avatars = ref(new Map())   // localId → object (pcode === PCODE_AVATAR)
 	const _prims   = ref(new Map())   // localId → object (pcode === PCODE_PRIM)
+	// fullId → localId reverse index (prims only). localId churns across sim restart / re-rez but
+	// fullId is stable; this lets ingest evict a stale-localId twin when the live copy arrives, and
+	// gives applyObjectProperties an O(1) lookup. Non-reactive (no template reads it). See
+	// docs/superpowers/specs/2026-06-27-fullid-dedup-design.md.
+	const _byFullId = new Map()   // fullId → localId
 	// Keep the per-kind index in sync with a record. Holds the SAME merged reference stored in
 	// `objects`, so consumers see live data; reconciles if an object's pcode ever changes kind.
 	function _index(localId, rec) {
 		if (rec.pcode === PCODE_AVATAR) { _avatars.value.set(localId, rec); _prims.value.delete(localId) }
 		else if (rec.pcode === PCODE_PRIM) { _prims.value.set(localId, rec); _avatars.value.delete(localId) }
 		else { _avatars.value.delete(localId); _prims.value.delete(localId) }
+		if (rec.pcode === PCODE_PRIM && rec.fullId) _byFullId.set(rec.fullId, localId)
 	}
 	function _unindex(localId) { _avatars.value.delete(localId); _prims.value.delete(localId) }
 
@@ -73,7 +79,13 @@ export const useWorldStore = defineStore('world', () => {
 		}
 	}
 
-	function removeObject(localId) { objects.value.delete(localId); _unindex(localId) }
+	function removeObject(localId) {
+		const rec = objects.value.get(localId)
+		// Only drop the fullId entry if it still points at THIS localId — a newer localId may have
+		// already reclaimed the fullId (churn), and we must not clobber that.
+		if (rec?.fullId && _byFullId.get(rec.fullId) === localId) _byFullId.delete(rec.fullId)
+		objects.value.delete(localId); _unindex(localId)
+	}
 
 	// WHY: ObjectProperties arrives keyed by fullId (UUID), not localId. Walk values to match.
 	// Merges name/description/creator/owner/perms into the object so Edit floater + Inspect
@@ -90,7 +102,10 @@ export const useWorldStore = defineStore('world', () => {
 		return false
 	}
 
-	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear() }
+	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear(); _byFullId.clear() }
+
+	/** localId currently holding this fullId, or undefined. O(1) via the _byFullId index. */
+	function localIdForFullId(fullId) { return _byFullId.get(fullId) }
 
 	// Derived from the small per-kind indexes (NOT the full objects map), so they invalidate only
 	// when an avatar/prim is added/removed/updated — prim churn no longer re-runs the avatar list.
@@ -207,7 +222,7 @@ export const useWorldStore = defineStore('world', () => {
 	return {
 		objects, avatars, prims, cullStats, setCullStats, sceneLoading, setSceneLoading,
 		assetProgress, setAssetProgress,
-		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll,
+		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll, localIdForFullId,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
 		terrainHeights, TERRAIN_STRIDE: terrainStride, terrainPatchCount, setTerrainPatch, clearTerrain,
