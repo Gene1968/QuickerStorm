@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { decodeTeleportFinishLLSD } from '../lib/eventQueue'
+import { decodeTeleportFinishLLSD, eqRegistry } from '../lib/eventQueue'
 import { parseLLSD } from '../lib/llsd'
 
 // Build the LLSD body OpenSim's EventQueueHelper.TeleportFinishEvent produces:
@@ -113,5 +113,16 @@ describe('decodeTeleportFinishLLSD', () => {
 		const f = decodeTeleportFinishLLSD(body)
 		expect(f!.regionSizeX).toBe(0)
 		expect(f!.regionSizeY).toBe(0)
+	})
+})
+
+describe('eqRegistry', () => {
+	it('has dedicated handlers for the known events', () => {
+		expect(eqRegistry.has('TeleportFinish')).toBe(true)
+		expect(eqRegistry.has('TeleportFailed')).toBe(true)
+		expect(eqRegistry.has('EnableSimulator')).toBe(true)
+	})
+	it('does not register a generic-only event', () => {
+		expect(eqRegistry.has('SomeFutureEvent')).toBe(false)
 	})
 })
