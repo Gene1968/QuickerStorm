@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { describe, it, expect } from 'bun:test'
 import {
 	planRegionEvictions, objCachePut, objCacheFlush, objCacheGetAll,
-	objCacheCrcMap, objCacheClearRegion, objCacheEvict,
+	objCacheCrcMap, objCacheClearRegion, objCacheEvict, objCacheDedupRegion,
 } from '@/lib/objectCache.js'
 
 describe('planRegionEvictions (region LRU)', () => {
@@ -99,5 +99,29 @@ describe('objCacheEvict (KillObject)', () => {
 		await objCacheEvict(R, 5)
 		await objCacheFlush()
 		expect((await objCacheGetAll(R)).length).toBe(0)
+	})
+})
+
+describe('objCacheDedupRegion (fullId dedup)', () => {
+	it('keeps newest-savedAt per fullId, deletes stale dups, keeps null-fullId', async () => {
+		const rk = 'dedupRegion1'
+		objCachePut(rk, { localId: 1, fullId: 'A', crc: 1 }, 100)
+		objCachePut(rk, { localId: 2, fullId: 'A', crc: 2 }, 200)   // newer dup of A
+		objCachePut(rk, { localId: 3, fullId: 'B', crc: 3 }, 150)
+		objCachePut(rk, { localId: 4, fullId: null, crc: 4 }, 150)  // null fullId → kept
+		await objCacheFlush()
+		const survivors = await objCacheDedupRegion(rk)
+		expect(survivors.map(d => d.localId).sort((a, b) => a - b)).toEqual([2, 3, 4])
+		// IDB actually shrank (stale localId 1 deleted)
+		const after = await objCacheGetAll(rk)
+		expect(after.map(d => d.localId).sort((a, b) => a - b)).toEqual([2, 3, 4])
+	})
+	it('returns all records when there are no duplicates', async () => {
+		const rk = 'dedupRegion2'
+		objCachePut(rk, { localId: 1, fullId: 'X' }, 100)
+		objCachePut(rk, { localId: 2, fullId: 'Y' }, 100)
+		await objCacheFlush()
+		const survivors = await objCacheDedupRegion(rk)
+		expect(survivors.map(d => d.localId).sort((a, b) => a - b)).toEqual([1, 2])
 	})
 })

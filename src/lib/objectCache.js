@@ -232,6 +232,52 @@ export async function objCacheClearRegion(regionKey) {
 	return n
 }
 
+/** Collapse a region's cached records to one-per-fullId (newest savedAt wins), DELETE the stale
+ * duplicates from IDB, and return the survivors' `data` (same shape as objCacheGetAll). WHY: localId
+ * is not a stable object identity — it churns across sim restart / re-rez while fullId is stable, so a
+ * region revisited across churn accumulates duplicate-localId records for the same object (measured:
+ * 9300 records for 5332 fullIds). Records with a null fullId can't be deduped → kept as-is. Called
+ * from preseed instead of objCacheGetAll. Degrades to objCacheGetAll on any error (never block paint).
+ * See docs/superpowers/specs/2026-06-27-fullid-dedup-design.md. */
+export async function objCacheDedupRegion(regionKey) {
+	if (!regionKey) return []
+	if (_flushing) { try { await _flushing } catch { /* flush failures already logged */ } }
+	try {
+		const db = await openDb()
+		const recs = await new Promise((resolve, reject) => {
+			const t = db.transaction(STORE, 'readonly')
+			t.onabort = () => reject(t.error ?? new Error('dedupRegion read aborted'))
+			const req = t.objectStore(STORE).index('regionKey').getAll(IDBKeyRange.only(regionKey))
+			req.onsuccess = () => resolve(req.result || [])
+			req.onerror   = () => reject(req.error)
+		})
+		const newest = new Map()   // fullId → record with max savedAt
+		const stale = []           // localIds to delete
+		const survivors = []
+		for (const r of recs) {
+			if (!r.fullId) { survivors.push(r.data); continue }   // can't dedup a null fullId
+			const cur = newest.get(r.fullId)
+			if (!cur) newest.set(r.fullId, r)
+			else if ((r.savedAt ?? 0) > (cur.savedAt ?? 0)) { stale.push(cur.localId); newest.set(r.fullId, r) }
+			else stale.push(r.localId)
+		}
+		for (const r of newest.values()) survivors.push(r.data)
+		if (stale.length) {
+			const tx = db.transaction(STORE, 'readwrite')
+			const st = tx.objectStore(STORE)
+			const done = txDone(tx)
+			for (const lid of stale) st.delete([regionKey, lid])
+			await done
+			_metaDirty = true; _scheduleFlush()
+			console.info(`[ObjCache] fullId-dedup ${regionKey}: ${recs.length}→${survivors.length} (deleted ${stale.length} stale-localId dups)`)
+		}
+		return survivors
+	} catch (e) {
+		console.warn('[ObjCache] dedupRegion failed, serving undeduped:', e)
+		return objCacheGetAll(regionKey)
+	}
+}
+
 /** Remove one object (KillObject / genuine delete). */
 export async function objCacheEvict(regionKey, localId) {
 	_writeBuf.delete(`${regionKey} ${localId}`)  // don't let a buffered put resurrect it
