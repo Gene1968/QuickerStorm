@@ -3187,9 +3187,10 @@ export function useWorldEngine(canvasRef) {
 		)
 		_raycaster.setFromCamera(_pickNdc, camera)
 		_raycaster.far = 1000
+		// Include OWN avatar here (unlike the prim pass below) so right-clicking yourself
+		// opens the self context menu — the menu component branches on `isSelf`.
 		const targets = []
 		meshMap.forEach((mesh, localId) => {
-			if (localId === ownAvatarLocalId) return
 			const obj = worldStore.objects.get(localId)
 			if (obj?.pcode !== PCODE_AVATAR) return
 			targets.push(mesh)
@@ -3207,6 +3208,7 @@ export function useWorldEngine(canvasRef) {
 						agentId: obj.fullId,
 						name:    obj.name || 'Avatar',
 						localId: hitMesh.userData.localId,
+						isSelf:  hitMesh.userData.localId === ownAvatarLocalId,
 						x: e.clientX,
 						y: e.clientY,
 					})

@@ -1,8 +1,18 @@
 <script setup>
+/**
+ * ObjectContextMenu — right-click menu on a world prim. Structure + order mirror FS
+ * menu_object (lowercased, our convention); enabled items have real backing today,
+ * the rest are DISABLED roadmap placeholders (most unlock with the HTTP-caps layer).
+ * The FS "ShareStorm" export/import/particle cluster injected at the top of the
+ * object menu becomes our "quickerSTORM" submenu, and the FS "Object" submenu
+ * (profile/inspect/link/scripts/zoom) is preserved. Rows render via <ContextMenuItem>.
+ */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useUiStore }    from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useLLUDP }      from '@/composables/useLLUDP'
+import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
+import ContextMenuItem   from '@/components/ContextMenuItem.vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
@@ -12,18 +22,12 @@ const menu = computed(() => ui.objectMenu)
 const showInspect = ref(false)
 const confirmDelete = ref(false)
 
-const style = computed(() => {
-	if (!menu.value) return {}
-	const MENU_W = 180
-	const MENU_H = 180
-	const x = Math.min(menu.value.x, window.innerWidth - MENU_W - 8)
-	const y = Math.min(menu.value.y, window.innerHeight - MENU_H - 8)
-	return { left: `${x}px`, top: `${y}px` }
-})
+// Measure + slide on-screen on both axes (flips upward near the screen bottom).
+const { el: menuEl, style, reflow } = useContextMenuPosition(menu)
 
 function close() { ui.closeObjectMenu(); showInspect.value = false; confirmDelete.value = false }
 
-// Two-step delete: first click arms (button turns red "Confirm?"), second click sends ObjectDelete.
+// Two-step delete: first click arms (row turns red "Confirm delete?"), second click sends ObjectDelete.
 // Avoids a native confirm() dialog. The sim enforces permissions, so an unowned object is a no-op.
 function del() {
 	if (!menu.value) return
@@ -44,7 +48,8 @@ function sit() {
 	close()
 }
 
-function inspect() { showInspect.value = !showInspect.value }
+// Toggle the inline inspect panel; re-measure since it changes the menu height.
+async function inspect() { showInspect.value = !showInspect.value; reflow() }
 
 function refreshTextures() {
 	if (!menu.value) return
@@ -60,6 +65,78 @@ function edit() {
 	ui.openObjectEdit(rootId)
 	ui.focusFloater('object-edit')
 }
+
+// FS menu_object order, lowercased; enabled = real backing, else disabled roadmap.
+const items = computed(() => [
+	{
+		label: 'quickerSTORM',
+		submenu: [
+			{
+				label: 'Save / export object',
+				submenu: [
+					{ label: 'Export as Collada (DAE)',	disabled: true },
+					{ label: 'Export as glTF (GLB)…',		disabled: true },
+					{ label: 'Backup object as OXP',		disabled: true },
+					{ sep: true },
+					{ label: 'Export as OBJ',				disabled: true },
+					{ label: 'Export as XML',				disabled: true },
+					{ label: 'Save texture as…',			disabled: true },
+				],
+			},
+			{ label: 'Import…',				disabled: true },
+			{ label: 'Inject particles',	disabled: true },
+			{ label: 'Send to off-world',	disabled: true },
+		],
+	},
+	{ sep: true },
+	{ label: 'Touch',				disabled: menu.value?.clickAction === 7, action: touch },
+	{ label: 'Edit…',									action: edit },
+	{ label: 'Edit PBR material',	disabled: true },
+	{ label: 'Build',				disabled: true },
+	{ label: 'Open',				disabled: true },
+	{ sep: true },
+	{ label: 'Sit here',								action: sit },
+	{ sep: true },
+	{
+		label: 'Object',
+		submenu: [
+			{ label: 'Zoom in',			disabled: true },
+			{ label: 'Profile',			disabled: true },
+			{ label: 'Inspect',			checked: () => showInspect.value, action: inspect },
+			{ label: 'Script info',		disabled: true },
+			{ sep: true },
+			{ label: 'Link',			disabled: true },
+			{ label: 'Unlink',			disabled: true },
+			{ label: 'Edit linked parts',	disabled: true },
+			{ sep: true },
+			{
+				label: 'Scripts',
+				submenu: [
+					{ label: 'Compile (Mono)',		disabled: true },
+					{ label: 'Compile (LSL)',		disabled: true },
+					{ label: 'Reset scripts',		disabled: true },
+					{ label: 'Run scripts',			disabled: true },
+					{ label: 'Stop scripts',		disabled: true },
+					{ label: 'Remove scripts',		disabled: true },
+				],
+			},
+			{ sep: true },
+			{ label: 'Report abuse',		disabled: true },
+			{ label: 'Block',				disabled: true },
+		],
+	},
+	{ sep: true },
+	{ label: 'Texture refresh',							action: refreshTextures },
+	{ label: 'Derender',			disabled: true },
+	{ label: 'Derender + blacklist',	disabled: true },
+	{ label: 'Return',				disabled: true },
+	{ label: 'Take',				disabled: true },
+	{ label: 'Take copy',			disabled: true },
+	{ label: 'Pay',					disabled: true },
+	{ label: 'Buy',					disabled: true },
+	{ sep: true },
+	{ label: confirmDelete.value ? 'Confirm delete?' : 'Delete', danger: () => confirmDelete.value, action: del },
+])
 
 function onDocClick(e) {
 	if (!menu.value) return
@@ -81,30 +158,18 @@ onUnmounted(() => {
 <template>
 	<div
 		v-if="menu"
+		ref="menuEl"
 		data-object-context-menu
 		:style="style"
-		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs select-none"
+		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs text-fg select-none"
 		@contextmenu.prevent
 	>
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed" :disabled="menu.clickAction === 7" @click="touch">Touch</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="edit">Edit…</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="sit">Sit here</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="inspect">{{ showInspect ? 'Hide inspect' : 'Inspect' }}</button>
-		<div v-if="showInspect" class="px-3 py-1.5 border-b border-edge text-2xs text-fg/70 font-mono">
+		<ContextMenuItem v-for="(it, i) in items" :key="i" :item="it" />
+		<div v-if="showInspect" class="px-3 py-1.5 border-t border-edge text-2xs text-fg/70 font-mono">
 			<div>id: {{ menu.localId }}</div>
 			<div class="truncate">uuid: {{ menu.fullId }}</div>
 			<div v-if="menu.pos">pos: {{ menu.pos.map(v => v.toFixed(1)).join(', ') }}</div>
 		</div>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="refreshTextures">Texture refresh</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Derender (to-do)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take (to-do)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Take copy (to-do)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Buy (to-do)</button>
-		<button
-			class="block w-full text-left px-3 py-1.5 hover:bg-white/10"
-			:class="confirmDelete ? 'text-red-400 font-medium' : ''"
-			@click="del"
-		>{{ confirmDelete ? 'Confirm Delete?' : 'Delete' }}</button>
 	</div>
 </template>

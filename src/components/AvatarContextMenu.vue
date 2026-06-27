@@ -1,9 +1,17 @@
 <script setup>
+/**
+ * AvatarContextMenu — right-click menu on another avatar. Structure + order mirror FS
+ * menu_avatar_other (lowercased, our convention); enabled items have real backing
+ * today, the rest are DISABLED roadmap placeholders. The FS "ShareStorm" avatar
+ * export cluster becomes our "quickerSTORM" submenu. Rows render via <ContextMenuItem>.
+ */
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useInstantMessage } from '@/composables/useInstantMessage'
 import { useGridSocialStore } from '@/stores/gridSocialStore'
 import { useSocial } from '@/composables/useSocial'
+import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
+import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const ui = useUiStore()
 const im = useInstantMessage()
@@ -12,15 +20,8 @@ const { offerFriendship } = useSocial()
 
 const menu = computed(() => ui.avatarMenu)
 
-// WHY: Reposition menu so it stays on-screen near the click. clamp to viewport on right/bottom.
-const style = computed(() => {
-	if (!menu.value) return {}
-	const MENU_W = 180
-	const MENU_H = 188
-	const x = Math.min(menu.value.x, window.innerWidth - MENU_W - 8)
-	const y = Math.min(menu.value.y, window.innerHeight - MENU_H - 8)
-	return { left: `${x}px`, top: `${y}px` }
-})
+// Measure + slide on-screen on both axes (flips upward near the screen bottom).
+const { el: menuEl, style } = useContextMenuPosition(menu)
 
 function close() { ui.closeAvatarMenu() }
 
@@ -55,6 +56,121 @@ function faceToward() {
 	close()
 }
 
+// ── Self-avatar actions ────────────────────────────────────────────────────
+function openWearing()    { ui.openAppearanceOnTab('wearing'); close() }
+function openOutfits()    { ui.toggleAppearanceOnTab('outfits'); close() }
+function openSelfProfile(){ ui.openProfile(null); close() }   // null target = own profile
+function openFriends()    { ui.openChatOnTab('contacts'); close() }
+
+// FS shares one "ShareStorm" export cluster across self + other avatars → our quickerSTORM submenu.
+const quickerStormSub = {
+	label: 'quickerSTORM',
+	submenu: [
+		{ label: 'Mesh export',			disabled: true },
+		{ label: 'Avatar XML export',	disabled: true },
+		{ label: 'Avatar textures',		disabled: true },
+		{ label: 'Avatar animations',	disabled: true },
+		{ label: 'OXP export',			disabled: true },
+		{ label: 'Add particles',		disabled: true },
+	],
+}
+
+// FS menu_avatar_self order, lowercased; enabled = real backing, else disabled roadmap.
+const selfItems = computed(() => [
+	quickerStormSub,
+	{ sep: true },
+	{ label: 'Sit down',			disabled: true },
+	{ label: 'Stand up',			disabled: true },
+	{ sep: true },
+	{
+		label: 'Appearance',
+		submenu: [
+			{ label: 'Now wearing…',						action: openWearing },
+			{ label: 'Outfits',	checked: () => ui.showAppearance && ui.appearanceActiveTab === 'outfits', action: openOutfits },
+			{ label: 'Edit shape',		disabled: true },
+			{ label: 'Edit outfit',		disabled: true },
+		],
+	},
+	{
+		label: 'Take off',
+		submenu: [
+			{
+				label: 'Clothes',
+				submenu: [
+					{ label: 'Shirt',		disabled: true },
+					{ label: 'Pants',		disabled: true },
+					{ label: 'Skirt',		disabled: true },
+					{ label: 'Shoes',		disabled: true },
+					{ label: 'Socks',		disabled: true },
+					{ label: 'Jacket',		disabled: true },
+					{ label: 'Gloves',		disabled: true },
+					{ label: 'Undershirt',	disabled: true },
+					{ label: 'Underpants',	disabled: true },
+					{ label: 'Tattoo',		disabled: true },
+					{ label: 'Physics',		disabled: true },
+					{ label: 'Alpha',		disabled: true },
+					{ sep: true },
+					{ label: 'All clothes',	disabled: true },
+				],
+			},
+			{ label: 'HUD',				disabled: true },
+			{ label: 'Detach all',		disabled: true },
+		],
+	},
+	{ label: 'Hover height',		disabled: true },
+	{ sep: true },
+	{ label: 'My profile…',								action: openSelfProfile },
+	{ sep: true },
+	{ label: 'Reset skeleton',		disabled: true },
+	{ label: 'Reset skeleton and animations',	disabled: true },
+	{ sep: true },
+	{
+		label: 'Community',
+		submenu: [
+			{ label: 'Friends',								action: openFriends },
+			{ label: 'Groups',			disabled: true },
+			{ label: 'Profile',								action: openSelfProfile },
+		],
+	},
+	{ sep: true },
+	{ label: 'Texture refresh',							action: refreshTextures },
+])
+
+// FS menu_avatar_other order, lowercased; enabled = real backing, else disabled roadmap.
+const otherItems = computed(() => [
+	quickerStormSub,
+	{ label: 'View profile',							action: viewProfile },
+	...(!social.isFriend(menu.value?.agentId)
+	? [{ label: 'Add friend',						action: addFriend }]
+	: []),
+	{ label: 'Give calling card',	disabled: true },
+	{ label: 'Send IM…',								action: startIM },
+	{ label: 'Invite to group',		disabled: true },
+	{ sep: true },
+	{ label: 'Zoom in',				disabled: true },
+	{ label: 'Face towards avatar',						action: faceToward },
+	{ sep: true },
+	{ label: 'Reset skeleton',		disabled: true },
+	{ label: 'Reset skeleton and animations',	disabled: true },
+	{ sep: true },
+	{
+		label: 'Annoyance',
+		submenu: [
+			{ label: 'Block',				disabled: true },
+			{ label: 'Report',				disabled: true },
+			{ label: 'Freeze',				disabled: true },
+			{ label: 'Eject',				disabled: true },
+			{ sep: true },
+			{ label: 'Derender',			disabled: true },
+			{ label: 'Derender + blacklist',	disabled: true },
+		],
+	},
+	{ label: 'Pay',					disabled: true },
+	{ label: 'Texture refresh',							action: refreshTextures },
+])
+
+const items = computed(() => (menu.value?.isSelf ? selfItems.value : otherItems.value))
+
 function onDocClick(e) {
 	if (!menu.value) return
 	if (e.target?.closest?.('[data-avatar-context-menu]')) return
@@ -77,22 +193,13 @@ onUnmounted(() => {
 <template>
 	<div
 		v-if="menu"
+		ref="menuEl"
 		data-avatar-context-menu
 		:style="style"
-		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs select-none"
+		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs text-fg select-none"
 		@contextmenu.prevent
 	>
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="startIM">Send IM…</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="viewProfile">View profile</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="faceToward">Face towards avatar</button>
-		<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10" @click="refreshTextures">Texture refresh</button>
-		<button
-			v-if="!social.isFriend(menu.agentId)"
-			class="block w-full text-left px-3 py-1.5 hover:bg-white/10"
-			@click="addFriend"
-		>Add Friend</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Mute (to-do)</button>
-		<button class="block w-full text-left px-3 py-1.5 text-fg/40 cursor-not-allowed" disabled>Follow (to-do)</button>
+		<ContextMenuItem v-for="(it, i) in items" :key="i" :item="it" />
 	</div>
 </template>
