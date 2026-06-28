@@ -33,6 +33,35 @@ const assetDisk: AssetDiskCache = ASSET_DISK_CACHE_ON
 	: createDisabledAssetDiskCache()
 let _diskHits = 0, _diskMiss = 0   // handler-level counters for the [AssetMemo] log line
 
+// WHY: this grid serves 100+ permanently-missing assets (blob 404s). A 404 is DEFINITIVELY DEAD —
+// retrying never resurrects it — so it is negative-cached and short-circuited (see DEAD_ASSET below).
+// To stop the log flood we dedupe the one-line dead-asset notice per key; an already-negative-cached
+// asset re-asked within TTL is fully silent (no fetch, no log).
+const DEAD_ASSET = 'asset_missing'                 // sentinel thrown for a known-dead (404'd) asset
+const _deadLogged = new Set<string>()              // keys whose "dead" notice has been logged once
+
+// Transient-failure retry policy. ONLY network errors / timeouts / 5xx are retried — never a 404
+// (a missing asset will not appear by retrying). Coalescing (assetMemo) means one in-flight retry
+// chain serves every concurrent waiter for the same uuid.
+const ASSET_RETRY_BACKOFF_MS = [250, 750]          // attempt N waits this long before retrying
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+// WHY pure + exported: the "what is worth retrying" decision is the load-bearing detail of R2 and
+// must be pinned by a test independent of a live fetch. Returns the next action for a fetch outcome.
+//   'retry' → transient (network err / 5xx) with retry budget left; backoff then re-fetch
+//   'dead'  → 404: definitively missing → negative-cache, never retry
+//   'fail'  → non-transient (other 4xx) or out of retry budget → give up
+export type AssetFetchOutcome =
+	| { kind: 'network' }              // fetch() threw (DNS/conn/timeout)
+	| { kind: 'status'; status: number }
+export function assetRetryDecision(outcome: AssetFetchOutcome, attempt: number): 'retry' | 'dead' | 'fail' {
+	const hasBudget = attempt < ASSET_RETRY_BACKOFF_MS.length
+	if (outcome.kind === 'network') return hasBudget ? 'retry' : 'fail'
+	if (outcome.status === 404) return 'dead'
+	if (outcome.status >= 500) return hasBudget ? 'retry' : 'fail'
+	return 'fail'                       // non-transient 4xx (401/403/410/…)
+}
+
 export interface AssetRequestSpec {
 	capNames: string[]      // cap names to try, in preference order
 	queryKey: string        // the `?<key>=<uuid>` query parameter
@@ -88,18 +117,36 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 			if (cached) { _diskHits++; return cached }
 			_diskMiss++
 			// A recently-confirmed 404 short-circuits without re-spending a 2–3s grid fetch + pool slot.
-			if (assetDisk.isNegative(key)) throw new Error('http_404')
+			// Serve the negative verdict to every coalesced waiter so a known-dead asset is never
+			// re-fetched within the TTL. Thrown as DEAD_ASSET (not http_404) so the catch stays silent.
+			if (assetDisk.isNegative(key)) throw new Error(DEAD_ASSET)
 
-			const tFetch0 = performance.now()
-			const res = await fetch(url, { headers: { Accept: spec.accept }, signal: AbortSignal.timeout(25_000) })
+			// Bounded retry: ONLY transient failures (network/timeout/5xx) are retried. A 404 breaks
+			// out immediately and is negative-cached — retrying a missing asset is pointless work.
 			// WHY: OpenSim returns 404 (not 416) when a speculative range overshoots; here we make no
-			// range request, so a 404 is a genuine missing asset → remember it (TTL'd). Other failures
-			// (timeout / 5xx) are transient and must NOT be negative-cached.
-			if (!res.ok) {
-				if (res.status === 404) assetDisk.putNegative(key)
-				throw new Error(`http_${res.status}`)
+			// range request, so a 404 is a genuine missing asset. assetRetryDecision encodes the policy.
+			const tFetch0 = performance.now()
+			let res: Response | undefined
+			for (let attempt = 0; ; attempt++) {
+				let outcome: AssetFetchOutcome
+				try {
+					res = await fetch(url, { headers: { Accept: spec.accept }, signal: AbortSignal.timeout(25_000) })
+					if (res.ok) break
+					outcome = { kind: 'status', status: res.status }
+				} catch {
+					outcome = { kind: 'network' }
+				}
+				const action = assetRetryDecision(outcome, attempt)
+				if (action === 'retry') { await sleep(ASSET_RETRY_BACKOFF_MS[attempt]); continue }
+				if (action === 'dead') {
+					assetDisk.putNegative(key)
+					if (!_deadLogged.has(key)) { _deadLogged.add(key); slog.info(s.ws, `[Asset] missing ${assetType} ${uuid} (404 — negative-cached)`) }
+					throw new Error(DEAD_ASSET)
+				}
+				// 'fail' → non-transient 4xx, or transient out of retry budget.
+				throw new Error(outcome.kind === 'network' ? 'network_error' : `http_${outcome.status}`)
 			}
-			const raw = Buffer.from(await res.arrayBuffer())
+			const raw = Buffer.from(await res!.arrayBuffer())
 			const fetchMs = Math.round(performance.now() - tFetch0)
 
 			let out: Buffer, hasAlpha = false, dims = '', decodeMs = 0
@@ -117,7 +164,7 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 				slog.info(s.ws, `[Asset] #${_assetLogN} ${assetType} ${uuid.slice(0, 8)}… via ${capName} (${raw.length}B${spec.transcode ? ` → ${out.length}B webp${dims}` : ''}) fetch=${fetchMs}ms decode=${decodeMs}ms | pool w=${ps.workers} degraded=${ps.degraded} inflight=${ps.inflight}`)
 			}
 			const result = {
-				mime: spec.transcode ? spec.mime : (res.headers.get('content-type') || spec.mime),
+				mime: spec.transcode ? spec.mime : (res!.headers.get('content-type') || spec.mime),
 				dataB64: out.toString('base64'),
 				...(spec.transcode ? { hasAlpha } : {}),
 			}
@@ -132,7 +179,11 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 			slog.info(s.ws, `[AssetMemo] size=${m.size} MB=${(m.bytes / 1048576).toFixed(0)} hits=${m.hits} misses=${m.misses} evict=${m.evictions} inflight=${m.inflight} | disk hits=${_diskHits} miss=${_diskMiss} MB=${(d.bytes / 1048576).toFixed(0)} size=${d.size} evict=${d.evictions} neg=${d.negSize}`)
 		}
 	} catch (e) {
-		slog.warn(s.ws, `[Asset] fetch failed ${assetType} ${uuid.slice(0, 8)}…: ${(e as Error).message}`)
-		send({ error: (e as Error).message })
+		const msg = (e as Error).message
+		// A known-dead asset is silent here — it was negative-cached and logged once at the 404 source;
+		// every later coalesced waiter and re-ask within TTL lands here and must NOT re-flood the log.
+		// Genuine transient failures (out of retries) still warn so a real outage stays visible.
+		if (msg !== DEAD_ASSET) slog.warn(s.ws, `[Asset] fetch failed ${assetType} ${uuid.slice(0, 8)}…: ${msg}`)
+		send({ error: msg })
 	}
 }

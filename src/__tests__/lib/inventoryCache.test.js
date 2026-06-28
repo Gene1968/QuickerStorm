@@ -2,12 +2,16 @@
 // Uses fake-indexeddb/auto to stub IndexedDB in the jsdom test environment.
 import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
 import {
 	loadCachedInventory,
 	saveCachedInventory,
+	saveCachedFolders,
 	clearCachedInventory,
 	makeInvSavePairs,
+	foldersToPairs,
 } from '@/lib/inventoryCache.js'
+import { useInventoryStore } from '@/stores/inventoryStore.js'
 
 const AGENT_A = '00000000-0000-0000-0000-000000000001'
 const AGENT_B = '00000000-0000-0000-0000-000000000002'
@@ -119,5 +123,91 @@ describe('makeInvSavePairs', () => {
 
 	it('returns empty array for an empty map', () => {
 		expect(makeInvSavePairs(new Map())).toEqual([])
+	})
+})
+
+describe('foldersToPairs', () => {
+	it('keeps agent folders and drops Library (server-owned) folders', () => {
+		const folders = new Map([
+			[FOLDER_1, { folderId: FOLDER_1, parentId: 'root', name: 'My Stuff', source: 'agent' }],
+			[FOLDER_2, { folderId: FOLDER_2, parentId: 'libroot', name: 'Library Bits', source: 'library' }],
+		])
+		const pairs = foldersToPairs(folders)
+		expect(pairs.length).toBe(1)
+		expect(pairs[0][0]).toBe(FOLDER_1)
+		expect(pairs[0][1].name).toBe('My Stuff')
+	})
+})
+
+// ── Write-back-lag fix (option c): a created folder must survive a hard reload that re-fetches
+//    a skeleton BEFORE the grid Robust write lands, then collapse cleanly when the server confirms.
+describe('created-folder write-back-lag survival', () => {
+	const ROOT = 'root-0000'
+	const NEW_FOLDER = 'new-folder-uuid-0001'
+
+	beforeEach(() => setActivePinia(createPinia()))
+
+	it('persists a created folder offline, reload loads it, then server confirm reconciles without duplicating', async () => {
+		// 1) Session A: log in with a skeleton, optimistically create a folder, micro-save folders to IDB.
+		const a = useInventoryStore()
+		a.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [{ folderId: ROOT, parentId: '0', name: 'My Inventory', typeDefault: 8 }],
+		})
+		a.addFolderOptimistic({ folderId: NEW_FOLDER, parentId: ROOT, name: 'Fresh Folder', typeDefault: -1 })
+		await saveCachedFolders(AGENT_A, foldersToPairs(a.folders))
+
+		// 2) Hard reload (Session B): the grid write-back lagged, so the fresh login skeleton does NOT
+		//    include the new folder. Apply the cached folder snapshot.
+		const b = useInventoryStore()
+		b.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [{ folderId: ROOT, parentId: '0', name: 'My Inventory', typeDefault: 8 }],
+		})
+		expect(b.folders.has(NEW_FOLDER)).toBe(false)   // skeleton alone lost it (the bug)
+
+		const cached = await loadCachedInventory(AGENT_A)
+		// Whole agent skeleton is cached (root + the new folder); the created folder must be among them.
+		expect(cached.folderPairs.some(([id]) => id === NEW_FOLDER)).toBe(true)
+		b.applyFolderCache(cached.folderPairs)
+		// Survives the reload — re-appears from the IDB snapshot.
+		expect(b.folders.has(NEW_FOLDER)).toBe(true)
+		expect(b.folders.get(NEW_FOLDER).name).toBe('Fresh Folder')
+
+		// 3) The grid write-back catches up: the server confirms the SAME folderId (the client minted
+		//    the UUID). Reconcile must collapse to one row and let the server name win.
+		const before = b.folders.size
+		b.confirmFolder({ folderId: NEW_FOLDER, parentId: ROOT, name: 'Fresh Folder (server)', typeDefault: -1 })
+		expect(b.folders.size).toBe(before)             // no duplicate row
+		expect(b.folders.get(NEW_FOLDER).name).toBe('Fresh Folder (server)')   // authoritative wins
+		expect(b.folders.get(NEW_FOLDER).source).toBe('agent')
+	})
+
+	it('applyFolderCache does not clobber a folder already present in the login skeleton', () => {
+		const s = useInventoryStore()
+		s.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [{ folderId: FOLDER_1, parentId: ROOT, name: 'Authoritative', typeDefault: 5 }],
+		})
+		s.applyFolderCache([[FOLDER_1, { folderId: FOLDER_1, parentId: ROOT, name: 'Stale Cache', typeDefault: 5 }]])
+		// The skeleton copy wins — cache only restores folders the skeleton lacks.
+		expect(s.folders.get(FOLDER_1).name).toBe('Authoritative')
+	})
+
+	it('saveCachedFolders preserves previously-cached itemPairs', async () => {
+		await saveCachedInventory(AGENT_A, [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]])
+		await saveCachedFolders(AGENT_A, [[FOLDER_2, { folderId: FOLDER_2, parentId: 'root', name: 'New', source: 'agent' }]])
+		const loaded = await loadCachedInventory(AGENT_A)
+		expect(loaded.itemPairs.length).toBe(1)          // items untouched
+		expect(loaded.folderPairs.length).toBe(1)        // folders added
+		expect(loaded.folderPairs[0][1].name).toBe('New')
+	})
+
+	it('saveCachedInventory preserves previously-cached folderPairs', async () => {
+		await saveCachedFolders(AGENT_A, [[FOLDER_2, { folderId: FOLDER_2, parentId: 'root', name: 'KeepMe', source: 'agent' }]])
+		await saveCachedInventory(AGENT_A, [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]])
+		const loaded = await loadCachedInventory(AGENT_A)
+		expect(loaded.folderPairs.length).toBe(1)        // folder micro-save survives the item save
+		expect(loaded.folderPairs[0][1].name).toBe('KeepMe')
 	})
 })

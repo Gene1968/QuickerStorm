@@ -70,6 +70,10 @@ useSocial()
 // when the tab closes — a fresh open the next day finds no flag.
 onMounted(() => {
 	try { sessionStorage.setItem('qs_in_world', '1') } catch {}
+	// WHY: greet the user with one Inventory floater open on first world load, mirroring how
+	// Conversations/Nearby start open. One-shot guard inside uiStore respects a manual close on
+	// SPA re-login (re-mount); a real page reload resets it.
+	ui.autoOpenInventoryOnce()
 })
 
 function returnToLogin() {

@@ -57,6 +57,30 @@ describe('uiStore profile (multi-instance)', () => {
 	})
 })
 
+describe('uiStore — auto-open inventory on first load', () => {
+	// WHY: the one-shot guard is module-level (survives store re-creation across SPA re-login),
+	// so these assertions run in sequence within one module: first call opens, later calls no-op.
+	it('autoOpenInventoryOnce opens inventory instance 0 on first call', () => {
+		const store = useUiStore()
+		expect(store.inventoryInstances).toEqual([])
+		store.autoOpenInventoryOnce()
+		expect(store.inventoryInstances).toEqual([0])
+		expect(store.showInventory).toBe(true)
+	})
+
+	it('does not re-open after a manual close on a later (re-login) mount', () => {
+		// Simulate user closing the auto-opened floater, then an SPA re-login re-mounts.
+		const store = useUiStore()
+		store.closeInventoryAt(0)
+		expect(store.inventoryInstances).toEqual([])
+		// Fresh store instance (re-login re-creates pinia) — guard already tripped this session.
+		setActivePinia(createPinia())
+		const store2 = useUiStore()
+		store2.autoOpenInventoryOnce()
+		expect(store2.inventoryInstances).toEqual([])
+	})
+})
+
 describe('uiStore — movement help + preferences tab', () => {
 	it('showMovementHelp defaults to false', () => {
 		const store = useUiStore()

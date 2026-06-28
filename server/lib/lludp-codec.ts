@@ -2555,3 +2555,51 @@ export function decodeBulkUpdateInventory(buf: Buffer, dataOffset: number): Bulk
   }
   return { folders, items }
 }
+
+/** Decode a BulkUpdateInventory event delivered over the EventQueue as LLSD, into the SAME
+ *  { folders[], items[] } shape decodeBulkUpdateInventory (the UDP path) returns. On OpenSim the
+ *  ack after a rename/move/perms mutation arrives via EventQueueGet (LLSD), not as a UDP packet,
+ *  so this is the only path that fires for those reconciles.
+ *
+ *  Reference (exact field names): opensim LLClientView.cs SendBulkUpdateInventory(folders, items)
+ *  ~line 13294 — body shape:
+ *    { AgentData:[{AgentID,TransactionID}],
+ *      FolderData:[{ FolderID, ParentID, Type, Name }],
+ *      ItemData:[{ ItemID, CallbackID, FolderID, CreatorID, OwnerID, GroupID, BaseMask, OwnerMask,
+ *                  GroupMask, EveryoneMask, NextOwnerMask, GroupOwned, AssetID, Type, InvType,
+ *                  Flags, SaleType, SalePrice, Name, Description, CreationDate, CRC }] }
+ *  Folder `Type` is the default content type (→ typeDefault); item `Type` is the AssetType and
+ *  `InvType` the inventory type — same fields the UDP S8 decoder reads. LLSD <uuid> leaves arrive
+ *  as plain strings and <integer> as numbers (see llsd.ts coerce), so no byte math here. */
+export function decodeBulkUpdateInventoryFromLLSD(llsdBody: unknown): BulkUpdateInventory {
+  const body = (llsdBody ?? {}) as Record<string, unknown>
+  const asArray = (v: unknown): Record<string, unknown>[] =>
+    Array.isArray(v) ? (v as Record<string, unknown>[]) : []
+  const str = (v: unknown): string => (v == null ? '' : String(v))
+  const num = (v: unknown): number => {
+    if (typeof v === 'number') return v
+    const n = parseFloat(String(v)); return Number.isNaN(n) ? 0 : n
+  }
+
+  const folders: BulkInventoryFolder[] = asArray(body.FolderData).map(f => ({
+    folderId:    str(f.FolderID),
+    parentId:    str(f.ParentID),
+    name:        str(f.Name),
+    typeDefault: num(f.Type),
+  }))
+
+  const items: CreatedInventoryItem[] = asArray(body.ItemData).map(it => ({
+    itemId:    str(it.ItemID),
+    parentId:  str(it.FolderID),   // FolderID = the folder the item lives in
+    assetId:   str(it.AssetID),
+    name:      str(it.Name),
+    desc:      str(it.Description),
+    assetType: num(it.Type),       // item-level Type = AssetType
+    invType:   num(it.InvType),
+    flags:     num(it.Flags),
+    createdAt: num(it.CreationDate),
+    ownerMask: num(it.OwnerMask),
+  }))
+
+  return { folders, items }
+}

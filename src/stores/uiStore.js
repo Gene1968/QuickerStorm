@@ -4,6 +4,12 @@ import { ref, computed, shallowRef, watch } from 'vue'
 import { useChatStore } from './chatStore'
 import { computeAutoGeomCacheMb } from '@/lib/geomCache.js'
 
+// WHY: One-shot guard so the Inventory floater auto-opens on the first world load of the
+// page session, but an SPA re-login (which re-mounts WorldView) respects a manual close —
+// see autoOpenInventoryOnce. Module-level (not a store ref) so it survives store re-creation
+// across re-login while still resetting on a real page reload.
+let _inventoryAutoOpened = false
+
 // WHY: Inventory supports up to 6 simultaneous floaters (per-bag, multi-view).
 // Default positions are arranged in a brick pattern so opening many at once
 // keeps them legible — row 1: #1+#2 side-by-side; row 2: #3 half-offset above;
@@ -173,6 +179,14 @@ export const useUiStore = defineStore('ui', () => {
 		return -1
 	}
 	function toggleInventory() { toggleInventoryAt(0) }
+	// WHY: mirror how Conversations/Nearby greet the user with a floater already open, but only
+	// on the FIRST world load of the page session. Guarded so an SPA re-login (re-mount) does not
+	// re-force it open after the user manually closed it. A real page reload resets the guard.
+	function autoOpenInventoryOnce() {
+		if (_inventoryAutoOpened) return
+		_inventoryAutoOpened = true
+		openInventoryAt(0)
+	}
 	function toggleMap()         { showMap.value         = !showMap.value }
 	function toggleNotifications() { showNotifications.value = !showNotifications.value }
 	function toggleSettings()    { showSettings.value    = !showSettings.value }
@@ -345,7 +359,7 @@ export const useUiStore = defineStore('ui', () => {
 		showProfile, profileTargetId, profileInstances,
 		toggleMode, toggleAvatarList, toggleMinimap, toggleChat,
 		toggleInventory, toggleMap, toggleNotifications, toggleSettings, toggleDebug,
-		inventoryInstances, openInventoryAt, closeInventoryAt, toggleInventoryAt, openNextInventory,
+		inventoryInstances, openInventoryAt, closeInventoryAt, toggleInventoryAt, openNextInventory, autoOpenInventoryOnce,
 		togglePreferences, openPreferences, toggleQuickPrefs,
 		toggleVoiceControls, toggleMoveControls, toggleCameraControls,
 		toggleAppearance, openAppearanceOnTab, toggleAppearanceOnTab, toggleSearch, toggleSnapshot, toggleAO,

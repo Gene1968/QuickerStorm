@@ -9,7 +9,8 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
-import { loadCachedInventory, saveCachedInventory, makeInvSavePairs } from '@/lib/inventoryCache'
+import { useUiStore } from '@/stores/uiStore'
+import { loadCachedInventory, saveCachedInventory, saveCachedFolders, makeInvSavePairs, foldersToPairs } from '@/lib/inventoryCache'
 import { C, S } from '@shared/protocol.js'
 
 const BATCH        = 40   // folders per cap POST (server batches them into one request)
@@ -58,6 +59,14 @@ export function useInventory() {
 	const inv     = useInventoryStore()
 	const session = useSessionStore()
 	const world   = useWorldStore()
+	const ui      = useUiStore()
+
+	// Persist the current folder skeleton to IDB. WHY: created/renamed/moved folders must survive a
+	// reload while the grid Robust write-back lags — otherwise a hard reload re-fetches a skeleton
+	// without the change (e.g. a renamed folder reverts to "New Folder"). Reconciled by folderId.
+	function persistFolders() {
+		if (session.agentId) saveCachedFolders(session.agentId, foldersToPairs(inv.folders))
+	}
 
 	// Fetch one or more folders' items in a single batched cap request.
 	function fetchFolders(ids) {
@@ -124,6 +133,11 @@ export function useInventory() {
 		if (!agentId || inv.cacheLoaded) return
 		try {
 			const cached = await loadCachedInventory(agentId)
+			if (cached) {
+				// Restore created-but-not-yet-persisted folders FIRST so their item lists have a home
+				// when applyCachedItems runs — survives the grid write-back lag (option c).
+				if (cached.folderPairs?.length) inv.applyFolderCache(cached.folderPairs)
+			}
 			if (cached?.itemPairs?.length) {
 				inv.applyCachedItems(cached.itemPairs)
 			} else {
@@ -173,8 +187,8 @@ export function useInventory() {
 		// Module-level ref so each onCapsReady can stop its predecessor.
 		if (_stopMutationSave) _stopMutationSave()
 		_stopMutationSave = stopMutationSave
-		// Backfill folders the user expanded before caps were ready (root auto-expands on load).
-		for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
+		// Backfill folders any window expanded before caps were ready (root auto-expands on load).
+		for (const id of inv.expandedUnion()) if (!inv.isFetched(id)) fetchFolder(id)
 		// Kick off the background full load so totals reach the exact count.
 		fetchAll()
 	}
@@ -198,10 +212,16 @@ export function useInventory() {
 		const folderId = crypto.randomUUID()
 		emit(C.CREATE_INV_FOLDER, { folderId, parentId, name: name || 'New Folder' })
 		inv.addFolderOptimistic({ folderId, parentId, name: name || 'New Folder', typeDefault })
+		// WHY: micro-save the folder skeleton to IDB the instant it's created. The cap returns 200
+		// from the region cache but the grid Robust write-back lags; a hard reload before that lands
+		// would re-fetch a skeleton WITHOUT this folder and it would vanish. Persisting it here makes
+		// it reappear from the snapshot on reload; it syncs out quietly once the write-back catches up.
+		persistFolders()
 		if (rename) {
-			// Ensure the parent is open so the new row renders, then enter inline-rename once its
-			// TreeNode has mounted (nextTick = after the DOM update + child onMounted listener).
-			if (!inv.isExpanded(parentId)) inv.toggle(parentId)
+			// Ensure the parent is open in the FOCUSED window so the new row renders, then enter
+			// inline-rename once its TreeNode has mounted (nextTick = after DOM update + onMounted).
+			const fid = ui.floaterStack.at(-1)
+			if (fid && !inv.isExpanded(fid, parentId)) inv.toggle(fid, parentId)
 			nextTick(() => window.dispatchEvent(new CustomEvent('inv:begin-rename', { detail: { id: folderId, kind: 'folder' } })))
 		}
 		return folderId
@@ -246,6 +266,7 @@ export function useInventory() {
 	function renameFolder(folderId, name) {
 		if (!folderId || !name) return
 		inv.renameFolderLocal(folderId, name)
+		persistFolders()   // so the new name survives a reload during grid write-back lag
 		emit(C.INV_RENAME_FOLDER, { folderId, name })
 	}
 
@@ -258,6 +279,7 @@ export function useInventory() {
 	function moveFolder(folderId, toParentId) {
 		if (!folderId || !toParentId) return
 		inv.moveFolderLocal(folderId, toParentId)
+		persistFolders()
 		emit(C.INV_MOVE_FOLDER, { folderId, toParentId })
 	}
 
@@ -272,6 +294,7 @@ export function useInventory() {
 		if (!folderId) return
 		const trashFolderId = inv.findSystemFolder(14)
 		inv.moveFolderLocal(folderId, trashFolderId)
+		persistFolders()
 		emit(C.INV_TRASH_FOLDER, { folderId, trashFolderId })
 	}
 
@@ -308,7 +331,14 @@ export function useInventory() {
 			on(S.INV_ITEM_REMOVED, d => (d?.itemIds || []).forEach(id => inv.removeItemLocal(id)))
 			// CreateInventoryCategory cap confirmed the folder persisted — re-affirm it in the store
 			// (server may have truncated the name); the optimistic add already used the same folderId.
-			on(S.INV_FOLDER_CREATED, d => { if (d?.folderId) inv.addFolderOptimistic({ folderId: d.folderId, parentId: d.parentId, name: d.name, typeDefault: d.typeDefault ?? -1 }) })
+			// UPSERT by folderId (same UUID the client minted) so the optimistic row + this confirm
+			// collapse to one — no duplicate — and the authoritative server name/parent wins once the
+			// grid write-back lands. Re-persist the skeleton so the now-confirmed folder is durable.
+			on(S.INV_FOLDER_CREATED, d => {
+				if (!d?.folderId) return
+				inv.confirmFolder({ folderId: d.folderId, parentId: d.parentId, name: d.name, typeDefault: d.typeDefault })
+				persistFolders()
+			})
 			// Cap rejected the create — revert the optimistic folder so the tree matches the server.
 			on(S.INV_FOLDER_CREATE_FAILED, d => { if (d?.folderId) inv.removeFolderLocal(d.folderId) })
 			registered = true
@@ -317,7 +347,7 @@ export function useInventory() {
 		// resume), inv.capsReady is already true but onCapsReady was never called. Kick off fetching.
 		if (inv.capsReady) {
 			loadCache().then(() => {
-				for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
+				for (const id of inv.expandedUnion()) if (!inv.isFetched(id)) fetchFolder(id)
 				fetchAll()
 			})
 		}

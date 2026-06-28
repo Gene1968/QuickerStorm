@@ -11,7 +11,16 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const rootId    = ref('')   // agent root ("My Inventory")
 	const libRootId = ref('')   // shared Library root
 	const items     = shallowRef(new Map())  // Map<folderId, Item[]> — filled by cap fetch
-	const expanded  = ref(new Set())         // folderIds currently expanded in the tree
+	// WHY per-floater: up to 6 inventory windows can be open at once and each must expand/collapse
+	// folders independently (FS behavior). A single shared Set leaked collapses across windows.
+	// Map<floaterId, Set<folderId>>; the global InventoryContextMenu + createFolder act on the
+	// FOCUSED floater's set (resolved via ui.floaterStack), tree nodes on their own injected id.
+	const expandedByFloater = ref(new Map())
+	// WHY: while a filter is active, folders auto-open to reveal matches (the `open` computed forces
+	// open). FS still lets you collapse an individual matching folder by clicking it; this per-floater
+	// overlay records those explicit collapses so a click takes effect WITHOUT touching the normal
+	// expand set. Cleared when the filter clears, so the next filter session starts all-revealed.
+	const filterCollapsedByFloater = ref(new Map())
 	const fetched   = shallowRef(new Set())  // folderIds whose contents have been fetched
 	const fetching  = shallowRef(new Set())  // folderIds with an in-flight fetch
 
@@ -34,7 +43,9 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// Active inventory drag, shared across ALL tree nodes + floaters. WHY shared state instead of
 	// relying on dataTransfer: getData() is unreadable during dragover and custom-type/types quirks
 	// vary by browser — a singleton ref is always readable and makes cross-floater drags reliable.
-	const dragPayload = ref(null)     // { id, kind:'item'|'folder' } | null
+	// WHY: { id } is the drag anchor (back-compat for single-item/folder readers); { ids } lists
+	// every id being moved (anchor first) for multi-select drags. count is ids.length for hints.
+	const dragPayload = ref(null)     // { id, ids:[...], kind:'item'|'folder', count } | null
 
 	function loadFromLogin(d) {
 		const m = new Map()
@@ -44,8 +55,12 @@ export const useInventoryStore = defineStore('inventory', () => {
 		rootId.value    = d?.inventoryRoot    || ''
 		libRootId.value = d?.inventoryLibRoot || ''
 		items.value     = new Map()
-		// WHY: auto-expand the root so the tree isn't a single collapsed row on open.
-		expanded.value  = new Set(rootId.value ? [rootId.value] : [])
+		// WHY: re-seed every currently-open window's expand set to the freshly-loaded root (auto-expanded)
+		// so a re-login starts each window clean; new windows seed lazily via ensureExpand.
+		const seeded = new Map()
+		for (const fid of expandedByFloater.value.keys()) seeded.set(fid, new Set(rootId.value ? [rootId.value] : []))
+		expandedByFloater.value = seeded
+		filterCollapsedByFloater.value = new Map()
 		fetched.value   = new Set()
 		fetching.value  = new Set()
 		// WHY: caps belong to the session — re-armed by the CAPS_READY message after each login.
@@ -75,7 +90,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 	}
 
 	function folderItems(folderId) { return items.value.get(folderId) || [] }
-	function isExpanded(id)        { return expanded.value.has(id) }
+	function isExpanded(floaterId, id) { const s = expandedByFloater.value.get(floaterId); return s ? s.has(id) : false }
 	function isFetched(id)         { return fetched.value.has(id) }
 	function isFetching(id)        { return fetching.value.has(id) }
 
@@ -93,19 +108,92 @@ export const useInventoryStore = defineStore('inventory', () => {
 		_schedTrigger()
 	}
 
-	function toggle(id) {
-		const s = new Set(expanded.value)
-		if (s.has(id)) s.delete(id); else s.add(id)
-		expanded.value = s
+	// Pre-populate FOLDERS from the IndexedDB cache. Mirrors applyBulkUpdate's folder-upsert: an
+	// existing skeleton folder wins (it's already authoritative from login), but a cached folder
+	// NOT in the skeleton is restored. WHY: a folder created last session whose grid write-back
+	// lagged is absent from this login's skeleton — restoring it from cache makes it survive the
+	// reload instead of vanishing; the server's later confirm (or a fresh fetch) reconciles by the
+	// same folderId, so no duplicate is created.
+	function applyFolderCache(pairs) {
+		if (!Array.isArray(pairs) || !pairs.length) return
+		const m = new Map(folders.value)
+		for (const [folderId, f] of pairs) {
+			if (!folderId || !f || m.has(folderId)) continue
+			m.set(folderId, { typeDefault: -1, version: 0, ...f, folderId, source: 'agent' })
+		}
+		folders.value = m
 	}
 
-	function expandAll() {
+	// All expand mutators are keyed by floaterId and reassign the outer Map so every reader
+	// (the tree's `open` computed) re-evaluates. A floater's set is seeded with the root expanded.
+	function _rootSeed() { return new Set(rootId.value ? [rootId.value] : []) }
+
+	function toggle(floaterId, id) {
+		if (!floaterId || !id) return
+		const m = new Map(expandedByFloater.value)
+		const s = new Set(m.get(floaterId) || _rootSeed())
+		if (s.has(id)) s.delete(id); else s.add(id)
+		m.set(floaterId, s)
+		expandedByFloater.value = m
+	}
+
+	function expandAll(floaterId) {
+		if (!floaterId) return
 		const s = new Set()
 		folders.value.forEach(f => s.add(f.folderId))
-		expanded.value = s
+		const m = new Map(expandedByFloater.value)
+		m.set(floaterId, s)
+		expandedByFloater.value = m
 	}
-	function collapseAll() {
-		expanded.value = new Set(rootId.value ? [rootId.value] : [])
+	function collapseAll(floaterId) {
+		if (!floaterId) return
+		const m = new Map(expandedByFloater.value)
+		m.set(floaterId, _rootSeed())
+		expandedByFloater.value = m
+	}
+	// Seed a window's expand set (root auto-expanded) when it opens — idempotent.
+	function ensureExpand(floaterId) {
+		if (!floaterId || expandedByFloater.value.has(floaterId)) return
+		const m = new Map(expandedByFloater.value)
+		m.set(floaterId, _rootSeed())
+		expandedByFloater.value = m
+	}
+	// Drop a window's expand set when it closes, so it doesn't leak across re-opens.
+	function dropExpand(floaterId) {
+		if (floaterId) clearFilterCollapse(floaterId)
+		if (!floaterId || !expandedByFloater.value.has(floaterId)) return
+		const m = new Map(expandedByFloater.value)
+		m.delete(floaterId)
+		expandedByFloater.value = m
+	}
+
+	// ── Filter-collapse overlay (explicit collapses while a filter is active) ──
+	function isFilterCollapsed(floaterId, id) {
+		const s = filterCollapsedByFloater.value.get(floaterId)
+		return s ? s.has(id) : false
+	}
+	function toggleFilterCollapse(floaterId, id) {
+		if (!floaterId || !id) return
+		const m = new Map(filterCollapsedByFloater.value)
+		const s = new Set(m.get(floaterId) || [])
+		if (s.has(id)) s.delete(id); else s.add(id)
+		m.set(floaterId, s)
+		filterCollapsedByFloater.value = m
+	}
+	// Clear a window's overlay when its filter clears (next filter starts fully revealed).
+	function clearFilterCollapse(floaterId) {
+		if (!floaterId || !filterCollapsedByFloater.value.has(floaterId)) return
+		const m = new Map(filterCollapsedByFloater.value)
+		m.delete(floaterId)
+		filterCollapsedByFloater.value = m
+	}
+	// Union of all windows' expanded folders (+ root) — for the caps-ready backfill fetch, since
+	// folder CONTENTS are shared across windows even though expand state isn't.
+	function expandedUnion() {
+		const s = new Set()
+		expandedByFloater.value.forEach(set => set.forEach(id => s.add(id)))
+		if (rootId.value) s.add(rootId.value)
+		return s
 	}
 
 	// First folder with the given preferred type (e.g. Favorites=23, Current Outfit=46).
@@ -227,6 +315,27 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (!folderId || folders.value.has(folderId)) return
 		const m = new Map(folders.value)
 		m.set(folderId, { folderId, parentId, name, typeDefault, version: 0, source: 'agent' })
+		folders.value = m
+	}
+
+	// Reconcile a server-confirmed folder (CreateInventoryCategory cap → S.INV_FOLDER_CREATED).
+	// UPSERT by folderId: the client owns the UUID and reuses it for the optimistic add AND the
+	// create request, so the confirm carries the SAME folderId — merging here collapses the two
+	// into one row (no duplicate) and lets the authoritative server fields (e.g. a truncated name)
+	// win once the grid write-back lands. Creates the row if the optimistic add was lost on reload.
+	function confirmFolder({ folderId, parentId, name, typeDefault }) {
+		if (!folderId) return
+		const m = new Map(folders.value)
+		const prev = m.get(folderId)
+		const next = { ...prev, folderId, source: 'agent' }
+		if (parentId != null)    next.parentId    = parentId
+		if (name != null)        next.name        = name
+		if (typeDefault != null) next.typeDefault = typeDefault
+		// WHY: in the lost-on-reload path `prev` is absent; if the server confirm omits typeDefault,
+		// a null/NaN would misclassify this as a non-system folder. Default to -1 (user folder).
+		if (next.typeDefault == null) next.typeDefault = -1
+		if (next.version == null) next.version = 0
+		m.set(folderId, next)
 		folders.value = m
 	}
 
@@ -359,8 +468,18 @@ export const useInventoryStore = defineStore('inventory', () => {
 				}
 				const list = items.value.get(it.parentId) || []
 				const idx = list.findIndex(x => x.itemId === it.itemId)
-				if (idx >= 0) list[idx] = { ...list[idx], ...it }
-				else items.value.set(it.parentId, [...list, it])
+				// WHY: recompute the canCopy/canModify/canTransfer flags whenever the ack carries an
+				// ownerMask — otherwise a perms change reconciled here (now live via the EventQueue path)
+				// updates the raw mask but leaves the cached flags (and rendered perm tags) stale.
+				if (idx >= 0) {
+					const merged = { ...list[idx], ...it }
+					if (it.ownerMask != null) Object.assign(merged, _permFlags(it.ownerMask))
+					list[idx] = merged
+				} else {
+					const ins = { ...it }
+					if (it.ownerMask != null) Object.assign(ins, _permFlags(it.ownerMask))
+					items.value.set(it.parentId, [...list, ins])
+				}
 			}
 			_schedTrigger()
 		}
@@ -386,19 +505,25 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	function clear() { loadFromLogin(null) }
 
-	function setDrag(id, kind) { dragPayload.value = id ? { id, kind } : null }
+	// WHY: accept either a single id or an array of ids. Normalize to { id (anchor), ids, kind, count }
+	// so single-id readers (id) and multi-id readers (ids) both work off one payload shape.
+	function setDrag(idOrIds, kind) {
+		const ids = (Array.isArray(idOrIds) ? idOrIds : [idOrIds]).filter(Boolean)
+		dragPayload.value = ids.length ? { id: ids[0], ids, kind, count: ids.length } : null
+	}
 	function clearDrag()       { dragPayload.value = null }
 
 	return {
-		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady, cacheLoaded,
+		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
 		selectedId, sortMode, contextMenu, propsTarget, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
-		markFetching, setCaps, applyCachedItems, toggle, expandAll, collapseAll, findSystemFolder,
+		markFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
+		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder,
 		select, descendantCounts,
 		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties, addToFavorites,
 		setItems, folderCount, itemCount, clear,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
-		pendingAgentFolders, addCreatedItems, addFolderOptimistic, landmarkTargetFolders,
+		pendingAgentFolders, addCreatedItems, addFolderOptimistic, confirmFolder, landmarkTargetFolders,
 		renameItemLocal, renameFolderLocal, moveItemLocal, moveFolderLocal,
 		removeItemLocal, removeFolderLocal, updateItemPermsLocal, applyBulkUpdate,
 	}

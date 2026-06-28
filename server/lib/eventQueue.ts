@@ -18,6 +18,7 @@ import { parseLLSD, llsdNum, llsdStr, type LLSDValue } from './llsd'
 import { getSession } from '../state/sessions'
 import { slog } from './serverLog'
 import { applyTeleportFinish } from '../handlers/lludp'
+import { decodeBulkUpdateInventoryFromLLSD } from './lludp-codec'
 import { S } from '../../shared/protocol.js'
 
 export interface TeleportFinishFields {
@@ -202,6 +203,20 @@ export const eqRegistry = new Map<string, EqHandler>([
 			s.tpDebugUntil = 0
 			s.ws.send(JSON.stringify({ t: S.TELEPORT_FAILED, d: { reason: 'sim reported teleport failed (EQ)' } }))
 		}
+	}],
+	['BulkUpdateInventory', (sessionId, body) => {
+		// WHY: On OpenSim the ack after a rename/move/perms/trash mutation is delivered here over the
+		// EventQueue as LLSD, NOT as a UDP BulkUpdateInventory (Low 281) packet — so the UDP path in
+		// lludp.ts never fires for these. Decode to the SAME { folders, items } envelope and emit the
+		// SAME S.INV_BULK_UPDATE message, so useInventory.applyBulkUpdate can't tell UDP from EQ origin.
+		const s = getSession(sessionId); if (!s) return
+		try {
+			const { folders, items } = decodeBulkUpdateInventoryFromLLSD(body)
+			if (folders.length || items.length) {
+				slog.info(s.ws, `[EQ] ✓ BulkUpdateInventory: ${folders.length} folder(s), ${items.length} item(s)`)
+				s.ws.send(JSON.stringify({ t: S.INV_BULK_UPDATE, d: { folders, items } }))
+			}
+		} catch (e) { slog.warn(s.ws, `[EQ] BulkUpdateInventory decode error: ${(e as Error).message}`) }
 	}],
 	['EnableSimulator', (sessionId, body) => {
 		const s = getSession(sessionId); if (!s) return

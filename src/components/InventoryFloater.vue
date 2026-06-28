@@ -3,9 +3,10 @@ import { ref, computed, watch, provide, onMounted, onUnmounted, nextTick } from 
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useInventory } from '@/composables/useInventory'
-import { itemIcon, TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT, itemMatchesType } from '@/utils/inventoryIcons'
+import { TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT, itemMatchesType } from '@/utils/inventoryIcons'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
+import InventoryFlatRow from '@/components/InventoryFlatRow.vue'
 import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
 
 const props = defineProps({
@@ -22,8 +23,7 @@ const showAddMenu = ref(false)
 function newFolderHere() {
 	const parentId = inv.folders.has(inv.selectedId) ? inv.selectedId : inv.rootId
 	if (!parentId) return
-	createFolder({ name: 'New Folder', parentId })
-	if (!inv.isExpanded(parentId)) inv.toggle(parentId)
+	createFolder({ name: 'New Folder', parentId })   // createFolder auto-expands the parent in the focused window
 	showAddMenu.value = false
 }
 
@@ -130,7 +130,10 @@ function buildTreeOrder() {
 	function walk(folderId) {
 		if (!folderHasMatch(folderId)) return
 		order.push(folderId)
-		if (inv.isExpanded(folderId) || filtersActive.value) {
+		const isOpen = filtersActive.value
+			? !inv.isFilterCollapsed(floaterId.value, folderId)
+			: inv.isExpanded(floaterId.value, folderId)
+		if (isOpen) {
 			for (const c of inv.childFolders(folderId).filter(ch => folderHasMatch(ch.folderId))) walk(c.folderId)
 			let its = inv.folderItems(folderId)
 			if (filtersActive.value) its = its.filter(it => itemVisible(it))
@@ -203,9 +206,16 @@ function trashSelected() {
 watch(activeTab, clearSelection)
 
 provide('invSelection', { selectedIds, anchorId, isSelected, clearSelection, selectionSelect })
+// Flat tabs (Recent/Worn/Favorites) select via the tab's own ordered id list, not the tree order.
+provide('invSelectionFlat', selectionSelectFlat)
 
 // WHY: per-instance id so each floater has its own focus/z-index slot in the floater stack.
 const floaterId   = computed(() => `inventory-${props.index}`)
+// WHY: the inv:begin-rename / context-menu actions are dispatched as GLOBAL window events, but the
+// inventory store is a singleton shared by every floater — so rows in OTHER open inventory windows
+// would also react and steal focus. Provide this floater's id so descendant rows can scope a global
+// event to the floater the user is actually acting in (= the focused one, top of the floater stack).
+provide('invFloaterId', floaterId)
 const defaultPos  = computed(() => INVENTORY_DEFAULT_POS[props.index] ?? INVENTORY_DEFAULT_POS[0])
 const title       = computed(() => props.index === 0 ? '📦 Inventory' : `📦 Inventory ${props.index + 1}`)
 const isLast      = computed(() => props.index >= MAX_INVENTORY - 1)
@@ -262,7 +272,16 @@ function scrollTabs(kind) {
 
 function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false; showAddMenu.value = false }
 
+// WHY: seed this window's per-instance expand set (root auto-expanded). immediate handles the
+// common case (rootId already loaded at mount); the watch covers a window that opens before login.
+watch(() => inv.rootId, (rid) => { if (rid) inv.ensureExpand(floaterId.value) }, { immediate: true })
+
+// WHY: when the filter clears, drop this window's filter-collapse overlay so the next filter
+// session starts fully revealed (and the normal expand state resumes cleanly).
+watch(filtersActive, (active) => { if (!active) inv.clearFilterCollapse(floaterId.value) })
+
 onMounted(() => {
+	inv.ensureExpand(floaterId.value)
 	nextTick(updateTabOverflow)
 	if (tabScrollEl.value && 'ResizeObserver' in window) {
 		tabRo = new ResizeObserver(updateTabOverflow)
@@ -271,6 +290,7 @@ onMounted(() => {
 	document.addEventListener('click', closeMenus)
 })
 onUnmounted(() => {
+	inv.dropExpand(floaterId.value)
 	tabRo?.disconnect()
 	document.removeEventListener('click', closeMenus)
 	clearTimeout(filterTimer)
@@ -293,8 +313,8 @@ onUnmounted(() => {
 			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-fg">
 			<div class="flex flex-row items-center justify-start w-full text-2xs">
-				<button class="ui-btn me-2 py-0" @click="inv.collapseAll()">Collapse</button>
-				<button class="ui-btn me-2 py-0" @click="inv.expandAll()">Expand</button>
+				<button class="ui-btn me-2 py-0" @click="inv.collapseAll(floaterId)">Collapse</button>
+				<button class="ui-btn me-2 py-0" @click="inv.expandAll(floaterId)">Expand</button>
 				<span class="me-1">Filter:</span>
 				<!-- Type-filter dropdown (FS "Filter: All Types ▾") -->
 				<div class="relative grow me-1">
@@ -346,10 +366,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'recent'">
 			<div v-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in recentItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, recentIds, $event)">
-					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
-					<span class="truncate">{{ it.name }}</span>
-				</div>
+				<InventoryFlatRow v-for="it in recentItems" :key="it.itemId" :item="it" :order="recentIds" />
 			</div>
 			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
 				<p>No recent items yet.</p>
@@ -358,10 +375,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'worn'">
 			<div v-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in wornItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, wornIds, $event)">
-					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
-					<span class="truncate">{{ it.name }}</span>
-				</div>
+				<InventoryFlatRow v-for="it in wornItems" :key="it.itemId" :item="it" :order="wornIds" />
 			</div>
 			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
 				<p>{{ cofFolderId ? 'Nothing worn (or still loading).' : 'No Current Outfit folder.' }}</p>
@@ -369,10 +383,7 @@ onUnmounted(() => {
 		</template>
 		<template v-else-if="activeTab === 'favorites'">
 			<div v-if="favItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
-				<div v-for="it in favItems" :key="it.itemId" class="flex items-center gap-1 px-1 py-0.5 rounded-sm text-xs text-fg/90 select-none cursor-pointer" :class="isSelected(it.itemId) ? 'bg-accent/30' : 'hover:bg-white/10'" :title="it.desc || it.name" @click="selectionSelectFlat(it.itemId, favIds, $event)">
-					<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
-					<span class="truncate">{{ it.name }}</span>
-				</div>
+				<InventoryFlatRow v-for="it in favItems" :key="it.itemId" :item="it" :order="favIds" />
 			</div>
 			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
 				<p>No favorites.</p>

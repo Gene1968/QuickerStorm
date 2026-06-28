@@ -1,10 +1,13 @@
 <script setup>
 // Recursive inventory folder row. Self-references by filename (Vue 3 SFC recursion).
-import { computed, inject, ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, inject, ref, shallowRef, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChevronRightIcon, ChevronDownIcon } from '@lucide/vue'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useInventory } from '@/composables/useInventory'
 import { itemIcon, folderIcon } from '@/utils/inventoryIcons'
+import { useInventoryThumbnail } from '@/composables/useInventoryThumbnail'
+import TexturePreviewTooltip, { clampPreviewPosition } from '@/components/TexturePreviewTooltip.vue'
 
 const props = defineProps({
 	folderId: { type: String, required: true },
@@ -12,15 +15,28 @@ const props = defineProps({
 })
 
 const inv    = useInventoryStore()
+const ui     = useUiStore()
 const { fetchFolder, renameItem, renameFolder, trashItem, trashFolder, moveItem, moveFolder } = useInventory()
+const { thumbnailFor } = useInventoryThumbnail()
 const f      = inject('invFilter')
 const invSel = inject('invSelection')
+// WHY: scope global inv:begin-rename to this floater (null when mounted outside a floater, e.g. tests).
+const invFloaterId = inject('invFloaterId', null)
+// This floater's expand-state key (per-window). Fallback for standalone mounts (e.g. tests).
+const myFid = computed(() => invFloaterId?.value || '__inv_default__')
+function isMyFloaterFocused() {
+	return !invFloaterId || ui.floaterStack.at(-1) === invFloaterId.value
+}
 
 const folder   = computed(() => inv.folders.get(props.folderId))
 const children = computed(() => inv.childFolders(props.folderId).filter(c => f.folderHasMatch(c.folderId)))
 const visible  = computed(() => f.folderHasMatch(props.folderId))
-// WHY: while filtering, auto-open matching folders so hits are revealed without manual expand.
-const open     = computed(() => inv.isExpanded(props.folderId) || f.filtersActive.value)
+// WHY: while filtering, folders auto-open to reveal matches — but (FS-style) a click can still
+// collapse an individual folder during the filter, tracked in the filter-collapse overlay so it
+// doesn't disturb the normal expand set. With no filter, the normal per-window expand state drives.
+const open     = computed(() => f.filtersActive.value
+	? !inv.isFilterCollapsed(myFid.value, props.folderId)
+	: inv.isExpanded(myFid.value, props.folderId))
 const loading  = computed(() => inv.isFetching(props.folderId))
 const fIcon    = computed(() => folderIcon(folder.value?.typeDefault, open.value))
 // FS labels the agent root "Inventory" (the grid skeleton names it "My Inventory").
@@ -37,7 +53,6 @@ const items    = computed(() => {
 	}
 	return inv.sortItems(all)
 })
-const empty    = computed(() => !f.filtersActive.value && inv.isFetched(props.folderId) && children.value.length === 0 && inv.folderItems(props.folderId).length === 0)
 
 // WHY: indent each level; chevron column is fixed so folder glyphs line up.
 const padLeft  = computed(() => `${props.depth * 0.85 + 0.25}rem`)
@@ -57,8 +72,14 @@ function permTags(it) {
 function onSelect(id, event)  { invSel.selectionSelect(id, event) }
 function toggleExpand() {
 	invSel.selectionSelect(props.folderId, {})
-	inv.toggle(props.folderId)
-	if (inv.isExpanded(props.folderId)) fetchFolder(props.folderId)
+	if (f.filtersActive.value) {
+		// During a filter, toggle the per-window collapse overlay so this folder collapses/re-opens
+		// independently without touching the normal expand set. Contents are already fetched (matched).
+		inv.toggleFilterCollapse(myFid.value, props.folderId)
+		return
+	}
+	inv.toggle(myFid.value, props.folderId)
+	if (inv.isExpanded(myFid.value, props.folderId)) fetchFolder(props.folderId)
 }
 // WHY: right-clicking an already-selected row keeps the multi-selection so a future
 // "Delete X items" context menu action can act on all of them. Clicking an unselected
@@ -169,14 +190,21 @@ function onKeydownItem(e, it) {
 function onBeginRenameEvent(e) {
 	const { id, kind } = e.detail || {}
 	if (!id || !kind) return
+	if (!isMyFloaterFocused()) return   // another inventory window is focused — let it handle the rename
 	beginRename(id, kind)
 }
 
+// WHY: capture-phase scroll catches scrolling on any ancestor (the tree's overflow
+// container), not just window — so the fixed-position preview is dismissed when the row
+// scrolls out from under the cursor.
 onMounted(() => {
 	window.addEventListener('inv:begin-rename', onBeginRenameEvent)
+	window.addEventListener('scroll', hidePreview, true)
 })
 onUnmounted(() => {
 	window.removeEventListener('inv:begin-rename', onBeginRenameEvent)
+	window.removeEventListener('scroll', hidePreview, true)
+	hidePreview()
 })
 
 // ── Drag & drop ──────────────────────────────────────────────────────────────
@@ -188,7 +216,16 @@ function onDragStartItem(e, it) {
 	// dataTransfer is still set so the browser treats the gesture as a real move drag.
 	// NOTE: native HTML5 DnD hit-testing is offset under Chrome DevTools device emulation (a Chromium
 	// bug — the emulation scale isn't applied to drag coords); works correctly with emulation off.
-	inv.setDrag(it.itemId, 'item')
+	// WHY: file-manager default — if the dragged row is part of a >1 multi-selection, drag ALL selected
+	// items. Folders can't be multi-moved this release, so a selection mixing folders falls back to the
+	// single anchor. Dragging an UNselected row never disturbs the selection — it's a lone-item drag.
+	const sel = invSel.selectedIds.value
+	let ids = [it.itemId]
+	if (sel.size > 1 && sel.has(it.itemId)) {
+		const onlyItems = [...sel].every(id => !inv.folders.has(id))
+		if (onlyItems) ids = [it.itemId, ...[...sel].filter(id => id !== it.itemId)]
+	}
+	inv.setDrag(ids, 'item')
 	e.dataTransfer.effectAllowed = 'move'
 	try { e.dataTransfer.setData('text/plain', it.itemId) } catch { /* some browsers restrict */ }
 }
@@ -242,9 +279,67 @@ function onDropFolder(e) {
 		if (isSelfOrDescendant(props.folderId, p.id)) return  // no dropping into own descendant
 		moveFolder(p.id, props.folderId)
 	} else {
-		moveItem(p.id, props.folderId)
+		// WHY: multi-select move — relocate every dragged item id (anchor + companions). Falls back
+		// to the single anchor when ids is absent (back-compat with single-id payloads).
+		for (const id of (p.ids?.length ? p.ids : [p.id])) moveItem(id, props.folderId)
 	}
 }
+
+// ── Texture hover preview ──────────────────────────────────────────────────────
+// FS shows a floating 256px preview when you hover a texture row. We do NOT auto-fetch
+// per row (a 24k-texture account would flood the asset service); only on hover-after-delay
+// do we kick the on-demand thumbnailFor() fetch. A short timer debounces fast cursor passes.
+const HOVER_DELAY_MS = 350
+
+const ASSET_TYPE_TEXTURE = 0
+function isTextureItem(it) { return it && it.assetType === ASSET_TYPE_TEXTURE && !!it.assetId }
+
+const preview = ref({ visible: false, src: null, x: 0, y: 0 })
+let hoverTimer = null
+let hoverItemId = null              // id the pending timer belongs to (guards stale fires)
+const boundRef = shallowRef(null)   // the thumbnail Ref the resolved url is read from (cleared on hide)
+
+// WHY: the thumbnail ref starts null and resolves async. Watch the bound ref's value so the
+// image paints as soon as it decodes even if the cursor is sitting still (mousemove may never fire).
+watch(() => boundRef.value && boundRef.value.value, (url) => {
+	if (boundRef.value && preview.value.visible) preview.value = { ...preview.value, src: url }
+})
+
+function hidePreview() {
+	if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null }
+	hoverItemId = null
+	boundRef.value = null
+	preview.value = { visible: false, src: null, x: 0, y: 0 }
+}
+
+function onItemMouseEnter(e, it) {
+	if (!isTextureItem(it)) return
+	// Restart the debounce timer for this row; capture cursor for initial placement.
+	if (hoverTimer) clearTimeout(hoverTimer)
+	hoverItemId = it.itemId
+	const startX = e.clientX
+	const startY = e.clientY
+	hoverTimer = setTimeout(() => {
+		hoverTimer = null
+		// Pointer may have left (mouseleave clears hoverItemId) before the timer fired.
+		if (hoverItemId !== it.itemId) return
+		// Kick the on-demand fetch (no-op if already cached) and bind to its reactive ref.
+		const urlRef = thumbnailFor(it)
+		boundRef.value = urlRef
+		const { x, y } = clampPreviewPosition(startX, startY, window.innerWidth, window.innerHeight)
+		preview.value = { visible: true, src: urlRef.value, x, y }
+	}, HOVER_DELAY_MS)
+}
+
+// WHY: the thumbnail ref starts null and resolves async; while the preview is open, mirror
+// the bound ref's latest value into preview.src on each move so the image appears once decoded.
+function onItemMouseMove(e, it) {
+	if (!preview.value.visible || hoverItemId !== it.itemId) return
+	const { x, y } = clampPreviewPosition(e.clientX, e.clientY, window.innerWidth, window.innerHeight)
+	preview.value = { visible: true, src: boundRef.value ? boundRef.value.value : preview.value.src, x, y }
+}
+
+function onItemMouseLeave() { hidePreview() }
 </script>
 
 <template>
@@ -316,6 +411,9 @@ function onDropFolder(e) {
 				@dragover="onDragOverFolder"
 				@dragleave="onDragLeaveFolder"
 				@drop="onDropFolder"
+				@mouseenter="onItemMouseEnter($event, it)"
+				@mousemove="onItemMouseMove($event, it)"
+				@mouseleave="onItemMouseLeave"
 			>
 				<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
 				<!-- Inline rename input swaps in when this item is being renamed. -->
@@ -335,7 +433,15 @@ function onDropFolder(e) {
 				</template>
 			</div>
 			<div v-if="loading" class="px-1 py-0.5 text-2xs italic text-fg/40" :style="{ paddingLeft: itemPad }">Loading…</div>
-			<div v-else-if="empty" class="px-1 py-0.5 text-2xs italic text-fg/30" :style="{ paddingLeft: itemPad }">(empty)</div>
 		</template>
+		<!-- Teleport to body so the fixed preview is never clipped by a scroll/overflow ancestor. -->
+		<Teleport to="body">
+			<TexturePreviewTooltip
+				v-if="preview.visible"
+				:src="preview.src"
+				:x="preview.x"
+				:y="preview.y"
+			/>
+		</Teleport>
 	</div>
 </template>

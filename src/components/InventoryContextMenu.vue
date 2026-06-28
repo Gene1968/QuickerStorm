@@ -15,14 +15,19 @@
  */
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useInventory } from '@/composables/useInventory'
 import { assetTypeName } from '@/utils/inventoryIcons'
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
 import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
+const ui   = useUiStore()
 const { createFolder, trashItem, trashFolder, wearAttachment, detach } = useInventory()
 const menu = computed(() => inv.contextMenu)
+// WHY: this menu is mounted ONCE globally, so expand/collapse must target whichever inventory
+// window is focused (the one just right-clicked = top of the floater stack), not a shared set.
+function activeFid() { return ui.floaterStack.at(-1) }
 
 // Measure + slide on-screen on both axes (flips upward near the screen bottom).
 const { el: menuEl, style } = useContextMenuPosition(menu)
@@ -31,8 +36,7 @@ const { el: menuEl, style } = useContextMenuPosition(menu)
 function newFolder() {
 	const parentId = menu.value?.obj?.folderId
 	if (!parentId) return
-	createFolder({ name: 'New Folder', parentId })
-	if (!inv.isExpanded(parentId)) inv.toggle(parentId)
+	createFolder({ name: 'New Folder', parentId })   // createFolder auto-expands the parent in the focused window
 	inv.closeContextMenu()
 }
 
@@ -46,7 +50,7 @@ function properties() { inv.showProperties(menu.value.kind, menu.value.obj) }
 function addFav() { inv.addToFavorites(menu.value.obj); inv.closeContextMenu() }
 
 function toggleFolder() {
-	inv.toggle(menu.value.obj.folderId)
+	inv.toggle(activeFid(), menu.value.obj.folderId)
 	inv.closeContextMenu()
 }
 
@@ -182,7 +186,7 @@ const items = computed(() => {
 		{ label: 'Create folder from selected',	disabled: true },
 		{ label: 'Ungroup folder items',		disabled: true },
 		{ label: 'Add to favorites',			disabled: true },
-		{ label: inv.isExpanded(o.folderId) ? 'Collapse' : 'Expand',	action: toggleFolder },
+		{ label: inv.isExpanded(activeFid(), o.folderId) ? 'Collapse' : 'Expand',	action: toggleFolder },
 	]
 })
 
