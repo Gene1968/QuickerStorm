@@ -2,8 +2,7 @@
 /**
  * AvatarContextMenu — right-click menu on another avatar. Structure + order mirror FS
  * menu_avatar_other (lowercased, our convention); enabled items have real backing
- * today, the rest are DISABLED roadmap placeholders. The FS "ShareStorm" avatar
- * export cluster becomes our "quickerSTORM" submenu. Rows render via <ContextMenuItem>.
+ * today, the rest are DISABLED roadmap placeholders. Rows render via <ContextMenuItem>.
  */
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
@@ -62,10 +61,11 @@ function openOutfits()    { ui.toggleAppearanceOnTab('outfits'); close() }
 function openSelfProfile(){ ui.openProfile(null); close() }   // null target = own profile
 function openFriends()    { ui.openChatOnTab('contacts'); close() }
 
-// FS shares one "ShareStorm" export cluster across self + other avatars → our quickerSTORM submenu.
+// FS shares one export cluster across self + other avatars → our quickerSTORM submenu.
 const quickerStormSub = {
 	label: 'quickerSTORM',
 	submenu: [
+		{ label: 'Inspect textures!',	disabled: true },
 		{ label: 'Mesh export',			disabled: true },
 		{ label: 'Avatar XML export',	disabled: true },
 		{ label: 'Avatar textures',		disabled: true },

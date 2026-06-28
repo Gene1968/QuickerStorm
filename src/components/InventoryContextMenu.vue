@@ -3,8 +3,7 @@
  * InventoryContextMenu — right-click menu on an inventory item or folder. Structure +
  * order mirror FS menu_inventory (lowercased, our convention); enabled items have real
  * backing today, the rest are DISABLED roadmap placeholders (most unlock with the
- * HTTP-caps inventory layer). The FS "ShareStorm" save/export cluster becomes our
- * "quickerSTORM" submenu. Rows render via <ContextMenuItem>. State lives in
+ * HTTP-caps inventory layer). Rows render via <ContextMenuItem>. State lives in
  * inventoryStore.contextMenu.
  */
 import { computed, onMounted, onUnmounted } from 'vue'

@@ -3,9 +3,7 @@
  * ObjectContextMenu — right-click menu on a world prim. Structure + order mirror FS
  * menu_object (lowercased, our convention); enabled items have real backing today,
  * the rest are DISABLED roadmap placeholders (most unlock with the HTTP-caps layer).
- * The FS "ShareStorm" export/import/particle cluster injected at the top of the
- * object menu becomes our "quickerSTORM" submenu, and the FS "Object" submenu
- * (profile/inspect/link/scripts/zoom) is preserved. Rows render via <ContextMenuItem>.
+ * The FS "Object" submenu (profile/inspect/link/scripts/zoom) is preserved. Rows render via <ContextMenuItem>.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useUiStore }    from '@/stores/uiStore'
@@ -71,6 +69,7 @@ const items = computed(() => [
 	{
 		label: 'quickerSTORM',
 		submenu: [
+			{ label: 'Inspect textures!',	disabled: true },
 			{
 				label: 'Save / export object',
 				submenu: [

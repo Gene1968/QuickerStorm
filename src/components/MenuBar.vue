@@ -264,7 +264,7 @@ const MENUS = [
 		],
 	},
 	{
-		// quickerSTORM — our brand take on FS's "ShareStorm!" power-tools menu: object
+		// quickerSTORM — our take on FS's power-tools menu: object
 		// export/import, upload, selected-object ops, and movement extras. Almost all are
 		// cap-/asset-pipeline-dependent so they ship disabled; FS-internal/dangerous items
 		// (godmode, explode, mass-delete region objects, message builder) are intentionally
