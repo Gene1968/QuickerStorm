@@ -31,6 +31,9 @@ import {
 	encodeTeleportLandmarkRequest, encodeSetStartLocationRequest,
 	encodeCreateInventoryItem, encodeCreateInventoryFolder, decodeUpdateCreateInventoryItem,
 	encodeAvatarPickerRequest, decodeAvatarPickerReply, decodeChangeUserRights,
+	encodeUpdateInventoryItem, encodeMoveInventoryItem, encodeMoveInventoryFolder,
+	encodeUpdateInventoryFolder, encodeRemoveInventoryItem, encodeRemoveInventoryFolder,
+	encodeRezSingleAttachmentFromInv, encodeDetachAttachmentIntoInv, decodeBulkUpdateInventory,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -1121,6 +1124,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 	//   }
 	const name = messageName(buf)
 
+	// BulkUpdateInventory (Low 281) — sim's ack after a rename/move/perms/trash mutation. Carries
+	// the updated folder + item rows; forwarded as S.INV_BULK_UPDATE so the client reconciles its store.
+	if (name === 'BulkUpdateInventory') {
+		try {
+			const { folders, items } = decodeBulkUpdateInventory(buf, dataOffset)
+			if (folders.length || items.length) {
+				slog.info(session.ws, `← BulkUpdateInventory: ${folders.length} folder(s), ${items.length} item(s)`)
+				session.ws.send(JSON.stringify({ t: S.INV_BULK_UPDATE, d: { folders, items } }))
+			}
+		} catch (e) { slog.warn(session.ws, `BulkUpdateInventory decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	// WHY: Log each unknown packet type once so we can detect unhandled messages.
 	if (!session.loggedTypes.has(type)) {
 		session.loggedTypes.add(type)
@@ -1284,6 +1300,158 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ CreateInventoryFolder "${d.name}" ${d.folderId.slice(0, 8)}… under ${d.parentId.slice(0, 8)}…`)
+		return
+	}
+
+	// ── Inventory mutation (Phase 3) ───────────────────────────────────────
+	// Each block: nextSeq → encode → trackReliable → udp.send. Sim acks with BulkUpdateInventory
+	// (forwarded as S.INV_BULK_UPDATE). Payloads are tolerant — read whatever fields msg.d provides;
+	// the client sends the full item/folder row it already holds so unchanged fields are preserved.
+
+	if (msg.t === C.INV_RENAME_ITEM) {
+		const d = msg.d as {
+			itemId: string; folderId: string; name: string
+			creatorId?: string; ownerId?: string; groupId?: string
+			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
+		}
+		if (!d.itemId || !d.folderId) { slog.warn(session.ws, 'InvRenameItem: missing itemId/folderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeUpdateInventoryItem({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ UpdateInventoryItem (rename) ${d.itemId.slice(0, 8)}… → "${d.name}"`)
+		return
+	}
+
+	if (msg.t === C.INV_UPDATE_PERMS) {
+		const d = msg.d as {
+			itemId: string; folderId: string; name?: string
+			creatorId?: string; ownerId?: string; groupId?: string
+			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
+		}
+		if (!d.itemId || !d.folderId) { slog.warn(session.ws, 'InvUpdatePerms: missing itemId/folderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeUpdateInventoryItem({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ UpdateInventoryItem (perms) ${d.itemId.slice(0, 8)}… next=${(d.nextOwnerMask ?? 0).toString(16)}`)
+		return
+	}
+
+	if (msg.t === C.INV_RENAME_FOLDER) {
+		const d = msg.d as { folderId: string; name: string; parentId?: string; typeDefault?: number }
+		if (!d.folderId) { slog.warn(session.ws, 'InvRenameFolder: missing folderId'); return }
+		const seq = nextSeq(session)
+		// WHY UpdateInventoryFolder (not MoveInventoryFolder): the Move message has no Name field.
+		const pkt = encodeUpdateInventoryFolder({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, parentId: d.parentId ?? '00000000-0000-0000-0000-000000000000',
+			type: d.typeDefault ?? -1, name: d.name || 'New Folder',
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ UpdateInventoryFolder (rename) ${d.folderId.slice(0, 8)}… → "${d.name}"`)
+		return
+	}
+
+	if (msg.t === C.INV_MOVE_ITEM) {
+		const d = msg.d as { itemId: string; toFolderId: string; newName?: string }
+		if (!d.itemId || !d.toFolderId) { slog.warn(session.ws, 'InvMoveItem: missing itemId/toFolderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeMoveInventoryItem({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			itemId: d.itemId, folderId: d.toFolderId, newName: d.newName,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoveInventoryItem ${d.itemId.slice(0, 8)}… → folder ${d.toFolderId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.INV_MOVE_FOLDER) {
+		const d = msg.d as { folderId: string; toParentId: string }
+		if (!d.folderId || !d.toParentId) { slog.warn(session.ws, 'InvMoveFolder: missing folderId/toParentId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeMoveInventoryFolder({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, parentId: d.toParentId,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoveInventoryFolder ${d.folderId.slice(0, 8)}… → parent ${d.toParentId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.INV_TRASH_ITEM) {
+		// Delete == move to Trash (Firestorm semantics). Client may pass trashFolderId (it knows the
+		// skeleton); fall back to the agent's system Trash if it didn't.
+		const d = msg.d as { itemId: string; trashFolderId?: string }
+		if (!d.itemId) { slog.warn(session.ws, 'InvTrashItem: missing itemId'); return }
+		const trash = d.trashFolderId
+		if (!trash) { slog.warn(session.ws, 'InvTrashItem: missing trashFolderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeMoveInventoryItem({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			itemId: d.itemId, folderId: trash,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoveInventoryItem (trash) ${d.itemId.slice(0, 8)}… → ${trash.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.INV_TRASH_FOLDER) {
+		const d = msg.d as { folderId: string; trashFolderId?: string }
+		if (!d.folderId) { slog.warn(session.ws, 'InvTrashFolder: missing folderId'); return }
+		const trash = d.trashFolderId
+		if (!trash) { slog.warn(session.ws, 'InvTrashFolder: missing trashFolderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeMoveInventoryFolder({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, parentId: trash,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoveInventoryFolder (trash) ${d.folderId.slice(0, 8)}… → ${trash.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.INV_PURGE_ITEM) {
+		const d = msg.d as { itemId: string }
+		if (!d.itemId) { slog.warn(session.ws, 'InvPurgeItem: missing itemId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeRemoveInventoryItem({ agentId: session.agentId, sessionId: session.sessionId, seq, itemId: d.itemId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ RemoveInventoryItem (purge) ${d.itemId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.INV_WEAR_ATTACHMENT) {
+		const d = msg.d as {
+			itemId: string; attachPoint?: number; ownerId?: string
+			itemFlags?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+			name?: string; description?: string
+		}
+		if (!d.itemId) { slog.warn(session.ws, 'InvWearAttachment: missing itemId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeRezSingleAttachmentFromInv({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ RezSingleAttachmentFromInv ${d.itemId.slice(0, 8)}… pt=${d.attachPoint ?? 0}`)
+		return
+	}
+
+	if (msg.t === C.INV_DETACH) {
+		const d = msg.d as { itemId: string }
+		if (!d.itemId) { slog.warn(session.ws, 'InvDetach: missing itemId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeDetachAttachmentIntoInv({ agentId: session.agentId, seq, itemId: d.itemId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ DetachAttachmentIntoInv ${d.itemId.slice(0, 8)}…`)
 		return
 	}
 

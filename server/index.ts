@@ -11,7 +11,7 @@ import { handleLogin, handleLogout } from './handlers/login'
 import { handleClientMessage } from './handlers/lludp'
 import { handleCapsFetch } from './handlers/caps'
 import { invokeCap } from './lib/caps/invoke'
-import { handleInventoryFetch } from './handlers/inventory'
+import { handleInventoryFetch, handleCreateFolder } from './handlers/inventory'
 import { handleAssetFetch } from './handlers/assets'
 import { handleMaterialFetch } from './handlers/materials'
 import { handleMeshFetch } from './handlers/mesh'
@@ -231,6 +231,15 @@ const server = Bun.serve<WSData>({
 				case C.INV_FETCH_FOLDER: {
 					const d = msg.d as { folderId?: string; folderIds?: string[] }
 					handleInventoryFetch(circuitId, d.folderIds ?? (d.folderId ? [d.folderId] : []))
+					break
+				}
+				case C.CREATE_INV_FOLDER: {
+					// Prefer the CreateInventoryCategory cap (persists reliably); fall back to the
+					// legacy fire-and-forget UDP CreateInventoryFolder only if the grid lacks the cap.
+					const d = msg.d as { folderId: string; parentId: string; name?: string; type?: number }
+					handleCreateFolder(circuitId, d).then((usedCap) => {
+						if (!usedCap) handleClientMessage(circuitId, msg)
+					})
 					break
 				}
 				case C.ASSET_FETCH: {

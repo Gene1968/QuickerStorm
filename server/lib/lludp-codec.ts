@@ -2277,3 +2277,281 @@ export function decodeParcelInfoReply(buf: Buffer, dataOffset: number): ParcelIn
   const auctionId = buf.readInt32LE(off)
   return { parcelId, ownerId, name, desc, actualArea, billableArea, flags, globalX, globalY, globalZ, simName, snapshotId, dwell, salePrice, auctionId }
 }
+
+// ── Inventory mutation (Phase 3) ───────────────────────────────────────────
+// Rename / move / trash / purge / perms / wear / detach. The sim acknowledges
+// successful mutations with BulkUpdateInventory (Low 281), decoded below.
+
+/** UUID "CRC32" — NOT a real CRC, the libopenmetaverse checksum: sum of the four
+ *  little-endian U32 words of the 16 raw bytes. Ported from LLUUID::getCRC32()
+ *  (phoenix-firestorm indra/llcommon/lluuid.cpp) and OpenMetaverse UUID.CRC().
+ */
+function uuidCRC32(uuid: string): number {
+  const b = uuidToBytes(uuid || '00000000-0000-0000-0000-000000000000')
+  let ret = 0
+  for (let i = 0; i < 4; i++) ret = (ret + b.readUInt32LE(i * 4)) >>> 0
+  return ret >>> 0
+}
+
+/** Inventory item "CRC" (checksum the sim/viewer agree on for UpdateInventoryItem).
+ *  Ported from OpenMetaverse Helpers.InventoryCRC (the exact arg order OpenSim's
+ *  LLClientView.cs passes — see OpenSim UDP/LLClientView.cs:2384). All adds wrap at U32.
+ *  WHY this exact field set: it matches libomv (no LastOwner, no thumbnail) which is
+ *  what OpenSim itself computes — so a value built this way round-trips to the same sim.
+ *  Firestorm's LLInventoryItem::getCRC32 additionally folds in mLastOwner + mThumbnailUUID;
+ *  OpenSim is lenient (it recomputes server-side and does not reject viewer-sent CRCs),
+ *  so we mirror the libomv/OpenSim form. NOTE: best-effort by design — see above.
+ */
+function inventoryCRC(p: {
+  creationDate: number; saleType: number; invType: number; type: number
+  assetId: string; groupId: string; salePrice: number
+  ownerId: string; creatorId: string; itemId: string; folderId: string
+  everyoneMask: number; flags: number; ownerMask: number; groupMask: number; nextOwnerMask: number
+}): number {
+  let crc = p.creationDate >>> 0
+  crc = (crc + ((p.saleType * 0x07073096) >>> 0)) >>> 0
+  crc = (crc + (p.invType >>> 0)) >>> 0
+  crc = (crc + (p.type >>> 0)) >>> 0
+  crc = (crc + uuidCRC32(p.assetId)) >>> 0
+  crc = (crc + uuidCRC32(p.groupId)) >>> 0
+  crc = (crc + (p.salePrice >>> 0)) >>> 0
+  const uuidSum = (uuidCRC32(p.ownerId) + uuidCRC32(p.creatorId) + uuidCRC32(p.itemId) + uuidCRC32(p.folderId)) >>> 0
+  crc = (crc + uuidSum) >>> 0
+  crc = (crc + (p.everyoneMask >>> 0)) >>> 0
+  crc = (crc + (p.flags >>> 0)) >>> 0
+  crc = (crc + (p.ownerMask >>> 0)) >>> 0
+  crc = (crc + (p.groupMask >>> 0)) >>> 0
+  crc = (crc + (p.nextOwnerMask >>> 0)) >>> 0
+  return crc >>> 0
+}
+
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
+const FULL_PERM = 0x7FFFFFFF
+
+/** UpdateInventoryItem (Low #266) — rename an item or change its permission masks.
+ *  Used for RENAME (set Name) and PERMS (set NextOwnerMask/EveryoneMask/GroupMask).
+ *  The caller passes the item's CURRENT fields so unchanged fields are preserved; only
+ *  the field(s) being edited are overridden by the call site. The CRC is computed over
+ *  the full field set (see inventoryCRC) so the sim accepts the update.
+ *  Block layout (message_template.msg):
+ *    AgentData Single { AgentID, SessionID, TransactionID }
+ *    InventoryData Variable { ItemID, FolderID, CallbackID U32, CreatorID, OwnerID, GroupID,
+ *      BaseMask U32, OwnerMask U32, GroupMask U32, EveryoneMask U32, NextOwnerMask U32,
+ *      GroupOwned BOOL, TransactionID, Type S8, InvType S8, Flags U32, SaleType U8,
+ *      SalePrice S32, Name Var1, Description Var1, CreationDate S32, CRC U32 }
+ */
+export function encodeUpdateInventoryItem(p: {
+  agentId: string; sessionId: string; seq: number
+  itemId: string; folderId: string
+  name?: string; description?: string
+  creatorId?: string; ownerId?: string; groupId?: string
+  baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+  groupOwned?: boolean
+  assetType?: number; invType?: number; flags?: number
+  saleType?: number; salePrice?: number; createdAt?: number
+  callbackId?: number; transactionId?: string
+}): Buffer {
+  const nameBuf = Buffer.from((p.name ?? '') + '\0', 'utf8')
+  const descBuf = Buffer.from((p.description ?? '') + '\0', 'utf8')
+  const type        = p.assetType ?? 0
+  const invType     = p.invType ?? 0
+  const flags       = (p.flags ?? 0) >>> 0
+  const saleType    = p.saleType ?? 0
+  const salePrice   = p.salePrice ?? 0
+  const createdAt   = p.createdAt ?? Math.floor(Date.now() / 1000)
+  const ownerId     = p.ownerId ?? p.agentId
+  const creatorId   = p.creatorId ?? ownerId
+  const groupId     = p.groupId ?? ZERO_UUID
+  const baseMask      = (p.baseMask ?? FULL_PERM) >>> 0
+  const ownerMask     = (p.ownerMask ?? FULL_PERM) >>> 0
+  const groupMask     = (p.groupMask ?? 0) >>> 0
+  const everyoneMask  = (p.everyoneMask ?? 0) >>> 0
+  const nextOwnerMask = (p.nextOwnerMask ?? FULL_PERM) >>> 0
+  const crc = inventoryCRC({
+    creationDate: createdAt, saleType, invType, type,
+    assetId: ZERO_UUID, groupId, salePrice,
+    ownerId, creatorId, itemId: p.itemId, folderId: p.folderId,
+    everyoneMask, flags, ownerMask, groupMask, nextOwnerMask,
+  })
+  return encode('UpdateInventoryItem', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, TransactionID: p.transactionId ?? ZERO_UUID },
+    InventoryData: {
+      ItemID: p.itemId, FolderID: p.folderId, CallbackID: (p.callbackId ?? 0) >>> 0,
+      CreatorID: creatorId, OwnerID: ownerId, GroupID: groupId,
+      BaseMask: baseMask, OwnerMask: ownerMask, GroupMask: groupMask,
+      EveryoneMask: everyoneMask, NextOwnerMask: nextOwnerMask, GroupOwned: !!p.groupOwned,
+      TransactionID: ZERO_UUID, Type: type, InvType: invType, Flags: flags,
+      SaleType: saleType, SalePrice: salePrice, Name: nameBuf, Description: descBuf,
+      CreationDate: createdAt, CRC: crc,
+    },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** MoveInventoryItem (Low #268) — move an item to a destination folder, optionally renaming.
+ *  AgentData { AgentID, SessionID, Stamp BOOL } + InventoryData Variable { ItemID, FolderID, NewName Var1 }.
+ *  Stamp=true asks the sim to re-timestamp. NewName empty (just NUL) = keep current name.
+ */
+export function encodeMoveInventoryItem(p: {
+  agentId: string; sessionId: string; seq: number
+  itemId: string; folderId: string; newName?: string
+}): Buffer {
+  // Empty NewName = no rename: send a zero-length Var1 buffer (count prefix 0).
+  const newNameBuf = p.newName != null && p.newName !== ''
+    ? Buffer.from(p.newName + '\0', 'utf8')
+    : Buffer.alloc(0)
+  return encode('MoveInventoryItem', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Stamp: true },
+    InventoryData: { ItemID: p.itemId, FolderID: p.folderId, NewName: newNameBuf },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** MoveInventoryFolder (Low #275) — reparent a folder.
+ *  AgentData { AgentID, SessionID, Stamp BOOL } + InventoryData Variable { FolderID, ParentID }.
+ */
+export function encodeMoveInventoryFolder(p: {
+  agentId: string; sessionId: string; seq: number
+  folderId: string; parentId: string
+}): Buffer {
+  return encode('MoveInventoryFolder', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Stamp: true },
+    InventoryData: { FolderID: p.folderId, ParentID: p.parentId },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** UpdateInventoryFolder (Low #274) — rename a folder (and/or reparent + retype).
+ *  AgentData { AgentID, SessionID } + FolderData Variable { FolderID, ParentID, Type S8, Name Var1 }.
+ *  WHY this for rename (not MoveInventoryFolder): MoveInventoryFolder has no Name field, so it
+ *  cannot rename. OpenSim's InventoryFolderImpl/UpdateInventoryFolder handler applies Name + Type
+ *  in place. Pass the folder's current ParentID + Type so they are preserved.
+ */
+export function encodeUpdateInventoryFolder(p: {
+  agentId: string; sessionId: string; seq: number
+  folderId: string; parentId: string; type?: number; name: string
+}): Buffer {
+  const nameBuf = Buffer.from((p.name ?? '') + '\0', 'utf8')
+  return encode('UpdateInventoryFolder', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    FolderData: { FolderID: p.folderId, ParentID: p.parentId, Type: p.type ?? -1, Name: nameBuf },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** RemoveInventoryItem (Low #270) — permanently delete an item (empty-trash / purge).
+ *  AgentData { AgentID, SessionID } + InventoryData Variable { ItemID }.
+ */
+export function encodeRemoveInventoryItem(p: {
+  agentId: string; sessionId: string; seq: number; itemId: string
+}): Buffer {
+  return encode('RemoveInventoryItem', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    InventoryData: { ItemID: p.itemId },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** RemoveInventoryFolder (Low #276) — permanently delete a folder.
+ *  AgentData { AgentID, SessionID } + FolderData Variable { FolderID }.
+ */
+export function encodeRemoveInventoryFolder(p: {
+  agentId: string; sessionId: string; seq: number; folderId: string
+}): Buffer {
+  return encode('RemoveInventoryFolder', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    FolderData: { FolderID: p.folderId },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** RezSingleAttachmentFromInv (Low #395) — wear/attach an inventory item.
+ *  AgentData { AgentID, SessionID } + ObjectData Single { ItemID, OwnerID, AttachmentPt U8,
+ *    ItemFlags U32, GroupMask U32, EveryoneMask U32, NextOwnerMask U32, Name Var1, Description Var1 }.
+ *  AttachmentPt 0 = default attachment point (the object's saved point); high bit (0x80) = add
+ *  without detaching the existing item at that point.
+ */
+export function encodeRezSingleAttachmentFromInv(p: {
+  agentId: string; sessionId: string; seq: number
+  itemId: string; ownerId?: string; attachPoint?: number
+  itemFlags?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+  name?: string; description?: string
+}): Buffer {
+  const nameBuf = Buffer.from((p.name ?? '') + '\0', 'utf8')
+  const descBuf = Buffer.from((p.description ?? '') + '\0', 'utf8')
+  return encode('RezSingleAttachmentFromInv', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: {
+      ItemID: p.itemId, OwnerID: p.ownerId ?? p.agentId, AttachmentPt: (p.attachPoint ?? 0) & 0xFF,
+      ItemFlags: (p.itemFlags ?? 0) >>> 0, GroupMask: (p.groupMask ?? 0) >>> 0,
+      EveryoneMask: (p.everyoneMask ?? 0) >>> 0, NextOwnerMask: (p.nextOwnerMask ?? FULL_PERM) >>> 0,
+      Name: nameBuf, Description: descBuf,
+    },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** DetachAttachmentIntoInv (Low #397) — detach an attached object back into inventory by ItemID.
+ *  ObjectData Single { AgentID, ItemID }. (No SessionID — the only block is ObjectData.)
+ *  WHY this over ObjectDetach (Low #113): ObjectDetach takes ObjectLocalID (the rezzed
+ *  attachment's local id), which the inventory UI does not know; DetachAttachmentIntoInv
+ *  detaches by inventory ItemID, which the inventory floater always has.
+ */
+export function encodeDetachAttachmentIntoInv(p: {
+  agentId: string; seq: number; itemId: string
+}): Buffer {
+  return encode('DetachAttachmentIntoInv', {
+    ObjectData: { AgentID: p.agentId, ItemID: p.itemId },
+  }, { seq: p.seq, reliable: true })
+}
+
+export interface BulkInventoryFolder { folderId: string; parentId: string; name: string; typeDefault: number }
+export interface BulkUpdateInventory { folders: BulkInventoryFolder[]; items: CreatedInventoryItem[] }
+
+/** Decode BulkUpdateInventory (Low #281) — the sim's reply after a rename/move/perms mutation.
+ *  AgentData { AgentID, TransactionID } +
+ *  FolderData Variable { FolderID, ParentID, Type S8, Name Var1 } +
+ *  ItemData Variable { ItemID, CallbackID U32, FolderID, CreatorID, OwnerID, GroupID,
+ *    BaseMask, OwnerMask, GroupMask, EveryoneMask, NextOwnerMask, GroupOwned BOOL, AssetID,
+ *    Type S8, InvType S8, Flags U32, SaleType U8, SalePrice S32, Name Var1, Description Var1,
+ *    CreationDate S32, CRC U32 }.
+ *  Item rows are shaped like decodeUpdateCreateInventoryItem output so the client merges them
+ *  with the same store mutation. NOTE: the dispatcher hands us the already zero-expanded buffer.
+ */
+export function decodeBulkUpdateInventory(buf: Buffer, dataOffset: number): BulkUpdateInventory {
+  let off = dataOffset
+  off += 16  // AgentID
+  off += 16  // TransactionID
+
+  const folderCount = buf[off++]
+  const folders: BulkInventoryFolder[] = []
+  for (let i = 0; i < folderCount && off + 16 <= buf.length; i++) {
+    const folderId = bytesToUuid(buf, off); off += 16
+    const parentId = bytesToUuid(buf, off); off += 16
+    const typeDefault = buf.readInt8(off); off += 1
+    let name = ''; [name, off] = readV1(buf, off)
+    folders.push({ folderId, parentId, name, typeDefault })
+  }
+
+  const itemCount = buf[off++]
+  const items: CreatedInventoryItem[] = []
+  for (let i = 0; i < itemCount && off + 16 <= buf.length; i++) {
+    const itemId    = bytesToUuid(buf, off); off += 16
+    off += 4   // CallbackID
+    const parentId  = bytesToUuid(buf, off); off += 16   // FolderID
+    off += 16  // CreatorID
+    off += 16  // OwnerID
+    off += 16  // GroupID
+    off += 4   // BaseMask
+    const ownerMask = buf.readUInt32LE(off); off += 4
+    off += 4   // GroupMask
+    off += 4   // EveryoneMask
+    off += 4   // NextOwnerMask
+    off += 1   // GroupOwned BOOL
+    const assetId   = bytesToUuid(buf, off); off += 16
+    const assetType = buf.readInt8(off); off += 1
+    const invType   = buf.readInt8(off); off += 1
+    const flags     = buf.readUInt32LE(off); off += 4
+    off += 1   // SaleType
+    off += 4   // SalePrice
+    let name = ''; [name, off] = readV1(buf, off)
+    let desc = ''; [desc, off] = readV1(buf, off)
+    const createdAt = buf.readInt32LE(off); off += 4
+    off += 4   // CRC
+    items.push({ itemId, parentId, assetId, name, desc, assetType, invType, flags, createdAt, ownerMask })
+  }
+  return { folders, items }
+}

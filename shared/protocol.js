@@ -39,6 +39,17 @@ export const C = {
 	SCULPT_FETCH:     'sculpt_fetch',     // { sculptId, sculptType } — fetch sculpt-map texture (J2C) → sculpt geometry
 	CREATE_LANDMARK:  'create_landmark',  // { name, desc, folderId } — CreateInventoryItem (Low 305) type/invType=3; sim builds LM from current pos
 	CREATE_INV_FOLDER:'create_inv_folder',// { folderId, parentId, name } — CreateInventoryFolder (Low 273); client supplies the new folderId
+	// ── Inventory writes (rename/move/delete/perms/wear) ──
+	INV_RENAME_ITEM:    'inv_rename_item',    // { itemId, folderId, name } — MoveInventoryItem / UpdateInventoryItem rename in place
+	INV_RENAME_FOLDER:  'inv_rename_folder',  // { folderId, name } — UpdateInventoryFolder rename
+	INV_MOVE_ITEM:      'inv_move_item',      // { itemId, toFolderId, newName? } — MoveInventoryItem (newName? = rename-on-move)
+	INV_MOVE_FOLDER:    'inv_move_folder',    // { folderId, toParentId } — MoveInventoryFolder
+	INV_TRASH_ITEM:     'inv_trash_item',     // { itemId } — delete = MoveInventoryItem into Trash; server resolves Trash via skeleton (client may also pass trashFolderId)
+	INV_TRASH_FOLDER:   'inv_trash_folder',   // { folderId } — delete = MoveInventoryFolder into Trash
+	INV_PURGE_ITEM:     'inv_purge_item',     // { itemId } — permanent RemoveInventoryItem (empty-trash); encoder+handler wired, UI may leave hidden
+	INV_UPDATE_PERMS:   'inv_update_perms',   // { itemId, folderId, nextOwnerMask, everyoneMask?, groupMask? } — UpdateInventoryItem permission change
+	INV_WEAR_ATTACHMENT:'inv_wear_attachment',// { itemId, attachPoint? } — RezSingleAttachmentFromInv (attachPoint 0 = default)
+	INV_DETACH:         'inv_detach',         // { itemId } — detach attached object back to inventory
 	// ── Social (Phase 3) ──
 	AVATAR_PROPS_REQ: 'avatar_props_req', // { avatarId } — AvatarPropertiesRequest (Low 169); sim replies Properties/Interests/Groups
 	PARCEL_INFO_REQ:  'parcel_info_req',  // { parcelId } — ParcelInfoRequest (Low 54)
@@ -80,6 +91,10 @@ export const S = {
 	CAPS_READY:      'caps_ready',    // { caps: string[] } — HTTP cap names available after seed-cap fetch
 	INV_FOLDER:      'inv_folder',    // { folderId, items: [{ itemId, parentId, name, desc, assetType, invType, assetId, flags }], error? } — FetchInventoryDescendents2 reply
 	INV_ITEM_CREATED:'inv_item_created', // { items: [{ itemId, parentId, assetId, name, desc, assetType, invType, flags, ownerMask }] } — UpdateCreateInventoryItem (Low 267)
+	INV_BULK_UPDATE: 'inv_bulk_update',  // { folders:[...], items:[...] } — decoded BulkUpdateInventory (rename/move/perms reconciliation)
+	INV_ITEM_REMOVED:'inv_item_removed', // { itemIds:[...] } — decoded RemoveInventoryItem ack / sim-driven removal
+	INV_FOLDER_CREATED:    'inv_folder_created',     // { folderId, parentId, name, typeDefault } — CreateInventoryCategory cap confirmed (persisted)
+	INV_FOLDER_CREATE_FAILED:'inv_folder_create_failed', // { folderId, error } — cap rejected; client reverts the optimistic folder
 	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error? } — fetched asset; textures arrive as WebP (server-transcoded from J2C)
 	MATERIAL_DATA:   'material_data',    // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
 	MESH_DATA:       'mesh_data',        // { meshId, lod, submeshes:[{positions,normals,uvs,indices}], error? }

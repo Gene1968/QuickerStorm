@@ -118,7 +118,7 @@ const outfitFolders = [
 		id="appearance"
 		title="🪞 Appearance"
 		:wrap-style="{ width: '23vw', height: '60vh', minWidth: '300px', minHeight: '440px', resize: 'both' }"
-		:default-pos="{ right: '20%', top: 'calc(100vh - 60vh - 5rem)' }"
+		:default-pos="{ left: 'calc(80vw - 23vw)', top: 'calc(100vh - 60vh - 5rem)' }"
 		@close="ui.toggleAppearance()"
 	>
 		<div class="flex flex-col flex-1 min-h-0 text-xs text-fg">

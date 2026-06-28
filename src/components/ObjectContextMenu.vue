@@ -170,7 +170,7 @@ onUnmounted(() => {
 	>
 		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
 		<ContextMenuItem v-for="(it, i) in items" :key="i" :item="it" />
-		<div v-if="showInspect" class="px-3 py-1.5 border-t border-edge text-2xs text-fg/70 font-mono">
+		<div v-if="showInspect" class="px-3 py-1 border-t border-edge text-2xs text-fg/70 font-mono">
 			<div>id: {{ menu.localId }}</div>
 			<div class="truncate">uuid: {{ menu.fullId }}</div>
 			<div v-if="menu.pos">pos: {{ menu.pos.map(v => v.toFixed(1)).join(', ') }}</div>

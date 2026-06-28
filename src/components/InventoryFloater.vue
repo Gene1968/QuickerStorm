@@ -14,7 +14,7 @@ const props = defineProps({
 
 const ui  = useUiStore()
 const inv = useInventoryStore()
-const { fetchFolder, createFolder } = useInventory()
+const { fetchFolder, createFolder, trashItem, trashFolder } = useInventory()
 
 const showAddMenu = ref(false)
 
@@ -175,6 +175,29 @@ function selectionSelectFlat(id, order, event) {
 const recentIds = computed(() => recentItems.value.map(i => i.itemId))
 const wornIds   = computed(() => wornItems.value.map(i => i.itemId))
 const favIds    = computed(() => favItems.value.map(i => i.itemId))
+
+// ── Footer Trash button: trash the anchor (last-clicked) row ─────────────────
+// WHY: mirrors the Trash2Icon button that was previously a TO-DO. Guarding system
+// folders (typeDefault >= 0) matches FS behavior; folder-with-children gets a confirm.
+function trashSelected() {
+	const id = anchorId.value
+	if (!id) return
+	const folder = inv.folders.get(id)
+	if (folder) {
+		// It's a folder.
+		if (Number(folder.typeDefault) >= 0) return   // system folder — refuse silently
+		const { items: ci, folders: cf } = inv.descendantCounts(id)
+		if (ci + cf > 0) {
+			if (!window.confirm(`Move "${folder.name}" and its ${ci + cf} contents to Trash?`)) return
+		}
+		trashFolder(id)
+		clearSelection()
+	} else {
+		// It's an item row — just trash it, no confirm (FS behavior).
+		trashItem(id)
+		clearSelection()
+	}
+}
 
 // Clear stale highlights when the user switches tabs.
 watch(activeTab, clearSelection)
@@ -405,7 +428,7 @@ onUnmounted(() => {
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
 				class="grow border border-edge-strong p-1 text-2xs text-fg truncate user-select-none flex items-center gap-1"
 			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 w-3 h-3 text-green-400" /><Loader2Icon v-else class="shrink-0 w-3 h-3 animate-spin opacity-60" />{{ inv.agentItemCount.toLocaleString() }} Items<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
-			<button class="ui-btn" title="Remove selected item (TO-DO)"><Trash2Icon class="w-3.5 h-3.5" /></button>
+			<button class="ui-btn" :class="anchorId ? '' : 'opacity-40 cursor-not-allowed'" :disabled="!anchorId" title="Move selected item to Trash" @click="trashSelected"><Trash2Icon class="w-3.5 h-3.5" /></button>
 		</div>
 	</FloaterWindow>
 </template>

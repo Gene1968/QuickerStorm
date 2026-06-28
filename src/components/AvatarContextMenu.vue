@@ -199,7 +199,7 @@ onUnmounted(() => {
 		class="fixed z-[200] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs text-fg select-none"
 		@contextmenu.prevent
 	>
-		<div class="px-3 py-1.5 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
+		<div class="px-3 py-1 text-accent font-medium border-b border-edge truncate">{{ menu.name }}</div>
 		<ContextMenuItem v-for="(it, i) in items" :key="i" :item="it" />
 	</div>
 </template>

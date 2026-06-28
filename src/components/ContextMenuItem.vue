@@ -40,7 +40,7 @@ function onClick() {
 	<!-- Submenu parent (hover reveals nested flyout) -->
 	<div v-else-if="item.submenu" class="cmi-sub relative">
 		<button
-			class="flex w-full items-center justify-between gap-4 px-3 py-1 text-left hover:bg-white/10"
+			class="flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left hover:bg-white/10"
 			:class="{ 'text-fg/40': item.disabled }"
 			:title="item.title"
 		>
@@ -57,7 +57,7 @@ function onClick() {
 	<!-- Leaf item -->
 	<button
 		v-else
-		class="flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left"
+		class="flex w-full items-center justify-between gap-4 px-3 py-1 text-left"
 		:class="[
 			item.disabled ? 'text-fg/40 cursor-not-allowed' : 'hover:bg-white/10',
 			isDanger ? 'text-red-400 font-medium' : '',

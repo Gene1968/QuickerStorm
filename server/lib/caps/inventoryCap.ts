@@ -10,7 +10,8 @@ export interface InvItem {
 	createdAt: number; ownerMask: number
 	canCopy: boolean; canModify: boolean; canTransfer: boolean
 }
-export interface InvFolder { folderId: string; items: InvItem[] }
+export interface InvSubfolder { folderId: string; parentId: string; name: string; typeDefault: number; version: number }
+export interface InvFolder { folderId: string; items: InvItem[]; subfolders: InvSubfolder[] }
 
 /** Build the {folders:[...]} request value. fetch_folders=1 (sim gates items on it). */
 export function buildInvRequest(folderIds: string[], ownerId: string): { folders: Array<Record<string, LLSDTyped | number>> } {
@@ -46,7 +47,17 @@ export function decodeInvFolders(parsed: LLSDValue): InvFolder[] {
 				canTransfer: (ownerMask & 0x2000) !== 0,
 			}
 		})
-		out.push({ folderId, items })
+		// Subfolders ("categories"): so the client can discover folders created since the login
+		// skeleton (e.g. via CreateInventoryCategory) without waiting for the next login. OpenSim
+		// FetchInvDescHandler.cs emits category_id/parent_id/name/type_default/version per child.
+		const subfolders: InvSubfolder[] = (Array.isArray(f?.categories) ? f.categories : []).map((c: any) => ({
+			folderId: llsdStr(c.category_id),
+			parentId: llsdStr(c.parent_id),
+			name: llsdStr(c.name),
+			typeDefault: llsdNum(c.type_default),
+			version: llsdNum(c.version),
+		})).filter((c: InvSubfolder) => c.folderId)
+		out.push({ folderId, items, subfolders })
 	}
 	return out
 }

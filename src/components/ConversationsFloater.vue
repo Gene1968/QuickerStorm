@@ -234,7 +234,7 @@ async function submitChat() {
 	<FloaterWindow
 		id="conversations"
 		:title="floaterTitle"
-		:wrap-style="{ width: '33vw', height: '39vh', resize: 'both' }"
+		:wrap-style="{ width: '32.25vw', height: '39vh', resize: 'both' }"
 		:default-pos="{ left: '0.0625vw', top: '7vh' }"
 		@close="ui.toggleChat()"
 	>

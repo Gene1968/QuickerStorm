@@ -51,3 +51,33 @@ export async function saveCachedInventory(agentId, itemPairs) {
 		console.warn('[InvCache] save failed:', e)
 	}
 }
+
+/** Remove the cached snapshot for this agent (e.g. on logout or account switch). */
+export async function clearCachedInventory(agentId) {
+	try {
+		const db = await openDb()
+		await new Promise((resolve, reject) => {
+			const tx  = db.transaction(STORE, 'readwrite')
+			tx.objectStore(STORE).delete(agentId)
+			tx.oncomplete = resolve
+			tx.onerror    = () => reject(tx.error)
+		})
+	} catch (e) {
+		console.warn('[InvCache] clear failed:', e)
+	}
+}
+
+/**
+ * Build the [[folderId, Item[]]...] pairs array from the store's items Map,
+ * skipping empty folders so the snapshot stays compact.
+ * WHY: extracted so useInventory.js and any future save path share one conversion.
+ * @param {Map<string, object[]>} itemsMap — inventoryStore.items.value
+ * @returns {Array<[string, object[]]>}
+ */
+export function makeInvSavePairs(itemsMap) {
+	const pairs = []
+	itemsMap.forEach((list, folderId) => {
+		if (list.length > 0) pairs.push([folderId, list])
+	})
+	return pairs
+}

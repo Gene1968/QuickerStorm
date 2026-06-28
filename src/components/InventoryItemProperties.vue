@@ -26,7 +26,7 @@ function perm(ok) { return ok ? '✓' : '✗' }
 		id="inv-props"
 		:title="isItem ? 'Item Properties' : 'Folder Properties'"
 		:wrap-style="{ width: '22rem', height: 'auto', maxHeight: '80vh' }"
-		:default-pos="{ left: '30vw', top: '20vh' }"
+		:default-pos="{ left: '30vw', top: '33vh' }"
 		@close="inv.closeProperties()"
 	>
 		<div class="p-3 text-xs text-fg space-y-1.5 overflow-y-auto">

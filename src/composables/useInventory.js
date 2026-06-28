@@ -4,12 +4,12 @@
 // server FetchInventoryDescendents2 → S.INV_FOLDER → inventoryStore.setItems.
 // IndexedDB cache: items are pre-populated from last session so inventory is instant, then
 // the cap fetch runs in the background and overwrites with current grid data.
-import { onMounted, onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRealtimeSocket } from './useRealtimeSocket'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
-import { loadCachedInventory, saveCachedInventory } from '@/lib/inventoryCache'
+import { loadCachedInventory, saveCachedInventory, makeInvSavePairs } from '@/lib/inventoryCache'
 import { C, S } from '@shared/protocol.js'
 
 const BATCH        = 40   // folders per cap POST (server batches them into one request)
@@ -50,6 +50,8 @@ let capsReadyAt = 0    // performance.now() at caps-ready; prepopulate window + 
 let _sawLoading = false       // region has shown load activity at least once (guards the premature-open race)
 let _lastProgress = -1        // last seen worldStore.assetProgress value
 let _lastProgressAt = 0       // performance.now() when assetProgress last advanced
+// WHY: mutation-save watcher stopper; module-level so re-login can cancel the previous login's watcher.
+let _stopMutationSave = null
 
 export function useInventory() {
 	const { on, off, emit } = useRealtimeSocket()
@@ -106,6 +108,12 @@ export function useInventory() {
 			return
 		}
 		inv.setItems(d.folderId, d.items || [])
+		// Ingest subfolders the sim reports under this folder. addFolderOptimistic no-ops if the
+		// folder already exists (skeleton), so this only surfaces folders created since login
+		// (e.g. via the CreateInventoryCategory cap) — the tree self-heals from live fetches.
+		for (const sf of (d.subfolders || [])) {
+			if (sf?.folderId) inv.addFolderOptimistic({ folderId: sf.folderId, parentId: sf.parentId, name: sf.name, typeDefault: sf.typeDefault ?? -1 })
+		}
 	}
 
 	// Load IndexedDB cache for this agent, pre-populating items without marking folders fetched.
@@ -144,12 +152,27 @@ export function useInventory() {
 		const stopSave = watch(() => inv.allAgentFetched, async (done) => {
 			if (!done || !session.agentId) return
 			stopSave()
-			const pairs = []
-			inv.items.forEach((list, folderId) => {
-				if (list.length > 0) pairs.push([folderId, list])
-			})
-			await saveCachedInventory(session.agentId, pairs)
+			await saveCachedInventory(session.agentId, makeInvSavePairs(inv.items))
 		})
+		// WHY: debounced mutation-save so rename/move/trash/perm changes are reflected in the
+		// next-login snapshot. Fires on itemCount changes ONLY after the initial cache hydration
+		// is complete (cacheLoaded=true) so we don't thrash IDB during the bulk fetch storm.
+		// 1.5 s debounce collapses bursts (BulkUpdateInventory can deliver 20+ items at once).
+		let _mutateSaveTimer = null
+		const stopMutationSave = watch(() => inv.itemCount, () => {
+			if (!inv.cacheLoaded || !session.agentId) return
+			clearTimeout(_mutateSaveTimer)
+			_mutateSaveTimer = setTimeout(async () => {
+				if (!session.agentId) return
+				await saveCachedInventory(session.agentId, makeInvSavePairs(inv.items))
+			}, 1500)
+		})
+		// Clean up the mutation watcher on the next login so a re-login starts fresh.
+		// WHY: the outer onCapsReady is called again on re-login; each call registers a fresh pair
+		// of watchers. Stop the previous login's mutation watcher to avoid double-writes.
+		// Module-level ref so each onCapsReady can stop its predecessor.
+		if (_stopMutationSave) _stopMutationSave()
+		_stopMutationSave = stopMutationSave
 		// Backfill folders the user expanded before caps were ready (root auto-expands on load).
 		for (const id of inv.expanded) if (!inv.isFetched(id)) fetchFolder(id)
 		// Kick off the background full load so totals reach the exact count.
@@ -166,14 +189,114 @@ export function useInventory() {
 		emit(C.CREATE_LANDMARK, { name: name || 'Landmark', desc: desc || '', folderId })
 	}
 
-	// Create a new folder. The client owns the FolderID (CreateInventoryFolder has no reply),
-	// so we generate it, tell the sim, and optimistically add it to the tree. Returns the id.
-	function createFolder({ name, parentId, typeDefault = -1 }) {
+	// Create a new folder. The client owns the FolderID, so we generate it, tell the server (which
+	// creates it via the CreateInventoryCategory cap), and optimistically add it to the tree.
+	// Returns the id. rename=true (default) drops the new folder straight into inline-rename so the
+	// user types its name immediately — matches Firestorm, and the cap persists whatever name lands.
+	function createFolder({ name, parentId, typeDefault = -1, rename = true }) {
 		if (!parentId) return ''
 		const folderId = crypto.randomUUID()
 		emit(C.CREATE_INV_FOLDER, { folderId, parentId, name: name || 'New Folder' })
 		inv.addFolderOptimistic({ folderId, parentId, name: name || 'New Folder', typeDefault })
+		if (rename) {
+			// Ensure the parent is open so the new row renders, then enter inline-rename once its
+			// TreeNode has mounted (nextTick = after the DOM update + child onMounted listener).
+			if (!inv.isExpanded(parentId)) inv.toggle(parentId)
+			nextTick(() => window.dispatchEvent(new CustomEvent('inv:begin-rename', { detail: { id: folderId, kind: 'folder' } })))
+		}
 		return folderId
+	}
+
+	// ── Inventory mutation (rename/move/trash/purge/perms/wear) ──
+	// Each wrapper applies the optimistic store mutation first (instant UI), then emits the cap
+	// request. The sim's authoritative reply (S.INV_BULK_UPDATE / S.INV_ITEM_REMOVED) reconciles.
+
+	// Pull the full current item row so the server can rebuild UpdateInventoryItem with the
+	// unchanged fields preserved (the sim requires a complete InventoryData block).
+	function currentItem(itemId, folderId) {
+		const list = inv.folderItems(folderId) || []
+		return list.find(i => i.itemId === itemId) || null
+	}
+
+	// Map a fetched item row → the field names encodeUpdateInventoryItem expects, so the sim
+	// rebuilds a complete InventoryData block (preserving unchanged fields + a valid CRC).
+	// WHY the explicit mapping: the row uses `desc`, and a naive `...cur` spread both (a) leaks
+	// the OLD `name` over a rename and (b) drops the description (row.desc ≠ encoder.description).
+	function itemServerFields(cur) {
+		if (!cur) return {}
+		return {
+			name:        cur.name,
+			description: cur.desc,
+			assetType:   cur.assetType,
+			invType:     cur.invType,
+			flags:       cur.flags,
+			ownerMask:   cur.ownerMask,
+			createdAt:   cur.createdAt,
+		}
+	}
+
+	function renameItem(itemId, folderId, name) {
+		if (!itemId || !name) return
+		const cur = currentItem(itemId, folderId)
+		inv.renameItemLocal(itemId, name)
+		// Spread cur fields FIRST, then override `name` — else the old name clobbers the new one.
+		emit(C.INV_RENAME_ITEM, { ...itemServerFields(cur), itemId, folderId, name })
+	}
+
+	function renameFolder(folderId, name) {
+		if (!folderId || !name) return
+		inv.renameFolderLocal(folderId, name)
+		emit(C.INV_RENAME_FOLDER, { folderId, name })
+	}
+
+	function moveItem(itemId, toFolderId) {
+		if (!itemId || !toFolderId) return
+		inv.moveItemLocal(itemId, toFolderId)
+		emit(C.INV_MOVE_ITEM, { itemId, toFolderId })
+	}
+
+	function moveFolder(folderId, toParentId) {
+		if (!folderId || !toParentId) return
+		inv.moveFolderLocal(folderId, toParentId)
+		emit(C.INV_MOVE_FOLDER, { folderId, toParentId })
+	}
+
+	function trashItem(itemId) {
+		if (!itemId) return
+		const trashFolderId = inv.findSystemFolder(14)
+		inv.moveItemLocal(itemId, trashFolderId)
+		emit(C.INV_TRASH_ITEM, { itemId, trashFolderId })
+	}
+
+	function trashFolder(folderId) {
+		if (!folderId) return
+		const trashFolderId = inv.findSystemFolder(14)
+		inv.moveFolderLocal(folderId, trashFolderId)
+		emit(C.INV_TRASH_FOLDER, { folderId, trashFolderId })
+	}
+
+	function purgeItem(itemId) {
+		if (!itemId) return
+		inv.removeItemLocal(itemId)
+		emit(C.INV_PURGE_ITEM, { itemId })
+	}
+
+	function updatePerms(itemId, folderId, masks = {}) {
+		if (!itemId) return
+		const cur = currentItem(itemId, folderId)
+		inv.updateItemPermsLocal(itemId, masks)
+		// itemServerFields preserves name+description; masks override the permission fields last.
+		emit(C.INV_UPDATE_PERMS, { ...itemServerFields(cur), itemId, folderId, ...masks })
+	}
+
+	function wearAttachment(itemId, attachPoint = 0) {
+		if (!itemId) return
+		emit(C.INV_WEAR_ATTACHMENT, { itemId, attachPoint })
+	}
+
+	function detach(itemId) {
+		if (!itemId) return
+		emit(C.INV_DETACH, { itemId })
 	}
 
 	onMounted(() => {
@@ -181,6 +304,13 @@ export function useInventory() {
 			on(S.INV_FOLDER,       onInvFolder)
 			on(S.CAPS_READY,       onCapsReady)
 			on(S.INV_ITEM_CREATED, onItemCreated)
+			on(S.INV_BULK_UPDATE,  d => inv.applyBulkUpdate(d || {}))
+			on(S.INV_ITEM_REMOVED, d => (d?.itemIds || []).forEach(id => inv.removeItemLocal(id)))
+			// CreateInventoryCategory cap confirmed the folder persisted — re-affirm it in the store
+			// (server may have truncated the name); the optimistic add already used the same folderId.
+			on(S.INV_FOLDER_CREATED, d => { if (d?.folderId) inv.addFolderOptimistic({ folderId: d.folderId, parentId: d.parentId, name: d.name, typeDefault: d.typeDefault ?? -1 }) })
+			// Cap rejected the create — revert the optimistic folder so the tree matches the server.
+			on(S.INV_FOLDER_CREATE_FAILED, d => { if (d?.folderId) inv.removeFolderLocal(d.folderId) })
 			registered = true
 		}
 		// WHY: Safety net — if CAPS_READY arrived before this component mounted (edge case on fast
@@ -195,5 +325,9 @@ export function useInventory() {
 	// Keep handlers registered for the session — module-level state survives component unmount.
 	onUnmounted(() => {})
 
-	return { fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder }
+	return {
+		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder,
+		renameItem, renameFolder, moveItem, moveFolder, trashItem, trashFolder,
+		purgeItem, updatePerms, wearAttachment, detach,
+	}
 }

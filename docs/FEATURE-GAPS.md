@@ -268,20 +268,29 @@ Working: contacts tab, search, online/offline list, rights toggles, add-by-name,
 
 Working: folder tree, lazy expand + background bulk load, item browse, count footer, type icons, search, filter/sort tabs, right-click properties.
 
-- [ ] Drag / move items to another folder
-- [ ] Rename item (F2 or context menu)
-- [ ] Wear / attach from inventory (calls to sim)
-- [ ] Detach / remove wearable
-- [ ] Thumbnails (GetTexture for asset preview image)
-- [ ] Create new item
-- [ ] Create folder
-- [ ] Change permissions
+**Write side shipped 2026-06-27** (workflow sweep, framework-first; build-verified + server clean-restart, NOT yet live-grid verified):
+- [x] Drag / move items to another folder — MoveInventoryItem/MoveInventoryFolder, drag-drop in tree w/ ancestor-cycle guard
+- [x] Rename item (F2 or context menu) — UpdateInventoryItem; inline edit via F2 + `inv:begin-rename` CustomEvent; folder rename = UpdateInventoryFolder (274)
+- [x] Wear / attach from inventory — RezSingleAttachmentFromInv (objects/assetType 6 only)
+- [x] Detach / remove wearable — DetachAttachmentIntoInv (by ItemID); attachments only
+- [x] Thumbnails (GetTexture for asset preview image) — useInventoryThumbnail (reuses getTextureUrl J2C pipeline), wired into tree item rows
+- [x] Change permissions — UpdateInventoryItem mask edit
+- [x] Inventory localStorage cache — extended existing IDB cache to flush post-mutation state (debounced 1.5s)
+- [x] Delete → move to Trash (FS semantics) — also unlocks "can't delete friend's object"; purge path (RemoveInventoryItem) wired but UI-hidden
+- [x] Create folder — (was already working pre-sweep)
+- [ ] Create new item — ⚠ DEFERRED: generic create (notecard/script/clothing) needs the asset-upload cap (NewFileAgentInventory / UpdateNotecardAgentInventory). Landmark create already works.
+- [ ] Wear clothing-layer **wearables** — ⚠ DEFERRED to bake pipeline (AgentSetAppearance, BRAINSTORM-FIRST/risky). Context menu leaves these disabled w/ tooltip.
+- [x] **Live-grid verified 2026-06-27** (osgrid, Lazarus Taxon 6): create folder ✓, folder rename (UpdateInventoryFolder) ✓, folder→Trash ✓, create landmark ✓, item rename (UpdateInventoryItem — sim ACCEPTED the CRC) ✓, item→Trash ✓, thumbnails render ✓, system-folder/non-object guards ✓.
+- [x] **BUG FIXED 2026-06-27**: item rename/perms sent the OLD name (a `...cur` spread clobbered the new `name`) AND dropped the description (row.desc ≠ encoder.description). Fixed in useInventory.js via `itemServerFields()` mapping; re-verified live.
+- [ ] **BulkUpdateInventory reconciliation (Bug B)** — on OpenSim the sim's ack arrives over the **EventQueue** (`[EQ] → client (generic) BulkUpdateInventory`, LLSD), NOT UDP. decodeBulkUpdateInventory is wired only on the UDP path, so S.INV_BULK_UPDATE never fires. Optimistic UX works; server-authoritative reconcile is dead until an LLSD-over-EQ decode is added to the EQ generic handler.
+- [ ] **Context menu / F2 rename only in main Inventory tree (Gap C)** — the flat Recent/Worn/Favorites tabs render rows without the right-click/keydown handlers, so rename/delete/etc. are unavailable there. Wire the same handlers into the flat-tab row component.
+- [ ] Folder rename persistence in cache — itemCount watcher doesn't fire on folder-name-only change; stale until next allAgentFetched/relogin (minor)
+- [ ] Drag-drop item/folder move + perms change + wear/detach on a real object — encoders verified, not yet exercised end-to-end live
 - [ ] Transfer / drop to another agent
 - [ ] Accept from another agent
 - [ ] "Folder of 42" / CMT batch operations
 - [ ] Play inventory assets inline (sounds, animations, gestures — locally and in-world options)
 - [ ] Find / filter duplicate UUIDs
-- [ ] Inventory localStorage cache (persist folder tree across login sessions)
 
 ---
 

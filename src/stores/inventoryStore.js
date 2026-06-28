@@ -31,6 +31,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const sortMode   = ref('name')    // item sort within a folder: 'name' | 'date' | 'type'
 	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
 	const propsTarget = ref(null)     // { kind, obj } shown in the Properties popover | null
+	// Active inventory drag, shared across ALL tree nodes + floaters. WHY shared state instead of
+	// relying on dataTransfer: getData() is unreadable during dragover and custom-type/types quirks
+	// vary by browser — a singleton ref is always readable and makes cross-floater drags reliable.
+	const dragPayload = ref(null)     // { id, kind:'item'|'folder' } | null
 
 	function loadFromLogin(d) {
 		const m = new Map()
@@ -226,6 +230,142 @@ export const useInventoryStore = defineStore('inventory', () => {
 		folders.value = m
 	}
 
+	// ── Optimistic mutations (mirror the server's MoveInventoryItem/UpdateInventoryItem/
+	//    UpdateInventoryFolder/RemoveInventoryItem before the sim's BulkUpdateInventory ack lands).
+	//    All resilient: a missing item/folder is a no-op, never a throw. ──
+
+	// Find which folder list an item currently lives in. Returns the folderId or '' if not found.
+	function _findItemFolder(itemId) {
+		let where = ''
+		items.value.forEach((list, folderId) => {
+			if (!where && list.some(i => i.itemId === itemId)) where = folderId
+		})
+		return where
+	}
+
+	function renameItemLocal(itemId, name) {
+		if (!itemId) return
+		const folderId = _findItemFolder(itemId)
+		if (!folderId) return
+		const list = items.value.get(folderId) || []
+		items.value.set(folderId, list.map(i => (i.itemId === itemId ? { ...i, name } : i)))
+		_schedTrigger()
+	}
+
+	function renameFolderLocal(folderId, name) {
+		if (!folderId) return
+		const f = folders.value.get(folderId)
+		if (!f) return
+		const m = new Map(folders.value)
+		m.set(folderId, { ...f, name })
+		folders.value = m
+	}
+
+	// Move an item between folder lists, updating its parentId. No-op if the item isn't found
+	// or it's already in the destination folder.
+	function moveItemLocal(itemId, toFolderId) {
+		if (!itemId || !toFolderId) return
+		const fromFolderId = _findItemFolder(itemId)
+		if (!fromFolderId || fromFolderId === toFolderId) return
+		const fromList = items.value.get(fromFolderId) || []
+		const moving = fromList.find(i => i.itemId === itemId)
+		if (!moving) return
+		items.value.set(fromFolderId, fromList.filter(i => i.itemId !== itemId))
+		const toList = items.value.get(toFolderId) || []
+		if (!toList.some(i => i.itemId === itemId)) {
+			items.value.set(toFolderId, [...toList, { ...moving, parentId: toFolderId }])
+		}
+		_schedTrigger()
+	}
+
+	function moveFolderLocal(folderId, toParentId) {
+		if (!folderId || !toParentId || folderId === toParentId) return
+		const f = folders.value.get(folderId)
+		if (!f || f.parentId === toParentId) return
+		const m = new Map(folders.value)
+		m.set(folderId, { ...f, parentId: toParentId })
+		folders.value = m
+	}
+
+	// Drop an item from whatever folder list it's in (purge / sim-driven removal).
+	function removeItemLocal(itemId) {
+		if (!itemId) return
+		const folderId = _findItemFolder(itemId)
+		if (!folderId) return
+		const list = items.value.get(folderId) || []
+		items.value.set(folderId, list.filter(i => i.itemId !== itemId))
+		_schedTrigger()
+	}
+
+	// Drop a folder from the tree. Its item list is dropped too; descendant folders are left for
+	// the sim's authoritative reconcile (BulkUpdateInventory) — we don't speculatively recurse.
+	function removeFolderLocal(folderId) {
+		if (!folderId || !folders.value.has(folderId)) return
+		const m = new Map(folders.value)
+		m.delete(folderId)
+		folders.value = m
+		if (items.value.has(folderId)) { items.value.delete(folderId); _schedTrigger() }
+	}
+
+	// Recompute the cached canCopy/canModify/canTransfer convenience flags from the owner mask bits.
+	function _permFlags(ownerMask) {
+		const m = ownerMask | 0
+		return {
+			canCopy:     (m & 0x8000) !== 0,
+			canModify:   (m & 0x4000) !== 0,
+			canTransfer: (m & 0x2000) !== 0,
+		}
+	}
+
+	// Apply a permission change to an item in place, recomputing the convenience flags from ownerMask.
+	function updateItemPermsLocal(itemId, masks = {}) {
+		if (!itemId) return
+		const folderId = _findItemFolder(itemId)
+		if (!folderId) return
+		const list = items.value.get(folderId) || []
+		items.value.set(folderId, list.map(i => {
+			if (i.itemId !== itemId) return i
+			const next = { ...i }
+			if (masks.ownerMask     != null) next.ownerMask     = masks.ownerMask
+			if (masks.everyoneMask  != null) next.everyoneMask  = masks.everyoneMask
+			if (masks.groupMask     != null) next.groupMask     = masks.groupMask
+			if (masks.nextOwnerMask != null) next.nextOwnerMask = masks.nextOwnerMask
+			Object.assign(next, _permFlags(next.ownerMask))
+			return next
+		}))
+		_schedTrigger()
+	}
+
+	// Reconcile authoritative rows from the sim (BulkUpdateInventory) into the maps. Upserts folders
+	// (preserving source) and items (placed into / migrated to their authoritative parentId folder).
+	function applyBulkUpdate({ folders: fol, items: its } = {}) {
+		if (Array.isArray(fol) && fol.length) {
+			const m = new Map(folders.value)
+			for (const f of fol) {
+				if (!f?.folderId) continue
+				const prev = m.get(f.folderId)
+				m.set(f.folderId, { source: 'agent', ...prev, ...f })
+			}
+			folders.value = m
+		}
+		if (Array.isArray(its) && its.length) {
+			for (const it of its) {
+				if (!it?.itemId || !it?.parentId) continue
+				// Remove any stale copy from its previous folder (move/rename reconciliation).
+				const oldFolder = _findItemFolder(it.itemId)
+				if (oldFolder && oldFolder !== it.parentId) {
+					const ol = items.value.get(oldFolder) || []
+					items.value.set(oldFolder, ol.filter(x => x.itemId !== it.itemId))
+				}
+				const list = items.value.get(it.parentId) || []
+				const idx = list.findIndex(x => x.itemId === it.itemId)
+				if (idx >= 0) list[idx] = { ...list[idx], ...it }
+				else items.value.set(it.parentId, [...list, it])
+			}
+			_schedTrigger()
+		}
+	}
+
 	// Folders a landmark can be saved into, FS-style: Favorites (type 23) first, then the
 	// Landmarks system folder (type 3) and all its descendant folders (indented by depth).
 	function landmarkTargetFolders() {
@@ -246,9 +386,12 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	function clear() { loadFromLogin(null) }
 
+	function setDrag(id, kind) { dragPayload.value = id ? { id, kind } : null }
+	function clearDrag()       { dragPayload.value = null }
+
 	return {
 		folders, rootId, libRootId, items, expanded, fetched, fetching, caps, capsReady, cacheLoaded,
-		selectedId, sortMode, contextMenu, propsTarget,
+		selectedId, sortMode, contextMenu, propsTarget, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, applyCachedItems, toggle, expandAll, collapseAll, findSystemFolder,
 		select, descendantCounts,
@@ -256,5 +399,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		setItems, folderCount, itemCount, clear,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
 		pendingAgentFolders, addCreatedItems, addFolderOptimistic, landmarkTargetFolders,
+		renameItemLocal, renameFolderLocal, moveItemLocal, moveFolderLocal,
+		removeItemLocal, removeFolderLocal, updateItemPermsLocal, applyBulkUpdate,
 	}
 })

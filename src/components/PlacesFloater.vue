@@ -49,8 +49,8 @@ const filteredHistory = computed(() => {
 	<FloaterWindow
 		id="places"
 		title="Places"
-		:wrap-style="{ width: '22rem', height: '36rem', resize: 'both' }"
-		:default-pos="{ right: '35vw', top: '20vh' }"
+		:wrap-style="{ width: '28rem', height: '36rem', resize: 'both' }"
+		:default-pos="{ left: '35vw', top: '20vh' }"
 		@close="ui.togglePlaces()"
 	>
 		<div class="flex flex-col h-full text-xs">
@@ -80,7 +80,7 @@ const filteredHistory = computed(() => {
 			</div>
 
 			<!-- Tab content area -->
-			<div class="flex-1 min-h-0 overflow-y-auto">
+			<div class="flex-1 min-h-0">
 
 				<!-- ── Favorites ── -->
 				<template v-if="ui.placesActiveTab === 'favorites'">
@@ -151,21 +151,25 @@ const filteredHistory = computed(() => {
 
 				<!-- ── Teleport History ── -->
 				<template v-else-if="ui.placesActiveTab === 'history'">
-					<ul v-if="filteredHistory.length" class="px-2 py-1">
+					<ul v-if="filteredHistory.length" class="py-1 pe-8 ps-2 max-w-full">
 						<li
 							v-for="(p, i) in filteredHistory"
 							:key="`hist-${i}`"
-							class="flex items-center justify-between gap-2 py-1 px-1 rounded-sm hover:bg-white/10 cursor-pointer group"
+							class="py-1 px-1 rounded-sm hover:bg-white/10 cursor-pointer group"
 							@dblclick="teleportTo(p)"
 						>
 							<div class="flex items-center gap-2 min-w-0">
 								<span class="mb-1 w-3.5 h-3.5 shrink-0">📌</span>
-								<div class="min-w-0">
-									<div class="truncate">{{ p.name }}</div>
-									<div class="text-2xs text-fg/60 truncate">{{ p.regionName || '—' }} ({{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }})</div>
+								<div class="grid grid-cols-4 gap-3 min-w-0">
+									<div class="col-span-2 truncate">
+										{{ p.name }},
+										<span class="text-2xs text-fg/60">{{ p.regionName || '—' }}</span>
+									</div>
+									<div class="text-2xs text-fg/60 whitespace-nowrap">{{ Math.round(p.x) }}, {{ Math.round(p.y) }}, {{ Math.round(p.z) }}</div>
+									<div class="text-2xs text-fg/60 whitespace-nowrap">mm/dd/yyyy, hh:mm</div>
 								</div>
+								<button class="absolute right-0 opacity-0 group-hover:opacity-100" @click.stop="teleportTo(p)">TP</button>
 							</div>
-							<button class="inline-btn opacity-0 group-hover:opacity-100" @click.stop="teleportTo(p)">TP</button>
 						</li>
 					</ul>
 					<div v-else class="py-8 text-fg/30 italic text-center">
