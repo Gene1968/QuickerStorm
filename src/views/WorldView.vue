@@ -10,6 +10,7 @@ import { useUiStore }		from '@/stores/uiStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { usePresenceStore }	from '@/stores/presenceStore.js'
+import { useInventoryStore }	from '@/stores/inventoryStore'
 import WorldCanvas			from '@/components/WorldCanvas.vue'
 import SceneLoadBadge		from '@/components/SceneLoadBadge.vue'
 import SimpleWorldView		from '@/components/SimpleWorldView.vue'
@@ -51,6 +52,7 @@ const ui           = useUiStore()
 const grid         = useGridStore()
 const session      = useSessionStore()
 const presenceStore= usePresenceStore()
+const inv          = useInventoryStore()
 const router       = useRouter()
 const voice        = useProximityVoice()
 // WHY: register inventory cap handlers (S.INV_FOLDER / S.CAPS_READY) for the whole session so
@@ -183,7 +185,12 @@ watch(
 					<ObjectContextMenu />
 					<LandContextMenu />
 					<InventoryContextMenu />
-					<InventoryItemProperties />
+					<InventoryItemProperties
+						v-for="(t, i) in inv.propsTargets"
+						:key="t.key"
+						:target="t"
+						:index="i"
+					/>
 					<ToastStack />
 					<TopRightTray />
 				</div>

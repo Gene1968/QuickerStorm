@@ -39,7 +39,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const selectedId = ref('')        // selected folder/item id (drives footer + highlight)
 	const sortMode   = ref('name')    // item sort within a folder: 'name' | 'date' | 'type'
 	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
-	const propsTarget = ref(null)     // { kind, obj } shown in the Properties popover | null
+	const propsTargets = ref([])      // [{ key, kind, obj }] — one open Properties floater per item/folder
 	// Active inventory drag, shared across ALL tree nodes + floaters. WHY shared state instead of
 	// relying on dataTransfer: getData() is unreadable during dragover and custom-type/types quirks
 	// vary by browser — a singleton ref is always readable and makes cross-floater drags reliable.
@@ -69,7 +69,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		selectedId.value = ''
 		sortMode.value   = 'name'
 		contextMenu.value = null
-		propsTarget.value = null
+		propsTargets.value = []
 	}
 
 	// Direct child folders of a folder, sorted to match Firestorm's default inventory order
@@ -227,8 +227,19 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// ── Context menu + Properties popover ──
 	function openContextMenu(x, y, kind, obj) { contextMenu.value = { x, y, kind, obj } }
 	function closeContextMenu() { contextMenu.value = null }
-	function showProperties(kind, obj) { propsTarget.value = { kind, obj }; contextMenu.value = null }
-	function closeProperties() { propsTarget.value = null }
+	// WHY: each item/folder opens its OWN Properties floater (FS behavior) — keep a list keyed by
+	// kind+id so a second item doesn't replace the first. Opening an already-open one is a no-op
+	// (its existing floater stays; FloaterWindow handles re-focus on click).
+	function showProperties(kind, obj) {
+		contextMenu.value = null
+		const id = obj?.itemId || obj?.folderId
+		if (!id) return
+		const key = `${kind}:${id}`
+		if (propsTargets.value.some(t => t.key === key)) return
+		propsTargets.value = [...propsTargets.value, { key, kind, obj }]
+	}
+	function closePropertiesFor(key) { propsTargets.value = propsTargets.value.filter(t => t.key !== key) }
+	function closeProperties() { propsTargets.value = [] }
 
 	// Local-only: insert item into the Favorites folder's in-memory list (no server cap yet).
 	function addToFavorites(item) {
@@ -515,12 +526,12 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	return {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
-		selectedId, sortMode, contextMenu, propsTarget, dragPayload, setDrag, clearDrag,
+		selectedId, sortMode, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
 		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder,
 		select, descendantCounts,
-		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closeProperties, addToFavorites,
+		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closePropertiesFor, closeProperties, addToFavorites,
 		setItems, folderCount, itemCount, clear,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
 		pendingAgentFolders, addCreatedItems, addFolderOptimistic, confirmFolder, landmarkTargetFolders,

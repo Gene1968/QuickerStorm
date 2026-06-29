@@ -642,13 +642,13 @@ function close() {
 								<div class="pe-2 text-fg/50 text-end">Sit label:</div>
 								<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.sitName }}</div>
 							</template>
-							<label class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 ps-1 text-fg/50 text-end"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
+							<label class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 ps-1 text-fg/50 whitespace-nowrap"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
 							<div class="flex items-center gap-1 bg-fg/20 py-1">
 								<select title="Whether purchaser receives original, copy, or contents." disabled class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 text-fg">
 									<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
 								</select>
 							</div>
-							<div class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 text-fg/50 text-end self-center">Price ?$</div>
+							<div class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 text-fg/50 text-end self-center">Price ??$</div>
 							<div class="flex items-center gap-1 bg-fg/20 pb-1">
 								<input type="number" min="0" max="999999999" step="1" :value="obj.salePrice" readonly
 								class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 w-20 text-fg" />
@@ -657,14 +657,32 @@ function close() {
 						</div>
 					</div>
 					<div v-if="obj.baseMask != null" class="border-t border-edge pt-2">
-						<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Permissions</div>
-						<div class="grid grid-cols-[5rem,1fr] gap-x-2 gap-y-1 text-xs font-mono">
-							<div class="text-fg/50">Base:</div>      <div class="text-fg">{{ permLetters(obj.baseMask) }}</div>
-							<div class="text-fg/50">Owner:</div>     <div class="text-fg">{{ permLetters(obj.ownerMask) }}</div>
-							<div class="text-fg/50">Group:</div>     <div class="text-fg">{{ permLetters(obj.groupMask) }}</div>
-							<div class="text-fg/50">Everyone:</div>  <div class="text-fg">{{ permLetters(obj.everyoneMask) }}</div>
+						<div class="text-fg/50 text-2xs uppercase tracking-wide">Permissions</div>
+						<h6 class="mb-1 text-2xs text-accent">You {can/can't} modify this object</h6>
+						<div class="flex gap-2 text-3xs font-mono">
+							<div class="text-fg/50">Base:</div>
+							<div class="text-fg">{{ permLetters(obj.baseMask) }}</div>
+							<div class="text-fg/50">Owner:</div>
+							<div class="text-fg">{{ permLetters(obj.ownerMask) }}</div>
+							<div class="text-fg/50">Group:</div>
+							<div class="text-fg">{{ permLetters(obj.groupMask) }}</div>
+							<div class="text-fg/50">Everyone:</div>
+							<div class="text-fg">{{ permLetters(obj.everyoneMask) }}</div>
 							<div class="text-fg/50">Next Owner:</div><div class="text-fg">{{ permLetters(obj.nextOwnerMask) }}</div>
 						</div>
+						<h6 class="w-12 text-3xs text-fg-muted">Anyone:</h6>
+						<div class="flex align-center gap-3 mb-1">
+							<span class="w-18">[&nbsp; ] Move</span>
+							<span class="w-18">[✓] Copy</span>
+							<span class="w-18">[&nbsp; ] Export</span>
+						</div>
+						<h6 class="mb-0 text-3xs text-fg-muted">Next owner:</h6>
+						<div class="flex gap-3 mb-1">
+							<span class="w-18">[✓] Modify</span>
+							<span class="w-18">[✓] Copy</span>
+							<span class="w-18">[✓] Transfer</span>
+						</div>
+						<h6 class="mb-0 text-3xs text-fg-muted">Pathfinding attributes: <span class="text-xs text-fg">none</span></h6>
 					</div>
 					<div v-if="!obj.creatorId" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
 						Loading properties from sim…

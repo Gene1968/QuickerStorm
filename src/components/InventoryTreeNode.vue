@@ -377,10 +377,10 @@ function onItemMouseLeave() { hidePreview() }
 				/>
 			</template>
 			<template v-else>
-				<span class="truncate">{{ displayName }}</span>
+				<span class="whitespace-nowrap">{{ displayName }}</span>
 			</template>
 			<!-- FS-style count shown only for the anchor (last individually clicked) folder, in parens. -->
-			<span v-if="isAnchor && renaming.id !== folderId" class="shrink-0 ml-auto pl-1 text-2xs text-fg/55 tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
+			<span v-if="isAnchor && renaming.id !== folderId" class="shrink-0 ml-auto px-1 text-2xs text-fg/75 font-medium tabular-nums">({{ counts.items }}/{{ counts.folders }})</span>
 		</div>
 
 		<template v-if="open">
@@ -428,7 +428,7 @@ function onItemMouseLeave() { hidePreview() }
 					/>
 				</template>
 				<template v-else>
-					<span class="truncate">{{ it.name }}</span>
+					<span class="whitespace-nowrap">{{ it.name }}</span>
 					<span v-for="tag in permTags(it)" :key="tag" class="shrink-0 text-2xs text-amber-400/70">({{ tag }})</span>
 				</template>
 			</div>
