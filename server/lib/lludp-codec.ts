@@ -1759,6 +1759,31 @@ export function decodeRegionHandshake(buf: Buffer, dataOffset: number): RegionHa
   return { simName, simAccess, waterHeight, terrainDetail, terrainStartHeight, terrainHeightRange, regionId, cacheId }
 }
 
+export interface SimulatorViewerTimeData {
+  usecSinceStart: number
+  secPerDay: number
+  secPerYear: number
+  sunDirection: [number, number, number]
+  sunPhase: number
+  sunAngVelocity: [number, number, number]
+}
+
+/** Decode SimulatorViewerTimeMessage (Low #150) — region sun position + day length.
+ *  Body per message_template.msg: UsecSinceStart U64 | SecPerDay U32 | SecPerYear U32 |
+ *  SunDirection LLVector3 | SunPhase F32 | SunAngVelocity LLVector3.
+ *  WHY: drives the client day/night cycle (sun dir + secPerDay for extrapolation).
+ */
+export function decodeSimulatorViewerTime(buf: Buffer, dataOffset: number): SimulatorViewerTimeData {
+  let off = dataOffset
+  const usecSinceStart = Number(buf.readBigUInt64LE(off)); off += 8
+  const secPerDay = buf.readUInt32LE(off); off += 4
+  const secPerYear = buf.readUInt32LE(off); off += 4
+  const sunDirection: [number, number, number] = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]; off += 12
+  const sunPhase = buf.readFloatLE(off); off += 4
+  const sunAngVelocity: [number, number, number] = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]; off += 12
+  return { usecSinceStart, secPerDay, secPerYear, sunDirection, sunPhase, sunAngVelocity }
+}
+
 /** Decode KillObject (High #16) — sim removes objects from the viewer's scene.
  *  Body: count(U8) + array of LocalID(U32). One packet can kill multiple objects.
  *  WHY: Without this handler, removed prims/avatars/NPCs stay in scene forever.

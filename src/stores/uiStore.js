@@ -95,6 +95,13 @@ export const useUiStore = defineStore('ui', () => {
 	// Kill-switch for the off-main-thread cache I/O worker (qs-geom + qs-mesh). Default ON; turning
 	// it off forces the main-thread cache path (sync fallback). See useCacheIO / geomCache client.
 	const cacheWorker        = ref(localStorage.getItem('qs-cache-worker') !== '0')
+	// Day/night cycle: follow region sun time (default ON). When off, a fixed time-of-day override
+	// (0..1) drives the sky directly. See useEnvironment.js + skyDome.js.
+	const dayNightCycle      = ref(localStorage.getItem('qs-daynight-cycle') !== '0')
+	const _todSaved          = Number(localStorage.getItem('qs-time-of-day'))
+	const timeOfDay          = ref(Number.isFinite(_todSaved) && _todSaved >= 0 && _todSaved <= 1 ? _todSaved : 0.5)
+	watch(dayNightCycle, (v) => localStorage.setItem('qs-daynight-cycle', v ? '1' : '0'))
+	watch(timeOfDay, (v) => localStorage.setItem('qs-time-of-day', String(v)))
 	watch(litShading, (v) => localStorage.setItem('qs-lit-shading', v ? '1' : '0'))
 	watch(instancing, (v) => localStorage.setItem('qs-instancing',  v ? '1' : '0'))
 	watch(showFps,    (v) => localStorage.setItem('qs-show-fps',    v ? '1' : '0'))
@@ -368,7 +375,7 @@ export const useUiStore = defineStore('ui', () => {
 		flying, setFlying,
 		sceneRebuildTick, requestSceneRebuild,
 		textureRefreshReq, requestTextureRefresh,
-		litShading, instancing, showFps, cacheWorker, fps, setFps, netKbps, setNetKbps,
+		litShading, instancing, showFps, cacheWorker, dayNightCycle, timeOfDay, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		geomCacheRamMb, setGeomCacheRamMb,
 		vramBudgetMb, setVramBudgetMb,

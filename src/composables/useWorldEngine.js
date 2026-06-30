@@ -20,6 +20,8 @@ import { getMesh, getMeshStats, getMeshBytes } from './useMeshFetch.js'
 import { getSculpt, getSculptStats } from './useSculptFetch.js'
 import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpTextureBuilds, setTextureRenderer, refreshTextures } from './useTextureFetch.js'
 import { useParticles } from './useParticles.js'
+import { useEnvironment } from './useEnvironment.js'
+import { createSkyDome } from '@/lib/skyDome.js'
 import { useCacheIO } from './useCacheIO.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled, EMERGENCY_HEAP_RATIO, SOFT_HEAP_APP_STANDDOWN } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild, shouldEvictForHeap } from '@/lib/cullPolicy.js'
@@ -293,6 +295,9 @@ export function useWorldEngine(canvasRef) {
 
 	let renderer, labelRenderer, scene, camera, animId, ro
 	let particles = null
+	// Day/night environment: lights + sky dome driven by useEnvironment each frame.
+	let sunLight = null, ambientLight = null, skyDome = null
+	const environment = useEnvironment()
 	const _psSrcVec = new THREE.Vector3()   // reused scratch for emitter world-position reads
 	const meshMap = new Map()  // localId → THREE.Mesh
 	// ── FEATURE-GAPS #6 draw-call instancing (gated on uiStore.instancing) ──
@@ -1562,7 +1567,12 @@ export function useWorldEngine(canvasRef) {
 		// NoToneMapping + SRGBColorSpace = sRGB-faithful unlit textures (decode→encode round-trip)
 		// and FS-style lighting in lit mode. SL content is LDR; sun-facing white clipping to full
 		// white is the authentic SL look, not an artifact.
-		renderer.toneMapping = THREE.NoToneMapping
+		// LinearToneMapping @ exposure 1.0 ≈ identity (multiply-by-1 then sRGB encode = same as
+		// NoToneMapping), so the calibration above is preserved at midday. The day/night cycle
+		// then ramps toneMappingExposure DOWN toward night (clamped ≤1.0) — one cheap global
+		// brightness lever that darkens unlit materials too (most of the scene is MeshBasic).
+		renderer.toneMapping = THREE.LinearToneMapping
+		renderer.toneMappingExposure = 1.0
 		// WHY: Explicit SRGBColorSpace — older Three.js defaulted to LinearEncoding which skips
 		// gamma correction. Without this, linear output hits an sRGB monitor raw → colours
 		// appear darker than expected, and prim shadow faces show as an unintended dark brown.
@@ -1659,16 +1669,30 @@ export function useWorldEngine(canvasRef) {
 		// Intensities calibrated for NoToneMapping (ACES used to compress these): sun 1.0 + ambient
 		// 0.45 ≈ SL's legacy sun/ambient balance — a sun-facing white surface reaches full white
 		// (authentic), shadow sides stay readable via ambient + sky fill.
-		const sun = new THREE.DirectionalLight(0xfff4e6, 1.0)
-		sun.position.set(50, 80, 50)
-		scene.add(sun)
+		// sun + ambient are driven by useEnvironment (day/night cycle); see animate().
+		sunLight = new THREE.DirectionalLight(0xfff4e6, 1.0)
+		sunLight.position.set(50, 80, 50)
+		scene.add(sunLight)
 		// WHY: Fill light from opposite side of sun. Prevents avatar shadow faces going near-zero
 		// (which after any outputColorSpace quirk produces the dark-face artefact).
 		// ~30% sun intensity keeps shadow side visible without flattening the 3D form.
 		const fill = new THREE.DirectionalLight(0xaad4f5, 0.3)
 		fill.position.set(-60, -20, -80)
 		scene.add(fill)
-		scene.add(new THREE.AmbientLight(0xfff4e6, 0.45))
+		ambientLight = new THREE.AmbientLight(0xfff4e6, 0.45)
+		scene.add(ambientLight)
+
+		// Gradient sky dome replaces the solid background. Guard compile: on failure, fall back
+		// to a solid background color so a shader error never blanks the scene (render quarantine).
+		try {
+			skyDome = createSkyDome(THREE)
+			scene.add(skyDome.mesh)
+			scene.background = null
+		} catch (e) {
+			skyDome = null
+			scene.background = new THREE.Color(0x87ceeb)
+			console.warn('[env] sky dome init failed, using solid background:', e)
+		}
 
 		// Resize observer
 		ro = new ResizeObserver(onResize)
@@ -4504,6 +4528,20 @@ export function useWorldEngine(canvasRef) {
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
+
+		// Day/night: advance the cycle and push it to lights, fog, exposure, and the sky dome.
+		environment.update(dt)
+		const _pal = environment.env.palette
+		const _sd = environment.env.sunDirThree
+		if (sunLight) {
+			sunLight.position.set(_sd.x * 200, _sd.y * 200, _sd.z * 200)
+			sunLight.color.setHex(_pal.sunColor)
+			sunLight.intensity = _pal.sunIntensity
+		}
+		if (ambientLight) ambientLight.color.setHex(_pal.ambient)
+		if (scene.fog) scene.fog.color.setHex(_pal.fog)
+		if (renderer) renderer.toneMappingExposure = _pal.exposure
+		if (skyDome) skyDome.update(_pal, _sd, camera.position, dt)
 
 		const _flyMoving = isFlying && !!(cf & (CTRL_AT_POS | CTRL_AT_NEG | CTRL_LEFT_POS | CTRL_LEFT_NEG | CTRL_UP_POS | CTRL_UP_NEG))
 		if (_flyMoving) playSoundLooping('flying.mp3', 0.5)

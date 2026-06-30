@@ -5,12 +5,21 @@
  * drag it and the caret is replaced by a Dock button (in the titlebar) to snap it back.
  * Post-login only (mounted in BottomToolbar context).
  */
+import { computed } from 'vue'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import { useTheme } from '@/composables/useTheme.js'
 import { useUiStore } from '@/stores/uiStore.js'
 
 const theme = useTheme()
 const ui    = useUiStore()
+
+// Format time-of-day 0..1 as a 24h clock (0.5 = 12:00, midnight at 0).
+const todLabel = computed(() => {
+	const h = (ui.timeOfDay * 24) % 24
+	const hh = Math.floor(h)
+	const mm = Math.floor((h - hh) * 60)
+	return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+})
 
 function close() { ui.showQuickPrefs = false }
 
@@ -63,6 +72,33 @@ function openPreferences() {
 					<span class="theme-knob" />
 					<span class="theme-label">{{ ui.litShading ? 'On' : 'Off' }}</span>
 				</button>
+			</div>
+
+			<!-- Day/Night cycle (default ON): follow region sun time, or fix the time of day. -->
+			<div class="qp-row">
+				<span class="qp-row-label">Day/Night Cycle</span>
+				<button
+					class="theme-toggle"
+					:class="{ dark: ui.dayNightCycle }"
+					:title="ui.dayNightCycle ? 'Following region sun time — click for a fixed sky' : 'Fixed time of day — click to follow region time'"
+					@click="ui.dayNightCycle = !ui.dayNightCycle"
+				>
+					<span class="theme-knob" />
+					<span class="theme-label">{{ ui.dayNightCycle ? 'Region' : 'Fixed' }}</span>
+				</button>
+			</div>
+
+			<div v-if="!ui.dayNightCycle" class="qp-row">
+				<span class="qp-row-label">Time of Day</span>
+				<div class="qp-slider-wrap">
+					<input
+						type="range" min="0" max="1" step="0.01"
+						:value="ui.timeOfDay"
+						class="qp-slider"
+						@input="ui.timeOfDay = Number($event.target.value)"
+					/>
+					<span class="qp-slider-val">{{ todLabel }}</span>
+				</div>
 			</div>
 
 			<div class="qp-row qp-row--disabled">

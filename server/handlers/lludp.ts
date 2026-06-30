@@ -11,7 +11,7 @@ import {
 	parseHeader, parseMsgType,
 	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
 	decodeObjectUpdateCached, encodeRequestMultipleObjects, decodeObjectUpdateCompressed,
-	decodeRegionHandshake, decodeZeroCoded,
+	decodeRegionHandshake, decodeSimulatorViewerTime, decodeZeroCoded,
 	encodeAgentUpdate, encodeChatFromViewer, encodeCompletePingCheck, encodeRegionHandshakeReply,
 	encodeTeleportLocationRequest, encodeCompleteAgentMovement,
 	decodeTeleportLocal, decodeTeleportFinish, encodeAgentSetAppearance, decodeKillObject,
@@ -62,6 +62,7 @@ const HIGH_KILL_OBJECT         = 16    // Sim → viewer: remove these localIds 
 const LOW_REGION_HANDSHAKE        = 148   // Sim → viewer: region name + terrain info (Low freq)
 const LOW_AGENT_MOVEMENT_COMPLETE = 250   // Sim → viewer: confirms avatar spawn position (Low freq)
 const LOW_DISABLE_SIMULATOR       = 152   // Sim → viewer: circuit terminated (Low freq)
+const LOW_SIMULATOR_VIEWER_TIME   = 150   // Sim → viewer: sun direction + day length (Low freq, Unencoded)
 const LOW_CHAT_FROM_SIM       = 139   // Low freq
 const LOW_TELEPORT_LOCAL      = 64    // Sim → viewer: same-region TP completed (Low freq)
 const LOW_TELEPORT_PROGRESS   = 73    // Sim → viewer: TP in progress — OpenSim uses 73, SL standard is 65
@@ -479,6 +480,25 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				d: { name: simName, access: simAccess, ...session.cachedRegionEnv },
 			}))
 		} catch (e) { slog.warn(session.ws, `RegionHandshake decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (type === `low:${LOW_SIMULATOR_VIEWER_TIME}`) {
+		// WHY: drives the client day/night cycle. Low-frequency correction; client extrapolates
+		// the sun between samples using sunAngVelocity + secPerDay.
+		try {
+			const t = decodeSimulatorViewerTime(buf, dataOffset)
+			session.ws.send(JSON.stringify({
+				t: S.ENVIRONMENT_TIME,
+				d: {
+					sunDirection: t.sunDirection,
+					sunPhase: t.sunPhase,
+					sunAngVelocity: t.sunAngVelocity,
+					secPerDay: t.secPerDay,
+					usecSinceStart: t.usecSinceStart,
+				},
+			}))
+		} catch (e) { slog.warn(session.ws, `SimulatorViewerTime decode error: ${(e as Error).message}`) }
 		return
 	}
 

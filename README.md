@@ -2,7 +2,7 @@
 
 A web-based 3D viewer for OpenSimulator and Second Life. Open a browser tab, log in, and you're in-world. No install needed.
 
-Tested on OSGrid, NeverWorld, GBG, and DigiWorldz.
+Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 
 ## Current state · June 2026
 
