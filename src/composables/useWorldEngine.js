@@ -1627,6 +1627,15 @@ export function useWorldEngine(canvasRef) {
 			waterMaterial,
 		)
 		waterMesh.rotation.x = -Math.PI / 2
+		// WHY renderOrder=-1: water is transparent (depthWrite:false) so it sits in the transparent
+		// queue with alpha-blended prims. Left at the default 0 it sorts by centroid distance, so the
+		// 8km plane flips ahead of/behind foliage as the camera turns. When water sorts AFTER foliage,
+		// the foliage's depthWrite:true alpha edges (blended over bare sky) reject the later water pass,
+		// freezing a bright sky/water halo (~#b9dcf0) on transparent edges over open water. Forcing water
+		// to draw first among transparents (still after the skyDome at -1000) makes foliage always
+		// composite over the water → soft edges hold at every angle. Opaque terrain already drew first,
+		// which is why edges over (even submerged) terrain were always fine.
+		waterMesh.renderOrder = -1
 		// WHY: y = region water level from RegionHandshake (SL default 20, but var-region/estate
 		// sims set custom levels). Re-applied by the sessionStore.waterHeight watcher if it arrives
 		// after the scene is built.
