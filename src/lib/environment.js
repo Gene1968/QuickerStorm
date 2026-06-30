@@ -10,9 +10,39 @@ const smoothstep = (a, b, x) => {
 
 // Keyframes by dayPhase (0 = deep night → 0.5 = horizon → 1 = high noon). Colors 0xRRGGBB.
 export const PALETTE = [
-	{ p: 0.0, skyZenith: 0x0a0f1e, skyHorizon: 0x1a2238, ambient: 0x26304d, sunColor: 0x3a4a6b, sunIntensity: 0.05, fog: 0x0a0f1e, exposure: 0.22, starOpacity: 1.0 },
-	{ p: 0.5, skyZenith: 0x2b3a66, skyHorizon: 0xe8975a, ambient: 0x6b5a52, sunColor: 0xffb066, sunIntensity: 0.6, fog: 0xcaa07a, exposure: 0.55, starOpacity: 0.3 },
-	{ p: 1.0, skyZenith: 0x3a7bd5, skyHorizon: 0x9ec9ee, ambient: 0xfff4e6, sunColor: 0xfff4e6, sunIntensity: 1.0, fog: 0x87ceeb, exposure: 1.0, starOpacity: 0.0 },
+	{
+		p: 0.0,
+		skyZenith: 0x0a0f1e,
+		skyHorizon: 0x1a2238,
+		ambient: 0x26304d,
+		sunColor: 0x3a4a6b,
+		sunIntensity: 0.05,
+		fog: 0x0a0f1e,
+		exposure: 0.22,
+		starOpacity: 1.0,
+	},
+	{
+		p: 0.5,
+		skyZenith: 0x2b3a66,
+		skyHorizon: 0xe8975a,
+		ambient: 0x6b5a52,
+		sunColor: 0xffb066,
+		sunIntensity: 0.6,
+		fog: 0xcaa07a,
+		exposure: 0.55,
+		starOpacity: 0.3,
+	},
+	{
+		p: 1.0,
+		skyZenith: 0x0c4aeb,
+		skyHorizon: 0xc4e9ff,
+		ambient: 0xfff4e6,
+		sunColor: 0xfff4e6,
+		sunIntensity: 1.0,
+		fog: 0xc4e9ff,
+		exposure: 1.0,
+		starOpacity: 0.0,
+	},
 ]
 
 // Sun elevation = SL up-component (Z), clamped. SL world is Z-up, so dir[2] is sin(elevation).

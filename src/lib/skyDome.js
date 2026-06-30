@@ -11,12 +11,13 @@ export function createSkyDome(THREE) {
 		depthWrite: false,
 		fog: false,
 		uniforms: {
-			uZenith: { value: new THREE.Color(0x3a7bd5) },
-			uHorizon: { value: new THREE.Color(0x9ec9ee) },
+			uZenith: { value: new THREE.Color(0x0c4aeb) },
+			uHorizon: { value: new THREE.Color(0xc5eaff) },
 			uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.4) },
 			uStar: { value: 0.0 },
 			uTime: { value: 0.0 },
 			uCloud: { value: 1.0 }, // 0 at deep night → 1 in daylight
+			uCloudColor: { value: new THREE.Color(0xeef6ff) }, // bright white-blue so clouds read against the sky
 		},
 		vertexShader: `
 			varying vec3 vDir;
@@ -31,6 +32,7 @@ export function createSkyDome(THREE) {
 			uniform float uStar;
 			uniform float uTime;
 			uniform float uCloud;
+			uniform vec3 uCloudColor;
 			varying vec3 vDir;
 			float hash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 			float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -46,9 +48,16 @@ export function createSkyDome(THREE) {
 				for (int i = 0; i < 4; i++) { v += amp * vnoise(p); p *= 2.0; amp *= 0.5; }
 				return v;
 			}
+			// linear → sRGB. Raw ShaderMaterial output is NOT auto-encoded by the renderer, so
+			// without this the linear palette colors render too dark in the sRGB framebuffer.
+			vec3 toSRGB(vec3 c) {
+				c = clamp(c, 0.0, 1.0);
+				return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+			}
 			void main() {
-				float h = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
-				vec3 col = mix(uHorizon, uZenith, pow(h, 0.6));
+				// Horizon color sits AT the horizon (vDir.y=0), easing up to zenith overhead.
+				float f = pow(clamp(vDir.y, 0.0, 1.0), 0.5);
+				vec3 col = mix(uHorizon, uZenith, f);
 				vec3 sdir = normalize(uSunDir);
 				float d = max(dot(normalize(vDir), sdir), 0.0);
 				col += vec3(1.0, 0.9, 0.7) * pow(d, 128.0);          // sun disc
@@ -57,14 +66,13 @@ export function createSkyDome(THREE) {
 				// upper hemisphere, fading out near the horizon and at night (uCloud).
 				if (vDir.y > 0.02) {
 					vec2 cuv = vDir.xz / vDir.y * 0.6 + vec2(uTime * 0.004, uTime * 0.002);
-					float cov = smoothstep(0.50, 0.95, fbm(cuv));
+					float cov = smoothstep(0.42, 0.80, fbm(cuv));      // denser coverage
 					float fade = smoothstep(0.02, 0.30, vDir.y) * uCloud;
-					vec3 cloudCol = mix(uHorizon, vec3(1.0), 0.6);
-					col = mix(col, cloudCol, clamp(cov * fade, 0.0, 0.85));
+					col = mix(col, uCloudColor, clamp(cov * fade, 0.0, 0.95)); // more opaque
 				}
 				float st = step(0.998, hash(floor(vDir * 600.0))) * uStar * smoothstep(0.0, 0.3, vDir.y);
 				col += vec3(st);
-				gl_FragColor = vec4(col, 1.0);
+				gl_FragColor = vec4(toSRGB(col), 1.0);
 			}`,
 	})
 	const mesh = new THREE.Mesh(geo, mat)

@@ -22,6 +22,7 @@ import { getTextureStats, getTextureBytes, pumpTextures, pruneTexturesLRU, pumpT
 import { useParticles } from './useParticles.js'
 import { useEnvironment } from './useEnvironment.js'
 import { createSkyDome } from '@/lib/skyDome.js'
+import { buildWaterMaterial } from '@/lib/waterMaterial.js'
 import { useCacheIO } from './useCacheIO.js'
 import { memStats, memUnderPressure, memRatio, setAppBytes, appRatio, appBudgetBytes, setAppBudgetOverride, setResidentCount, heapThrottled, EMERGENCY_HEAP_RATIO, SOFT_HEAP_APP_STANDDOWN } from '@/lib/memGovernor.js'
 import { selectEvictions, selectReloads, groupChildrenByRoot, drawDistanceMayGrow, orderByDistance, selectVisibility, shouldEvictForBudget, shouldAutoRebuild, shouldEvictForHeap } from '@/lib/cullPolicy.js'
@@ -1617,41 +1618,9 @@ export function useWorldEngine(canvasRef) {
 		// distance from camera so far water reads smooth. Mirrors Firestorm's seamless
 		// ocean appearance. Opacity tuned to "good before" baseline (0.5x); no fresnel
 		// or specular — user found that look too busy.
-		waterMaterial = new THREE.ShaderMaterial({
-			uniforms: {
-				uTime:    { value: 0 },
-				uColor:   { value: new THREE.Color(0x2266aa) },
-				uOpacity: { value: 0.75 },
-			},
-			vertexShader: `
-				varying vec3 vWorld;
-				void main() {
-					vec4 worldPos = modelMatrix * vec4(position, 1.0);
-					vWorld = worldPos.xyz;
-					gl_Position = projectionMatrix * viewMatrix * worldPos;
-				}
-			`,
-			fragmentShader: `
-				uniform float uTime;
-				uniform vec3 uColor;
-				uniform float uOpacity;
-				varying vec3 vWorld;
-				void main() {
-					float d = distance(cameraPosition.xz, vWorld.xz);
-					// Ripples crisp under ~60 m, faded out by ~250 m.
-					float near = 1.0 - smoothstep(70.0, 230.0, d);
-					float r1 = sin(vWorld.x * 1.80 + uTime * 1.10);
-					float r2 = sin(vWorld.z * 1.55 + uTime * 0.90);
-					float r3 = sin((vWorld.x + vWorld.z) * 0.95 + uTime * 0.65);
-					float ripple = (r1 + r2 + 0.7 * r3) / 2.7;
-					vec3 col = uColor + ripple * 0.055 * near;
-					gl_FragColor = vec4(col, uOpacity);
-				}
-			`,
-			transparent: true,
-			depthWrite: false,
-			side: THREE.FrontSide,
-		})
+		// FS-like water: 3-layer scrolling normals + sun glint + fresnel-to-sky. Uniforms uSunDir/
+		// uSunColor/uSunIntensity/uSkyHorizon/uSkyZenith are driven from the env palette in animate().
+		waterMaterial = buildWaterMaterial(THREE)
 		const OCEAN_SIZE = 8192
 		waterMesh = new THREE.Mesh(
 			new THREE.PlaneGeometry(OCEAN_SIZE, OCEAN_SIZE, 4, 4),
@@ -4541,7 +4510,7 @@ export function useWorldEngine(canvasRef) {
 		if (ambientLight) ambientLight.color.setHex(_pal.ambient)
 		if (scene.fog) scene.fog.color.setHex(_pal.fog)
 		if (renderer) renderer.toneMappingExposure = _pal.exposure
-		if (skyDome) skyDome.update(_pal, _sd, camera.position, dt)
+		if (skyDome) { try { skyDome.update(_pal, _sd, camera.position, dt) } catch { /* stale sky material across HMR — skip frame */ } }
 
 		const _flyMoving = isFlying && !!(cf & (CTRL_AT_POS | CTRL_AT_NEG | CTRL_LEFT_POS | CTRL_LEFT_NEG | CTRL_UP_POS | CTRL_UP_NEG))
 		if (_flyMoving) playSoundLooping('flying.mp3', 0.5)
@@ -4731,7 +4700,20 @@ export function useWorldEngine(canvasRef) {
 			worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 		}
 
-		if (waterMaterial) waterMaterial.uniforms.uTime.value += dt
+		if (waterMaterial) {
+			// WHY try/catch: a hot-reload can briefly leave a stale material instance whose uniform
+			// set predates a newly-added uniform; without this guard the throw skips render() every
+			// frame → black scene. Quarantine it so the loop always renders.
+			try {
+				const wu = waterMaterial.uniforms
+				wu.uTime.value += dt
+				// Drive water sheen + exposure from the day/night palette (_pal) and sun dir (_sd).
+				wu.uSunDir.value.set(_sd.x, _sd.y, _sd.z)
+				wu.uSunColor.value.setHex(_pal.sunColor)
+				wu.uSunIntensity.value = _pal.sunIntensity
+				wu.uExposure.value = _pal.exposure
+			} catch { /* stale material across HMR — skip this frame's water uniforms */ }
+		}
 		if (gizmoGroup) positionGizmo()
 
 		// NOTE: mesh building moved off the rAF path to a focus-independent timer (see onMounted).
