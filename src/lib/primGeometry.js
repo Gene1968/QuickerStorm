@@ -7,7 +7,9 @@ import { buildPrimMeshArrays } from '@/lib/primMesher.js'
 // count changes, axis-map fixes…). Old entries become unreachable and age out via LRU.
 // v2: real PrimMesher tessellation (hollow/cut/twist/taper/shear/radius/revolutions/skew)
 // replaces the Three.js-primitive stand-ins.
-export const GEOM_VERSION = 2
+// v3: linear-prim cap UVs match FS LLVolume (top v=y+0.5, bottom v=0.5-y) — caps were upside-down.
+// v4: side-face V matches FS (V runs with the path, 0 bottom → 1 top) — sides were upside-down too.
+export const GEOM_VERSION = 4
 
 // WHY: tessellate an SL prim from its full shape via the PrimMesher port (src/lib/primMesher.js),
 // faithful to OpenSim's Meshmerizer. Replaces the old Box/Cylinder/Sphere/Torus stand-ins so

@@ -153,6 +153,63 @@ describe('buildPrimMeshArrays — deformations change the mesh', () => {
 	})
 })
 
+describe('buildPrimMeshArrays — cap UVs (FS LLVolume parity)', () => {
+	// FS createCap / createUnCutCubeCap (indra/llmath/llvolume.cpp): the two caps of a linear
+	// prim are V-mirrors of each other — TOP cap uses v = y+0.5, BOTTOM cap uses v = 0.5-y
+	// ("Mirror for underside"). PrimMesher.cs flips BOTH u and v on both caps, which leaves the
+	// top cap V-flipped (upside-down texture) relative to the viewer. Pin FS parity here.
+	function capVertices(arr, topward) {
+		// Collect (y, uv.v) for every vertex on the +Z (top) or -Z (bottom) cap of a unit box.
+		const out = []
+		for (let t = 0; t < arr.faceNumbers.length; t++) {
+			const po = t * 9, uo = t * 6
+			const zs = [arr.positions[po + 2], arr.positions[po + 5], arr.positions[po + 8]]
+			const onCap = topward ? zs.every((z) => z > 0.45) : zs.every((z) => z < -0.45)
+			if (!onCap) continue
+			for (let v = 0; v < 3; v++) {
+				out.push({ y: arr.positions[po + v * 3 + 1], uvV: arr.uvs[uo + v * 2 + 1] })
+			}
+		}
+		return out
+	}
+
+	it('top cap maps v = y + 0.5 (matches FS, not upside-down)', () => {
+		const top = capVertices(buildPrimMeshArrays(BOX), true)
+		expect(top.length).toBeGreaterThan(0)
+		for (const { y, uvV } of top) expect(uvV).toBeCloseTo(y + 0.5, 4)
+	})
+
+	it('bottom cap maps v = 0.5 - y (FS "mirror for underside")', () => {
+		const bot = capVertices(buildPrimMeshArrays(BOX), false)
+		expect(bot.length).toBeGreaterThan(0)
+		for (const { y, uvV } of bot) expect(uvV).toBeCloseTo(0.5 - y, 4)
+	})
+})
+
+describe('buildPrimMeshArrays — side UVs (FS LLVolume parity)', () => {
+	// FS LLPath (linear/circle) sets mTexT = t and createSide uses it directly as the side V, so
+	// side V runs WITH the path: 0 at the bottom (z=-0.5), 1 at the top (z=+0.5). PrimMesher.cs used
+	// 1-percentOfPath, rendering side textures upside-down. Pin FS parity: V tracks Z height.
+	it('box side V increases with Z (0 at bottom, 1 at top — not inverted)', () => {
+		const a = buildPrimMeshArrays(BOX)
+		// A side triangle spans Z (vertices at both z≈-0.5 and z≈+0.5); a cap triangle does not.
+		// Within a side triangle, the bottom vertex must map V≈0 and the top vertex V≈1 (FS parity).
+		let checked = 0
+		for (let t = 0; t < a.faceNumbers.length; t++) {
+			const po = t * 9, uo = t * 6
+			const zs = [a.positions[po + 2], a.positions[po + 5], a.positions[po + 8]]
+			if (Math.min(...zs) > -0.49 || Math.max(...zs) < 0.49) continue   // not a Z-spanning side tri
+			for (let v = 0; v < 3; v++) {
+				const z = a.positions[po + v * 3 + 2]
+				const uvV = a.uvs[uo + v * 2 + 1]
+				if (z < -0.49) { expect(uvV).toBeCloseTo(0, 2); checked++ }
+				else if (z > 0.49) { expect(uvV).toBeCloseTo(1, 2); checked++ }
+			}
+		}
+		expect(checked).toBeGreaterThan(0)
+	})
+})
+
 describe('buildPrimMeshArrays — robustness', () => {
 	it('does not throw on an empty shape and still returns finite geometry', () => {
 		const a = buildPrimMeshArrays({})

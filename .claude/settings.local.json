@@ -336,7 +336,11 @@
       "Bash(cat)",
       "Bash(bun /c/Users/gene1/AppData/Local/Temp/claude/C--Users-gene1-Downloads-Pages-git-QuickerStorm/79e4b009-4e52-4877-a9ae-1f0cc1d59c04/scratchpad/inspect.mjs)",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $p = Get-Process -Id $_ -ErrorAction SilentlyContinue; \"PID $_ = $\\($p.ProcessName\\)\"; Stop-Process -Id $_ -Force } } else { \"nothing on 8787\" })",
-      "Bash(powershell -Command 'Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }')"
+      "Bash(powershell -Command 'Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }')",
+      "PowerShell(npx vitest run src/__tests__/lib/primMesher.test.js 2>&1 | Select-Object -Last 40)",
+      "PowerShell(npx vitest run src/__tests__/lib/primMesher.test.js src/__tests__/lib/geomKey.test.js src/__tests__/lib/primGeometry.test.js 2>&1 | Select-Object -Last 25)",
+      "PowerShell(npx vitest run 2>&1 | Select-Object -Last 15)",
+      "PowerShell(npx vitest run src/__tests__/lib/primMesher.test.js src/__tests__/lib/primGeometry.test.js 2>&1 | Select-Object -Last 18)"
     ]
   }
 }

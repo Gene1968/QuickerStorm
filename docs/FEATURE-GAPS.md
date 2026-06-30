@@ -183,7 +183,7 @@ Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdat
 - [ ] Sculpt texture assignment
 - [ ] Create new prim in-world
 - [ ] Link / Unlink prims
-- [ ] **Link number wrong (2026-06-19)** — we compute link order by sorting children by LocalID; correct source is `ObjectProperties.LinkNumber` (U32). e.g. child localId 955628720 shows as link 47 vs FS link 67 in the same 154-prim linkset. Fix: decode and store `LinkNumber` from ObjectProperties; use it instead of sorted position.
+- [ ] **Link number wrong (2026-06-19)** — we compute link order by sorting children by LocalID; correct source is `ObjectProperties.LinkNumber` (U32). e.g. child localId 955628720 shows as link 47 vs FS link 67 in the same 154-prim linkset. Fix: decode and store `LinkNumber` from ObjectProperties; use it instead of sorted position.  Still wrong 6/30.
 - [ ] Object face raycast picking — currently picks bounding box; need per-triangle for correct face selection
 - [ ] Open / unpack box contents (RequestTaskInventory + Xfer)
 - [ ] Take, Delete, Copy to inventory (perms + Phase 3 caps)

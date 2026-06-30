@@ -641,7 +641,7 @@ class PrimMesh {
 					vf.v1 = cClone(newLayer.coords[face.v1]); vf.v2 = cClone(newLayer.coords[face.v2]); vf.v3 = cClone(newLayer.coords[face.v3])
 					vf.n1 = cClone(faceNormal); vf.n2 = cClone(faceNormal); vf.n3 = cClone(faceNormal)
 					vf.uv1 = { ...newLayer.faceUVs[face.v1] }; vf.uv2 = { ...newLayer.faceUVs[face.v2] }; vf.uv3 = { ...newLayer.faceUVs[face.v3] }
-					if (pathType === PathType.Linear) { flipUV(vf.uv1); flipUV(vf.uv2); flipUV(vf.uv3) }
+					if (pathType === PathType.Linear) { flipCapU(vf.uv1); flipCapU(vf.uv2); flipCapU(vf.uv3) }
 					this.viewerFaces.push(vf)
 				}
 			}
@@ -653,7 +653,11 @@ class PrimMesh {
 			if (node.percentOfPath < this.pathCutBegin + 0.01 || node.percentOfPath > this.pathCutEnd - 0.01) this.faces.push(...newLayer.faces)
 
 			const numVerts = newLayer.coords.length
-			const thisV = 1.0 - node.percentOfPath
+			// Side-face V. PrimMesher.cs uses (1 - percentOfPath); the SL viewer (FS LLPath linear/circle
+			// path sets mTexT = t, used directly as the side V in LLVolumeFace::createSide) runs V with the
+			// path: 0 at the bottom (z=-0.5), 1 at the top. Using 1-percentOfPath renders side textures
+			// upside-down (visible on text/oriented textures). WHY: deviation from PrimMesher.cs for FS parity.
+			const thisV = node.percentOfPath
 
 			if (nodeIndex > 0) {
 				let startVert = coordsLen + 1
@@ -725,7 +729,7 @@ class PrimMesh {
 					vf.v1 = cClone(newLayer.coords[face.v1 - coordsLen]); vf.v2 = cClone(newLayer.coords[face.v2 - coordsLen]); vf.v3 = cClone(newLayer.coords[face.v3 - coordsLen])
 					vf.n1 = cClone(faceNormal); vf.n2 = cClone(faceNormal); vf.n3 = cClone(faceNormal)
 					vf.uv1 = { ...newLayer.faceUVs[face.v1 - coordsLen] }; vf.uv2 = { ...newLayer.faceUVs[face.v2 - coordsLen] }; vf.uv3 = { ...newLayer.faceUVs[face.v3 - coordsLen] }
-					if (pathType === PathType.Linear) { flipUV(vf.uv1); flipUV(vf.uv2); flipUV(vf.uv3) }
+					if (pathType === PathType.Linear) { flipCapU(vf.uv1); flipCapU(vf.uv2); flipCapU(vf.uv3) }
 					this.viewerFaces.push(vf)
 				}
 			}
@@ -741,7 +745,13 @@ function makeViewerFace(primFaceNumber) {
 		uv1: { u: 0, v: 0 }, uv2: { u: 0, v: 0 }, uv3: { u: 0, v: 0 },
 	}
 }
-function flipUV(uv) { uv.u = 1.0 - uv.u; uv.v = 1.0 - uv.v }
+// Cap-UV mirror. PrimMesher.cs flips BOTH u and v here, but that's physics-meshing convention and
+// leaves rendered caps upside-down vs the viewer. The SL viewer (FS LLVolume createCap /
+// createUnCutCubeCap, indra/llmath/llvolume.cpp) mirrors only U on caps — top cap v = y+0.5, bottom
+// cap v = 0.5-y. The top/bottom V difference comes from flipNormals() (which already flips faceUV v
+// on the bottom cap); the extra v-flip PrimMesher.cs does on top of that is what flipped both caps.
+// WHY: deliberate deviation from PrimMesher.cs for FS rendering parity.
+function flipCapU(uv) { uv.u = 1.0 - uv.u }
 function calcSurfaceNormal(vf) {
 	const e1 = coord(vf.v2.x - vf.v1.x, vf.v2.y - vf.v1.y, vf.v2.z - vf.v1.z)
 	const e2 = coord(vf.v3.x - vf.v1.x, vf.v3.y - vf.v1.y, vf.v3.z - vf.v1.z)
