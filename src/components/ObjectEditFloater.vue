@@ -198,6 +198,7 @@ const profileCurveLabel = computed(() => {
 	return `${map[low] ?? 'Unknown'} (${c})`
 })
 
+// SL/FS ClickAction enum (indra_constants.h): values are NOT the combo display order — map by value.
 const CLICK_ACTION_OPTIONS = [
 	{ value: 0, label: 'Touch (default)' },
 	{ value: 1, label: 'Sit on object' },
@@ -205,8 +206,10 @@ const CLICK_ACTION_OPTIONS = [
 	{ value: 3, label: 'Pay object' },
 	{ value: 4, label: 'Open' },
 	{ value: 5, label: 'Play animation' },
-	{ value: 6, label: 'Zoom' },
-	{ value: 7, label: 'Ignore object' },
+	{ value: 6, label: 'Open media' },
+	{ value: 7, label: 'Zoom' },
+	{ value: 8, label: 'None' },
+	{ value: 9, label: 'Ignore object' },
 ]
 const SALE_TYPE_OPTIONS = [
 	{ value: 0, label: 'Not for sale' },

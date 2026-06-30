@@ -203,8 +203,12 @@ export function useWorldEngine(canvasRef) {
 	const sessionStore      = useSessionStore()
 	const mapStore          = useMapStore()
 	const uiStore           = useUiStore()
-	const hoverAction = ref(null)   // null | 0-7  (ClickAction value, null = no interactive object under cursor)
+	const hoverAction = ref(null)   // null | 0-9  (ClickAction value, null = no interactive object under cursor)
 	const hoverPos    = ref({ x: 0, y: 0 })
+	// altFocus: Alt is held → the user is in camera-focus mode (Alt+click sets the look-at focal
+	// point). Drives the magnifier badge (HoverCursorBadge) + hides the edit gizmo so it's clear the
+	// next click focuses the camera rather than manipulating the selection (FS reuses the Zoom cursor).
+	const altFocus = ref(false)
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
@@ -876,6 +880,7 @@ export function useWorldEngine(canvasRef) {
 			|| e.code === 'MetaLeft' || e.code === 'MetaRight') {
 			syncGizmoModeFromModifiers(e)
 		}
+		if (e.code === 'AltLeft' || e.code === 'AltRight') setAltFocus(true)
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 		keys[e.code] = true
 		if (e.code === 'KeyF' || e.code === 'Home') {
@@ -915,6 +920,18 @@ export function useWorldEngine(canvasRef) {
 			|| e.code === 'MetaLeft' || e.code === 'MetaRight') {
 			syncGizmoModeFromModifiers(e)
 		}
+		if (e.code === 'AltLeft' || e.code === 'AltRight') setAltFocus(false)
+	}
+	// Alt-held camera-focus affordance: flag the magnifier cursor + hide the edit gizmo (the gizmo
+	// is rebuilt visible on selection, so refreshGizmo also re-applies this). highlight stays.
+	function setAltFocus(on) {
+		if (altFocus.value === on) return
+		altFocus.value = on
+		if (gizmoGroup) gizmoGroup.visible = !on
+		// Hide the native cursor while Alt is held — the magnifier badge IS the pointer (FS replaces
+		// the cursor with the zoom glyph). Restored on release; onPointerMove re-derives it on move.
+		const canvas = canvasRef.value
+		if (canvas) canvas.style.cursor = on ? 'none' : 'default'
 	}
 	// WHY: When the window loses focus (tab switch, alt-tab), keyup events are not delivered.
 	// Keys appear stuck and the avatar spins / walks indefinitely.
@@ -924,6 +941,7 @@ export function useWorldEngine(canvasRef) {
 		for (const k in keys) keys[k] = false
 		isDragging = false
 		eHoldTime  = 0
+		setAltFocus(false)   // Alt keyup is not delivered after alt-tab → clear focus affordance
 	}
 
 	// WHY: Enter alt-orbit by deriving radius/yaw/pitch from current camera position
@@ -1124,6 +1142,11 @@ export function useWorldEngine(canvasRef) {
 			const hits = _raycaster.intersectObjects(targets, true)
 			if (hits.length > 0) {
 				enterOrbitAt(hits[0].point)
+				// FS parity: a successful alt+click warps the cursor to screen center (the new focal
+				// point is now under the centered pointer). We can't move the OS cursor in-browser, so
+				// recenter the magnifier badge — the visible pointer while Alt is held. Only on a hit:
+				// a miss (e.g. clicking sky) doesn't move the focal point, so the badge must NOT jump.
+				hoverPos.value = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
 				return
 			}
 		}
@@ -1887,6 +1910,7 @@ export function useWorldEngine(canvasRef) {
 		clearGizmo()
 		gizmoGroup  = buildGizmoForMode(uiStore.gizmoMode || 'move')
 		gizmoMeshId = id
+		gizmoGroup.visible = !altFocus.value   // stay hidden if rebuilt while Alt (focus mode) is held
 		scene.add(gizmoGroup)
 		positionGizmo()
 	}
@@ -3303,6 +3327,10 @@ export function useWorldEngine(canvasRef) {
 		const canvas = canvasRef.value
 		if (!canvas) return
 
+		// Alt held (camera-focus mode): the magnifier badge follows the cursor (hoverPos above) and
+		// the native cursor stays hidden. Skip raycast + cursor overrides; WorldCanvas forces action 7.
+		if (altFocus.value) { canvas.style.cursor = 'none'; return }
+
 		// Edit floater active → select mode, suppress hover interaction
 		if (uiStore.floaterStack?.includes('object-edit')) {
 			canvas.style.cursor = 'crosshair'
@@ -3357,10 +3385,11 @@ export function useWorldEngine(canvasRef) {
 		// don't show a spurious buy badge. Sit/Touch/Open/etc. are allowed on child prims.
 		const isChild = (obj?.parentId ?? 0) !== 0
 		const ca = (isChild && (rawCa === 2 || rawCa === 3)) ? 0 : rawCa
-		// WHY: show hand only when the object has a script that handles touch (handleTouch flag,
-		// PrimFlags bit 0x80) or has a non-default ClickAction (Sit/Buy/Pay/…). ClickAction=0
-		// alone does not mean the object is interactive — it's the default for all prims.
-		const touchable = ca !== 7 && (ca !== 0 || obj?.handleTouch)
+		// WHY: show a cursor badge only when the object has a script that handles touch (handleTouch
+		// flag, PrimFlags bit 0x80) or has a non-default ClickAction (Sit/Buy/Pay/Open/Play/OpenMedia/
+		// Zoom). ClickAction=0 alone does not mean the object is interactive — it's the prim default.
+		// Disabled(8)/Ignore(9) explicitly suppress interaction. Zoom(7) IS interactive (magnifier).
+		const touchable = ca !== 8 && ca !== 9 && (ca !== 0 || obj?.handleTouch)
 
 		canvas.style.cursor = touchable ? 'pointer' : 'default'
 		hoverAction.value = touchable ? ca : null
@@ -5208,5 +5237,5 @@ export function useWorldEngine(canvasRef) {
 
 	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
-	return { scene, camera, hoverAction, hoverPos, onPointerMove, onPointerLeave }
+	return { scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave }
 }
