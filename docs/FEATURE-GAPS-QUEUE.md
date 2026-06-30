@@ -135,12 +135,18 @@ create-item (asset-upload cap), clothing-layer wearables (bake pipeline → brai
 - **Grid Manager** in the OpenSim tab (add new grids, save locally) like FS.
 - **Privacy ▸ Logs & Transcripts** — decide local-save behavior (vs. retain-N-in-chat); is it accessible?
 
-### Terrain & Environment visuals — FEATURE-GAPS L211–223
-- sun/moon directional light · sky gradient · day/night cycle · 4 detail terrain textures (corner-blend)
-- wind/cloud LayerData consumers (already decoded) · (water reflections/shadows = bigger → brainstorm-first)
+### ✅ Terrain & Environment visuals — SHIPPED 2026-06-29/30 (committed c87854b, f2487cb)
+sun-driven directional light + gradient **sky dome** + **day/night cycle** (SimulatorViewerTimeMessage
+Low 150) + global exposure ramp + **procedural drifting clouds** + QuickPrefs day/night toggle &
+time-of-day override. 4-detail terrain textures were already wired. **FS-like ocean water** (broad
+constant ripple bands + broad sun sheen + sharp horizon, sRGB-encode fix for dark custom shaders).
+See [[daynight-environment-shipped]], [[water-fs-glint-fresnel-shipped]].
+**Deferred:** wind/cloud LayerData (used procedural clouds instead — sim layers are skipped, not decoded);
+dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water reflections/SSR = brainstorm-first.
 
-### Trees / plants — FEATURE-GAPS L160–163
-- system trees/plants (PCode 0x01/0x04) billboard or fixed-geometry treatment
+### Trees / plants — FEATURE-GAPS L160–163 (the one remaining Environment follow-on)
+- system trees/plants (PCode TREE 15 / GRASS 20) billboard treatment. **Needs a reference read** of the
+  OpenSim/libomv tree-species enum + bundled WebP billboards + a branch in the prim-spawn path. Own pass.
 
 ---
 
@@ -186,6 +192,12 @@ create-item (asset-upload cap), clothing-layer wearables (bake pipeline → brai
 ---
 
 ## Recently shipped (don't re-pick)
+- **2026-06-30:** Prim face-UV fix (upside-down caps+sides, GEOM_VERSION→4, commit 6ed408d) · alpha-edge
+  foliage halo over water fix (waterMesh.renderOrder, commit cba5e84).
+- **2026-06-29/30:** Day/Night Environment system (sun-driven sky dome + exposure cycle + clouds + prefs;
+  commit c87854b) + FS-like ocean water & sky/cloud color + custom-shader sRGB-encode fix (commit f2487cb).
+  Remaining Environment follow-on = tree/plant billboards. See [[daynight-environment-shipped]],
+  [[water-fs-glint-fresnel-shipped]].
 - **2026-06-28:** Inventory write side committed (create-via-cap, rename/move/trash/perms/attach, subfolder-ingest,
   auto-rename, drag-move) — see [[inventory-write-side-shipped]]; the drag "weirdness" was DevTools device emulation.
 - **2026-06-27:** Mesh Tier-2 disk cache · fullId cache dedup + live reconciliation · PrimMesher full-shape port

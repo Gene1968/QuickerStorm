@@ -37,6 +37,10 @@ const props = defineProps({
 	// caretDir: 'up' | 'down' — draws a tail linking the floater to its opener button while it
 	// sits at its default position. null = no caret (most floaters have no opener button).
 	caretDir:   { type: String,  default: null },
+	// buildTool: this floater is a focused-building tool (e.g. ObjectEditFloater) — it survives the
+	// app-chrome hide (Alt+Shift+U, uiVisible) and is only hidden by the master Ctrl+Alt+F1
+	// (renderUiVisible). Non-build floaters hide on either toggle.
+	buildTool:  { type: Boolean, default: false },
 })
 
 defineEmits(['close'])
@@ -162,8 +166,9 @@ const rootClass = computed(() => [
 	(!pos.value && !props.defaultPos) ? 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2' : '',
 	isFocused.value ? 'opacity-100' : 'opacity-[.85]',
 	// WHY: position:fixed escapes any parent display:none, so v-show on a wrapper won't hide
-	// these. Toggle UI visibility (Ctrl+Alt+F1) requires hiding directly on each floater.
-	!ui.uiVisible ? 'invisible pointer-events-none' : '',
+	// these — hide directly on each floater. Master Ctrl+Alt+F1 (renderUiVisible) hides ALL;
+	// Alt+Shift+U (uiVisible) hides app chrome but spares build tools (buildTool floaters).
+	(!ui.renderUiVisible || (!ui.uiVisible && !props.buildTool)) ? 'invisible pointer-events-none' : '',
 ])
 
 const rootStyle = computed(() => ({

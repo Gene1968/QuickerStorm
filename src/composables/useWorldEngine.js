@@ -258,6 +258,8 @@ export function useWorldEngine(canvasRef) {
 		uiStore.clearWarp()
 	})
 	const stopGizmoModeWatch = watch(() => uiStore.gizmoMode,        () => refreshGizmo())
+	// Ctrl+Alt+F1 master toggle: rebuild/clear the gizmo + highlight (both guard on renderUiVisible).
+	const stopRenderUiWatch  = watch(() => uiStore.renderUiVisible,  () => { refreshGizmo(); refreshHighlight() })
 	const stopGizmoVisWatch  = watch(() => uiStore.showObjectEdit, (v) => { if (!v) { clearGizmo(); clearHighlight() } else { refreshGizmo(); refreshHighlight() } })
 	const stopHlLinkedWatch  = watch(() => uiStore.editLinked, (linked) => {
 		if (!linked && uiStore.editObjectId) {
@@ -1858,7 +1860,8 @@ export function useWorldEngine(canvasRef) {
 
 	function refreshHighlight() {
 		clearHighlight()
-		if (!uiStore.showObjectEdit || !uiStore.editObjectId) return
+		// renderUiVisible (Ctrl+Alt+F1 master) hides the selection highlight too; Alt+Shift+U keeps it.
+		if (!uiStore.showObjectEdit || !uiStore.editObjectId || !uiStore.renderUiVisible) return
 		const id = uiStore.editObjectId
 		if (uiStore.editLinked) {
 			// Single prim (root or child depending on what was clicked) — yellow only.
@@ -1876,7 +1879,8 @@ export function useWorldEngine(canvasRef) {
 	function refreshGizmo() {
 		if (!scene) return
 		const id = uiStore.editObjectId
-		if (!uiStore.showObjectEdit || !id) { clearGizmo(); return }
+		// renderUiVisible (Ctrl+Alt+F1 master) hides the gizmo too; Alt+Shift+U (uiVisible) keeps it.
+		if (!uiStore.showObjectEdit || !id || !uiStore.renderUiVisible) { clearGizmo(); return }
 		if (uiStore.instancing) promoteOut(id)   // ensure an individual mesh exists for the gizmo
 		const mesh = meshMap.get(id)
 		if (!mesh) { clearGizmo(); return }
@@ -5131,6 +5135,7 @@ export function useWorldEngine(canvasRef) {
 		stopTexRefreshWatch()
 		stopGizmoSelWatch()
 		stopGizmoModeWatch()
+		stopRenderUiWatch()
 		stopGizmoVisWatch()
 		stopHlLinkedWatch()
 		stopSelSyncWatch()

@@ -29,6 +29,7 @@ const shortcutRows = [
 	{ keys: 'Alt+H',        desc: 'Teleport history (Places)' },
 	{ keys: 'Ctrl+Alt+R',   desc: 'Rebake avatar textures' },
 	{ keys: 'Shift+Alt+A',  desc: 'Mic mute (toggle TO-DO)' },
+	{ keys: 'Alt+⇧+U',      desc: 'Show UI (keeps build tools)' },
 	{ keys: 'Ctrl+Alt+F1',  desc: 'UI all hide/render (toggle)' },
 ]
 

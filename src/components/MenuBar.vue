@@ -57,10 +57,10 @@ function onKey(e) {
 		rebake()
 		return
 	}
-	// Toggle UI visibility (render all floaters/bars off for clean screenshot). FS binds the
-	// app-level "Show User Interface" toggle to Alt+Shift+U and the render-feature "UI" bit to
-	// Ctrl+Alt+F1 — we have one underlying state, so accept BOTH combos so users who know either
-	// FS shortcut get what they expect.
+	// Two FS-mirrored UI-hide levels (distinct states):
+	//  • Alt+Shift+U "Show User Interface" → app chrome off, but KEEPS the edit gizmo +
+	//    ObjectEditFloater for focused building.
+	//  • Ctrl+Alt+F1 "Rendering Features → UI" → master, hides EVERYTHING incl. gizmo + edit floater.
 	if (e.altKey && e.shiftKey && !e.ctrlKey && (e.key === 'u' || e.key === 'U' || e.code === 'KeyU')) {
 		e.preventDefault()
 		ui.toggleUiVisible()
@@ -68,7 +68,7 @@ function onKey(e) {
 	}
 	if (e.ctrlKey && e.altKey && e.key === 'F1') {
 		e.preventDefault()
-		ui.toggleUiVisible()
+		ui.toggleRenderUiVisible()
 		return
 	}
 	// Ctrl+W — Close topmost active floater (overrides browser close-tab)
@@ -577,7 +577,7 @@ const MENUS = [
 			{
 				label: 'Rendering features',
 				submenu: [
-					{ label: 'UI',	kbd: 'Ctrl+Alt+F1',	checked: () => ui.uiVisible, action: () => act(() => ui.toggleUiVisible()) },
+					{ label: 'UI',	kbd: 'Ctrl+Alt+F1',	checked: () => ui.renderUiVisible, action: () => act(() => ui.toggleRenderUiVisible()) },
 					{ label: 'Selected',		disabled: true },
 					{ label: 'Highlighted',		disabled: true },
 					{ label: 'Foot shadows',	disabled: true },

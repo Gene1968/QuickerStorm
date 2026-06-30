@@ -266,8 +266,15 @@ export const useUiStore = defineStore('ui', () => {
 		floaterStack.value = [...floaterStack.value.filter(f => f !== id), id]
 	}
 
+	// Two FS-mirrored UI-hide levels:
+	//  • uiVisible (Alt+Shift+U "Show user interface"): hides app chrome (bars/floaters/HUD) for a
+	//    clean view, but KEEPS the build tools — edit gizmo + ObjectEditFloater — for focused building.
+	//  • renderUiVisible (Ctrl+Alt+F1 "Rendering Features → UI"): the higher-level master that hides
+	//    ALL on-screen UI including the gizmo, selection highlight, and ObjectEditFloater.
 	const uiVisible = ref(true)
 	function toggleUiVisible() { uiVisible.value = !uiVisible.value }
+	const renderUiVisible = ref(true)
+	function toggleRenderUiVisible() { renderUiVisible.value = !renderUiVisible.value }
 
 	// WHY: Ctrl+W closes topmost floater by mapping FloaterWindow id → show ref.
 	// Stack may have stale IDs (FloaterWindow doesn't clean up on unmount), so always
@@ -382,7 +389,7 @@ export const useUiStore = defineStore('ui', () => {
 		openProfile, closeProfile, toggleProfile,
 		showCreateLandmark, createLandmarkPrefill, openCreateLandmark,
 		floaterStack, focusFloater,
-		uiVisible, toggleUiVisible, closeActiveFloater,
+		uiVisible, toggleUiVisible, renderUiVisible, toggleRenderUiVisible, closeActiveFloater,
 		cameraPos, setCameraPos,
 		cameraYaw, setCameraYaw,
 		avatarMenu, openAvatarMenu, closeAvatarMenu,

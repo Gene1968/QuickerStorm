@@ -111,24 +111,24 @@ watch(
 		<!-- 2D fallback -->
 		<template v-if="show2D">
 			<!-- Top row: menu bar + location bar -->
-			<div v-show="ui.uiVisible" class="relative flex shrink-0 h-8 bg-black/70 border-b border-edge">
+			<div v-show="ui.uiVisible && ui.renderUiVisible" class="relative flex shrink-0 h-8 bg-black/70 border-b border-edge">
 				<MenuBar />
 				<LocationBar />
 			</div>
-			<FavoritesBar v-show="ui.uiVisible" />
+			<FavoritesBar v-show="ui.uiVisible && ui.renderUiVisible" />
 			<SimpleWorldView class="flex-1" />
-			<BottomToolbar v-show="ui.uiVisible" />
+			<BottomToolbar v-show="ui.uiVisible && ui.renderUiVisible" />
 		</template>
 
 		<!-- 3D world -->
 		<template v-else>
 			<!-- Top row: menu bar + location bar -->
-			<div v-show="ui.uiVisible" class="toprow relative flex shrink-0 items-center justify-between h-8 bg-black/70 border-b border-edge">
+			<div v-show="ui.uiVisible && ui.renderUiVisible" class="toprow relative flex shrink-0 items-center justify-between h-8 bg-black/70 border-b border-edge">
 				<MenuBar />
 				<LocationBar />
 				<AudioControlsWidget class="hidden md:flex" />
 			</div>
-			<FavoritesBar v-show="ui.uiVisible" />
+			<FavoritesBar v-show="ui.uiVisible && ui.renderUiVisible" />
 
 			<!-- Middle: canvas area with overlays -->
 			<div class="flex-1 relative overflow-hidden">
@@ -150,11 +150,13 @@ watch(
 					</div>
 				</Transition>
 
-				<!-- Overlay/floater layer — hidden as a unit by Ctrl+Alt+F1.
+				<!-- App-chrome layer — hidden by Alt+Shift+U (Show User Interface) AND by the master
+				     Ctrl+Alt+F1 (Rendering Features → UI). The build tools (gizmo + ObjectEditFloater)
+				     are deliberately NOT in here so Alt+Shift+U keeps them for focused building.
 				     Absolute children are hidden by display:none on this wrapper.
 				     FloaterWindow children are position:fixed and escape display:none;
 				     they handle visibility via FloaterWindow.vue's invisible class. -->
-				<div v-show="ui.uiVisible">
+				<div v-show="ui.uiVisible && ui.renderUiVisible">
 					<ResyncBanner />
 					<MinimapOverlay			v-if="ui.showMinimap" />
 					<AvatarList				v-if="ui.showAvatarList" />
@@ -169,7 +171,6 @@ watch(
 					<CameraControlsFloater	v-if="ui.showCameraControls" />
 					<MapFloater				v-if="ui.showMap" />
 					<PlacesFloater			v-if="ui.showPlaces" />
-					<ObjectEditFloater		v-if="ui.showObjectEdit" />
 					<ProfileFloater
 						v-for="(tid, i) in ui.profileInstances"
 						:key="tid ?? 'self'"
@@ -194,10 +195,17 @@ watch(
 					<ToastStack />
 					<TopRightTray />
 				</div>
+
+				<!-- Build-tool layer — survives Alt+Shift+U (focused building) and is only hidden by the
+				     master Ctrl+Alt+F1. The edit gizmo + selection highlight live in the canvas/scene and
+				     follow ui.renderUiVisible via useWorldEngine. -->
+				<div v-show="ui.renderUiVisible">
+					<ObjectEditFloater v-if="ui.showObjectEdit" />
+				</div>
 			</div>
 
 			<!-- Bottom toolbar -->
-			<BottomToolbar v-show="ui.uiVisible" />
+			<BottomToolbar v-show="ui.uiVisible && ui.renderUiVisible" />
 		</template>
 
 	</div>
