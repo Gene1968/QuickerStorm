@@ -174,13 +174,18 @@ export function useInstantMessage() {
 	function onImRecv(d) {
 		// WHY: dialog 0=MessageFromAgent, 1=MessageBox, 4=FromTaskAsAlert, 19=BusyAutoResponse, etc.
 		if (d.dialog === IM_INVENTORY_OFFERED) { onInventoryOffer(d); return }
-		if (d.dialog === IM_INVENTORY_ACCEPTED) {
-			// Reply to an offer I made (rare agent-to-agent) — informational only.
-			notif.notify({ tab: 'system', title: `${d.fromAgentName || (d.fromAgentId || '').slice(0, 8)} accepted your inventory offer.` })
-			return
-		}
-		if (d.dialog === IM_INVENTORY_DECLINED) {
-			notif.notify({ tab: 'system', title: `${d.fromAgentName || (d.fromAgentId || '').slice(0, 8)} declined your inventory offer.` })
+		if (d.dialog === IM_INVENTORY_ACCEPTED || d.dialog === IM_INVENTORY_DECLINED) {
+			// FS parity: dialog 5 = "[NAME] received your inventory offer." (InventoryAccepted),
+			// dialog 6 = "[NAME] declined your inventory offer." (InventoryDeclined). OpenSim delivers
+			// dialog-5 ~0.4s after the offer as a transmission/receipt ACK — this is the "arrived / done
+			// transmitting" signal (matters most for large items/folders), NOT the recipient manually
+			// accepting (OpenSim never relays that). NAME must be the RECIPIENT: the ACK arrives with
+			// fromAgentId = the recipient but fromAgentName = the GIVER's name (verified 2026-07-02, an
+			// OpenSim quirk), so resolve the recipient's real name from our own give record first.
+			const rid = d.fromAgentId
+			const name = inventory.giveRecipientName(rid) || conversations.value.get(rid)?.name || d.fromAgentName || (rid || '').slice(0, 8)
+			const verb = d.dialog === IM_INVENTORY_ACCEPTED ? 'received' : 'declined'
+			notif.notify({ tab: 'system', title: `${name} ${verb} your inventory offer.` })
 			return
 		}
 		// Only handle 0 (normal IM) below; other dialogs (group invites, requests) are Phase 3.

@@ -466,6 +466,9 @@ export function useInventory() {
 		if (!toAgentId) return
 		const ids = Array.isArray(itemIds) ? itemIds : [itemIds]
 		const recipient = toName || 'recipient'
+		// WHY: remember the recipient's name keyed by agentId so the dialog-5 "received" ACK (which
+		// arrives with the giver's name, not the recipient's — OpenSim quirk) can render the right name.
+		inv.noteGiveRecipient(toAgentId, recipient)
 		const gave = []
 		let blocked = 0
 		for (const itemId of ids) {
@@ -479,10 +482,10 @@ export function useInventory() {
 			emit(C.GIVE_INVENTORY, { toAgentId, itemId, assetType: it.assetType, name: it.name })
 			gave.push(it.name)
 		}
-		if (gave.length === 1) {
-			notifyInfo('Inventory given', `Gave ${gave[0]} to ${recipient}`)
-		} else if (gave.length > 1) {
-			notifyInfo('Inventory given', `Gave ${gave.length} items to ${recipient}`)
+		// FS parity (ItemsShared): a single "Items successfully shared." on send. The per-recipient
+		// "[name] received your inventory offer." follows when OpenSim's dialog-5 ACK lands (useInstantMessage).
+		if (gave.length) {
+			notifyInfo('Inventory', 'Items successfully shared.')
 		}
 		if (blocked) {
 			notifyInfo('Not transferable', `${blocked} item${blocked === 1 ? '' : 's'} could not be given (no-transfer)`)

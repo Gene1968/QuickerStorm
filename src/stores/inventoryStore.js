@@ -843,6 +843,15 @@ export const useInventoryStore = defineStore('inventory', () => {
 	}
 	function clearDrag()       { dragPayload.value = null }
 
+	// WHY: OpenSim's inventory-offer ACK (IM dialog 5 "received") comes back with fromAgentId = the
+	// RECIPIENT but fromAgentName = the GIVER's name (an OpenSim quirk). To render FS's "[recipient]
+	// received your inventory offer." we resolve the recipient's real name from our OWN give record —
+	// giveInventory notes it here keyed by the recipient's agentId, and useInstantMessage reads it on
+	// the dialog-5/6 ack. Plain Map (non-reactive) — this is a lookup cache, not rendered state.
+	const _giveRecipientNames = new Map()
+	function noteGiveRecipient(agentId, name) { if (agentId) _giveRecipientNames.set(agentId, name || '') }
+	function giveRecipientName(agentId) { return agentId ? (_giveRecipientNames.get(agentId) || '') : '' }
+
 	return {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
 		selectedId, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
@@ -856,5 +865,6 @@ export const useInventoryStore = defineStore('inventory', () => {
 		pendingAgentFolders, addCreatedItems, addFolderOptimistic, confirmFolder, landmarkTargetFolders,
 		renameItemLocal, renameFolderLocal, moveItemLocal, moveFolderLocal,
 		removeItemLocal, removeFolderLocal, updateItemPermsLocal, applyBulkUpdate,
+		noteGiveRecipient, giveRecipientName,
 	}
 })
