@@ -33,6 +33,12 @@ const connected = ref(false)
 
 // Event handlers: Map<messageType, Set<callback>>
 const handlers = new Map()
+// Keyed handlers: Map<key, { type, cb }>. WHY: a composable that re-registers across HMR reloads (or a
+// remount) passes a stable key so on() removes its PREVIOUS callback before adding the new one — the
+// closure identity changes each module reload, so a plain Set can't dedupe it. This module is a
+// persistent singleton (not reloaded when a feature composable is), so the stale ref survives here to be
+// removed. Fixes duplicate IM/offer toasts that multiplied with each dev hot-reload.
+const keyedHandlers = new Map()
 
 // ── Public API ──────────────────────────────────────────────────────────
 
@@ -91,7 +97,14 @@ function sendBinary(buf) {
  * @param {string} type
  * @param {Function} cb - called with the full parsed message
  */
-function on(type, cb) {
+function on(type, cb, key) {
+	// Keyed registration is idempotent: drop any prior callback stored under this key first, so a
+	// composable re-registering (HMR reload / remount) never stacks duplicate handlers.
+	if (key !== undefined) {
+		const prev = keyedHandlers.get(key)
+		if (prev) off(prev.type, prev.cb)
+		keyedHandlers.set(key, { type, cb })
+	}
 	if (!handlers.has(type)) handlers.set(type, new Set())
 	handlers.get(type).add(cb)
 }

@@ -127,7 +127,7 @@ export function useSocial() {
 			on(S.NAME_REPLY,    onNameReply)
 			on(S.AVATAR_PICKER_REPLY,   onAvatarPickerReply)
 			on(S.FRIEND_RIGHTS_CHANGED, onFriendRightsChanged)
-			on(S.IM_RECV,               onFriendshipIm)
+			on(S.IM_RECV,               onFriendshipIm, 'friendship-im')  // keyed: no HMR/remount handler stacking
 			// WHY: friends arrive (with UUIDs only) on login. Resolve any unresolved names as the
 			// list changes — UUIDNameRequest is cheap and batched. Watcher persists for the session.
 			nameWatcher = watch(

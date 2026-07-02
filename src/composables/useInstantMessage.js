@@ -202,7 +202,9 @@ export function useInstantMessage() {
 	// Singleton hookup — multiple call sites won't double-bind.
 	onMounted(() => {
 		if (!registered) {
-			on(S.IM_RECV, onImRecv)
+			// Keyed so an HMR reload / remount replaces the prior callback instead of stacking a new one
+			// (fixed duplicate offer toasts — 3 identical "…is offering you…" on one relayed IM).
+			on(S.IM_RECV, onImRecv, 'im-recv')
 			registered = true
 		}
 		if (session.agentId && conversations.value.size === 0) load(session.agentId)
