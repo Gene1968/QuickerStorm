@@ -12,6 +12,7 @@ import { useWorldStore } from '@/stores/worldStore'
 import { useUiStore } from '@/stores/uiStore'
 import { loadCachedInventory, saveCachedInventory, saveCachedFolders, removeCachedFolder, makeInvSavePairs, foldersToPairs } from '@/lib/inventoryCache'
 import { useNotifications } from '@/composables/useNotifications'
+import { playSound } from '@/composables/useAudio'
 import { assetTypeName } from '@/utils/inventoryIcons'
 import { C, S } from '@shared/protocol.js'
 
@@ -582,6 +583,7 @@ export function useInventory() {
 			nextOwnerMask: it.nextOwnerMask,
 			removeItem,
 		})
+		playSound('rezz.mp3', 0.3)   // FS-style rez cue (both context-menu + drag-to-canvas rez funnel here)
 		notifyInfo('Rezzing', `Rezzing ${it.name || 'object'}…`)
 	}
 
