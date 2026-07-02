@@ -145,6 +145,16 @@ function rebake() {
 	emit(C.REBAKE, {})
 }
 
+// "Selected object" = the object open in the Edit floater (our in-world selection concept).
+function hasSelectedObject() { return ui.showObjectEdit && ui.editObjectId != null }
+// Delete it: server maps C.OBJECT_DELETE → DeRezObject(Delete→Trash); the sim's KillObject removes
+// the mesh. Close the Edit floater since its target is gone. Mirrors the object context-menu Delete.
+function deleteSelectedObject() {
+	if (!hasSelectedObject()) return
+	emit(C.OBJECT_DELETE, { localId: ui.editObjectId })
+	ui.showObjectEdit = false
+}
+
 function resyncWorld() {
 	close()
 	emit(C.RESYNC_WORLD, {})
@@ -317,7 +327,9 @@ const MENUS = [
 					{ label: 'Buy',							disabled: true },
 					{ label: 'Take',						disabled: true },
 					{ label: 'Take copy',					disabled: true },
-					{ label: 'Delete',						disabled: true },
+					// Delete the SELECTED object (the one open in the Edit floater = our selection concept).
+					// Enabled only while an object is selected; sends DeRezObject→Trash (server maps it).
+					{ label: 'Delete',	disabled: () => !hasSelectedObject(),	action: () => act(deleteSelectedObject) },
 					{ label: 'Duplicate',					disabled: true },
 					{ sep: true },
 					{ label: 'Add particles',				disabled: true },

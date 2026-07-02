@@ -18,7 +18,7 @@ import {
 	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
-	encodeObjectName, encodeObjectDescription, encodeObjectDelete,
+	encodeObjectName, encodeObjectDescription, encodeObjectDelete, encodeDeRezObject,
 	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
 	encodeSetAlwaysRun,
 	encodeMapBlockRequest, encodeMapNameRequest, decodeMapBlockReply,
@@ -1696,12 +1696,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	}
 
 	if (msg.t === C.OBJECT_DELETE) {
+		// WHY DeRezObject, not ObjectDelete: OpenSim registers NO handler for ObjectDelete (Low 89) — it
+		// logs "ignoring unhandled packet ObjectDelete" and nothing happens. The viewer "Delete" path is
+		// DeRezObject (Low 291) with Destination=DeRezAction.Delete(6); the sim moves it to Trash and
+		// broadcasts a KillObject that our onKillObject removes from the scene.
 		const d = msg.d as { localId: number }
 		const seq = nextSeq(session)
-		const pkt = encodeObjectDelete({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId })
+		const pkt = encodeDeRezObject({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: [d.localId] })
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectDelete localId=${d.localId}`)
+		slog.info(session.ws, `→ DeRezObject (delete→trash) localId=${d.localId}`)
 		return
 	}
 

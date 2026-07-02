@@ -593,6 +593,30 @@ export function encodeObjectDelete(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+/** DeRezObject (Low 291) — the REAL delete path. OpenSim registers NO handler for ObjectDelete (Low 89)
+ *  and logs "ignoring unhandled packet ObjectDelete", so owner-delete must go through DeRezObject with
+ *  Destination = DeRezAction.Delete (6). The sim resolves the agent's Trash folder itself
+ *  (Scene.Inventory GetFolderForType Trash), so DestinationID may be zero. Mirrors FS "Delete". */
+const DEREZ_DELETE = 6   // DeRezAction.Delete (opensim OpenSim/Framework/IScene.cs) — route to Trash
+export function encodeDeRezObject(p: {
+  agentId: string; sessionId: string; seq: number; localIds: number[]
+  destination?: number; destinationId?: string; transactionId?: string
+}): Buffer {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  return encode('DeRezObject', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    AgentBlock: {
+      GroupID:       ZERO,
+      Destination:   p.destination ?? DEREZ_DELETE,
+      DestinationID: p.destinationId ?? ZERO,
+      TransactionID: p.transactionId ?? crypto.randomUUID(),
+      PacketCount:   1,
+      PacketNumber:  0,
+    },
+    ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
+  }, { seq: p.seq, reliable: true })
+}
+
 // ── AgentRequestSit (Low #122) — claim a target prim as the sit target ───
 // Followed by AgentSit (Low #123) which actually sits. Sim broadcasts the result via
 // ObjectUpdate carrying the avatar's new parent + offset. Phase 2: send both immediately.

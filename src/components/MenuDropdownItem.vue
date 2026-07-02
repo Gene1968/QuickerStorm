@@ -11,11 +11,18 @@
  *   checked  → () => bool; renders a ✓ in a reserved column when true
  *   title    → native tooltip (use for items whose effect isn't obvious)
  */
+import { computed } from 'vue'
 import { playSound } from '@/composables/useAudio'
 
-defineProps({
+const props = defineProps({
 	item: { type: Object, required: true },
 })
+
+// disabled may be a boolean (static) OR a () => bool (reactive, like `checked`) so an item can
+// enable/disable off live state (e.g. "Delete" only when an object is selected). Backward-compatible.
+const isDisabled = computed(() =>
+	typeof props.item.disabled === 'function' ? props.item.disabled() : props.item.disabled,
+)
 </script>
 
 <template>
@@ -25,8 +32,8 @@ defineProps({
 	<div v-else-if="item.submenu" class="mb-sub-wrap">
 		<button
 			class="mb-item mb-item--has-sub"
-			:class="{ 'mb-item--disabled': item.disabled }"
-			:disabled="item.disabled"
+			:class="{ 'mb-item--disabled': isDisabled }"
+			:disabled="isDisabled"
 			:title="item.title"
 			@click="playSound('tick.mp3', 0.6)"
 		>
@@ -48,10 +55,10 @@ defineProps({
 	<button
 		v-else
 		class="mb-item"
-		:class="{ 'mb-item--disabled': item.disabled }"
-		:disabled="item.disabled"
+		:class="{ 'mb-item--disabled': isDisabled }"
+		:disabled="isDisabled"
 		:title="item.title"
-		@click="playSound('tick.mp3', 0.6); item.action && item.action()"
+		@click="playSound('tick.mp3', 0.6); !isDisabled && item.action && item.action()"
 	>
 		<span class="mb-item-label">
 			<span v-if="item.checked" class="mb-item-check">{{ item.checked() ? '✓' : '' }}</span>{{ item.label }}
