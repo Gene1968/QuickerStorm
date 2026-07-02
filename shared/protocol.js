@@ -33,7 +33,7 @@ export const C = {
 	TP_HOME:        'tp_home',         // {} — TeleportLandmarkRequest with zero UUID; sim sends avatar to stored home position
 	SET_HOME:       'set_home',        // { regionName, x, y, z } — SetStartLocationRequest (Low 324) LocationID=1
 	INV_FETCH_FOLDER: 'inv_fetch_folder', // { folderId } or { folderIds:[] } — fetch folder item(s) via FetchInventoryDescendents2 cap (batched)
-	ASSET_FETCH:      'asset_fetch',      // { assetType:'texture'|'mesh'|'sound'|..., uuid } — fetch via ViewerAsset/GetTexture/GetMesh cap (server transcodes J2C→WebP)
+	ASSET_FETCH:      'asset_fetch',      // { assetType:'texture'|'mesh'|'sound'|..., uuid, full? } — fetch via ViewerAsset/GetTexture/GetMesh cap (server transcodes J2C→WebP). full=true → texture decoded at FULL resolution (no downscale cap) for the preview floater
 	MATERIAL_FETCH:   'material_fetch',   // { kind:'pbr'|'legacy', ids:string[] } — fetch GLTF (ViewerAsset) or legacy (RenderMaterials cap)
 	MESH_FETCH:       'mesh_fetch',       // { meshId, lod } — fetch + decode a mesh asset at LOD 0..3 (high..lowest) → geometry arrays
 	SCULPT_FETCH:     'sculpt_fetch',     // { sculptId, sculptType } — fetch sculpt-map texture (J2C) → sculpt geometry
@@ -44,17 +44,21 @@ export const C = {
 	INV_RENAME_FOLDER:  'inv_rename_folder',  // { folderId, name } — UpdateInventoryFolder rename
 	INV_MOVE_ITEM:      'inv_move_item',      // { itemId, toFolderId, newName? } — MoveInventoryItem (newName? = rename-on-move)
 	INV_MOVE_FOLDER:    'inv_move_folder',    // { folderId, toParentId } — MoveInventoryFolder
+	COPY_INV_ITEM:      'copy_inv_item',      // { oldItemId, newFolderId, newName? } — CopyInventoryItem (Low 269); sim mints new ItemID, acks via BulkUpdateInventory
 	INV_TRASH_ITEM:     'inv_trash_item',     // { itemId } — delete = MoveInventoryItem into Trash; server resolves Trash via skeleton (client may also pass trashFolderId)
 	INV_TRASH_FOLDER:   'inv_trash_folder',   // { folderId } — delete = MoveInventoryFolder into Trash
 	INV_PURGE_ITEM:     'inv_purge_item',     // { itemId } — permanent RemoveInventoryItem (empty-trash); encoder+handler wired, UI may leave hidden
 	INV_UPDATE_PERMS:   'inv_update_perms',   // { itemId, folderId, nextOwnerMask, everyoneMask?, groupMask? } — UpdateInventoryItem permission change
 	INV_WEAR_ATTACHMENT:'inv_wear_attachment',// { itemId, attachPoint? } — RezSingleAttachmentFromInv (attachPoint 0 = default)
 	INV_DETACH:         'inv_detach',         // { itemId } — detach attached object back to inventory
+	REZ_OBJECT:         'rez_object',         // { itemId, folderId, position:{x,y,z}, name, description, assetType, invType, flags, saleType, salePrice, creationDate, creatorId, ownerId, groupId, baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask } — RezObject (Low 293); server holds no inventory so client sends the full InventoryData row (same fields as INV_UPDATE_PERMS). position = drop point in region coords; server rezzes AT it (BypassRaycast=1, RayEnd=position). removeItem defaults to !copyable
 	// ── Social (Phase 3) ──
 	AVATAR_PROPS_REQ: 'avatar_props_req', // { avatarId } — AvatarPropertiesRequest (Low 169); sim replies Properties/Interests/Groups
 	PARCEL_INFO_REQ:  'parcel_info_req',  // { parcelId } — ParcelInfoRequest (Low 54)
 	FRIEND_OFFER:     'friend_offer',     // { toAgentId, toAgentName, message } — ImprovedInstantMessage dialog 38
 	FRIEND_RESPOND:   'friend_respond',   // { transactionId, accept:boolean, folderId? } — Accept(297)/Decline(298)Friendship
+	IM_OFFER_REPLY:   'im_offer_reply',   // { imId, accept:boolean, fromAgentId, offerDialog, destFolderId? } — reply to inventory offer via ImprovedInstantMessage (accept=offer+1, decline=offer+2; accept bucket=destFolderId UUID, decline bucket empty)
+	GIVE_INVENTORY:   'give_inventory',   // { toAgentId, itemId, assetType, name } — offer an inventory ITEM to another agent via ImprovedInstantMessage dialog 4 (IM_INVENTORY_OFFERED); fresh messageId (giver owns the tx), bucket=[assetType byte]+item UUID (LLGiveInventory::commitGiveInventoryItem)
 	FRIEND_REMOVE:    'friend_remove',    // { agentId } — TerminateFriendship (Low 300)
 	FRIEND_RIGHTS:    'friend_rights',    // { agentId, rights:number } — GrantUserRights (Low 320)
 	NAME_REQ:         'name_req',         // { ids:string[] } — UUIDNameRequest (Low 235) → resolve avatar UUIDs to names
@@ -87,7 +91,7 @@ export const S = {
 	ENVIRONMENT_TIME:'environment_time', // { sunDirection:[x,y,z], sunPhase, sunAngVelocity:[x,y,z], secPerDay, usecSinceStart } — SimulatorViewerTimeMessage (Low 150) → day/night cycle
 
 	CIRCUIT_STATUS:  'circuit_status',// { alive: boolean } — response to CHECK_CIRCUIT
-	IM_RECV:         'im_recv',       // { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp } — incoming IM
+	IM_RECV:         'im_recv',       // { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, imId, binaryBucket } — incoming IM (binaryBucket = base64; inventory offer dialog 4 = S8 assetType + 16-byte item UUID)
 	OBJECT_PROPS:    'object_props',  // { items: [{ fullId, creatorId, ownerId, name, description, ... }] } — sim's ObjectProperties reply
 	MAP_BLOCKS:      'map_blocks',    // { blocks: [{ regionX, regionY, name, access, regionFlags, waterHeight, agents, mapImageId }] }
 	CAPS_READY:      'caps_ready',    // { caps: string[] } — HTTP cap names available after seed-cap fetch
@@ -97,7 +101,7 @@ export const S = {
 	INV_ITEM_REMOVED:'inv_item_removed', // { itemIds:[...] } — decoded RemoveInventoryItem ack / sim-driven removal
 	INV_FOLDER_CREATED:    'inv_folder_created',     // { folderId, parentId, name, typeDefault } — CreateInventoryCategory cap confirmed (persisted)
 	INV_FOLDER_CREATE_FAILED:'inv_folder_create_failed', // { folderId, error } — cap rejected; client reverts the optimistic folder
-	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error? } — fetched asset; textures arrive as WebP (server-transcoded from J2C)
+	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error?, hasAlpha?, srcWidth?, srcHeight?, full? } — fetched asset; textures arrive as WebP (server-transcoded from J2C). srcWidth/srcHeight = TRUE J2C-header dims; full=true echoes a full-resolution preview decode
 	MATERIAL_DATA:   'material_data',    // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
 	MESH_DATA:       'mesh_data',        // { meshId, lod, submeshes:[{positions,normals,uvs,indices}], error? }
 	SCULPT_DATA:     'sculpt_data',      // { sculptId, sculptType, submeshes:[{positions,normals,uvs,indices (base64)}], error? }

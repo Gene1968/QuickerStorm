@@ -5,8 +5,39 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useAvatarStore } from '@/stores/avatarStore'
+import { useNotificationStore } from '@/stores/notificationStore'
+import { useInventoryStore } from '@/stores/inventoryStore'
+import { useUiStore } from '@/stores/uiStore'
+import { assetTypeName } from '@/utils/inventoryIcons'
 import { playSound } from '@/composables/useAudio'
-import { S } from '@shared/protocol.js'
+import { checkOfferThrottle } from '@/composables/useOfferThrottle'
+import { C, S } from '@shared/protocol.js'
+
+// SL asset type — inventory offers of a texture auto-open a preview on accept (FS parity).
+const ASSET_TYPE_TEXTURE = 0
+
+// SL IM dialog constants (phoenix-firestorm/indra/llmessage/llinstantmessage.h): an agent
+// inventory give arrives as IM_INVENTORY_OFFERED; the reply dialogs (accepted = offer+1,
+// declined = offer+2) are computed server-side. Task-object offers (9/10/11) are out of scope
+// this pass — see docs/FEATURE-GAPS.md.
+const IM_INVENTORY_OFFERED = 4
+const IM_INVENTORY_ACCEPTED = 5
+const IM_INVENTORY_DECLINED = 6
+
+// Parse an agent inventory-offer BinaryBucket (base64) → { assetType, offeredId }.
+// Wire layout (llimprocessing.cpp offer_agent_bucket_t): S8 asset_type + 16-byte LLUUID.
+function parseOfferBucket(b64) {
+	if (!b64) return null
+	try {
+		const bin = atob(b64)
+		if (bin.length < 17) return null
+		const assetType = bin.charCodeAt(0)
+		let hex = ''
+		for (let i = 1; i <= 16; i++) hex += bin.charCodeAt(i).toString(16).padStart(2, '0')
+		const offeredId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+		return { assetType, offeredId }
+	} catch { return null }
+}
 
 // conversations: Map<remoteAgentId, { agentId, agentName, messages: [{from, text, ts, dialog}] }>
 const conversations = ref(new Map())
@@ -55,14 +86,103 @@ function ensureConv(agentId, agentName) {
 let registered = false
 
 export function useInstantMessage() {
-	const { on, off } = useRealtimeSocket()
+	const { on, off, emit } = useRealtimeSocket()
 	const { sendIM }  = useLLUDP()
 	const session     = useSessionStore()
 	const avatar      = useAvatarStore()
+	const notif       = useNotificationStore()
+	const inventory   = useInventoryStore()
+	const ui          = useUiStore()
+
+	// Inventory offers ride on ImprovedInstantMessage (S.IM_RECV) with inventory dialogs (4/5/6).
+	// useSocial owns friendship dialogs (38/39/40); this composable owns normal IM (0) + inventory.
+	// The IM_RECV subscription pattern allows multiple listeners, so both handlers coexist.
+	function onInventoryOffer(d) {
+		const fromName = d?.fromAgentName || (d?.fromAgentId || '').slice(0, 8)
+		const bucket = parseOfferBucket(d.binaryBucket)
+		const typeLabel = bucket ? assetTypeName(bucket.assetType) : 'item'
+		// WHY: file the accepted item into the system folder matching the offered AssetType. For every
+		// AssetType that has a dedicated system folder (Texture/Sound/Landmark/Clothing/Object/Notecard/
+		// Bodypart/Animation/Gesture) SL's assetTypeToFolderType is an identity cast, so folderType ===
+		// assetType. Fall back to the inventory root when the type has no dedicated system folder.
+		// (OpenSim ignores this bucket for agent offers; it matters on SL/stricter sims.)
+		const destFolderId = (bucket && inventory.findSystemFolder(bucket.assetType)) || inventory.rootId || ''
+		const isTexture = !!bucket && bucket.assetType === ASSET_TYPE_TEXTURE
+		const offeredName = d.message || typeLabel
+
+		// WHY: the offer surfaces inline in the giver's IM thread (FS shows the offer in the IM window
+		// when a session with that agent exists). We add the entry unconditionally so opening the IM
+		// tab later still shows it; the corner toast stays too, matching FS.
+		const conv = ensureConv(d.fromAgentId, fromName)
+		const offerMsg = {
+			kind: 'offer',
+			from: fromName,
+			fromId: d.fromAgentId,
+			text: offeredName,
+			typeLabel,
+			ts: Date.now(),
+			resolved: null,   // null = pending; 'accepted' | 'declined' after action
+		}
+		conv.messages.push(offerMsg)
+		conversations.value = new Map(conversations.value)
+		if (activeId.value !== d.fromAgentId) unreadCount.value++
+		persist(session.agentId)
+
+		// WHY: the SAME reply drives both the inline IM buttons and the corner toast, so it must be
+		// idempotent — otherwise accepting inline then clicking the still-live toast (or vice-versa)
+		// would emit a SECOND C.IM_OFFER_REPLY (a duplicate accept) to the sim. Guard on resolved.
+		let toastGroupId = null
+		const reply = (accept) => {
+			if (offerMsg.resolved) return
+			emit(C.IM_OFFER_REPLY, {
+				imId: d.imId,
+				accept,
+				fromAgentId: d.fromAgentId,
+				offerDialog: IM_INVENTORY_OFFERED,
+				destFolderId: accept ? destFolderId : '',
+			})
+			// Mark the inline entry resolved so its Accept/Decline buttons disable.
+			offerMsg.resolved = accept ? 'accepted' : 'declined'
+			conversations.value = new Map(conversations.value)
+			persist(session.agentId)
+			// Dismiss the corner toast too so it can't linger with live actions after an inline decision.
+			if (toastGroupId) notif.dismissGroup(toastGroupId)
+			// FS parity: on accepting a TEXTURE offer, auto-open its preview without stealing focus,
+			// gated by the rolling-window throttle so a flood of offers doesn't bury the screen.
+			// MANUAL double-click opens go through uiStore directly and bypass this path entirely.
+			if (accept && isTexture && bucket.offeredId && checkOfferThrottle()) {
+				ui.openTexturePreview(bucket.offeredId, offeredName, bucket.offeredId)
+			}
+		}
+		// Expose the reply handler on the inline entry so ConversationsFloater can call it.
+		offerMsg.reply = reply
+
+		playSound('chime.mp3', 0.5)
+		const { groupId } = notif.notify({
+			tab: 'system', sticky: true,
+			title: `${fromName} is offering you ${typeLabel === 'item' ? 'an item' : `a ${typeLabel}`}`,
+			body: d.message || '',
+			actions: [
+				{ label: 'Accept',  variant: 'primary', run: () => reply(true) },
+				{ label: 'Decline', variant: 'ghost',   run: () => reply(false) },
+			],
+		})
+		toastGroupId = groupId   // let the shared reply() dismiss the toast on inline resolution
+	}
 
 	function onImRecv(d) {
 		// WHY: dialog 0=MessageFromAgent, 1=MessageBox, 4=FromTaskAsAlert, 19=BusyAutoResponse, etc.
-		// For Phase 2 only handle 0 (normal IM); other dialogs (group invites, requests) are Phase 3.
+		if (d.dialog === IM_INVENTORY_OFFERED) { onInventoryOffer(d); return }
+		if (d.dialog === IM_INVENTORY_ACCEPTED) {
+			// Reply to an offer I made (rare agent-to-agent) — informational only.
+			notif.notify({ tab: 'system', title: `${d.fromAgentName || (d.fromAgentId || '').slice(0, 8)} accepted your inventory offer.` })
+			return
+		}
+		if (d.dialog === IM_INVENTORY_DECLINED) {
+			notif.notify({ tab: 'system', title: `${d.fromAgentName || (d.fromAgentId || '').slice(0, 8)} declined your inventory offer.` })
+			return
+		}
+		// Only handle 0 (normal IM) below; other dialogs (group invites, requests) are Phase 3.
 		if (d.dialog !== 0) return
 		const isNew = !conversations.value.has(d.fromAgentId)
 		const conv = ensureConv(d.fromAgentId, d.fromAgentName)

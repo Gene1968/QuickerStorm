@@ -14,7 +14,9 @@ import { S } from '../../shared/protocol.js'
 
 // Tier-2 asset cache + request coalescing. Assets are global by UUID (caps are per-session but the
 // bytes they serve are not), so one memo serves every circuit. dataB64 length ≈ payload bytes.
-type AssetPayload = { mime: string; dataB64: string; hasAlpha?: boolean }
+// srcWidth/srcHeight are the TRUE J2C-header dimensions (present on transcoded textures); the client
+// texture-preview floater shows these as the real asset size regardless of the world downscale cap.
+type AssetPayload = { mime: string; dataB64: string; hasAlpha?: boolean; srcWidth?: number; srcHeight?: number }
 const ASSET_MEMO_BUDGET = 384 * 1048576
 const assetMemo = createAssetMemo<AssetPayload>({ budgetBytes: ASSET_MEMO_BUDGET, sizeOf: v => v.dataB64.length })
 let _memoStatTick = 0
@@ -87,14 +89,19 @@ export function assetRequestSpec(assetType: string): AssetRequestSpec | null {
 	}
 }
 
-export async function handleAssetFetch(circuitId: string, req: { assetType: string; uuid: string }): Promise<void> {
+export async function handleAssetFetch(circuitId: string, req: { assetType: string; uuid: string; full?: boolean }): Promise<void> {
 	const s = getSession(circuitId)
 	if (!s) return
 	const t0 = performance.now()   // DIAG(webp-trickle): handler entry → reply send, reported as tMs
 	const { assetType, uuid } = req || ({} as any)
-	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.ASSET_DATA, d: { uuid, assetType, ...d } }))
-
 	const spec = assetRequestSpec(assetType)
+	// WHY full-res path: the world load transcodes textures at MAX_TEX_DIM (512) to bound GPU/heap. The
+	// texture-preview floater wants the TRUE asset pixels (FS llpreviewtexture BOOST_PREVIEW), so it asks
+	// for full=true → we decode with no downscale cap and cache it under a distinct key so the full-res
+	// bytes never evict/pollute the world 512 texture cache. Only textures honor `full` (transcode path).
+	const full = !!req?.full && !!spec?.transcode
+	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.ASSET_DATA, d: { uuid, assetType, ...(full ? { full: true } : {}), ...d } }))
+
 	if (!spec || !uuid) { send({ error: 'bad_request' }); return }
 
 	const capName = spec.capNames.find(n => s.caps.get(n))
@@ -110,8 +117,10 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 		// Memoized: a cached asset answers instantly; a concurrent/retried request for the same uuid
 		// shares the in-flight grid fetch + decode instead of re-queuing both. Errors throw and are
 		// never cached (the rejection reaches every coalesced waiter; a later retry re-attempts).
-		const payload = await assetMemo.memo(`${assetType}:${uuid}`, async () => {
-			const key = `${assetType}:${uuid}`
+		// Distinct cache key for the full-res variant so it never evicts/serves the world 512 payload.
+		const memoKey = full ? `${assetType}:full:${uuid}` : `${assetType}:${uuid}`
+		const payload = await assetMemo.memo(memoKey, async () => {
+			const key = memoKey
 			// Tier-2: a previously fetched+transcoded asset answers from disk — no grid fetch, no decode.
 			const cached = assetDisk.get(key)
 			if (cached) { _diskHits++; return cached }
@@ -150,9 +159,12 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 			const fetchMs = Math.round(performance.now() - tFetch0)
 
 			let out: Buffer, hasAlpha = false, dims = '', decodeMs = 0
+			let srcWidth = 0, srcHeight = 0
 			if (spec.transcode) {
 				const tDec0 = performance.now()
-				const r = await decodeInPool(raw); out = r.image; hasAlpha = r.hasAlpha
+				// full → Infinity = no downscale cap (true asset resolution for the preview floater).
+				const r = await decodeInPool(raw, full ? Infinity : undefined); out = r.image; hasAlpha = r.hasAlpha
+				srcWidth = r.srcWidth; srcHeight = r.srcHeight
 				decodeMs = Math.round(performance.now() - tDec0)
 				dims = ` ${r.srcWidth}×${r.srcHeight}→${r.width}×${r.height}`
 			}
@@ -166,7 +178,7 @@ export async function handleAssetFetch(circuitId: string, req: { assetType: stri
 			const result = {
 				mime: spec.transcode ? spec.mime : (res!.headers.get('content-type') || spec.mime),
 				dataB64: out.toString('base64'),
-				...(spec.transcode ? { hasAlpha } : {}),
+				...(spec.transcode ? { hasAlpha, srcWidth, srcHeight } : {}),
 			}
 			assetDisk.put(key, result)   // persist for every later client / visit / restart
 			return result

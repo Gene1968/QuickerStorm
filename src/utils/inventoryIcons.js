@@ -58,7 +58,9 @@ const FOLDER_ICONS = {
 export const FOLDER_FAVORITES      = 23
 export const FOLDER_CURRENT_OUTFIT  = 46
 
-// Type-filter dropdown options (FS "Filter: All Types ▾"). `types` lists matching AssetTypes.
+// Type-filter dropdown + Filters-panel checkboxes (FS "Filter: All Types ▾" / LLInventoryFilter).
+// `types` lists matching AssetTypes; `invTypes` (optional) matches on InventoryType instead — used
+// where AssetType is ambiguous (Snapshots share AssetType 0 (Texture) but carry InventoryType 15).
 export const TYPE_FILTERS = [
 	{ id: 'all',          label: 'All Types',     types: null },
 	{ id: 'animations',   label: 'Animations',    types: [20] },
@@ -73,18 +75,35 @@ export const TYPE_FILTERS = [
 	{ id: 'objects',      label: 'Objects',       types: [6] },
 	{ id: 'scripts',      label: 'Scripts',       types: [10, 11] },
 	{ id: 'settings',     label: 'Settings',      types: [56] },
+	{ id: 'snapshots',    label: 'Snapshots',     types: null, invTypes: [15] },
 	{ id: 'sounds',       label: 'Sounds',        types: [1] },
 	{ id: 'textures',     label: 'Textures',      types: [0] },
 ]
+
+// The multi-select checkbox subset shown in the Filters panel — same entries minus the 'all' pseudo.
+export const TYPE_FILTER_CHECKS = TYPE_FILTERS.filter(t => t.id !== 'all')
 
 export function typeFilterLabel(id) {
 	return (TYPE_FILTERS.find(t => t.id === id) || TYPE_FILTERS[0]).label
 }
 
+// True when `item` matches a single filter id (a TYPE_FILTERS entry). 'all'/falsy → matches everything.
 export function itemMatchesType(item, typeId) {
 	if (!typeId || typeId === 'all') return true
 	const f = TYPE_FILTERS.find(t => t.id === typeId)
-	return !!(f && f.types && f.types.includes(item.assetType))
+	if (!f) return true
+	if (f.types && f.types.includes(item.assetType)) return true
+	if (f.invTypes && f.invTypes.includes(item.invType ?? item.inventoryType)) return true
+	return false
+}
+
+// True when `item` matches ANY of the filter ids in `set` (a Set or array of TYPE_FILTERS ids).
+// An empty set (or one containing 'all') matches everything — the "no type filter" state.
+export function itemMatchesTypeSet(item, set) {
+	if (!set) return true
+	const ids = set instanceof Set ? [...set] : set
+	if (!ids.length || ids.includes('all')) return true
+	return ids.some(id => itemMatchesType(item, id))
 }
 
 const ASSET_TYPE_NAMES = {

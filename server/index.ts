@@ -243,7 +243,7 @@ const server = Bun.serve<WSData>({
 					break
 				}
 				case C.ASSET_FETCH: {
-					const d = msg.d as { assetType: string; uuid: string }
+					const d = msg.d as { assetType: string; uuid: string; full?: boolean }
 					handleAssetFetch(circuitId, d)
 					break
 				}

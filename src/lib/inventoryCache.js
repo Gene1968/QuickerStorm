@@ -41,8 +41,16 @@ export async function loadCachedInventory(agentId) {
  * Persist item pairs for this agent. itemPairs: [[folderId, Item[]]...].
  * Preserves any previously-cached folderPairs so a full item-save doesn't drop folders the
  * micro-save persisted (write-back-lag survivors). Pass folderPairs to overwrite them too.
+ *
+ * @param isFetched  optional (folderId)=>boolean. When supplied, the save MERGES itemPairs with the
+ *   previously-cached itemPairs at the FOLDER level (mergeItemPairs): a folder actually FETCHED this
+ *   session is authoritative (its current list wins, even if empty = genuinely empty), but a folder
+ *   NOT fetched keeps its previously-cached list. WHY: a premature allAgentFetched save or a debounced
+ *   mutation-save must never persist a snapshot SMALLER than last-known for a folder that simply hasn't
+ *   been re-fetched yet — that is the PERMANENT DATA LOSS this fix prevents. Omit for a blind overwrite
+ *   (e.g. tests / a full authoritative snapshot).
  */
-export async function saveCachedInventory(agentId, itemPairs, folderPairs = null) {
+export async function saveCachedInventory(agentId, itemPairs, isFetched = null, folderPairs = null) {
 	try {
 		const db = await openDb()
 		await new Promise((resolve, reject) => {
@@ -51,10 +59,13 @@ export async function saveCachedInventory(agentId, itemPairs, folderPairs = null
 			const getReq = store.get(agentId)
 			getReq.onsuccess = () => {
 				const prev = getReq.result
+				const nextItemPairs = isFetched
+					? mergeItemPairs(prev?.itemPairs, itemPairs, isFetched)
+					: itemPairs
 				store.put({
 					agentId,
 					savedAt:     Date.now(),
-					itemPairs,
+					itemPairs:   nextItemPairs,
 					// WHY: keep last-known folderPairs unless this save explicitly supplies them.
 					folderPairs: folderPairs ?? prev?.folderPairs ?? [],
 				})
@@ -87,7 +98,12 @@ export async function saveCachedFolders(agentId, folderPairs) {
 					agentId,
 					savedAt:     Date.now(),
 					itemPairs:   prev?.itemPairs ?? [],
-					folderPairs: folderPairs || [],
+					// WHY union, not overwrite: the in-memory folders Map can transiently DROP a folder
+					// (mid-fetch reconcile, a killObject race, an unfinished login skeleton) — mirroring it
+					// wholesale would SHRINK the cache and permanently lose a write-back-lag survivor. Union
+					// by folderId preferring the current in-memory copy keeps the newest edit while never
+					// letting a transient drop erase a folder the cache already knew about.
+					folderPairs: mergeFolderPairs(prev?.folderPairs, folderPairs),
 				})
 			}
 			tx.oncomplete = resolve
@@ -95,6 +111,78 @@ export async function saveCachedFolders(agentId, folderPairs) {
 		})
 	} catch (e) {
 		console.warn('[InvCache] folder save failed:', e)
+	}
+}
+
+/**
+ * Union two [[folderId, Folder]...] lists by folderId, preferring `next` (the current in-memory copy)
+ * over `prev` (the previously-cached copy). WHY: a save must never SHRINK the folder cache — a folder
+ * present in prev but transiently missing from next survives.
+ */
+function mergeFolderPairs(prev, next) {
+	const m = new Map()
+	for (const p of (prev || [])) { if (Array.isArray(p) && p[0]) m.set(p[0], p[1]) }
+	for (const p of (next || [])) { if (Array.isArray(p) && p[0]) m.set(p[0], p[1]) }
+	return [...m.entries()]
+}
+
+/**
+ * Merge two [[folderId, Item[]]...] lists so an item-cache save can NEVER SHRINK a folder that
+ * simply hasn't been re-fetched this session. For each folderId known to prev or next:
+ *   • FETCHED this session (isFetched(folderId) === true): the `next` list is authoritative — use it
+ *     (even shrunk, or absent = genuinely empty → drop the folder for compactness). This is how a real
+ *     purge/trash from a fetched folder persists.
+ *   • NOT fetched: keep the previously-cached `prev` list (a transient empty in-memory list, or a
+ *     folder not yet loaded, must not erase last-known items).
+ * `next` typically comes from makeInvSavePairs (empty fetched folders already skipped for compactness);
+ * this helper only ever ADDS BACK unfetched folders' cached items, never re-injects into a fetched one.
+ *
+ * @param prev       previously-cached itemPairs (or null)
+ * @param next       current-session itemPairs to persist
+ * @param isFetched  (folderId)=>boolean — was this folder actually fetched this session?
+ * @returns {Array<[string, object[]]>}
+ */
+export function mergeItemPairs(prev, next, isFetched) {
+	const fetchedCheck = typeof isFetched === 'function' ? isFetched : () => true
+	const nextMap = new Map()
+	for (const p of (next || [])) { if (Array.isArray(p) && p[0]) nextMap.set(p[0], p[1]) }
+	const out = new Map(nextMap)
+	for (const p of (prev || [])) {
+		if (!Array.isArray(p) || !p[0]) continue
+		const folderId = p[0]
+		// A fetched folder is authoritative — never resurrect its previously-cached list.
+		if (fetchedCheck(folderId)) continue
+		// Unfetched: only keep the cached list if this session didn't already supply one.
+		if (!nextMap.has(folderId)) out.set(folderId, p[1])
+	}
+	return [...out.entries()]
+}
+
+/**
+ * Remove a single folder (by folderId) from this agent's cached folderPairs, leaving itemPairs and all
+ * other folders untouched. WHY: saveCachedFolders UNIONS prev+next (never shrinks) so it can't drop a
+ * folder — but a rejected optimistic create (INV_FOLDER_CREATE_FAILED) must be dropped from the IDB
+ * snapshot, else applyFolderCache resurrects the (dirty) folder on the next reload.
+ */
+export async function removeCachedFolder(agentId, folderId) {
+	if (!agentId || !folderId) return
+	try {
+		const db = await openDb()
+		await new Promise((resolve, reject) => {
+			const tx    = db.transaction(STORE, 'readwrite')
+			const store = tx.objectStore(STORE)
+			const getReq = store.get(agentId)
+			getReq.onsuccess = () => {
+				const prev = getReq.result
+				if (!prev) { resolve(); return }
+				const folderPairs = (prev.folderPairs || []).filter(p => !(Array.isArray(p) && p[0] === folderId))
+				store.put({ ...prev, savedAt: Date.now(), folderPairs })
+			}
+			tx.oncomplete = resolve
+			tx.onerror    = () => reject(tx.error)
+		})
+	} catch (e) {
+		console.warn('[InvCache] folder remove failed:', e)
 	}
 }
 

@@ -7,8 +7,10 @@ import {
 	loadCachedInventory,
 	saveCachedInventory,
 	saveCachedFolders,
+	removeCachedFolder,
 	clearCachedInventory,
 	makeInvSavePairs,
+	mergeItemPairs,
 	foldersToPairs,
 } from '@/lib/inventoryCache.js'
 import { useInventoryStore } from '@/stores/inventoryStore.js'
@@ -194,6 +196,56 @@ describe('created-folder write-back-lag survival', () => {
 		expect(s.folders.get(FOLDER_1).name).toBe('Authoritative')
 	})
 
+	it('a moved/renamed existing folder survives reload during write-back lag', async () => {
+		const P1 = 'parent-0001'
+		const P2 = 'parent-0002'
+		const F  = 'moved-folder-0001'
+
+		// Session A: skeleton has folder F under parent P1 named N1. Locally move F to P2 AND rename to N2
+		// → both mark F dirty. Persist the folder skeleton (write-back to the grid lags).
+		const a = useInventoryStore()
+		a.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [
+				{ folderId: ROOT, parentId: '0',  name: 'My Inventory', typeDefault: 8 },
+				{ folderId: P1,   parentId: ROOT, name: 'P1',           typeDefault: -1 },
+				{ folderId: P2,   parentId: ROOT, name: 'P2',           typeDefault: -1 },
+				{ folderId: F,    parentId: P1,   name: 'N1',           typeDefault: -1 },
+			],
+		})
+		a.moveFolderLocal(F, P2)
+		a.renameFolderLocal(F, 'N2')
+		expect(a.folders.get(F).dirty).toBe(true)
+		await saveCachedFolders(AGENT_A, foldersToPairs(a.folders))
+
+		// Session B reload: the grid write-back lagged, so the fresh login skeleton STILL shows F under
+		// P1 named N1. applyFolderCache must apply the dirty cached copy OVER the skeleton (local edit wins).
+		const b = useInventoryStore()
+		b.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [
+				{ folderId: ROOT, parentId: '0',  name: 'My Inventory', typeDefault: 8 },
+				{ folderId: P1,   parentId: ROOT, name: 'P1',           typeDefault: -1 },
+				{ folderId: P2,   parentId: ROOT, name: 'P2',           typeDefault: -1 },
+				{ folderId: F,    parentId: P1,   name: 'N1',           typeDefault: -1 },
+			],
+		})
+		// Skeleton alone reverts F (the bug).
+		expect(b.folders.get(F).parentId).toBe(P1)
+		expect(b.folders.get(F).name).toBe('N1')
+
+		const cached = await loadCachedInventory(AGENT_A)
+		b.applyFolderCache(cached.folderPairs)
+		// The local move + rename win over the stale skeleton, no duplicate row.
+		expect(b.folders.get(F).parentId).toBe(P2)
+		expect(b.folders.get(F).name).toBe('N2')
+		expect(b.folders.get(F).dirty).toBe(true)   // still unconfirmed
+
+		// A grid confirm for F clears dirty (skeleton wins on the NEXT reload).
+		b.confirmFolder({ folderId: F, parentId: P2, name: 'N2', typeDefault: -1 })
+		expect(b.folders.get(F).dirty).toBeUndefined()
+	})
+
 	it('saveCachedFolders preserves previously-cached itemPairs', async () => {
 		await saveCachedInventory(AGENT_A, [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]])
 		await saveCachedFolders(AGENT_A, [[FOLDER_2, { folderId: FOLDER_2, parentId: 'root', name: 'New', source: 'agent' }]])
@@ -209,5 +261,114 @@ describe('created-folder write-back-lag survival', () => {
 		const loaded = await loadCachedInventory(AGENT_A)
 		expect(loaded.folderPairs.length).toBe(1)        // folder micro-save survives the item save
 		expect(loaded.folderPairs[0][1].name).toBe('KeepMe')
+	})
+})
+
+// ── Item-cache never shrinks an UNFETCHED folder (FIX 2): a premature allAgentFetched save or a
+//    debounced mutation-save must not persist a snapshot smaller than last-known for a folder that
+//    simply hasn't been re-fetched yet. Only a folder actually fetched this session is authoritative.
+describe('mergeItemPairs — item cache never shrinks an unfetched folder', () => {
+	it('keeps the previously-cached list for a folder NOT fetched this session', () => {
+		const prev = [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]]
+		// This session we only fetched nothing yet; next (in-memory) is transiently empty for FOLDER_1.
+		const next = []
+		const merged = mergeItemPairs(prev, next, () => false)   // isFetched → false for everything
+		const f1 = merged.find(([id]) => id === FOLDER_1)
+		expect(f1).toBeTruthy()
+		expect(f1[1].length).toBe(1)   // cached item preserved (folder not re-fetched)
+	})
+
+	it('uses the current in-memory list (authoritative) for a folder that WAS fetched', () => {
+		const prev = [[FOLDER_1, [item('i1', 'Cube', FOLDER_1), item('i2', 'Ball', FOLDER_1)]]]
+		// FOLDER_1 fetched this session and is now genuinely down to one item (the other was purged).
+		const next = [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]]
+		const merged = mergeItemPairs(prev, next, (id) => id === FOLDER_1)
+		const f1 = merged.find(([id]) => id === FOLDER_1)
+		expect(f1[1].length).toBe(1)   // authoritative shrink persists (genuine delete)
+	})
+
+	it('a fetched folder that is genuinely empty drops out (compact) but stays gone', () => {
+		const prev = [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]]
+		const next = []   // makeInvSavePairs skips the now-empty fetched folder
+		const merged = mergeItemPairs(prev, next, (id) => id === FOLDER_1)
+		// FOLDER_1 was fetched + is empty → not preserved from prev (authoritative empty).
+		expect(merged.some(([id]) => id === FOLDER_1)).toBe(false)
+	})
+
+	it('mixed: preserves an unfetched folder while applying a fetched folder shrink', () => {
+		const prev = [
+			[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]],
+			[FOLDER_2, [item('i2', 'Ball', FOLDER_2), item('i3', 'Script', FOLDER_2)]],
+		]
+		const next = [[FOLDER_2, [item('i2', 'Ball', FOLDER_2)]]]   // only FOLDER_2 re-fetched
+		const merged = mergeItemPairs(prev, next, (id) => id === FOLDER_2)
+		const f1 = merged.find(([id]) => id === FOLDER_1)
+		const f2 = merged.find(([id]) => id === FOLDER_2)
+		expect(f1[1].length).toBe(1)   // unfetched FOLDER_1 preserved
+		expect(f2[1].length).toBe(1)   // fetched FOLDER_2 shrink applied
+	})
+})
+
+// ── removeCachedFolder: a rejected optimistic folder-create must be DROPPED from the IDB snapshot so
+//    applyFolderCache can't resurrect it on the next reload (INV_FOLDER_CREATE_FAILED path). ──
+describe('removeCachedFolder — rejected folder-create is not resurrected on reload', () => {
+	const ROOT = 'root-0000'
+	const NEW_FOLDER = 'rejected-folder-0001'
+	const KEEP_FOLDER = 'keep-folder-0001'
+
+	beforeEach(() => setActivePinia(createPinia()))
+
+	it('drops only the named folder, leaving itemPairs and other folders untouched', async () => {
+		await saveCachedInventory(AGENT_A, [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]])
+		await saveCachedFolders(AGENT_A, [
+			[NEW_FOLDER,  { folderId: NEW_FOLDER,  parentId: ROOT, name: 'Rejected', source: 'agent', dirty: true }],
+			[KEEP_FOLDER, { folderId: KEEP_FOLDER, parentId: ROOT, name: 'Keep',     source: 'agent' }],
+		])
+		await removeCachedFolder(AGENT_A, NEW_FOLDER)
+		const loaded = await loadCachedInventory(AGENT_A)
+		expect(loaded.folderPairs.some(([id]) => id === NEW_FOLDER)).toBe(false)   // rejected folder dropped
+		expect(loaded.folderPairs.some(([id]) => id === KEEP_FOLDER)).toBe(true)   // sibling untouched
+		expect(loaded.itemPairs.length).toBe(1)                                    // items untouched
+	})
+
+	it('no-op when nothing cached (does not throw)', async () => {
+		await expect(removeCachedFolder(AGENT_A, NEW_FOLDER)).resolves.toBeUndefined()
+	})
+
+	it('after remove, applyFolderCache on reload does NOT restore the rejected folder', async () => {
+		// Session A: optimistically create a folder, micro-save it, then the grid rejects it → remove from cache.
+		const a = useInventoryStore()
+		a.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [{ folderId: ROOT, parentId: '0', name: 'My Inventory', typeDefault: 8 }],
+		})
+		a.addFolderOptimistic({ folderId: NEW_FOLDER, parentId: ROOT, name: 'Rejected', typeDefault: -1 })
+		await saveCachedFolders(AGENT_A, foldersToPairs(a.folders))
+		// Cap rejected the create.
+		a.removeFolderLocal(NEW_FOLDER)
+		await removeCachedFolder(AGENT_A, NEW_FOLDER)
+
+		// Session B reload: apply whatever the cache still holds — the rejected folder must be gone.
+		const b = useInventoryStore()
+		b.loadFromLogin({
+			inventoryRoot: ROOT,
+			inventorySkeleton: [{ folderId: ROOT, parentId: '0', name: 'My Inventory', typeDefault: 8 }],
+		})
+		const cached = await loadCachedInventory(AGENT_A)
+		b.applyFolderCache(cached?.folderPairs || [])
+		expect(b.folders.has(NEW_FOLDER)).toBe(false)   // NOT resurrected
+	})
+})
+
+describe('saveCachedInventory with isFetched predicate — round-trip', () => {
+	it('does not drop an unfetched folder present only in the previous snapshot', async () => {
+		// Previously cached: FOLDER_1 has an item.
+		await saveCachedInventory(AGENT_A, [[FOLDER_1, [item('i1', 'Cube', FOLDER_1)]]])
+		// A premature save fires while FOLDER_1 has not been re-fetched (transiently empty in-memory).
+		await saveCachedInventory(AGENT_A, [], (id) => id !== FOLDER_1)   // FOLDER_1 not fetched
+		const loaded = await loadCachedInventory(AGENT_A)
+		const f1 = loaded.itemPairs.find(([id]) => id === FOLDER_1)
+		expect(f1).toBeTruthy()
+		expect(f1[1].length).toBe(1)   // cached item survived the premature save
 	})
 })

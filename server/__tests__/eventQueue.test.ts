@@ -208,7 +208,11 @@ describe('eqRegistry BulkUpdateInventory (LLSD path)', () => {
 				invType:   7,
 				flags:     0,
 				createdAt: 1700000000,
-				ownerMask: 581632,
+				baseMask:      581632,
+				ownerMask:     581632,
+				groupMask:     0,
+				everyoneMask:  0,
+				nextOwnerMask: 532480,
 			},
 		])
 	})

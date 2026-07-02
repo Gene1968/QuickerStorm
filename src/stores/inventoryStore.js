@@ -23,6 +23,35 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const filterCollapsedByFloater = ref(new Map())
 	const fetched   = shallowRef(new Set())  // folderIds whose contents have been fetched
 	const fetching  = shallowRef(new Set())  // folderIds with an in-flight fetch
+	// ── MOVE-RECONCILIATION STATE MACHINE ─────────────────────────────────────────────────────────
+	// WHY: an optimistic move (moveItemLocal) / create (addCreatedItems) places an item at toFolderId
+	// before the grid confirms. A NAÏVE per-item dirty boolean cleared on the first authoritative fetch
+	// that saw the item is WRONG in two ways: (BUG A) a DST fetch that includes X clears the marker, then
+	// a LAGGING SRC fetch that still lists X re-adds it → X duplicated in SRC and DST; (BUG B) a move the
+	// grid NEVER performs leaves X pinned at DST forever (SRC keeps listing it, DST never does) with no
+	// path to give up. This state machine tracks a pending record per moved/created item, accrues
+	// authoritative presence flags from EACH fetch of the src/dst folders, and only clears the record
+	// once the fetches let it decide SUCCESS / FAILED / DELETED. GLOBAL INVARIANT while pending: the item
+	// appears in exactly ONE folder (toFolderId). Persisted via the item row's `pendingMove` field so it
+	// round-trips through makeInvSavePairs/applyCachedItems and survives a reload.
+	// Map<itemId, { itemId, fromFolderId, toFolderId, destFetched, destPresent, srcFetched, srcPresent }>
+	// fromFolderId === null → a locally-created item (no source folder; pin to toFolderId until confirmed).
+	const pendingMoves = new Map()
+
+	function _newPending(itemId, fromFolderId, toFolderId) {
+		return {
+			itemId, fromFolderId: fromFolderId ?? null, toFolderId,
+			destFetched: false, destPresent: false, srcFetched: false, srcPresent: false,
+		}
+	}
+	// The serializable snapshot stamped onto the item row at toFolderId so the record survives reload.
+	function _pendingRowStamp(rec) {
+		return {
+			fromFolderId: rec.fromFolderId, toFolderId: rec.toFolderId,
+			destFetched: rec.destFetched, destPresent: rec.destPresent,
+			srcFetched: rec.srcFetched, srcPresent: rec.srcPresent,
+		}
+	}
 
 	// WHY: batch Vue reactivity triggers — many WS messages arrive per tick (40+ folder responses).
 	// Instead of triggering N full re-renders, mutate in-place and flush once per microtask.
@@ -37,7 +66,11 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const capsReady = computed(() => caps.value.has('FetchInventoryDescendents2') || caps.value.has('WebFetchInventoryDescendents'))
 	const cacheLoaded = ref(false)    // true once IndexedDB cache was applied this session
 	const selectedId = ref('')        // selected folder/item id (drives footer + highlight)
-	const sortMode   = ref('name')    // item sort within a folder: 'name' | 'date' | 'type'
+	// WHY: default 'date' (most recent) matches Firestorm's default InventorySortOrder for new items.
+	const sortMode   = ref('date')    // item sort within a folder: 'name' | 'date' | 'type'
+	// WHY: FS "Sort System Folders to Top" gear toggle. When on (default, mirrors FS), system folders
+	// (a real preferred AssetType, typeDefault >= 0) sort above user folders; when off, purely by name.
+	const systemFoldersToTop = ref(true)
 	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
 	const propsTargets = ref([])      // [{ key, kind, obj }] — one open Properties floater per item/folder
 	// Active inventory drag, shared across ALL tree nodes + floaters. WHY shared state instead of
@@ -63,11 +96,13 @@ export const useInventoryStore = defineStore('inventory', () => {
 		filterCollapsedByFloater.value = new Map()
 		fetched.value   = new Set()
 		fetching.value  = new Set()
+		pendingMoves.clear()
 		// WHY: caps belong to the session — re-armed by the CAPS_READY message after each login.
 		caps.value       = new Set()
 		cacheLoaded.value = false
 		selectedId.value = ''
-		sortMode.value   = 'name'
+		sortMode.value   = 'date'
+		systemFoldersToTop.value = true
 		contextMenu.value = null
 		propsTargets.value = []
 	}
@@ -82,8 +117,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 		folders.value.forEach(f => { if (f.parentId === parentId) out.push(f) })
 		const isSystem = (f) => Number(f.typeDefault) >= 0
 		out.sort((a, b) => {
-			const sa = isSystem(a), sb = isSystem(b)
-			if (sa !== sb) return sa ? -1 : 1
+			if (systemFoldersToTop.value) {
+				const sa = isSystem(a), sb = isSystem(b)
+				if (sa !== sb) return sa ? -1 : 1
+			}
 			return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
 		})
 		return out
@@ -104,6 +141,25 @@ export const useInventoryStore = defineStore('inventory', () => {
 		for (const [folderId, list] of (pairs || [])) {
 			if (!fetched.value.has(folderId)) items.value.set(folderId, list || [])
 		}
+		// WHY: rebuild the move-reconciliation state machine from any cached rows that carried a
+		// `pendingMove` stamp — an unconfirmed move/create from last session must keep suppressing a
+		// lagging SRC fetch (BUG A) and stay resolvable (BUG B) across the reload. The stamp lives on the
+		// row at toFolderId; the record is keyed by itemId. If two rows collide (shouldn't happen — the
+		// invariant is one folder per pending item), the toFolderId on the record wins.
+		for (const [, list] of (pairs || [])) {
+			for (const it of (list || [])) {
+				const pm = it?.pendingMove
+				if (pm && it.itemId && pm.toFolderId) {
+					pendingMoves.set(it.itemId, {
+						itemId: it.itemId,
+						fromFolderId: pm.fromFolderId ?? null,
+						toFolderId: pm.toFolderId,
+						destFetched: !!pm.destFetched, destPresent: !!pm.destPresent,
+						srcFetched: !!pm.srcFetched, srcPresent: !!pm.srcPresent,
+					})
+				}
+			}
+		}
 		cacheLoaded.value = true
 		_schedTrigger()
 	}
@@ -118,7 +174,25 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (!Array.isArray(pairs) || !pairs.length) return
 		const m = new Map(folders.value)
 		for (const [folderId, f] of pairs) {
-			if (!folderId || !f || m.has(folderId)) continue
+			if (!folderId || !f) continue
+			const skel = m.get(folderId)
+			if (skel) {
+				// Folder already in the login skeleton. Normally skeleton-wins (it's authoritative from
+				// login). BUT if the CACHED copy is dirty (a local create/rename/move the grid hasn't
+				// confirmed), the reload skeleton may still carry the STALE parentId/name because the grid
+				// write-back lagged — so apply the cached edit OVER the skeleton until the grid confirms.
+				// WHY parentId/name/version only: those are the user-editable fields; keep the skeleton's
+				// source/typeDefault. dirty stays true (still unconfirmed) so a mid-session BulkUpdate clears it.
+				if (f.dirty) {
+					const next = { ...skel, source: 'agent', dirty: true }
+					if (f.parentId != null) next.parentId = f.parentId
+					if (f.name     != null) next.name     = f.name
+					if (f.version  != null) next.version  = f.version
+					m.set(folderId, next)
+				}
+				continue
+			}
+			// Folder absent from the skeleton (write-back lagged / created last session) — restore it.
 			m.set(folderId, { typeDefault: -1, version: 0, ...f, folderId, source: 'agent' })
 		}
 		folders.value = m
@@ -216,6 +290,8 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	// ── Sort (folders stay system-then-name; items sort by the chosen mode) ──
 	function setSort(m) { sortMode.value = m }
+	function setSystemFoldersToTop(on) { systemFoldersToTop.value = !!on }
+	function toggleSystemFoldersToTop() { systemFoldersToTop.value = !systemFoldersToTop.value }
 	function sortItems(list) {
 		const arr = [...list]
 		if (sortMode.value === 'date')      arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
@@ -225,8 +301,29 @@ export const useInventoryStore = defineStore('inventory', () => {
 	}
 
 	// ── Context menu + Properties popover ──
-	function openContextMenu(x, y, kind, obj) { contextMenu.value = { x, y, kind, obj } }
+	// WHY: `targets` carries the FULL right-click selection so multi-capable actions (Delete,
+	// Copy-UUID) operate on every selected row (FS behavior). `obj`/`kind` stay the clicked row
+	// (the menu header + single-target actions like Rename use them). When the caller omits
+	// targets, single-selection is implied → default to just the clicked row.
+	function openContextMenu(x, y, kind, obj, targets = null) {
+		const list = (Array.isArray(targets) && targets.length) ? targets : [{ kind, obj }]
+		contextMenu.value = { x, y, kind, obj, targets: list }
+	}
 	function closeContextMenu() { contextMenu.value = null }
+	// Resolve an inventory id (folderId or itemId) to a context-menu target { kind, obj }.
+	// Folders win when an id collides (folder ids and item ids are distinct UUIDs in practice).
+	// Returns null when the id matches neither (stale selection entry).
+	function resolveTarget(id) {
+		const folder = folders.value.get(id)
+		if (folder) return { kind: 'folder', obj: folder }
+		let found = null
+		items.value.forEach(list => {
+			if (found) return
+			const it = list.find(i => i.itemId === id)
+			if (it) found = it
+		})
+		return found ? { kind: 'item', obj: found } : null
+	}
 	// WHY: each item/folder opens its OWN Properties floater (FS behavior) — keep a list keyed by
 	// kind+id so a second item doesn't replace the first. Opening an already-open one is a no-op
 	// (its existing floater stays; FloaterWindow handles re-focus on click).
@@ -268,11 +365,163 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// Store fetched folder contents (from FetchInventoryDescendents2).
 	// WHY: mutate in-place + deferred trigger — avoids O(n) Map copy per response and collapses
 	// 40+ concurrent WS messages into one Vue re-render per microtask tick.
+	//
+	// This is the authoritative-fetch hook for the MOVE-RECONCILIATION STATE MACHINE (see pendingMoves):
+	// each fetch of a folder feeds presence flags into every pending record whose from/to touches it and
+	// may RESOLVE the record. `liveList` is authoritative grid data. See _reconcilePending for the rules.
 	function setItems(folderId, list) {
-		items.value.set(folderId, list || [])
+		// WHY: the cap fetch surfaces raw masks (ownerMask + nextOwnerMask) but only the server's
+		// current-owner canCopy/canModify/canTransfer flags. Re-derive both the owner and next-owner
+		// convenience flags here so every ingested row carries nextCan* for the Properties floater,
+		// regardless of which path (fetch vs BulkUpdate) delivered it.
+		const enriched = (list || []).map(it =>
+			(it && it.ownerMask != null) ? { ...it, ..._permFlags(it.ownerMask, it.nextOwnerMask) } : it,
+		)
+		const merged = _reconcilePending(folderId, enriched)
+		items.value.set(folderId, merged)
 		fetched.value.add(folderId)
 		fetching.value.delete(folderId)
 		_schedTrigger()
+	}
+
+	// Does `list` (authoritative fetch of a folder) contain itemId?
+	function _listHas(list, itemId) { return list.some(i => i?.itemId === itemId) }
+
+	// Strip the transient pending-move stamp off an item row (row becomes authoritative).
+	function _clearStamp(it) {
+		if (!it || !it.pendingMove) return it
+		const { pendingMove, ...clean } = it
+		void pendingMove
+		return clean
+	}
+
+	// Reconcile the authoritative liveList for `folderId` against the move-reconciliation state machine.
+	// Returns the list to store at `folderId`. Also mutates OTHER folders' lists when a pending resolves.
+	//
+	// Steps:
+	//   1) Update presence flags on every pending record whose src/dst is `folderId`.
+	//   2) RESOLVE any record the accrued flags now decide (SUCCESS/FAILED/DELETED) — applying the
+	//      authoritative placement and deleting the record.
+	//   3) Build `folderId`'s stored list, honouring records STILL pending (keep at to / drop from src /
+	//      drop from any third folder) so the GLOBAL INVARIANT holds: a pending item lives only at its to.
+	function _reconcilePending(folderId, liveList) {
+		// (1) Accrue authoritative presence for every pending record this fetch informs.
+		for (const rec of pendingMoves.values()) {
+			if (rec.toFolderId === folderId) {
+				rec.destFetched = true
+				rec.destPresent = _listHas(liveList, rec.itemId)
+			}
+			if (rec.fromFolderId != null && rec.fromFolderId === folderId) {
+				rec.srcFetched = true
+				rec.srcPresent = _listHas(liveList, rec.itemId)
+			}
+		}
+
+		// (2) Resolve whatever the accrued flags now decide. Collect resolutions so we can apply their
+		// placement side-effects (to OTHER folders + to this folder's build) after the loop.
+		const resolvedToDropHere = new Set()   // itemIds no longer pending-pinned to `folderId`
+		for (const rec of [...pendingMoves.values()]) {
+			const decision = _pendingDecision(rec)
+			if (decision === 'pending') continue
+			pendingMoves.delete(rec.itemId)
+			if (decision === 'failed') {
+				// The move never happened — HONOR the grid: X belongs at fromFolderId, not at to.
+				// Remove any optimistic copy at to (unless to === the folder we're building — handled below),
+				// and ensure X exists at fromFolderId (the src fetch that proved srcPresent carries it, but a
+				// prior optimistic move removed it from the in-memory src list, so re-add if missing).
+				_removeItemFrom(rec.toFolderId, rec.itemId, folderId, resolvedToDropHere)
+				_ensureItemAt(rec.fromFolderId, rec.itemId, folderId)
+			} else if (decision === 'deleted') {
+				// X gone server-side — remove everywhere; never resurrect.
+				_removeItemFrom(rec.toFolderId, rec.itemId, folderId, resolvedToDropHere)
+				if (rec.fromFolderId != null) _removeItemFrom(rec.fromFolderId, rec.itemId, folderId, resolvedToDropHere)
+			}
+			else if (decision === 'success') {
+				// X stays at to (authoritative). Strip the now-stale stamp off the to-row. When to === the
+				// folder being built the build step strips it; else strip it in place here (this fetch is of
+				// the SRC, so the to-row won't be rebuilt this pass).
+				if (rec.toFolderId !== folderId) {
+					const toList = items.value.get(rec.toFolderId)
+					if (toList) {
+						const i = toList.findIndex(x => x.itemId === rec.itemId)
+						if (i >= 0 && toList[i].pendingMove) items.value.set(rec.toFolderId, toList.map(_clearStamp))
+					}
+				}
+			}
+		}
+
+		// (3) Build the stored list for `folderId`.
+		const out = []
+		const seen = new Set()
+		for (const it of liveList) {
+			if (!it?.itemId) { out.push(it); continue }
+			seen.add(it.itemId)
+			const rec = pendingMoves.get(it.itemId)
+			if (rec) {
+				// Still pending. Keep only at to; drop from src or any third folder.
+				if (rec.toFolderId === folderId) {
+					out.push({ ...it, pendingMove: _pendingRowStamp(rec) })
+				}
+				// else: folderId is src or a third folder → drop X here (invariant: lives only at to).
+				continue
+			}
+			// Not pending. If a just-resolved record said drop it here, honour that; else authoritative.
+			if (resolvedToDropHere.has(it.itemId)) continue
+			out.push(_clearStamp(it))
+		}
+		// Re-add / re-stamp any pending item pinned to `folderId` (to) that liveList omitted (write-back lag).
+		const existing = items.value.get(folderId) || []
+		for (const it of existing) {
+			if (seen.has(it.itemId)) continue
+			const rec = pendingMoves.get(it.itemId)
+			if (rec && rec.toFolderId === folderId) out.push({ ...it, pendingMove: _pendingRowStamp(rec) })
+		}
+		return out
+	}
+
+	// Decide a pending record from its accrued authoritative flags. See the state-machine rules:
+	//   SUCCESS  destPresent === true, but hold the record until src is CONFIRMED CLEAN (srcFetched &&
+	//            !srcPresent) so a later lagging src-fetch is still suppressed (fixes BUG A). Created
+	//            items (fromFolderId === null) have no src to confirm → success as soon as destPresent.
+	//   FAILED   destFetched && !destPresent && srcPresent → the move didn't happen (fixes BUG B).
+	//   DELETED  destFetched && !destPresent && srcFetched && !srcPresent → gone server-side.
+	//   PENDING  otherwise (e.g. dest not fetched yet) → stay optimistic at to.
+	function _pendingDecision(rec) {
+		if (rec.destPresent) {
+			if (rec.fromFolderId == null) return 'success'
+			return (rec.srcFetched && !rec.srcPresent) ? 'success' : 'pending'
+		}
+		if (rec.destFetched && !rec.destPresent) {
+			if (rec.srcPresent) return 'failed'
+			if (rec.srcFetched && !rec.srcPresent) return 'deleted'
+		}
+		return 'pending'
+	}
+
+	// Remove itemId from a folder's stored list. If the folder is `buildingFolderId` (the list setItems is
+	// about to overwrite), record it in dropHere instead so the build step drops it — never write a list
+	// that will be immediately replaced.
+	function _removeItemFrom(folderId, itemId, buildingFolderId, dropHere) {
+		if (folderId == null) return
+		if (folderId === buildingFolderId) { dropHere.add(itemId); return }
+		const list = items.value.get(folderId)
+		if (!list) return
+		if (list.some(i => i.itemId === itemId)) {
+			items.value.set(folderId, list.filter(i => i.itemId !== itemId).map(_clearStamp))
+		}
+	}
+
+	// Ensure itemId exists (authoritative, un-stamped) in a folder's stored list. Skips `buildingFolderId`
+	// (setItems is rebuilding it from the authoritative liveList that already carries X). Pulls the row
+	// from wherever it currently lives (e.g. the optimistic copy at to) so no data is invented.
+	function _ensureItemAt(folderId, itemId, buildingFolderId) {
+		if (folderId == null || folderId === buildingFolderId) return
+		const list = items.value.get(folderId) || []
+		if (list.some(i => i.itemId === itemId)) return
+		let row = null
+		items.value.forEach(l => { if (!row) { const f = l.find(i => i.itemId === itemId); if (f) row = f } })
+		if (!row) return
+		items.value.set(folderId, [...list, _clearStamp({ ...row, parentId: folderId })])
 	}
 
 	const folderCount = computed(() => folders.value.size)
@@ -315,7 +564,20 @@ export const useInventoryStore = defineStore('inventory', () => {
 			if (!it?.parentId) continue
 			const cur = items.value.get(it.parentId) || []
 			if (cur.some(x => x.itemId === it.itemId)) continue
-			items.value.set(it.parentId, [...cur, it])
+			// WHY enrich here: UpdateCreateInventoryItem/BulkUpdateInventory carry raw masks (ownerMask +
+			// nextOwnerMask) but NOT the canCopy/canModify/canTransfer convenience flags the perm badges +
+			// Properties floater read. Without deriving them the freshly-RECEIVED item shows NM/NC/NT
+			// (undefined → falsy) until a reload runs it through setItems/the cap fetch, which does enrich.
+			// Mirror setItems + applyBulkUpdate so the RECEIVE path yields correct owner perms with no reload.
+			const enriched = (it.ownerMask != null) ? { ...it, ..._permFlags(it.ownerMask, it.nextOwnerMask) } : it
+			// WHY a pending-move record with fromFolderId=null — a locally-created item the grid hasn't
+			// confirmed. A lagging re-fetch of this folder (or a reload skeleton) may not list it yet during
+			// write-back lag; the record makes _reconcilePending re-add it so it doesn't vanish, and pins it
+			// here until an authoritative fetch confirms (destPresent → SUCCESS, since there is no src). The
+			// stamp on the row serialises the record so it survives a reload.
+			const rec = _newPending(it.itemId, null, it.parentId)
+			pendingMoves.set(it.itemId, rec)
+			items.value.set(it.parentId, [...cur, { ...enriched, pendingMove: _pendingRowStamp(rec) }])
 		}
 		_schedTrigger()
 	}
@@ -325,7 +587,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	function addFolderOptimistic({ folderId, parentId, name, typeDefault = -1 }) {
 		if (!folderId || folders.value.has(folderId)) return
 		const m = new Map(folders.value)
-		m.set(folderId, { folderId, parentId, name, typeDefault, version: 0, source: 'agent' })
+		// WHY dirty:true — this folder is a local edit the grid hasn't confirmed yet. On the next reload
+		// the login skeleton may not include it (or may carry a stale parentId/name) while the grid
+		// write-back lags, so applyFolderCache must let the CACHED copy win. Cleared on confirm/BulkUpdate.
+		m.set(folderId, { folderId, parentId, name, typeDefault, version: 0, source: 'agent', dirty: true })
 		folders.value = m
 	}
 
@@ -346,6 +611,9 @@ export const useInventoryStore = defineStore('inventory', () => {
 		// a null/NaN would misclassify this as a non-system folder. Default to -1 (user folder).
 		if (next.typeDefault == null) next.typeDefault = -1
 		if (next.version == null) next.version = 0
+		// WHY: the grid caught up on this folderId — clear the local-edit marker so the skeleton (now
+		// authoritative) wins on the next reload instead of the stale cached copy overriding it.
+		delete next.dirty
 		m.set(folderId, next)
 		folders.value = m
 	}
@@ -363,6 +631,20 @@ export const useInventoryStore = defineStore('inventory', () => {
 		return where
 	}
 
+	// Public item lookup: return { item, folderId } for a given itemId, or null if not loaded.
+	// WHY: the clipboard (copy/cut/paste) needs the item's row (for canCopy perms + name) and its
+	// source folder without every caller re-walking the items map.
+	function findItem(itemId) {
+		if (!itemId) return null
+		let found = null
+		items.value.forEach((list, folderId) => {
+			if (found) return
+			const it = list.find(i => i.itemId === itemId)
+			if (it) found = { item: it, folderId }
+		})
+		return found
+	}
+
 	function renameItemLocal(itemId, name) {
 		if (!itemId) return
 		const folderId = _findItemFolder(itemId)
@@ -377,7 +659,9 @@ export const useInventoryStore = defineStore('inventory', () => {
 		const f = folders.value.get(folderId)
 		if (!f) return
 		const m = new Map(folders.value)
-		m.set(folderId, { ...f, name })
+		// WHY dirty:true — a local rename the grid hasn't confirmed. Marks the cached copy as the
+		// winner in applyFolderCache so the reload skeleton's stale name can't revert it during write-back lag.
+		m.set(folderId, { ...f, name, dirty: true })
 		folders.value = m
 	}
 
@@ -392,8 +676,20 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (!moving) return
 		items.value.set(fromFolderId, fromList.filter(i => i.itemId !== itemId))
 		const toList = items.value.get(toFolderId) || []
+		// WHY a pending-move record — a local move the grid hasn't confirmed. _reconcilePending accrues
+		// authoritative presence from EACH src/dst fetch so the item (a) survives a lagging DST fetch that
+		// omits it, (b) is suppressed in a lagging SRC fetch even AFTER a DST fetch confirms it (record held
+		// until src is confirmed clean → fixes BUG A duplicate), and (c) is returned to SRC if the grid
+		// never performs the move (fixes BUG B stuck). If a record already exists (re-move / created item
+		// moved again), carry its ORIGINAL fromFolderId so the true source stays authoritative.
+		const prior = pendingMoves.get(itemId)
+		const origFrom = prior ? prior.fromFolderId : fromFolderId
+		const rec = _newPending(itemId, origFrom, toFolderId)
+		pendingMoves.set(itemId, rec)
 		if (!toList.some(i => i.itemId === itemId)) {
-			items.value.set(toFolderId, [...toList, { ...moving, parentId: toFolderId }])
+			items.value.set(toFolderId, [...toList, { ...moving, parentId: toFolderId, pendingMove: _pendingRowStamp(rec) }])
+		} else {
+			items.value.set(toFolderId, toList.map(i => (i.itemId === itemId ? { ...i, parentId: toFolderId, pendingMove: _pendingRowStamp(rec) } : i)))
 		}
 		_schedTrigger()
 	}
@@ -403,13 +699,18 @@ export const useInventoryStore = defineStore('inventory', () => {
 		const f = folders.value.get(folderId)
 		if (!f || f.parentId === toParentId) return
 		const m = new Map(folders.value)
-		m.set(folderId, { ...f, parentId: toParentId })
+		// WHY dirty:true — a local move the grid hasn't confirmed. applyFolderCache lets this cached
+		// parentId win over the reload skeleton's stale parentId until the grid write-back lands.
+		m.set(folderId, { ...f, parentId: toParentId, dirty: true })
 		folders.value = m
 	}
 
 	// Drop an item from whatever folder list it's in (purge / sim-driven removal).
 	function removeItemLocal(itemId) {
 		if (!itemId) return
+		// WHY: an authoritative local removal (purge) supersedes any pending move — drop the record so a
+		// stale src/dst fetch can never resurrect the item via the state machine.
+		pendingMoves.delete(itemId)
 		const folderId = _findItemFolder(itemId)
 		if (!folderId) return
 		const list = items.value.get(folderId) || []
@@ -427,13 +728,20 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (items.value.has(folderId)) { items.value.delete(folderId); _schedTrigger() }
 	}
 
-	// Recompute the cached canCopy/canModify/canTransfer convenience flags from the owner mask bits.
-	function _permFlags(ownerMask) {
+	// Recompute the cached convenience perm flags from the mask bits (PERM_COPY 0x8000,
+	// PERM_MODIFY 0x4000, PERM_TRANSFER 0x2000 — see phoenix-firestorm llpermissionsflags.h).
+	// canCopy/canModify/canTransfer = current-owner perms (the "You can" badges);
+	// nextCan* = perms a recipient inherits (Next-Owner section of the Properties floater).
+	function _permFlags(ownerMask, nextOwnerMask) {
 		const m = ownerMask | 0
+		const n = nextOwnerMask | 0
 		return {
-			canCopy:     (m & 0x8000) !== 0,
-			canModify:   (m & 0x4000) !== 0,
-			canTransfer: (m & 0x2000) !== 0,
+			canCopy:         (m & 0x8000) !== 0,
+			canModify:       (m & 0x4000) !== 0,
+			canTransfer:     (m & 0x2000) !== 0,
+			nextCanCopy:     (n & 0x8000) !== 0,
+			nextCanModify:   (n & 0x4000) !== 0,
+			nextCanTransfer: (n & 0x2000) !== 0,
 		}
 	}
 
@@ -450,7 +758,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 			if (masks.everyoneMask  != null) next.everyoneMask  = masks.everyoneMask
 			if (masks.groupMask     != null) next.groupMask     = masks.groupMask
 			if (masks.nextOwnerMask != null) next.nextOwnerMask = masks.nextOwnerMask
-			Object.assign(next, _permFlags(next.ownerMask))
+			Object.assign(next, _permFlags(next.ownerMask, next.nextOwnerMask))
 			return next
 		}))
 		_schedTrigger()
@@ -464,13 +772,22 @@ export const useInventoryStore = defineStore('inventory', () => {
 			for (const f of fol) {
 				if (!f?.folderId) continue
 				const prev = m.get(f.folderId)
-				m.set(f.folderId, { source: 'agent', ...prev, ...f })
+				// WHY: a BulkUpdate/fetch carrying this folderId means the grid caught up — clear the
+				// local-edit marker so the skeleton wins on the next reload (spread `prev` first so a
+				// stale prev.dirty doesn't linger, then the explicit delete removes it either way).
+				const next = { source: 'agent', ...prev, ...f }
+				delete next.dirty
+				m.set(f.folderId, next)
 			}
 			folders.value = m
 		}
 		if (Array.isArray(its) && its.length) {
 			for (const it of its) {
 				if (!it?.itemId || !it?.parentId) continue
+				// WHY: an authoritative BulkUpdate ack for this item means the grid caught up — retire any
+				// pending-move record so a later lagging src/dst fetch can't re-run the state machine, and
+				// so the persisted cache stops carrying the stamp.
+				pendingMoves.delete(it.itemId)
 				// Remove any stale copy from its previous folder (move/rename reconciliation).
 				const oldFolder = _findItemFolder(it.itemId)
 				if (oldFolder && oldFolder !== it.parentId) {
@@ -484,12 +801,14 @@ export const useInventoryStore = defineStore('inventory', () => {
 				// updates the raw mask but leaves the cached flags (and rendered perm tags) stale.
 				if (idx >= 0) {
 					const merged = { ...list[idx], ...it }
-					if (it.ownerMask != null) Object.assign(merged, _permFlags(it.ownerMask))
-					list[idx] = merged
+					if (it.ownerMask != null) Object.assign(merged, _permFlags(it.ownerMask, it.nextOwnerMask))
+					// WHY: the grid confirmed this item — strip the transient pending stamp so it's
+					// authoritative and never re-injected by a stale fetch.
+					list[idx] = _clearStamp(merged)
 				} else {
 					const ins = { ...it }
-					if (it.ownerMask != null) Object.assign(ins, _permFlags(it.ownerMask))
-					items.value.set(it.parentId, [...list, ins])
+					if (it.ownerMask != null) Object.assign(ins, _permFlags(it.ownerMask, it.nextOwnerMask))
+					items.value.set(it.parentId, [...list, _clearStamp(ins)])
 				}
 			}
 			_schedTrigger()
@@ -526,13 +845,13 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	return {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
-		selectedId, sortMode, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
+		selectedId, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
 		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder,
 		select, descendantCounts,
-		setSort, sortItems, openContextMenu, closeContextMenu, showProperties, closePropertiesFor, closeProperties, addToFavorites,
-		setItems, folderCount, itemCount, clear,
+		setSort, setSystemFoldersToTop, toggleSystemFoldersToTop, sortItems, openContextMenu, closeContextMenu, resolveTarget, showProperties, closePropertiesFor, closeProperties, addToFavorites,
+		setItems, folderCount, itemCount, clear, findItem,
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
 		pendingAgentFolders, addCreatedItems, addFolderOptimistic, confirmFolder, landmarkTargetFolders,
 		renameItemLocal, renameFolderLocal, moveItemLocal, moveFolderLocal,

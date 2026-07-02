@@ -30,6 +30,7 @@ import MapFloater			from '@/components/MapFloater.vue'
 import InventoryFloater		from '@/components/InventoryFloater.vue'
 import InventoryContextMenu	from '@/components/InventoryContextMenu.vue'
 import InventoryItemProperties	from '@/components/InventoryItemProperties.vue'
+import TexturePreviewFloater	from '@/components/TexturePreviewFloater.vue'
 import AppearanceFloater	from '@/components/AppearanceFloater.vue'
 import MoveControlsFloater	from '@/components/MoveControlsFloater.vue'
 import CameraControlsFloater	from '@/components/CameraControlsFloater.vue'
@@ -181,6 +182,11 @@ watch(
 					<DebugPanel				v-if="ui.showDebug" />
 					<MovementHelpFloater	v-if="ui.showMovementHelp" />
 					<NotificationsFloater	v-if="ui.showNotifications" />
+					<TexturePreviewFloater
+							v-for="inst in ui.texPreviewInstances"
+							:key="inst.id"
+							:instance="inst"
+						/>
 				<CreateLandmarkFloater	v-if="ui.showCreateLandmark" />
 					<AvatarContextMenu />
 					<ObjectContextMenu />

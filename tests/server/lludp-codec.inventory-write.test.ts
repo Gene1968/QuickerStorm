@@ -3,6 +3,7 @@ import {
 	encodeUpdateInventoryItem,
 	encodeMoveInventoryItem,
 	encodeMoveInventoryFolder,
+	encodeCopyInventoryItem,
 	encodeUpdateInventoryFolder,
 	encodeRemoveInventoryItem,
 	encodeRemoveInventoryFolder,
@@ -92,6 +93,32 @@ describe('encodeMoveInventoryFolder (Low 275)', () => {
 		expect(body[invOff]).toBe(1)
 		expect(body.subarray(invOff + 1, invOff + 17).equals(uuidToBytes(FOLDER))).toBe(true)
 		expect(body.subarray(invOff + 17, invOff + 33).equals(uuidToBytes(PARENT))).toBe(true)
+	})
+})
+
+describe('encodeCopyInventoryItem (Low 269)', () => {
+	it('emits Low 269 with CallbackID, OldAgentID, OldItemID, NewFolderID, empty NewName', () => {
+		const pkt = encodeCopyInventoryItem({ agentId: A, sessionId: S, seq: 9, oldItemId: ITEM, newFolderId: FOLDER })
+		const body = bodyAfterPrefix(pkt, 269)
+		// AgentData: AgentID, SessionID (no Stamp on this message)
+		expect(body.subarray(0, 16).equals(uuidToBytes(A))).toBe(true)
+		expect(body.subarray(16, 32).equals(uuidToBytes(S))).toBe(true)
+		// InventoryData Variable: count=1, CallbackID U32=0, OldAgentID(=agent default), OldItemID, NewFolderID
+		const invOff = 32
+		expect(body[invOff]).toBe(1)
+		expect(body.readUInt32LE(invOff + 1)).toBe(0)                                     // CallbackID
+		expect(body.subarray(invOff + 5, invOff + 21).equals(uuidToBytes(A))).toBe(true)  // OldAgentID defaults to agent
+		expect(body.subarray(invOff + 21, invOff + 37).equals(uuidToBytes(ITEM))).toBe(true)
+		expect(body.subarray(invOff + 37, invOff + 53).equals(uuidToBytes(FOLDER))).toBe(true)
+		expect(body[invOff + 53]).toBe(0)   // NewName Var1 length = 0 (keep source name)
+	})
+
+	it('writes NewName when a rename-on-copy is requested', () => {
+		const pkt = encodeCopyInventoryItem({ agentId: A, sessionId: S, seq: 9, oldItemId: ITEM, newFolderId: FOLDER, newName: 'Hi' })
+		const body = bodyAfterPrefix(pkt, 269)
+		const nameLenOff = 32 + 1 + 4 + 16 + 16 + 16
+		expect(body[nameLenOff]).toBe(3) // "Hi" + NUL
+		expect(body.subarray(nameLenOff + 1, nameLenOff + 3).toString('utf8')).toBe('Hi')
 	})
 })
 

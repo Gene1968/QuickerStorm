@@ -7,7 +7,10 @@ import { llsdNum, llsdStr } from '../llsd'
 export interface InvItem {
 	itemId: string; parentId: string; name: string; desc: string
 	assetType: number; invType: number; assetId: string; flags: number
-	createdAt: number; ownerMask: number
+	createdAt: number
+	// Full permission mask set (LLPermissions). ownerMask drives the "You can" badges;
+	// nextOwnerMask drives the Next-Owner perms shown in the Properties floater.
+	baseMask: number; ownerMask: number; groupMask: number; everyoneMask: number; nextOwnerMask: number
 	canCopy: boolean; canModify: boolean; canTransfer: boolean
 }
 export interface InvSubfolder { folderId: string; parentId: string; name: string; typeDefault: number; version: number }
@@ -35,13 +38,18 @@ export function decodeInvFolders(parsed: LLSDValue): InvFolder[] {
 		if (!folderId) continue
 		const items: InvItem[] = (Array.isArray(f?.items) ? f.items : []).map((it: any) => {
 			const perms = (it.permissions && typeof it.permissions === 'object') ? it.permissions : {}
-			const ownerMask = llsdNum(perms.owner_mask)
+			const baseMask      = llsdNum(perms.base_mask)
+			const ownerMask     = llsdNum(perms.owner_mask)
+			const groupMask     = llsdNum(perms.group_mask)
+			const everyoneMask  = llsdNum(perms.everyone_mask)
+			const nextOwnerMask = llsdNum(perms.next_owner_mask)
 			return {
 				itemId: llsdStr(it.item_id), parentId: llsdStr(it.parent_id),
 				name: llsdStr(it.name), desc: llsdStr(it.desc),
 				assetType: llsdNum(it.type), invType: llsdNum(it.inv_type),
 				assetId: llsdStr(it.asset_id), flags: llsdNum(it.flags),
-				createdAt: llsdNum(it.created_at), ownerMask,
+				createdAt: llsdNum(it.created_at),
+				baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask,
 				canCopy: (ownerMask & 0x8000) !== 0,
 				canModify: (ownerMask & 0x4000) !== 0,
 				canTransfer: (ownerMask & 0x2000) !== 0,

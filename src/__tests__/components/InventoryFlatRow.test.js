@@ -1,7 +1,8 @@
 // Tests for InventoryFlatRow — the flat Recent/Worn/Favorites tab row. Covers Gap C: the
 // flat-tab rows must carry the same row interactions as the main tree (InventoryTreeNode):
 // right-click → context menu, F2 / context-menu Rename → inline rename → renameItem, and
-// double-click → rename. We mock useInventory so the rename/move wiring is asserted without
+// double-click → OPEN the item (openInventoryItem; rename stays on F2 + context menu). We mock
+// useInventory so the rename/move/open wiring is asserted without
 // a live circuit, and use a real Pinia store for openContextMenu state.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -10,10 +11,11 @@ import { setActivePinia, createPinia } from 'pinia'
 import { ref } from 'vue'
 
 // Mock the composable so we can spy on the server-side write calls.
-const renameItem = vi.fn()
-const moveItem   = vi.fn()
+const renameItem        = vi.fn()
+const moveItem          = vi.fn()
+const openInventoryItem = vi.fn()
 vi.mock('@/composables/useInventory', () => ({
-	useInventory: () => ({ renameItem, moveItem }),
+	useInventory: () => ({ renameItem, moveItem, openInventoryItem }),
 }))
 
 import InventoryFlatRow from '@/components/InventoryFlatRow.vue'
@@ -55,6 +57,7 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	renameItem.mockClear()
 	moveItem.mockClear()
+	openInventoryItem.mockClear()
 	const inv = useInventoryStore()
 	openContextMenu = vi.spyOn(inv, 'openContextMenu')
 })
@@ -122,10 +125,13 @@ describe('InventoryFlatRow — rename', () => {
 		expect(w.find('input').exists()).toBe(false)
 	})
 
-	it('double-click begins rename', async () => {
+	it('double-click OPENS the item (not rename); rename stays on F2 / context menu', async () => {
 		const w = mountRow()
 		await w.find('div').trigger('dblclick')
-		expect(w.find('input').exists()).toBe(true)
+		// No inline-rename input — dblclick now dispatches openInventoryItem instead.
+		expect(w.find('input').exists()).toBe(false)
+		expect(openInventoryItem).toHaveBeenCalledTimes(1)
+		expect(openInventoryItem.mock.calls[0][0].itemId).toBe('item-1')
 	})
 })
 
@@ -138,5 +144,35 @@ describe('InventoryFlatRow — drag', () => {
 		await w.find('div').trigger('dragstart', { dataTransfer: dt })
 		expect(setDrag).toHaveBeenCalledWith(['item-1'], 'item')
 		expect(dt.effectAllowed).toBe('move')
+	})
+
+	it('dragging a mixed item+folder selection carries all ids with kind "mixed" (anchor first)', async () => {
+		const inv = useInventoryStore()
+		// A folder is present in the selection alongside this item → 'mixed'.
+		inv.folders.set('folder-X', { folderId: 'folder-X', parentId: 'root', name: 'Sub', typeDefault: -1 })
+		const setDrag = vi.spyOn(inv, 'setDrag')
+		const w = mountRow()
+		// Multi-select: this row's item + a folder (folder can only come from the tree, but the shared
+		// selection spans both surfaces).
+		selectedIds.value = new Set(['item-1', 'folder-X'])
+		const dt = { effectAllowed: '', setData: vi.fn() }
+		await w.find('div').trigger('dragstart', { dataTransfer: dt })
+		const [ids, kind] = setDrag.mock.calls[0]
+		expect(ids[0]).toBe('item-1')            // anchor first
+		expect(new Set(ids)).toEqual(new Set(['item-1', 'folder-X']))
+		expect(kind).toBe('mixed')
+	})
+
+	it('dragging an all-items multi-selection keeps kind "item"', async () => {
+		const inv = useInventoryStore()
+		const setDrag = vi.spyOn(inv, 'setDrag')
+		const w = mountRow()
+		selectedIds.value = new Set(['item-1', 'item-2'])
+		const dt = { effectAllowed: '', setData: vi.fn() }
+		await w.find('div').trigger('dragstart', { dataTransfer: dt })
+		const [ids, kind] = setDrag.mock.calls[0]
+		expect(ids[0]).toBe('item-1')
+		expect(new Set(ids)).toEqual(new Set(['item-1', 'item-2']))
+		expect(kind).toBe('item')
 	})
 })

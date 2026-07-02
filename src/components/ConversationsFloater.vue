@@ -6,6 +6,8 @@ import { useAvatarStore } from '@/stores/avatarStore'
 import { useUiStore }     from '@/stores/uiStore'
 import { useGridSocialStore, hasRight, setRight, RIGHT_ONLINE, RIGHT_MAP, RIGHT_MODIFY } from '@/stores/gridSocialStore'
 import { useSocial }     from '@/composables/useSocial'
+import { useInventory }  from '@/composables/useInventory'
+import { useInventoryStore } from '@/stores/inventoryStore'
 import { playSound } from '@/composables/useAudio'
 import { EyeIcon, MapPinSearchIcon, BoxIcon, ShieldUserIcon, HandshakeIcon, GiftIcon, PhoneIcon, CaptionsIcon, UserPlusIcon, SquareMenuIcon, SearchIcon, XIcon, MapIcon, ChevronDownIcon } from '@lucide/vue'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
@@ -126,11 +128,48 @@ const imMapEnabled = computed(() => {
 	const f = social.friendById(c.agentId)
 	return !!(f && f.online && hasRight(f.rightsHas, RIGHT_MAP))
 })
+// ── Give inventory to the active IM recipient ─────────────────────────────
+const invStore = useInventoryStore()
+const { giveInventory } = useInventory()
+const imDropActive = ref(false)
+// WHY: only item drags are transferable this pass (folder-give is a followup). dataTransfer.getData
+// is unreadable during dragover, so read inventoryStore.dragPayload set on dragstart.
+function imDragIsItem() { return invStore.dragPayload?.kind === 'item' && invStore.dragPayload.ids?.length > 0 }
+function onImGiveDragOver(e) {
+	if (!activeConv.value || !imDragIsItem()) return
+	e.preventDefault()
+	e.dataTransfer.dropEffect = 'copy'
+	imDropActive.value = true
+}
+function onImGiveDragLeave() { imDropActive.value = false }
+function onImGiveDrop(e) {
+	imDropActive.value = false
+	const c = activeConv.value
+	if (!c || !imDragIsItem()) return
+	e.preventDefault()
+	giveInventory(invStore.dragPayload.ids, c.agentId, c.agentName)
+	invStore.clearDrag()
+}
+// Gift button: give the currently-selected inventory item to this conversation's agent.
+const imGiveEnabled = computed(() => !!activeConv.value && !!invStore.selectedId && !!invStore.findItem(invStore.selectedId))
+function imGive() {
+	const c = activeConv.value
+	if (!c || !invStore.selectedId) return
+	giveInventory([invStore.selectedId], c.agentId, c.agentName)
+}
+
 function imProfile()   { const c = activeConv.value; if (c) openProfile(c.agentId) }
 function imMap()       { const c = activeConv.value; if (c && imMapEnabled.value) { ui.profileTargetId = c.agentId; ui.showMap = true } }
 function imAddFriend() { const c = activeConv.value; if (c) offerFriendship(c.agentId, c.agentName, 'Will you be my friend?') }
 function imRemove()    { const c = activeConv.value; if (c) confirmRemove({ id: c.agentId, name: c.agentName }) }
 function imCloseConv() { const c = activeConv.value; if (c) closeImTab(c.agentId) }
+
+// WHY: inline inventory-offer Accept/Decline reuse the reply handler attached to the offer entry
+// by useInstantMessage.onInventoryOffer. It marks the entry resolved (disabling the buttons) and,
+// for accepted textures, auto-opens the preview via the throttle. A resolved offer restored from
+// localStorage loses its reply fn — guard so a stale button click is a no-op.
+function acceptOffer(m)  { if (m.reply && !m.resolved) m.reply(true) }
+function declineOffer(m) { if (m.reply && !m.resolved) m.reply(false) }
 
 const floaterTitle = computed(() =>
 	avatar.displayName ? `Conversations – ${ tabs.value.find(t => t.id === activeTab.value)?.label ?? 'Unknown' }` : 'Conversations'
@@ -420,7 +459,7 @@ async function submitChat() {
 						<!-- <button v-else class="qs-btn-mini" title="Remove friend" @click="imRemove">Remove</button> -->
 						<button class="qs-btn-mini" disabled title="Offer teleport — not yet available">TP!</button>
 						<button class="qs-btn-mini" disabled title="Request teleport — not yet available">TP?</button>
-						<button class="qs-btn-mini" disabled title="Send an item to this resident — not yet available"><GiftIcon class="w-4 h-4" /></button>
+						<button class="qs-btn-mini" :disabled="!imGiveEnabled" title="Give the selected inventory item to this resident" @click="imGive"><GiftIcon class="w-4 h-4" /></button>
 						<button class="qs-btn-mini" disabled title="Add a voice to this chat — not yet available"><PhoneIcon class="w-4 h-4" /></button>
 						<button class="qs-btn-mini" disabled title="Open this conversation's past transcripts — not yet available"><CaptionsIcon class="w-4 h-4" /></button>
 						<button class="qs-btn-mini" disabled title="Add someone to this conversation — not yet available"><UserPlusIcon class="w-4 h-4" /></button>
@@ -434,19 +473,54 @@ async function submitChat() {
 					</div>
 					<div
 						ref="imLogEl"
-						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0 cursor-text"
+						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0 cursor-text transition-colors"
+						:class="{ 'bg-accent/10 ring-1 ring-inset ring-accent/60': imDropActive }"
 						@click="imInputEl?.focus()"
+						@dragover="onImGiveDragOver"
+						@dragleave="onImGiveDragLeave"
+						@drop="onImGiveDrop"
 					>
-						<div
+						<template
 							v-for="(m, i) in [...activeConv.messages].reverse().slice(0, 200)"
 							:key="i"
-							class="text-xs leading-snug text-fg"
 						>
-							<span class="text-fg text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
-							<button v-if="m.fromId" class="inline bg-panel p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
-							<span v-else class="text-accent font-medium">{{ m.from }}</span>:
-							{{ m.text }}
-						</div>
+							<!-- Inline inventory offer (FS shows the give in the IM window) -->
+							<div
+								v-if="m.kind === 'offer'"
+								class="text-xs leading-snug border border-brd rounded-sm bg-card/50 px-2 py-1.5 my-0.5"
+							>
+								<div class="flex items-center gap-1 text-t1">
+									<GiftIcon class="w-4 h-4 shrink-0 text-accent" />
+									<span class="text-fg text-2xs select-none">{{ formatTime(m.ts) }}</span>
+									<span class="min-w-0 truncate">
+										<span class="text-accent font-medium">{{ m.from }}</span>
+										offered a {{ m.typeLabel }}: <span class="font-medium">{{ m.text }}</span>
+									</span>
+								</div>
+								<div v-if="!m.resolved && m.reply" class="flex gap-1.5 mt-1.5">
+									<button class="qs-btn-mini" title="Accept this item" @click="acceptOffer(m)">Accept</button>
+									<button class="qs-btn-mini" title="Decline this item" @click="declineOffer(m)">Decline</button>
+								</div>
+								<!-- WHY: a pending offer restored from localStorage loses its reply fn (functions don't
+								     serialize). Don't render clickable-but-inert buttons — show an expired hint instead. -->
+								<div v-else-if="!m.resolved && !m.reply" class="mt-1 text-2xs text-t1/70 italic select-none">
+									Offer expired — ask {{ m.from }} to send it again.
+								</div>
+								<div v-else class="mt-1 text-2xs text-t1/70 italic select-none">
+									{{ m.resolved === 'accepted' ? 'Accepted.' : 'Declined.' }}
+								</div>
+							</div>
+							<!-- Regular IM line -->
+							<div
+								v-else
+								class="text-xs leading-snug text-fg"
+							>
+								<span class="text-fg text-2xs me-1 select-none">{{ formatTime(m.ts) }}</span>
+								<button v-if="m.fromId" class="inline bg-panel p-0.5 px-1 text-accent font-medium hover:underline" title="Learn more about this Resident" @click.stop="openProfile(m.fromId)">{{ m.from }}</button>
+								<span v-else class="text-accent font-medium">{{ m.from }}</span>:
+								{{ m.text }}
+							</div>
+						</template>
 						<div v-if="!activeConv.messages.length" class="py-4 text-gray-200 text-xs italic">
 							No messages yet — say hello.
 						</div>

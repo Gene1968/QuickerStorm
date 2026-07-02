@@ -19,7 +19,7 @@ const props = defineProps({
 
 const inv = useInventoryStore()
 const ui = useUiStore()
-const { renameItem, moveItem } = useInventory()
+const { renameItem, moveItem, openInventoryItem } = useInventory()
 const invSel = inject('invSelection')
 // WHY: scope global inv:begin-rename to this floater (null when mounted outside a floater, e.g. tests).
 const invFloaterId = inject('invFloaterId', null)
@@ -46,11 +46,19 @@ function permTags(item) {
 
 function onSelect(event) { selectFlat(it.value.itemId, props.order, event) }
 
-// WHY: right-clicking an already-selected row keeps the multi-selection (so a future
-// multi-delete acts on all); clicking an unselected row first reduces to a single select.
+// WHY: right-clicking an already-selected row keeps the multi-selection so context-menu
+// actions ("Delete 3 items", Copy-UUID) act on all of them; clicking an unselected row first
+// reduces to a single select. When the clicked row IS part of a >1 selection, pass the whole
+// set as `targets` (anchor first, resolved to { kind, obj }); otherwise a single target.
 function onContextMenu(event) {
 	if (!invSel.isSelected(it.value.itemId)) selectFlat(it.value.itemId, props.order, {})
-	inv.openContextMenu(event.clientX, event.clientY, 'item', it.value)
+	const sel = invSel.selectedIds.value
+	let targets = [{ kind: 'item', obj: it.value }]
+	if (sel.size > 1 && sel.has(it.value.itemId)) {
+		const rest = [...sel].filter(x => x !== it.value.itemId).map(x => inv.resolveTarget(x)).filter(Boolean)
+		targets = [{ kind: 'item', obj: it.value }, ...rest]
+	}
+	inv.openContextMenu(event.clientX, event.clientY, 'item', it.value, targets)
 }
 
 // ── Inline rename (mirrors InventoryTreeNode) ──────────────────────────────────
@@ -85,9 +93,9 @@ function onRenameKey(e) {
 	if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
 }
 
-// Double-click a row to rename (FS double-clicks open; flat tabs have no opener yet, so we
-// match the tree's rename affordance — F2 and double-click both begin rename here).
-function onDblClick() { beginRename(it.value.itemId) }
+// Double-click OPENS the item by asset type (texture → preview floater; others → toast), matching
+// FS. Rename stays available via F2 and the right-click context menu — no rename capability lost.
+function onDblClick() { openInventoryItem(it.value) }
 
 // F2 / Delete on the focused row, mirroring InventoryTreeNode.onKeydownItem.
 function onKeydown(e) {
@@ -111,13 +119,25 @@ onUnmounted(() => window.removeEventListener('inv:begin-rename', onBeginRenameEv
 function onDragStart(e) {
 	const sel = invSel.selectedIds.value
 	let ids = [it.value.itemId]
+	let kind = 'item'
+	// WHY: drag the whole multi-selection (anchor first), whether it's all items or a mix that
+	// includes folders (FS behavior). The drop handler resolves each id's kind individually, so a
+	// mixed selection tagged 'mixed' relocates every id. Lone (unselected) row = single-item drag.
 	if (sel.size > 1 && sel.has(it.value.itemId)) {
-		const onlyItems = [...sel].every(id => !inv.folders.has(id))
-		if (onlyItems) ids = [it.value.itemId, ...[...sel].filter(id => id !== it.value.itemId)]
+		ids = [it.value.itemId, ...[...sel].filter(id => id !== it.value.itemId)]
+		kind = dragKindFor(ids)
 	}
-	inv.setDrag(ids, 'item')
+	inv.setDrag(ids, kind)
 	e.dataTransfer.effectAllowed = 'move'
 	try { e.dataTransfer.setData('text/plain', it.value.itemId) } catch { /* some browsers restrict */ }
+}
+
+// Classify a drag payload: 'folder' (all folders), 'item' (all items), or 'mixed' (both).
+function dragKindFor(ids) {
+	let hasFolder = false, hasItem = false
+	for (const id of ids) { if (inv.folders.has(id)) hasFolder = true; else hasItem = true }
+	if (hasFolder && hasItem) return 'mixed'
+	return hasFolder ? 'folder' : 'item'
 }
 function onDragEnd() { inv.clearDrag() }
 </script>

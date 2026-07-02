@@ -199,13 +199,19 @@ export function encodeWebp(
 }
 
 /** Decode a J2C codestream → WebP buffer plus whether it carries real transparency. Opaque textures
- *  use lossy q90; alpha textures use lossless (no cutout edge-bleed). */
+ *  use lossy q90; alpha textures use lossless (no cutout edge-bleed).
+ *
+ *  `maxDim` overrides the world-load downscale cap (MAX_TEX_DIM). The texture-preview floater passes
+ *  Infinity to transcode at FULL asset resolution (no downscale) so the preview shows true pixels —
+ *  mirrors FS llpreviewtexture BOOST_PREVIEW, which fetches the image at its native discard level.
+ *  `srcWidth/srcHeight` are ALWAYS the true J2C-header dimensions regardless of the cap. */
 export async function j2cToImageWithAlpha(
 	bytes: Buffer | Uint8Array,
+	maxDim: number = MAX_TEX_DIM,
 ): Promise<{ image: Buffer; hasAlpha: boolean; width: number; height: number; srcWidth: number; srcHeight: number }> {
 	const dec = await decodeJ2C(bytes)
 	const { channels } = dec
-	const { pixels, width, height } = downscalePixels(dec.pixels, dec.width, dec.height, channels, MAX_TEX_DIM)
+	const { pixels, width, height } = downscalePixels(dec.pixels, dec.width, dec.height, channels, maxDim)
 	const hasAlpha = pixelsHaveAlpha(pixels, channels)
 	const image = encodeWebp(pixels, width, height, channels, hasAlpha)
 	return { image, hasAlpha, width, height, srcWidth: dec.width, srcHeight: dec.height }

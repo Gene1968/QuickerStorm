@@ -13,6 +13,8 @@ import { useSessionStore }  from '@/stores/sessionStore.js'
 import { useGridSocialStore } from '@/stores/gridSocialStore.js'
 import { useSocial }        from '@/composables/useSocial.js'
 import { useInstantMessage } from '@/composables/useInstantMessage.js'
+import { useInventory }     from '@/composables/useInventory.js'
+import { useInventoryStore } from '@/stores/inventoryStore.js'
 import FloaterWindow        from '@/components/FloaterWindow.vue'
 import { EyeIcon, MapPinSearchIcon, BoxIcon } from '@lucide/vue'
 
@@ -30,6 +32,31 @@ const session  = useSessionStore()
 const social   = useGridSocialStore()
 const { requestProfile, requestNames, offerFriendship, removeFriend } = useSocial()
 const im       = useInstantMessage()
+const invStore = useInventoryStore()
+const { giveInventory } = useInventory()
+
+// Drop-zone state for the "give inventory" target (other-user profiles only).
+const dropActive = ref(false)
+// WHY: only item drags are transferable this pass (folder-give is a followup) — reject folders so
+// the zone doesn't falsely accept them. dataTransfer.getData is unreadable during dragover, so read
+// the shared inventoryStore.dragPayload set on dragstart.
+function invDragIsItem() { return invStore.dragPayload?.kind === 'item' && invStore.dragPayload.ids?.length > 0 }
+function onGiveDragOver(e) {
+	if (isSelf.value || !invDragIsItem()) return
+	e.preventDefault()
+	e.dataTransfer.dropEffect = 'copy'
+	dropActive.value = true
+}
+function onGiveDragLeave() { dropActive.value = false }
+function onGiveDrop(e) {
+	dropActive.value = false
+	if (isSelf.value || !invDragIsItem()) return
+	e.preventDefault()
+	const toId = props.targetId
+	if (!toId) return
+	giveInventory(invStore.dragPayload.ids, toId, displayName.value)
+	invStore.clearDrag()
+}
 
 // ── Computed ─────────────────────────────────────────────────────────────────
 const isSelf = computed(() => props.targetId === null)
@@ -372,10 +399,21 @@ function saveNotes() {
 
 		<div class="flex flex-col gap-1 px-4 py-2">
 			<p class="text-2xs text-fg">Share:</p>
-				<button
-					disabled
-					class="px-2.5 py-1 text-xs rounded-sm border border-edge text-fg cursor-not-allowed opacity-50"
-				>Drop inventory item here.</button>
+			<!-- Self can't give to self → stays a disabled hint. Other-user profiles are a live drop
+			     target: drag inventory item(s) here to offer them to this avatar. -->
+			<button
+				v-if="isSelf"
+				disabled
+				class="px-2.5 py-1 text-xs rounded-sm border border-edge text-fg cursor-not-allowed opacity-50"
+			>Drop inventory item here.</button>
+			<div
+				v-else
+				class="px-2.5 py-2 text-xs text-center rounded-sm border border-dashed transition-colors"
+				:class="dropActive ? 'border-accent bg-accent/10 text-accent' : 'border-edge text-fg'"
+				@dragover="onGiveDragOver"
+				@dragleave="onGiveDragLeave"
+				@drop="onGiveDrop"
+			>Drop inventory item here to give to {{ displayName }}.</div>
 		</div>
 
 			<!-- Other-user action buttons -->

@@ -7,14 +7,16 @@
 // The pool (lib/j2cPool.ts) owns the workers; this file is just the per-job decode body.
 import { j2cToImageWithAlpha } from './j2c'
 
-// Each job: { id, buf }. buf is the J2C codestream as an ArrayBuffer (structured-cloned in — fine).
+// Each job: { id, buf, maxDim? }. buf is the J2C codestream as an ArrayBuffer (structured-cloned in
+// — fine). maxDim (optional) overrides the world-load downscale cap; the preview path passes Infinity
+// for a full-resolution transcode. Undefined → the decoder's default MAX_TEX_DIM (world-load behavior).
 // Reply on success: { id, ok:true, image:<ArrayBuffer, transferred>, hasAlpha, width, height, srcWidth, srcHeight }.
 // Reply on failure: { id, ok:false, error }. The pool rejects the matching job with this error so the
 // caller's existing catch (handlers/assets.ts) sends {error} to the client, exactly as before.
 self.onmessage = async (e: MessageEvent) => {
-	const { id, buf } = e.data as { id: number; buf: ArrayBuffer }
+	const { id, buf, maxDim } = e.data as { id: number; buf: ArrayBuffer; maxDim?: number }
 	try {
-		const r = await j2cToImageWithAlpha(Buffer.from(buf))
+		const r = await j2cToImageWithAlpha(Buffer.from(buf), maxDim)
 		const image = r.image
 		// WHY .slice(byteOffset, …): the Buffer may be a view onto a larger pooled ArrayBuffer. slice
 		// gives a standalone ArrayBuffer covering exactly these bytes, safe to transfer zero-copy.

@@ -178,7 +178,13 @@ export interface CreatedInventoryItem {
   invType:   number
   flags:     number
   createdAt: number
-  ownerMask: number
+  // Full permission mask set (LLPermissions). ownerMask = current-owner perms (drives the
+  // "You can" Modify/Copy/Transfer badges); nextOwnerMask = perms a recipient inherits.
+  baseMask:       number
+  ownerMask:      number
+  groupMask:      number
+  everyoneMask:   number
+  nextOwnerMask:  number
 }
 
 /** Decode UpdateCreateInventoryItem (Low #267) — the sim's reply after creating an item.
@@ -201,11 +207,11 @@ export function decodeUpdateCreateInventoryItem(buf: Buffer, dataOffset: number)
     off += 16  // CreatorID
     off += 16  // OwnerID
     off += 16  // GroupID
-    off += 4   // BaseMask
-    const ownerMask = buf.readUInt32LE(off); off += 4
-    off += 4   // GroupMask
-    off += 4   // EveryoneMask
-    off += 4   // NextOwnerMask
+    const baseMask      = buf.readUInt32LE(off); off += 4
+    const ownerMask     = buf.readUInt32LE(off); off += 4
+    const groupMask     = buf.readUInt32LE(off); off += 4
+    const everyoneMask  = buf.readUInt32LE(off); off += 4
+    const nextOwnerMask = buf.readUInt32LE(off); off += 4
     off += 1   // GroupOwned BOOL
     const assetId   = bytesToUuid(buf, off); off += 16
     const assetType = buf.readInt8(off); off += 1
@@ -217,7 +223,7 @@ export function decodeUpdateCreateInventoryItem(buf: Buffer, dataOffset: number)
     const descLen = buf[off++]; const desc = buf.slice(off, off + descLen).toString('utf8').replace(/\0/g, ''); off += descLen
     const createdAt = buf.readInt32LE(off); off += 4
     off += 4   // CRC
-    items.push({ itemId, parentId, assetId, name, desc, assetType, invType, flags, createdAt, ownerMask })
+    items.push({ itemId, parentId, assetId, name, desc, assetType, invType, flags, createdAt, baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask })
   }
   return items
 }
@@ -312,6 +318,7 @@ export function encodeImprovedInstantMessage(p: {
   position?:      [number, number, number]
   dialog?:        number      // 0 = MessageFromAgent
   messageId?:     string
+  binaryBucket?:  Buffer      // MessageBlock.BinaryBucket (e.g. accept-offer destination folder UUID)
 }): Buffer {
   const fromBuf = Buffer.from(p.fromAgentName + '\0', 'utf8')
   const msgBuf  = Buffer.from(p.message + '\0', 'utf8')
@@ -343,7 +350,7 @@ export function encodeImprovedInstantMessage(p: {
       FromGroup: false, ToAgentID: p.toAgentId, ParentEstateID: 0, RegionID: regionId,
       Position: pos, Offline: 0, Dialog: dialog, ID: idStr,
       Timestamp: Math.floor(Date.now() / 1000),
-      FromAgentName: fromBuf, Message: msgBuf, BinaryBucket: Buffer.alloc(0),
+      FromAgentName: fromBuf, Message: msgBuf, BinaryBucket: p.binaryBucket ?? Buffer.alloc(0),
     },
     EstateBlock: { EstateID: 0 },
     MetaData: [],
@@ -358,7 +365,8 @@ export interface ImprovedInstantMessageData {
   message:       string
   timestamp:     number
   position:      [number, number, number]
-  imId:          string   // message UUID — for friendship dialogs this is the transaction id echoed in Accept/Decline
+  imId:          string   // message UUID — for friendship/inventory dialogs this is the transaction id echoed in Accept/Decline
+  binaryBucket:  string   // MessageBlock.BinaryBucket as base64 (dialog-specific payload; inventory offer = S8 assetType + 16-byte item UUID)
 }
 
 export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): ImprovedInstantMessageData {
@@ -376,14 +384,26 @@ export function decodeImprovedInstantMessage(buf: Buffer, dataOffset: number): I
   const pz = buf.readFloatLE(off); off += 4
   off += 1   // Offline
   const dialog = buf[off++]
-  const imId = bytesToUuid(buf, off); off += 16  // ID (message UUID) — friendship transaction id
+  const imId = bytesToUuid(buf, off); off += 16  // ID (message UUID) — friendship/inventory transaction id
   const timestamp = buf.readUInt32LE(off); off += 4
   const nameLen = buf[off++]
   const fromAgentName = buf.slice(off, off + nameLen).toString('utf8').replace(/\0/g, '')
   off += nameLen
   const msgLen = buf.readUInt16LE(off); off += 2
   const message = buf.slice(off, off + msgLen).toString('utf8').replace(/\0/g, '')
-  return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz], imId }
+  off += msgLen
+  // BinaryBucket (Variable 2, LE length prefix). For an agent inventory offer (dialog 4) this is
+  // { S8 asset_type; LLUUID object_id } = 17 bytes — see llimprocessing.cpp offer_agent_bucket_t.
+  // Surfaced as base64 so the forwarded IM_RECV payload can carry it losslessly (may contain NULs).
+  let binaryBucket = ''
+  if (off + 2 <= buf.length) {
+    const bucketLen = buf.readUInt16LE(off); off += 2
+    if (bucketLen > 0 && off + bucketLen <= buf.length) {
+      binaryBucket = buf.slice(off, off + bucketLen).toString('base64')
+      off += bucketLen
+    }
+  }
+  return { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, position: [px, py, pz], imId, binaryBucket }
 }
 
 // ── ObjectSelect / ObjectDeselect (Low #110 / #111) — selection set ──────
@@ -2412,6 +2432,87 @@ export function encodeUpdateInventoryItem(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+/** RezObject (Low #293) — rez an inventory object into the world at a drop point.
+ *  Block layout (message_template.msg):
+ *    AgentData Single { AgentID, SessionID, GroupID }
+ *    RezData Single { FromTaskID, BypassRaycast U8, RayStart LLVector3, RayEnd LLVector3,
+ *      RayTargetID, RayEndIsIntersection BOOL, RezSelected BOOL, RemoveItem BOOL,
+ *      ItemFlags U32, GroupMask U32, EveryoneMask U32, NextOwnerMask U32 }
+ *    InventoryData Single { ...same shape as UpdateInventoryItem (minus CallbackID), with CRC }
+ *  Ported from ../phoenix-firestorm indra/newview/lltooldraganddrop.cpp
+ *  (LLToolDragAndDrop::dropObject → RezObject; pack_permissions_slam for the RezData masks;
+ *   item->packMessage(msg) for InventoryData — the same CRC'd block UpdateInventoryItem uses).
+ *  WHY BypassRaycast=1 + RayEnd=position, RayEndIsIntersection=0: rez AT the given point rather
+ *  than casting a ray; FS sets RayStart/RayEnd to the drop point and RayEndIsIntersection=false.
+ *  WHY RemoveItem = !copyable: a no-copy item is consumed from inventory when rezzed (FS passes
+ *  remove_from_inventory when the item lacks copy perm); copyable items stay in inventory.
+ *  NOTE: RezData's ItemFlags/GroupMask/EveryoneMask/NextOwnerMask are legacy "permission slam"
+ *  fields the modern sim ignores (see FS comment), but we still pack them for template correctness.
+ */
+export function encodeRezObject(p: {
+  agentId: string; sessionId: string; seq: number; groupId?: string
+  rayStart: [number, number, number]; rayEnd: [number, number, number]
+  rezSelected?: boolean; removeItem?: boolean
+  itemFlags?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+  inventoryData: {
+    itemId: string; folderId: string
+    name?: string; description?: string
+    creatorId?: string; ownerId?: string; groupId?: string
+    baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+    groupOwned?: boolean
+    assetType?: number; invType?: number; flags?: number
+    saleType?: number; salePrice?: number; createdAt?: number
+    transactionId?: string
+  }
+}): Buffer {
+  const inv = p.inventoryData
+  const nameBuf = Buffer.from((inv.name ?? '') + '\0', 'utf8')
+  const descBuf = Buffer.from((inv.description ?? '') + '\0', 'utf8')
+  const type        = inv.assetType ?? 0
+  const invType     = inv.invType ?? 0
+  const flags       = (inv.flags ?? 0) >>> 0
+  const saleType    = inv.saleType ?? 0
+  const salePrice   = inv.salePrice ?? 0
+  const createdAt   = inv.createdAt ?? Math.floor(Date.now() / 1000)
+  const ownerId     = inv.ownerId ?? p.agentId
+  const creatorId   = inv.creatorId ?? ownerId
+  const invGroupId  = inv.groupId ?? ZERO_UUID
+  const baseMask      = (inv.baseMask ?? FULL_PERM) >>> 0
+  const ownerMask     = (inv.ownerMask ?? FULL_PERM) >>> 0
+  const invGroupMask  = (inv.groupMask ?? 0) >>> 0
+  const invEveryMask  = (inv.everyoneMask ?? 0) >>> 0
+  const invNextMask   = (inv.nextOwnerMask ?? FULL_PERM) >>> 0
+  const crc = inventoryCRC({
+    creationDate: createdAt, saleType, invType, type,
+    assetId: ZERO_UUID, groupId: invGroupId, salePrice,
+    ownerId, creatorId, itemId: inv.itemId, folderId: inv.folderId,
+    everyoneMask: invEveryMask, flags, ownerMask, groupMask: invGroupMask, nextOwnerMask: invNextMask,
+  })
+  // RezData legacy slam masks default to the item's next-owner/group/everyone masks (matches FS).
+  const slamGroupMask = (p.groupMask ?? invGroupMask) >>> 0
+  const slamEveryMask = (p.everyoneMask ?? invEveryMask) >>> 0
+  const slamNextMask  = (p.nextOwnerMask ?? invNextMask) >>> 0
+  return encode('RezObject', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, GroupID: p.groupId ?? ZERO_UUID },
+    RezData: {
+      FromTaskID: ZERO_UUID, BypassRaycast: 1,
+      RayStart: p.rayStart, RayEnd: p.rayEnd, RayTargetID: ZERO_UUID,
+      RayEndIsIntersection: false, RezSelected: !!p.rezSelected, RemoveItem: !!p.removeItem,
+      ItemFlags: (p.itemFlags ?? flags) >>> 0,
+      GroupMask: slamGroupMask, EveryoneMask: slamEveryMask, NextOwnerMask: slamNextMask,
+    },
+    InventoryData: {
+      ItemID: inv.itemId, FolderID: inv.folderId,
+      CreatorID: creatorId, OwnerID: ownerId, GroupID: invGroupId,
+      BaseMask: baseMask, OwnerMask: ownerMask, GroupMask: invGroupMask,
+      EveryoneMask: invEveryMask, NextOwnerMask: invNextMask, GroupOwned: !!inv.groupOwned,
+      TransactionID: inv.transactionId ?? ZERO_UUID, Type: type, InvType: invType, Flags: flags,
+      SaleType: saleType, SalePrice: salePrice, Name: nameBuf, Description: descBuf,
+      CreationDate: createdAt, CRC: crc,
+    },
+  }, { seq: p.seq, reliable: true })
+}
+
 /** MoveInventoryItem (Low #268) — move an item to a destination folder, optionally renaming.
  *  AgentData { AgentID, SessionID, Stamp BOOL } + InventoryData Variable { ItemID, FolderID, NewName Var1 }.
  *  Stamp=true asks the sim to re-timestamp. NewName empty (just NUL) = keep current name.
@@ -2440,6 +2541,31 @@ export function encodeMoveInventoryFolder(p: {
   return encode('MoveInventoryFolder', {
     AgentData: { AgentID: p.agentId, SessionID: p.sessionId, Stamp: true },
     InventoryData: { FolderID: p.folderId, ParentID: p.parentId },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** CopyInventoryItem (Low #269) — duplicate an existing item into a folder as a NEW item.
+ *  AgentData { AgentID, SessionID } + InventoryData Variable
+ *    { CallbackID U32, OldAgentID, OldItemID, NewFolderID, NewName Var1 }.
+ *  WHY OldAgentID: the item's CURRENT owner (for own inventory this is the agent). The sim mints
+ *  a fresh ItemID for the copy and acks via BulkUpdateInventory (already handled → S.INV_BULK_UPDATE).
+ *  Ported from ../phoenix-firestorm indra/newview/llviewerinventory.cpp copy_inventory_item().
+ *  Empty NewName (Var1 zero-length) tells the sim to keep the source item's name.
+ */
+export function encodeCopyInventoryItem(p: {
+  agentId: string; sessionId: string; seq: number
+  callbackId?: number; oldAgentId?: string; oldItemId: string; newFolderId: string; newName?: string
+}): Buffer {
+  const newNameBuf = p.newName != null && p.newName !== ''
+    ? Buffer.from(p.newName + '\0', 'utf8')
+    : Buffer.alloc(0)
+  return encode('CopyInventoryItem', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    InventoryData: {
+      CallbackID: (p.callbackId ?? 0) >>> 0,
+      OldAgentID: p.oldAgentId ?? p.agentId,
+      OldItemID: p.oldItemId, NewFolderID: p.newFolderId, NewName: newNameBuf,
+    },
   }, { seq: p.seq, reliable: true })
 }
 
@@ -2560,11 +2686,11 @@ export function decodeBulkUpdateInventory(buf: Buffer, dataOffset: number): Bulk
     off += 16  // CreatorID
     off += 16  // OwnerID
     off += 16  // GroupID
-    off += 4   // BaseMask
-    const ownerMask = buf.readUInt32LE(off); off += 4
-    off += 4   // GroupMask
-    off += 4   // EveryoneMask
-    off += 4   // NextOwnerMask
+    const baseMask      = buf.readUInt32LE(off); off += 4
+    const ownerMask     = buf.readUInt32LE(off); off += 4
+    const groupMask     = buf.readUInt32LE(off); off += 4
+    const everyoneMask  = buf.readUInt32LE(off); off += 4
+    const nextOwnerMask = buf.readUInt32LE(off); off += 4
     off += 1   // GroupOwned BOOL
     const assetId   = bytesToUuid(buf, off); off += 16
     const assetType = buf.readInt8(off); off += 1
@@ -2576,7 +2702,7 @@ export function decodeBulkUpdateInventory(buf: Buffer, dataOffset: number): Bulk
     let desc = ''; [desc, off] = readV1(buf, off)
     const createdAt = buf.readInt32LE(off); off += 4
     off += 4   // CRC
-    items.push({ itemId, parentId, assetId, name, desc, assetType, invType, flags, createdAt, ownerMask })
+    items.push({ itemId, parentId, assetId, name, desc, assetType, invType, flags, createdAt, baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask })
   }
   return { folders, items }
 }
@@ -2623,7 +2749,11 @@ export function decodeBulkUpdateInventoryFromLLSD(llsdBody: unknown): BulkUpdate
     invType:   num(it.InvType),
     flags:     num(it.Flags),
     createdAt: num(it.CreationDate),
-    ownerMask: num(it.OwnerMask),
+    baseMask:      num(it.BaseMask),
+    ownerMask:     num(it.OwnerMask),
+    groupMask:     num(it.GroupMask),
+    everyoneMask:  num(it.EveryoneMask),
+    nextOwnerMask: num(it.NextOwnerMask),
   }))
 
   return { folders, items }

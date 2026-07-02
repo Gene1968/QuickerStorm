@@ -37,18 +37,29 @@ const props = defineProps({
 
 <template>
 	<div
-		class="fixed z-[2000] rounded-md overflow-hidden border border-brd bg-card shadow-lg pointer-events-none"
+		class="fixed z-[2000] rounded-md overflow-hidden border border-brd shadow-lg pointer-events-none"
 		:style="{ left: `${x}px`, top: `${y}px`, width: '16rem', height: '16rem' }"
 	>
-		<img
-			v-if="src"
-			:src="src"
-			class="w-full h-full object-contain"
-			alt=""
-		/>
-		<!-- Spinner-free placeholder while the fetch resolves; checkerboard hint of an image area. -->
-		<div v-else class="w-full h-full flex items-center justify-center text-2xs italic text-fg/40">
-			Loading preview…
+		<div class="bgtrans w-full h-full">
+			<img
+				v-if="src"
+				:src="src"
+				class="w-full h-full object-cover"
+				alt=""
+			/>
+			<!-- Spinner-free placeholder while the fetch resolves; checkerboard hint of an image area. -->
+			<div v-else class="w-full h-full flex items-center justify-center text-2xs italic text-fg/40">
+				Loading preview…
+			</div>
 		</div>
 	</div>
 </template>
+
+<style scoped>
+.bgtrans {
+	background-color: #444444ff;
+	background-image: url('@/assets/img/bg-for-trans-imgs.webp');
+	background-repeat: repeat;
+	background-size: auto;
+}
+</style>

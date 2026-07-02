@@ -99,6 +99,30 @@ describe('inventoryStore optimistic mutations', () => {
 		expect(it.canTransfer).toBe(true)
 	})
 
+	it('addCreatedItems derives owner perm flags for a freshly-received item (no reload needed)', () => {
+		const inv = seed()
+		// A received/accepted item arrives via UpdateCreateInventoryItem → S.INV_ITEM_CREATED with
+		// full-perm ownerMask but no convenience flags. addCreatedItems must derive them so the badges
+		// render correct immediately (the reload-fixes-it bug: raw masks present, canX left undefined).
+		inv.addCreatedItems([{ itemId: 'rx', parentId: 'objs', name: 'Gift', ownerMask: 0xE000, nextOwnerMask: 0xE000 }])
+		const it = inv.folderItems('objs').find(i => i.itemId === 'rx')
+		expect(it).toBeTruthy()
+		expect(it.canCopy).toBe(true)
+		expect(it.canModify).toBe(true)
+		expect(it.canTransfer).toBe(true)
+		expect(it.nextCanCopy).toBe(true)
+	})
+
+	it('addCreatedItems reflects a restricted ownerMask (copy-only) in the derived flags', () => {
+		const inv = seed()
+		inv.addCreatedItems([{ itemId: 'rx2', parentId: 'objs', name: 'Locked', ownerMask: 0x8000, nextOwnerMask: 0x0000 }])
+		const it = inv.folderItems('objs').find(i => i.itemId === 'rx2')
+		expect(it.canCopy).toBe(true)
+		expect(it.canModify).toBe(false)
+		expect(it.canTransfer).toBe(false)
+		expect(it.nextCanCopy).toBe(false)
+	})
+
 	it('applyBulkUpdate upserts folders preserving source', () => {
 		const inv = seed()
 		inv.applyBulkUpdate({ folders: [{ folderId: 'objs', name: 'Objects2', parentId: 'root' }] })
@@ -172,6 +196,51 @@ describe('inventoryStore optimistic mutations', () => {
 			inv.applyBulkUpdate({})
 			inv.applyBulkUpdate(undefined)
 		}).not.toThrow()
+	})
+})
+
+describe('sort mode + system-folders-to-top', () => {
+	beforeEach(() => { setActivePinia(createPinia()) })
+
+	it('default sort mode is date (most recent), matching Firestorm', () => {
+		const inv = useInventoryStore()
+		expect(inv.sortMode).toBe('date')
+	})
+
+	it('loadFromLogin resets sort mode to date', () => {
+		const inv = seed()
+		inv.setSort('name')
+		expect(inv.sortMode).toBe('name')
+		inv.loadFromLogin({ inventoryRoot: 'root', inventorySkeleton: [] })
+		expect(inv.sortMode).toBe('date')
+	})
+
+	it('sortItems date-orders by createdAt desc by default', () => {
+		const inv = seed()
+		const out = inv.sortItems([
+			{ itemId: 'a', name: 'A', createdAt: 100 },
+			{ itemId: 'b', name: 'B', createdAt: 300 },
+			{ itemId: 'c', name: 'C', createdAt: 200 },
+		])
+		expect(out.map(i => i.itemId)).toEqual(['b', 'c', 'a'])
+	})
+
+	it('childFolders puts system folders on top by default, pure name when toggled off', () => {
+		const inv = useInventoryStore()
+		inv.loadFromLogin({
+			inventoryRoot: 'root',
+			inventorySkeleton: [
+				{ folderId: 'root',  parentId: '',     name: 'My Inventory', typeDefault: 8,  version: 1 },
+				{ folderId: 'zsys',  parentId: 'root', name: 'Zebra',        typeDefault: 6,  version: 1 }, // system
+				{ folderId: 'auser', parentId: 'root', name: 'Apple',        typeDefault: -1, version: 1 }, // user
+			],
+		})
+		// default: system (Zebra) sorts above the user folder (Apple) despite alphabetical order
+		expect(inv.childFolders('root').map(f => f.folderId)).toEqual(['zsys', 'auser'])
+		// toggled off: pure name order → Apple before Zebra
+		inv.toggleSystemFoldersToTop()
+		expect(inv.systemFoldersToTop).toBe(false)
+		expect(inv.childFolders('root').map(f => f.folderId)).toEqual(['auser', 'zsys'])
 	})
 })
 

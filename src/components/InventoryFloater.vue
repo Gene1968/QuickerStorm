@@ -3,10 +3,12 @@ import { ref, computed, watch, provide, onMounted, onUnmounted, nextTick } from 
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useInventory } from '@/composables/useInventory'
-import { TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT, itemMatchesType } from '@/utils/inventoryIcons'
+import { useInventoryClipboard } from '@/composables/useInventoryClipboard'
+import { TYPE_FILTERS, typeFilterLabel, FOLDER_FAVORITES, FOLDER_CURRENT_OUTFIT, itemMatchesTypeSet } from '@/utils/inventoryIcons'
 import FloaterWindow   from '@/components/FloaterWindow.vue'
 import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
 import InventoryFlatRow from '@/components/InventoryFlatRow.vue'
+import InventoryFiltersPanel from '@/components/InventoryFiltersPanel.vue'
 import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
 
 const props = defineProps({
@@ -15,7 +17,8 @@ const props = defineProps({
 
 const ui  = useUiStore()
 const inv = useInventoryStore()
-const { fetchFolder, createFolder, trashItem, trashFolder } = useInventory()
+const { fetchFolder, createFolder, trashItem, trashFolder, pasteInto } = useInventory()
+const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 
 const showAddMenu = ref(false)
 
@@ -66,7 +69,11 @@ const tabFills = computed(() => {
 // ── Per-instance filter state (not stored globally — each floater is independent) ─────────────
 const rawFilter      = ref('')   // bound directly to input (immediate)
 const localFilter    = ref('')   // debounced — drives the actual filter computation
-const localTypeFilter = ref('all')
+// WHY: multi-select type filter (Set of TYPE_FILTERS ids). Empty Set = "All Types". Both the header
+// dropdown (single-pick) and the Filters panel (multi-check) mutate this one source of truth.
+const typeIds        = ref(new Set())
+// "Show empty folders" (FS filter): when off, folders whose subtree has zero ITEMS are hidden.
+const showEmptyFolders = ref(true)
 let   filterTimer    = null
 
 // Spinner true while debounce is pending
@@ -77,8 +84,18 @@ watch(rawFilter, (v) => {
 	filterTimer = setTimeout(() => { localFilter.value = v }, 280)
 })
 
+// WHY: the injected tree still keys one branch off a single 'all' sentinel — report 'all' when no
+// type filter is active, else a non-'all' marker so the "text-only, folder-name matched → show all
+// items" shortcut only applies when there's genuinely no type filter.
+const typeFilterMarker = computed(() => (typeIds.value.size === 0 ? 'all' : 'multi'))
+const typeLabel = computed(() => {
+	if (typeIds.value.size === 0) return 'All Types'
+	if (typeIds.value.size === 1) return typeFilterLabel([...typeIds.value][0])
+	return `${typeIds.value.size} types`
+})
+
 const filtering     = computed(() => localFilter.value.trim().length > 0)
-const filtersActive = computed(() => filtering.value || localTypeFilter.value !== 'all')
+const filtersActive = computed(() => filtering.value || typeIds.value.size > 0 || !showEmptyFolders.value)
 
 function nameMatches(name) {
 	return (name || '').toLowerCase().includes(localFilter.value.trim().toLowerCase())
@@ -95,18 +112,27 @@ function itemSearchText(it) {
 	return s
 }
 function itemVisible(it) {
-	return nameMatches(itemSearchText(it)) && itemMatchesType(it, localTypeFilter.value)
+	return nameMatches(itemSearchText(it)) && itemMatchesTypeSet(it, typeIds.value)
+}
+// WHY: "Show empty folders" off → a folder is only shown if it (or a descendant) holds a visible ITEM.
+function folderHasItem(folderId) {
+	for (const it of inv.folderItems(folderId)) if (itemVisible(it)) return true
+	for (const c of inv.childFolders(folderId)) if (folderHasItem(c.folderId)) return true
+	return false
 }
 function folderHasMatch(folderId) {
 	if (!filtersActive.value) return true
-	if (filtering.value && localTypeFilter.value === 'all' && folderNameMatches(folderId)) return true
+	// Empty-folder hiding is orthogonal to name/type match: hide a folder with no visible items.
+	if (!showEmptyFolders.value && !folderHasItem(folderId)) return false
+	if (!filtering.value && typeIds.value.size === 0) return true   // only empty-folder filter active
+	if (filtering.value && typeIds.value.size === 0 && folderNameMatches(folderId)) return true
 	for (const it of inv.folderItems(folderId)) if (itemVisible(it)) return true
 	for (const c of inv.childFolders(folderId)) if (folderHasMatch(c.folderId)) return true
 	return false
 }
 
 // Provide filter context to InventoryTreeNode (recursive, so provide on the floater works).
-provide('invFilter', { filtering, filtersActive, typeFilter: localTypeFilter, folderHasMatch, itemVisible, folderNameMatches, nameMatches })
+provide('invFilter', { filtering, filtersActive, typeFilter: typeFilterMarker, folderHasMatch, itemVisible, folderNameMatches, nameMatches })
 
 // ── Per-floater multi-selection ───────────────────────────────────────────────
 // State is local so each of the up-to-6 inventory windows has independent selection.
@@ -222,22 +248,109 @@ const isLast      = computed(() => props.index >= MAX_INVENTORY - 1)
 const nextOpen    = computed(() => ui.inventoryInstances.includes(props.index + 1))
 
 
+// ── Clipboard (Ctrl+X cut / Ctrl+C copy / Ctrl+V paste) ──────────────────────
+// FS semantics: CUT→PASTE moves; COPY→PASTE duplicates copyable items. Scoped to the FOCUSED
+// inventory floater (top of the stack) so an open-but-background window never steals the shortcut.
+
+// The paste target: an anchor folder pastes INTO itself; an anchor item pastes into its parent
+// folder; nothing selected → My Inventory root. (FS pastes into the current/selected folder.)
+function pasteTargetFolderId() {
+	const id = anchorId.value
+	if (id && inv.folders.has(id)) return id                 // folder anchor → into it
+	if (id) { const f = inv.findItem(id); if (f) return f.folderId }   // item anchor → its folder
+	return inv.rootId
+}
+
+function isFocusedFloater() { return ui.floaterStack.at(-1) === floaterId.value }
+
+// Don't hijack Ctrl+C/X/V while the user is typing in an input/textarea/contenteditable
+// (the filter box, an inline-rename field, etc.) — let the browser handle native copy/paste there.
+function isTextEditing(e) {
+	const t = e.target
+	if (!t) return false
+	const tag = t.tagName
+	return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable === true
+}
+
+function onClipboardKey(e) {
+	if (!isFocusedFloater() || isTextEditing(e)) return
+	const mod = e.ctrlKey || e.metaKey
+	if (!mod) return
+	const k = e.key.toLowerCase()
+	if (k === 'c') {
+		const ids = [...selectedIds.value]
+		if (!ids.length) return
+		setCopy(ids, pasteTargetFolderId())
+		e.preventDefault()
+	} else if (k === 'x') {
+		const ids = [...selectedIds.value]
+		if (!ids.length) return
+		setCut(ids, pasteTargetFolderId())
+		e.preventDefault()
+	} else if (k === 'v') {
+		if (!clipboard.value.ids.length) return
+		pasteInto(clipboard.value, pasteTargetFolderId(), clearClipboard)
+		e.preventDefault()
+	}
+}
+
 function close()        { ui.closeInventoryAt(props.index) }
 function toggleNext()   { if (!isLast.value) ui.toggleInventoryAt(props.index + 1) }
 
-// ── Cog menu (bottom-left) — holds sort options, FS-style ────────────────────────
-const showCogMenu = ref(false)
+// ── Clearing search + filters (Collapse also resets the text search, FS-style) ──
+function clearSearch() {
+	clearTimeout(filterTimer)
+	rawFilter.value = ''
+	localFilter.value = ''
+}
+function resetFilters() {
+	clearSearch()
+	typeIds.value = new Set()
+	showEmptyFolders.value = true
+}
+// Collapse All: FS also drops the active text search when you collapse the tree.
+function collapseAll() {
+	inv.collapseAll(floaterId.value)
+	clearSearch()
+}
+function expandAllFolders() { inv.expandAll(floaterId.value) }
+
+// ── Cog / gear menu (mirrors menu_inventory_gear_default.xml) ────────────────────
+const showCogMenu   = ref(false)
+const showSortSub   = ref(false)
 const SORT_OPTIONS = [
 	{ id: 'name', label: 'Sort by Name' },
-	{ id: 'date', label: 'Sort by Date' },
+	{ id: 'date', label: 'Sort by Most Recent' },
 	{ id: 'type', label: 'Sort by Type' },
 ]
-function pickSort(id) { inv.setSort(id); showCogMenu.value = false }
+function pickSort(id) { inv.setSort(id) }
+function newInventoryWindow() { ui.openNextInventory(); showCogMenu.value = false }
+function gearShowFilters()   { showFilters.value = true; showCogMenu.value = false }
+function gearReset()         { resetFilters(); showCogMenu.value = false }
+function gearCollapse()      { collapseAll(); showCogMenu.value = false }
+function gearExpand()        { expandAllFolders(); showCogMenu.value = false }
+function gearCloseAll()      { for (let i = 0; i < MAX_INVENTORY; i++) ui.closeInventoryAt(i) }
+function toggleSysTop()      { inv.toggleSystemFoldersToTop() }
 
-// ── Type-filter dropdown ───────────────────────────────────────────────────────
+// ── Type-filter dropdown (single-pick; syncs the shared multi-select Set) ────────
 const showTypeMenu = ref(false)
-const typeLabel    = computed(() => typeFilterLabel(localTypeFilter.value))
-function setType(id) { localTypeFilter.value = id; showTypeMenu.value = false }
+function typeChecked(id) {
+	if (id === 'all') return typeIds.value.size === 0
+	return typeIds.value.has(id)
+}
+function setType(id) {
+	// Header dropdown behaves as a single-pick: 'all' clears, any other replaces the set.
+	typeIds.value = id === 'all' ? new Set() : new Set([id])
+	showTypeMenu.value = false
+}
+function toggleTypeId(id) {
+	const s = new Set(typeIds.value)
+	if (s.has(id)) s.delete(id); else s.add(id)
+	typeIds.value = s
+}
+
+// ── Filters side panel (Show Filters button) ─────────────────────────────────────
+const showFilters = ref(false)
 
 // ── Horizontal tab strip: wheel-scroll + edge arrows only when overflowing ───────
 const tabScrollEl = ref(null)
@@ -270,7 +383,7 @@ function scrollTabs(kind) {
 	setTimeout(updateTabOverflow, 250)
 }
 
-function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false; showAddMenu.value = false }
+function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false; showSortSub.value = false; showAddMenu.value = false; showFilters.value = false }
 
 // WHY: seed this window's per-instance expand set (root auto-expanded). immediate handles the
 // common case (rootId already loaded at mount); the watch covers a window that opens before login.
@@ -288,11 +401,13 @@ onMounted(() => {
 		tabRo.observe(tabScrollEl.value)
 	}
 	document.addEventListener('click', closeMenus)
+	window.addEventListener('keydown', onClipboardKey)
 })
 onUnmounted(() => {
 	inv.dropExpand(floaterId.value)
 	tabRo?.disconnect()
 	document.removeEventListener('click', closeMenus)
+	window.removeEventListener('keydown', onClipboardKey)
 	clearTimeout(filterTimer)
 	filterTimer = null
 })
@@ -313,8 +428,8 @@ onUnmounted(() => {
 			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-fg">
 			<div class="flex flex-row items-center justify-start w-full text-2xs">
-				<button class="ui-btn me-2 py-0" @click="inv.collapseAll(floaterId)">Collapse</button>
-				<button class="ui-btn me-2 py-0" @click="inv.expandAll(floaterId)">Expand</button>
+				<button class="ui-btn me-2 py-0" title="Collapse all folders (clears the search filter)" @click="collapseAll">Collapse</button>
+				<button class="ui-btn me-2 py-0" title="Expand all folders" @click="expandAllFolders">Expand</button>
 				<span class="me-1">Filter:</span>
 				<!-- Type-filter dropdown (FS "Filter: All Types ▾") -->
 				<div class="relative grow me-1">
@@ -324,9 +439,9 @@ onUnmounted(() => {
 							v-for="t in TYPE_FILTERS"
 							:key="t.id"
 							class="block w-full text-left px-2 py-1 hover:bg-white/10"
-							:class="localTypeFilter === t.id ? 'text-accent' : 'text-fg'"
+							:class="typeChecked(t.id) ? 'text-accent' : 'text-fg'"
 							@click="setType(t.id)"
-						>{{ t.label }}</button>
+						>{{ typeChecked(t.id) ? '✓ ' : '   ' }}{{ t.label }}</button>
 					</div>
 				</div>
 			</div>
@@ -396,15 +511,36 @@ onUnmounted(() => {
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-fg">
 			<div class="relative">
 				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon class="w-3.5 h-3.5" /><ChevronDownIcon class="w-2.5" /></button>
-				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[9rem] bg-panel border border-edge rounded-sm shadow-lg" @click.stop>
-					<div class="px-2 py-1 text-2xs text-fg-muted border-b border-edge">Sort</div>
-					<button
-						v-for="o in SORT_OPTIONS"
-						:key="o.id"
-						class="block w-full text-left px-2 py-1 hover:bg-white/10"
-						:class="inv.sortMode === o.id ? 'text-accent' : 'text-fg'"
-						@click="pickSort(o.id)"
-					>{{ inv.sortMode === o.id ? '✓ ' : '   ' }}{{ o.label }}</button>
+				<!-- Gear menu — mirrors menu_inventory_gear_default.xml, backed items only. -->
+				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[11rem] bg-panel border border-edge rounded-sm shadow-lg text-2xs" @click.stop>
+					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" :disabled="isLast" title="Open another inventory window" @click="newInventoryWindow">New Inventory Window</button>
+					<div class="border-t border-edge"></div>
+					<div class="relative">
+						<button class="flex w-full items-center justify-between px-2 py-1.5 hover:bg-white/10 text-fg" @click.stop="showSortSub = !showSortSub">Sorting<ChevronRightIcon class="w-3" /></button>
+						<div v-if="showSortSub" class="absolute bottom-0 left-full ml-0.5 z-[61] min-w-[11rem] bg-panel border border-edge rounded-sm shadow-lg" @click.stop>
+							<button
+								v-for="o in SORT_OPTIONS"
+								:key="o.id"
+								class="block w-full text-left px-2 py-1 hover:bg-white/10"
+								:class="inv.sortMode === o.id ? 'text-accent' : 'text-fg'"
+								@click="pickSort(o.id)"
+							>{{ inv.sortMode === o.id ? '✓ ' : '   ' }}{{ o.label }}</button>
+							<div class="border-t border-edge"></div>
+							<button
+								class="block w-full text-left px-2 py-1 hover:bg-white/10"
+								:class="inv.systemFoldersToTop ? 'text-accent' : 'text-fg'"
+								@click="toggleSysTop"
+							>{{ inv.systemFoldersToTop ? '✓ ' : '   ' }}System Folders to Top</button>
+						</div>
+					</div>
+					<div class="border-t border-edge"></div>
+					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg" @click="gearShowFilters">Show Filters…</button>
+					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg" @click="gearReset">Reset Filters</button>
+					<div class="border-t border-edge"></div>
+					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg" @click="gearCollapse">Collapse All Folders</button>
+					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg" @click="gearExpand">Expand All Folders</button>
+					<div class="border-t border-edge"></div>
+					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg" @click="gearCloseAll">Close All Windows</button>
 				</div>
 			</div>
 			<div class="relative">
@@ -430,7 +566,23 @@ onUnmounted(() => {
 				class="ui-btn"
 				@click="toggleNext"
 			><LuggageIcon class="w-3.5 h-3.5" /></button>
-			<button class="ui-btn" title="Show filters - Shows the filter side menu when selected. Becomes highlighted when any filter is enabled. (TO-DO)"><FilterIcon class="w-3.5 h-3.5" /></button>
+			<div class="relative">
+				<button
+					class="ui-btn"
+					:class="filtersActive ? 'text-accent border-accent' : ''"
+					title="Show filters - filter the inventory by type and hide empty folders. Highlighted when any filter is enabled."
+					@click.stop="showFilters = !showFilters"
+				><FilterIcon class="w-3.5 h-3.5" /></button>
+				<InventoryFiltersPanel
+					v-if="showFilters"
+					:type-ids="typeIds"
+					:show-empty-folders="showEmptyFolders"
+					@toggle-type="toggleTypeId"
+					@update:show-empty-folders="showEmptyFolders = $event"
+					@reset="resetFilters"
+					@close="showFilters = false"
+				/>
+			</div>
 			<button v-if="true" class="ui-btn" title="Switch between views (TO-DO)"><ListIcon class="w-3.5 h-3.5" /></button>
 			<button v-else class="ui-btn" title="Switch between views (TO-DO)"><TableOfContentsIcon class="w-3.5 h-3.5" /></button>
 			<div

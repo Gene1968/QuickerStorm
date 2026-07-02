@@ -16,7 +16,7 @@ const props = defineProps({
 
 const inv    = useInventoryStore()
 const ui     = useUiStore()
-const { fetchFolder, renameItem, renameFolder, trashItem, trashFolder, moveItem, moveFolder } = useInventory()
+const { fetchFolder, renameItem, renameFolder, trashItem, trashFolder, moveItem, moveFolder, openInventoryItem } = useInventory()
 const { thumbnailFor } = useInventoryThumbnail()
 const f      = inject('invFilter')
 const invSel = inject('invSelection')
@@ -81,16 +81,29 @@ function toggleExpand() {
 	inv.toggle(myFid.value, props.folderId)
 	if (inv.isExpanded(myFid.value, props.folderId)) fetchFolder(props.folderId)
 }
-// WHY: right-clicking an already-selected row keeps the multi-selection so a future
-// "Delete X items" context menu action can act on all of them. Clicking an unselected
-// row first clears to a single selection (standard file-manager behavior).
+// WHY: right-clicking an already-selected row keeps the multi-selection so context-menu
+// actions ("Delete 3 items", Copy-UUID) act on all of them (FS behavior). Right-clicking an
+// UNselected row first clears to a single selection (standard file-manager behavior). When
+// the clicked row IS part of a >1 selection, pass the whole set as `targets`; otherwise a
+// single target (just the clicked row).
+function contextTargetsFor(id, clickedKind, clickedObj) {
+	const sel = invSel.selectedIds.value
+	if (sel.size > 1 && sel.has(id)) {
+		// Anchor (clicked row) first, then the rest of the selection resolved to { kind, obj }.
+		const rest = [...sel].filter(x => x !== id).map(x => inv.resolveTarget(x)).filter(Boolean)
+		return [{ kind: clickedKind, obj: clickedObj }, ...rest]
+	}
+	return [{ kind: clickedKind, obj: clickedObj }]
+}
 function onContextMenuFolder(event) {
 	if (!invSel.isSelected(props.folderId)) invSel.selectionSelect(props.folderId, {})
-	inv.openContextMenu(event.clientX, event.clientY, 'folder', folder.value)
+	const targets = contextTargetsFor(props.folderId, 'folder', folder.value)
+	inv.openContextMenu(event.clientX, event.clientY, 'folder', folder.value, targets)
 }
 function onContextMenuItem(event, it) {
 	if (!invSel.isSelected(it.itemId)) invSel.selectionSelect(it.itemId, {})
-	inv.openContextMenu(event.clientX, event.clientY, 'item', it)
+	const targets = contextTargetsFor(it.itemId, 'item', it)
+	inv.openContextMenu(event.clientX, event.clientY, 'item', it, targets)
 }
 
 // ── Inline rename ────────────────────────────────────────────────────────────
@@ -221,17 +234,37 @@ function onDragStartItem(e, it) {
 	// single anchor. Dragging an UNselected row never disturbs the selection — it's a lone-item drag.
 	const sel = invSel.selectedIds.value
 	let ids = [it.itemId]
+	let kind = 'item'
 	if (sel.size > 1 && sel.has(it.itemId)) {
-		const onlyItems = [...sel].every(id => !inv.folders.has(id))
-		if (onlyItems) ids = [it.itemId, ...[...sel].filter(id => id !== it.itemId)]
+		ids = [it.itemId, ...[...sel].filter(id => id !== it.itemId)]
+		kind = dragKindFor(ids)
 	}
-	inv.setDrag(ids, 'item')
+	inv.setDrag(ids, kind)
 	e.dataTransfer.effectAllowed = 'move'
 	try { e.dataTransfer.setData('text/plain', it.itemId) } catch { /* some browsers restrict */ }
 }
 
+// Classify a drag payload by what its ids contain: 'folder' (all folders), 'item' (all items),
+// or 'mixed' (both). The drop handler dispatches per-id anyway, but the kind drives dragover
+// hit-testing (a pure-folder drag must reject self/descendant targets).
+function dragKindFor(ids) {
+	let hasFolder = false, hasItem = false
+	for (const id of ids) { if (inv.folders.has(id)) hasFolder = true; else hasItem = true }
+	if (hasFolder && hasItem) return 'mixed'
+	return hasFolder ? 'folder' : 'item'
+}
+
 function onDragStartFolder(e) {
-	inv.setDrag(props.folderId, 'folder')
+	// WHY: dragging a folder that's part of a multi-selection carries ALL selected ids (anchor
+	// first), matching the item path so mixed item+folder selections move together (FS behavior).
+	const sel = invSel.selectedIds.value
+	let ids = [props.folderId]
+	let kind = 'folder'
+	if (sel.size > 1 && sel.has(props.folderId)) {
+		ids = [props.folderId, ...[...sel].filter(id => id !== props.folderId)]
+		kind = dragKindFor(ids)
+	}
+	inv.setDrag(ids, kind)
 	e.dataTransfer.effectAllowed = 'move'
 	try { e.dataTransfer.setData('text/plain', props.folderId) } catch { /* some browsers restrict */ }
 }
@@ -257,8 +290,14 @@ function onDragOverFolder(e) {
 	// preventDefault here is what tells the browser a drop is allowed — without it, drop never fires.
 	const p = inv.dragPayload
 	if (!p) return
-	if (p.kind === 'folder' && isSelfOrDescendant(props.folderId, p.id)) return  // no cycle, no self
-	if (p.kind === 'item' && p.id === props.folderId) return
+	// WHY: a payload can carry items, folders, or a mix. Reject this target only if it's invalid for
+	// EVERY dragged id (a folder can't drop into itself/a descendant; an item can't "move" into the
+	// folder it's already in) — otherwise allow the drop and let onDropFolder skip the no-op ids.
+	const ids = p.ids?.length ? p.ids : [p.id]
+	const anyValid = ids.some(id => inv.folders.has(id)
+		? !isSelfOrDescendant(props.folderId, id)   // folder: not self/descendant
+		: id !== props.folderId)                     // item: not already here (best-effort)
+	if (!anyValid) return
 	e.preventDefault()
 	e.dataTransfer.dropEffect = 'move'
 	dropTarget.value = props.folderId
@@ -274,14 +313,20 @@ function onDropFolder(e) {
 	const p = inv.dragPayload
 	inv.clearDrag()
 	if (!p || !p.id) return
-	if (p.id === props.folderId) return   // dropped onto itself — no-op
-	if (p.kind === 'folder') {
-		if (isSelfOrDescendant(props.folderId, p.id)) return  // no dropping into own descendant
-		moveFolder(p.id, props.folderId)
-	} else {
-		// WHY: multi-select move — relocate every dragged item id (anchor + companions). Falls back
-		// to the single anchor when ids is absent (back-compat with single-id payloads).
-		for (const id of (p.ids?.length ? p.ids : [p.id])) moveItem(id, props.folderId)
+	// WHY: dispatch per id so a single payload can carry items, folders, or a mix (FS behavior).
+	// Resolve each id's kind from the store (folder vs item) rather than the payload's summary kind.
+	// Falls back to the single anchor when ids is absent (back-compat with single-id payloads).
+	for (const id of (p.ids?.length ? p.ids : [p.id])) {
+		if (inv.folders.has(id)) {
+			// Folder: skip self and any drop into its own descendant (would create a cycle). moveFolder
+			// also no-ops a folder already parented here.
+			if (id === props.folderId) continue
+			if (isSelfOrDescendant(props.folderId, id)) continue
+			moveFolder(id, props.folderId)
+		} else {
+			// Item: moveItem no-ops if it's already in the target folder.
+			moveItem(id, props.folderId)
+		}
 	}
 }
 
@@ -404,6 +449,7 @@ function onItemMouseLeave() { hidePreview() }
 				tabindex="0"
 				draggable="true"
 				@click="invSel.selectionSelect(it.itemId, $event)"
+				@dblclick="openInventoryItem(it)"
 				@contextmenu.prevent.stop="onContextMenuItem($event, it)"
 				@keydown="onKeydownItem($event, it)"
 				@dragstart="onDragStartItem($event, it)"

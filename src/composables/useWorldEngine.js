@@ -1170,19 +1170,27 @@ export function useWorldEngine(canvasRef) {
 	function onMouseUp() { isDragging = false }
 
 	function onDblClick(e) {
-		if (!canvasRef.value || !camera || !terrainMesh) return
+		const p = screenToGround(e.clientX, e.clientY)
+		if (!p) return
+		requestTeleport({ x: p.x, y: p.y, z: p.z + 0.5 })
+	}
+
+	// Raycast a screen point onto the terrain and return the hit in SL region coords, or null on
+	// miss (clicked sky/water off-terrain). Shared by double-click teleport + inventory drag-to-rez.
+	// THREE coords: x=SL.x, y=SL.z, z=-SL.y → invert to SL. Returns z at the ground (caller may lift).
+	function screenToGround(clientX, clientY) {
+		if (!canvasRef.value || !camera || !terrainMesh) return null
 		const rect = canvasRef.value.getBoundingClientRect()
 		_pickNdc.set(
-			((e.clientX - rect.left) / rect.width) * 2 - 1,
-			-((e.clientY - rect.top) / rect.height) * 2 + 1,
+			((clientX - rect.left) / rect.width) * 2 - 1,
+			-((clientY - rect.top) / rect.height) * 2 + 1,
 		)
 		_raycaster.setFromCamera(_pickNdc, camera)
 		_raycaster.far = 1000
 		const hits = _raycaster.intersectObject(terrainMesh, false)
-		if (!hits.length) return
-		// THREE coords: x=SL.x, y=SL.z, z=-SL.y → invert to SL
+		if (!hits.length) return null
 		const p = hits[0].point
-		requestTeleport({ x: p.x, y: -p.z, z: p.y + 0.5 })
+		return { x: p.x, y: -p.z, z: p.y }
 	}
 
 	// Scroll wheel: zoom in orbit mode or third-person; forward/back in explore mode
@@ -5237,5 +5245,5 @@ export function useWorldEngine(canvasRef) {
 
 	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
-	return { scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave }
+	return { scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave, screenToGround }
 }

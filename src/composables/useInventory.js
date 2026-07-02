@@ -10,8 +10,15 @@ import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useUiStore } from '@/stores/uiStore'
-import { loadCachedInventory, saveCachedInventory, saveCachedFolders, makeInvSavePairs, foldersToPairs } from '@/lib/inventoryCache'
+import { loadCachedInventory, saveCachedInventory, saveCachedFolders, removeCachedFolder, makeInvSavePairs, foldersToPairs } from '@/lib/inventoryCache'
+import { useNotifications } from '@/composables/useNotifications'
+import { assetTypeName } from '@/utils/inventoryIcons'
 import { C, S } from '@shared/protocol.js'
+
+// SL AssetType — the dispatch keys openInventoryItem switches on. (Confirmed against
+// src/utils/inventoryIcons.js ASSET_TYPE_NAMES.) Only TEXTURE has a full viewer pipeline;
+// the rest get a graceful "coming soon" toast (see docs/FEATURE-GAPS.md 2026-06-30).
+const ASSET_TYPE_TEXTURE = 0
 
 const BATCH        = 40   // folders per cap POST (server batches them into one request)
 const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background bulk load
@@ -44,6 +51,38 @@ export function shouldDeferInventoryWalk(sawLoading, sceneLoading, msSinceProgre
 	return msSinceProgress < stallMs                       // loading + progressing → defer; stalled → walk
 }
 
+// SL AssetType for an OBJECT (rezzable) = 6; InvType for an OBJECT = 6 too. Only OBJECT items
+// can be rezzed into the world (matches the InventoryContextMenu isObject test + FS behaviour).
+export const ASSET_TYPE_OBJECT = 6
+
+// PERM_COPY bit (matches server RezObject handler): a copyable object stays in inventory when rezzed;
+// a no-copy object is consumed (the sim removes it — expected FS behaviour, still allowed to rez).
+const PERM_COPY = 0x00008000
+
+/**
+ * Compute a rez drop point ~`distance` metres in FRONT of the avatar, at avatar height.
+ * Pure so it is unit-testable without the world engine.
+ *
+ * @param avatarPos  sim-authoritative avatar position {x,y,z} in SL coords (worldStore.avatarPos)
+ * @param cameraYaw  Three.js yaw radians (uiStore.cameraYaw); 0 = facing North (SL +Y)
+ * @param distance   metres in front (default 2)
+ * @returns {{x:number,y:number,z:number}} drop point in SL region coords
+ *
+ * WHY the vector: useWorldEngine sends camAt (SL-space forward) as [-sin(yaw), cos(yaw), 0]
+ * for a given Three.js yaw — the same forward basis is used here so the object lands where the
+ * avatar is looking. Z is kept at avatar height (the sim settles it onto whatever is below).
+ */
+export function rezPositionInFront(avatarPos, cameraYaw = 0, distance = 2) {
+	const a = avatarPos || { x: 128, y: 128, z: 25 }
+	const fx = -Math.sin(cameraYaw)
+	const fy = Math.cos(cameraYaw)
+	return {
+		x: Math.max(0, (a.x || 0) + fx * distance),
+		y: Math.max(0, (a.y || 0) + fy * distance),
+		z: Math.max(0, a.z || 0),
+	}
+}
+
 let registered = false
 let pump = null
 let capsReadyAt = 0    // performance.now() at caps-ready; prepopulate window + absolute ceiling measured from here
@@ -60,6 +99,29 @@ export function useInventory() {
 	const session = useSessionStore()
 	const world   = useWorldStore()
 	const ui      = useUiStore()
+	const { notifyInfo } = useNotifications()
+
+	// Double-click / "Open" dispatch for an inventory ITEM, switched once by asset type.
+	// TEXTURE → the texture-preview floater (full pipeline exists). Everything else has no
+	// client viewer yet, so it shows a graceful toast (deferred floaters logged in
+	// docs/FEATURE-GAPS.md 2026-06-30) instead of a dead-end no-op.
+	function openInventoryItem(item) {
+		if (!item) return
+		switch (item.assetType) {
+			case ASSET_TYPE_TEXTURE:
+				// WHY: item carries assetId (the J2C UUID) — getTextureUrl resolves it on demand.
+				// Pass itemId as the multi-instance KEY so double-clicking two different inventory items
+				// opens two floaters, while re-opening the SAME item just focuses its existing floater.
+				if (item.assetId) ui.openTexturePreview(item.assetId, item.name, item.desc, item.itemId)
+				else notifyInfo('No preview', 'This texture has no asset to show yet.')
+				break
+			default: {
+				// Sound / animation / gesture / landmark / calling-card / other: no viewer pipeline yet.
+				const label = assetTypeName(item.assetType)
+				notifyInfo('Preview coming soon', `${label} preview isn't supported yet.`)
+			}
+		}
+	}
 
 	// Persist the current folder skeleton to IDB. WHY: created/renamed/moved folders must survive a
 	// reload while the grid Robust write-back lags — otherwise a hard reload re-fetches a skeleton
@@ -166,7 +228,11 @@ export function useInventory() {
 		const stopSave = watch(() => inv.allAgentFetched, async (done) => {
 			if (!done || !session.agentId) return
 			stopSave()
-			await saveCachedInventory(session.agentId, makeInvSavePairs(inv.items))
+			// WHY isFetched predicate: allAgentFetched can fire at a DIPPED count (a fetch returned empty
+			// mid-move) — merging at the folder level keeps last-known items for any folder not actually
+			// fetched, so this "done" save can never persist a snapshot smaller than last-known. See
+			// mergeItemPairs. Prevents PERMANENT DATA LOSS of a just-moved/created item.
+			await saveCachedInventory(session.agentId, makeInvSavePairs(inv.items), id => inv.isFetched(id))
 		})
 		// WHY: debounced mutation-save so rename/move/trash/perm changes are reflected in the
 		// next-login snapshot. Fires on itemCount changes ONLY after the initial cache hydration
@@ -178,7 +244,9 @@ export function useInventory() {
 			clearTimeout(_mutateSaveTimer)
 			_mutateSaveTimer = setTimeout(async () => {
 				if (!session.agentId) return
-				await saveCachedInventory(session.agentId, makeInvSavePairs(inv.items))
+				// Same folder-level merge as the one-shot save: a mutation-save must not drop items from a
+				// folder that hasn't been re-fetched (transiently empty in-memory) — see mergeItemPairs.
+				await saveCachedInventory(session.agentId, makeInvSavePairs(inv.items), id => inv.isFetched(id))
 			}, 1500)
 		})
 		// Clean up the mutation watcher on the next login so a re-login starts fresh.
@@ -250,7 +318,15 @@ export function useInventory() {
 			assetType:   cur.assetType,
 			invType:     cur.invType,
 			flags:       cur.flags,
-			ownerMask:   cur.ownerMask,
+			// WHY: carry ALL FIVE perm masks, not just ownerMask. encodeUpdateInventoryItem DEFAULTS any
+			// absent mask (base/next-owner→FULL, group/everyone→0), so a rename or single-checkbox perms
+			// edit that omitted them would silently RELAX a gift item's next-owner/group/everyone perms.
+			// The store populates all masks on every row (cap decode + receive-path enrich), so round-trip them.
+			baseMask:      cur.baseMask,
+			ownerMask:     cur.ownerMask,
+			groupMask:     cur.groupMask,
+			everyoneMask:  cur.everyoneMask,
+			nextOwnerMask: cur.nextOwnerMask,
 			createdAt:   cur.createdAt,
 		}
 	}
@@ -276,11 +352,66 @@ export function useInventory() {
 		emit(C.INV_MOVE_ITEM, { itemId, toFolderId })
 	}
 
+	// Walk upward from toParentId; reject the move if folderId is encountered (target is the folder
+	// itself or one of its descendants) — moving a folder into its own subtree would create a cycle.
+	// WHY: guard at this choke point so every caller (drag-drop, clipboard cut→paste, context menu) is
+	// protected, not just the drag path that had its own hit-test guard.
+	function wouldCycleFolderMove(folderId, toParentId) {
+		let cur = toParentId
+		const seen = new Set()
+		while (cur) {
+			if (cur === folderId) return true
+			if (seen.has(cur)) break
+			seen.add(cur)
+			cur = inv.folders.get(cur)?.parentId ?? ''
+		}
+		return false
+	}
+
 	function moveFolder(folderId, toParentId) {
 		if (!folderId || !toParentId) return
+		if (wouldCycleFolderMove(folderId, toParentId)) return   // no-op: self / own-descendant target
 		inv.moveFolderLocal(folderId, toParentId)
 		persistFolders()
 		emit(C.INV_MOVE_FOLDER, { folderId, toParentId })
+	}
+
+	// Duplicate an item into a folder (clipboard COPY→PASTE). The sim mints a fresh ItemID and acks via
+	// BulkUpdateInventory (→ S.INV_BULK_UPDATE), which drops the copy into the target list — so there is
+	// no optimistic add here (we don't own the new ItemID, unlike createFolder). newName omitted = the
+	// sim keeps the source item's name (FS behavior).
+	function copyItem(oldItemId, newFolderId, newName) {
+		if (!oldItemId || !newFolderId) return
+		emit(C.COPY_INV_ITEM, { oldItemId, newFolderId, ...(newName ? { newName } : {}) })
+	}
+
+	/**
+	 * PASTE the clipboard into `targetFolderId`. CUT → MOVE every id (items via moveItem, folders via
+	 * moveFolder) then clear; COPY → DUPLICATE every COPYABLE item via copyItem (folders are skipped —
+	 * folder-copy is deferred, see docs/FEATURE-GAPS.md 2026-06-30). Returns a small summary for the caller.
+	 * The clip object is { mode, ids, sourceFolderId } from useInventoryClipboard.
+	 */
+	function pasteInto(clip, targetFolderId, clearClipboard) {
+		if (!clip?.ids?.length || !targetFolderId) return { moved: 0, copied: 0, skipped: 0 }
+		let moved = 0, copied = 0, skipped = 0
+		if (clip.mode === 'cut') {
+			for (const id of clip.ids) {
+				if (inv.folders.has(id)) { moveFolder(id, targetFolderId); moved++ }
+				else if (inv.findItem(id)) { moveItem(id, targetFolderId); moved++ }
+				else skipped++
+			}
+			if (clearClipboard) clearClipboard()   // CUT clipboard is single-use
+		} else if (clip.mode === 'copy') {
+			for (const id of clip.ids) {
+				if (inv.folders.has(id)) { skipped++; continue }   // folder-copy deferred
+				const found = inv.findItem(id)
+				// Respect perms: only duplicate copyable items (canCopy from the corrected ownerMask).
+				if (found?.item && found.item.canCopy !== false) { copyItem(id, targetFolderId); copied++ }
+				else skipped++
+			}
+			// COPY clipboard is KEPT (FS pastes the same copy repeatedly) — no clear here.
+		}
+		return { moved, copied, skipped }
 	}
 
 	function trashItem(itemId) {
@@ -322,6 +453,86 @@ export function useInventory() {
 		emit(C.INV_DETACH, { itemId })
 	}
 
+	/**
+	 * Give (offer) one or more inventory ITEMS to another agent. Mirrors FS LLGiveInventory:
+	 * one ImprovedInstantMessage (dialog 4, IM_INVENTORY_OFFERED) per item; the server builds the
+	 * bucket = [assetType byte][item UUID] and owns a fresh transaction id. Folder-give is out of scope.
+	 *
+	 * @param itemIds  a single itemId or an array (multi-select)
+	 * @param toAgentId  recipient avatar UUID
+	 * @param toName  recipient display name (for the confirmation toast); optional
+	 */
+	function giveInventory(itemIds, toAgentId, toName) {
+		if (!toAgentId) return
+		const ids = Array.isArray(itemIds) ? itemIds : [itemIds]
+		const recipient = toName || 'recipient'
+		const gave = []
+		let blocked = 0
+		for (const itemId of ids) {
+			if (!itemId) continue
+			const found = inv.findItem(itemId)
+			const it = found?.item
+			if (!it) continue
+			// WHY: respect perms — only offer transferable items (canTransfer from the corrected
+			// ownerMask, W1). canTransfer === false means the grid will reject the give; skip + notify.
+			if (it.canTransfer === false) { blocked++; continue }
+			emit(C.GIVE_INVENTORY, { toAgentId, itemId, assetType: it.assetType, name: it.name })
+			gave.push(it.name)
+		}
+		if (gave.length === 1) {
+			notifyInfo('Inventory given', `Gave ${gave[0]} to ${recipient}`)
+		} else if (gave.length > 1) {
+			notifyInfo('Inventory given', `Gave ${gave.length} items to ${recipient}`)
+		}
+		if (blocked) {
+			notifyInfo('Not transferable', `${blocked} item${blocked === 1 ? '' : 's'} could not be given (no-transfer)`)
+		}
+	}
+
+	/**
+	 * REZ an inventory OBJECT into the world (FS: LLToolDragAndDrop::dropObject → RezObject).
+	 * The server holds no inventory, so we send the full InventoryData row (same fields as
+	 * updatePerms via itemServerFields) plus perm masks + a drop position; the sim rezzes the
+	 * object AT that position and streams it back as an ObjectUpdate the render pipeline shows.
+	 *
+	 * @param itemId    the inventory item to rez
+	 * @param position  optional {x,y,z} SL drop point (e.g. a raycast hit from drag-to-canvas);
+	 *                  omitted → ~2m in front of the avatar at avatar height (rezPositionInFront)
+	 *
+	 * Perms: rez is allowed for copyable OR the object itself. A no-copy object is consumed from
+	 * inventory when rezzed (server defaults removeItem = !copyable) — expected FS behaviour, so we
+	 * still allow it. We do NOT block on transfer/modify.
+	 */
+	function rezObject(itemId, position) {
+		if (!itemId) return
+		const found = inv.findItem(itemId)
+		const it = found?.item
+		if (!it) return
+		// Guard: only OBJECT-type items are rezzable (assetType 6). Anything else is a no-op + toast.
+		if (it.assetType !== ASSET_TYPE_OBJECT) {
+			notifyInfo('Not rezzable', `${it.name || 'This item'} is not an object.`)
+			return
+		}
+		const pos = position || rezPositionInFront(world.avatarPos, ui.cameraYaw)
+		// removeItem = !copyable so the caller/UI can reflect the consume; server also derives this,
+		// but computing it here keeps the two in sync and documents the perms contract at the call site.
+		const removeItem = ((it.ownerMask ?? PERM_COPY) & PERM_COPY) === 0
+		emit(C.REZ_OBJECT, {
+			...itemServerFields(it),
+			itemId,
+			folderId: found.folderId,
+			position: { x: pos.x, y: pos.y, z: pos.z },
+			// Full perm masks so the sim rebuilds a complete InventoryData block + valid CRC.
+			baseMask:      it.baseMask,
+			ownerMask:     it.ownerMask,
+			groupMask:     it.groupMask,
+			everyoneMask:  it.everyoneMask,
+			nextOwnerMask: it.nextOwnerMask,
+			removeItem,
+		})
+		notifyInfo('Rezzing', `Rezzing ${it.name || 'object'}…`)
+	}
+
 	onMounted(() => {
 		if (!registered) {
 			on(S.INV_FOLDER,       onInvFolder)
@@ -340,7 +551,16 @@ export function useInventory() {
 				persistFolders()
 			})
 			// Cap rejected the create — revert the optimistic folder so the tree matches the server.
-			on(S.INV_FOLDER_CREATE_FAILED, d => { if (d?.folderId) inv.removeFolderLocal(d.folderId) })
+			// WHY removeCachedFolder (not persistFolders): removeFolderLocal only drops the folder from the
+			// in-memory Map, and saveCachedFolders UNIONS prev+next so it can NEVER drop a folder from IDB.
+			// The optimistic-create path micro-saved the (dirty) folder to IDB; without a targeted cache-
+			// remove, a hard reload restores the rejected folder from the stale snapshot (applyFolderCache
+			// lets a dirty cached folder win) — resurrecting a folder the grid refused.
+			on(S.INV_FOLDER_CREATE_FAILED, d => {
+				if (!d?.folderId) return
+				inv.removeFolderLocal(d.folderId)
+				if (session.agentId) removeCachedFolder(session.agentId, d.folderId)
+			})
 			registered = true
 		}
 		// WHY: Safety net — if CAPS_READY arrived before this component mounted (edge case on fast
@@ -357,7 +577,8 @@ export function useInventory() {
 
 	return {
 		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder,
-		renameItem, renameFolder, moveItem, moveFolder, trashItem, trashFolder,
-		purgeItem, updatePerms, wearAttachment, detach,
+		openInventoryItem,
+		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
+		purgeItem, updatePerms, wearAttachment, detach, giveInventory, rezObject,
 	}
 }

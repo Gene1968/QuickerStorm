@@ -31,9 +31,11 @@ import {
 	encodeTeleportLandmarkRequest, encodeSetStartLocationRequest,
 	encodeCreateInventoryItem, encodeCreateInventoryFolder, decodeUpdateCreateInventoryItem,
 	encodeAvatarPickerRequest, decodeAvatarPickerReply, decodeChangeUserRights,
-	encodeUpdateInventoryItem, encodeMoveInventoryItem, encodeMoveInventoryFolder,
+	encodeUpdateInventoryItem, encodeMoveInventoryItem, encodeMoveInventoryFolder, encodeCopyInventoryItem,
 	encodeUpdateInventoryFolder, encodeRemoveInventoryItem, encodeRemoveInventoryFolder,
 	encodeRezSingleAttachmentFromInv, encodeDetachAttachmentIntoInv, decodeBulkUpdateInventory,
+	encodeRezObject,
+	uuidToBytes,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
@@ -1360,6 +1362,48 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.REZ_OBJECT) {
+		// Rez an inventory object into the world at a drop point. The server holds no inventory, so the
+		// client sends the full InventoryData row (same fields it sends for INV_UPDATE_PERMS) plus the
+		// drop position. Sim rezzes AT position (BypassRaycast=1, RayEnd=position); the new object then
+		// streams back as an ObjectUpdate. See ../phoenix-firestorm lltooldraganddrop.cpp dropObject.
+		const d = msg.d as {
+			itemId: string; folderId: string; position: { x: number; y: number; z: number }
+			name?: string; description?: string
+			creatorId?: string; ownerId?: string; groupId?: string
+			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
+			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
+			groupOwned?: boolean; rezSelected?: boolean; removeItem?: boolean; rezGroupId?: string
+		}
+		if (!d.itemId || !d.folderId || !d.position) { slog.warn(session.ws, 'RezObject: missing itemId/folderId/position'); return }
+		// WHY default removeItem = !copyable: a no-copy item is consumed on rez (FS remove_from_inventory).
+		// PERM_COPY bit is 0x00008000; if the item's ownerMask lacks copy, remove it from inventory.
+		const PERM_COPY = 0x00008000
+		const copyable = ((d.ownerMask ?? 0x7FFFFFFF) & PERM_COPY) !== 0
+		const removeItem = d.removeItem ?? !copyable
+		const pos: [number, number, number] = [d.position.x, d.position.y, d.position.z]
+		const seq = nextSeq(session)
+		const pkt = encodeRezObject({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			groupId: d.rezGroupId,
+			rayStart: pos, rayEnd: pos,
+			rezSelected: d.rezSelected, removeItem,
+			inventoryData: {
+				itemId: d.itemId, folderId: d.folderId,
+				name: d.name, description: d.description,
+				creatorId: d.creatorId, ownerId: d.ownerId, groupId: d.groupId,
+				baseMask: d.baseMask, ownerMask: d.ownerMask, groupMask: d.groupMask,
+				everyoneMask: d.everyoneMask, nextOwnerMask: d.nextOwnerMask, groupOwned: d.groupOwned,
+				assetType: d.assetType, invType: d.invType, flags: d.flags,
+				saleType: d.saleType, salePrice: d.salePrice, createdAt: d.createdAt,
+			},
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ RezObject ${d.itemId.slice(0, 8)}… @ (${pos.map(n => n.toFixed(1)).join(', ')}) removeItem=${removeItem}`)
+		return
+	}
+
 	if (msg.t === C.INV_RENAME_FOLDER) {
 		const d = msg.d as { folderId: string; name: string; parentId?: string; typeDefault?: number }
 		if (!d.folderId) { slog.warn(session.ws, 'InvRenameFolder: missing folderId'); return }
@@ -1401,6 +1445,22 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ MoveInventoryFolder ${d.folderId.slice(0, 8)}… → parent ${d.toParentId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.COPY_INV_ITEM) {
+		// Duplicate a copyable item into a folder as a NEW item (clipboard COPY→PASTE). The sim mints a
+		// fresh ItemID and acks via BulkUpdateInventory (→ S.INV_BULK_UPDATE), which surfaces the copy.
+		const d = msg.d as { oldItemId: string; newFolderId: string; newName?: string }
+		if (!d.oldItemId || !d.newFolderId) { slog.warn(session.ws, 'CopyInvItem: missing oldItemId/newFolderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeCopyInventoryItem({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			oldItemId: d.oldItemId, newFolderId: d.newFolderId, newName: d.newName,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ CopyInventoryItem ${d.oldItemId.slice(0, 8)}… → folder ${d.newFolderId.slice(0, 8)}…`)
 		return
 	}
 
@@ -1723,6 +1783,72 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ${d.accept ? 'Accept' : 'Decline'}Friendship tx=${d.transactionId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.IM_OFFER_REPLY) {
+		// Reply to an inventory offer (ImprovedInstantMessage). Mirrors LLOfferInfo::sendReceiveResponse
+		// (phoenix-firestorm/indra/newview/llviewermessage.cpp:1726): accept dialog = offer+1,
+		// decline = offer+2; MessageBlock.ID echoes the original offer's transaction id (imId);
+		// accept BinaryBucket = 16-byte destination folder UUID, decline BinaryBucket = empty.
+		const d = msg.d as { imId: string; accept: boolean; fromAgentId: string; offerDialog?: number; destFolderId?: string }
+		if (!d.imId || !d.fromAgentId) return
+		// WHY: offerDialog defaults to 4 (IM_INVENTORY_OFFERED, the agent-give case). +1/+2 gives
+		// 5 (IM_INVENTORY_ACCEPTED)/6 (IM_INVENTORY_DECLINED). Task-offer 9 would yield 10/11.
+		const offerDialog = typeof d.offerDialog === 'number' ? d.offerDialog : 4
+		const replyDialog = offerDialog + (d.accept ? 1 : 2)
+		// WHY: accept carries the destination folder UUID (16 raw bytes) so the sim files the item
+		// there; decline carries an empty bucket so the sim routes the item to Trash.
+		// WHY: decline uses FS's EMPTY_BINARY_BUCKET — a single NUL byte, not a zero-length bucket
+		// (llinstantmessage.cpp EMPTY_BINARY_BUCKET_SIZE=1) — so the sim routes the item to Trash.
+		const bucket = d.accept && d.destFolderId
+			? uuidToBytes(d.destFolderId)
+			: Buffer.from([0])
+		const seq = nextSeq(session)
+		const pkt = encodeImprovedInstantMessage({
+			agentId:       session.agentId,
+			sessionId:     session.sessionId,
+			seq,
+			toAgentId:     d.fromAgentId,
+			fromAgentName: session.agentName || 'User',
+			message:       '',
+			dialog:        replyDialog,
+			messageId:     d.imId,   // echo the offer transaction id
+			binaryBucket:  bucket,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ Inventory offer ${d.accept ? 'accept' : 'decline'} (IM dialog ${replyDialog}) to ${d.fromAgentId.slice(0, 8)}… tx=${d.imId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.GIVE_INVENTORY) {
+		// Offer an inventory ITEM to another agent. Mirrors LLGiveInventory::commitGiveInventoryItem
+		// (phoenix-firestorm/indra/newview/llgiveinventory.cpp:428): pack an ImprovedInstantMessage with
+		// dialog IM_INVENTORY_OFFERED (4), a FRESH transaction id the giver owns (transaction_id.generate()),
+		// Message = the item's name, FromAgentName = the giver's full name, and BinaryBucket =
+		// [S8 assetType][16-byte item UUID] (BUCKET_SIZE = sizeof(U8) + UUID_BYTES). Folder-give is out of scope.
+		const d = msg.d as { toAgentId: string; itemId: string; assetType: number; name?: string }
+		if (!d.toAgentId || !d.itemId) return
+		const IM_INVENTORY_OFFERED = 4
+		// WHY: bucket byte 0 is the asset type, bytes 1..16 are the RAW item UUID — the recipient's viewer
+		// (our decodeImprovedInstantMessage → parseOfferBucket) reads exactly this shape back.
+		const bucket = Buffer.concat([Buffer.from([(d.assetType | 0) & 0xff]), uuidToBytes(d.itemId)])
+		const seq = nextSeq(session)
+		const pkt = encodeImprovedInstantMessage({
+			agentId:       session.agentId,
+			sessionId:     session.sessionId,
+			seq,
+			toAgentId:     d.toAgentId,
+			fromAgentName: session.agentName || 'User',
+			message:       d.name || '',
+			dialog:        IM_INVENTORY_OFFERED,
+			messageId:     crypto.randomUUID(),   // giver owns the transaction id (fresh per offer)
+			binaryBucket:  bucket,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ Give inventory "${d.name || '?'}" (type ${d.assetType | 0}) item=${d.itemId.slice(0, 8)}… to ${d.toAgentId.slice(0, 8)}…`)
 		return
 	}
 

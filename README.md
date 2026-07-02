@@ -4,7 +4,7 @@ A web-based 3D viewer for OpenSimulator and Second Life. Open a browser tab, log
 
 Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 
-## Current state · June 2026
+## Current state · July 2026
 
 **Phases 1 and 2 complete.** Login, movement, terrain, cross-region teleport, 1 500–1 800 prim rendering per region, Map 2D, IM, and avatar/object context menus all ship.
 

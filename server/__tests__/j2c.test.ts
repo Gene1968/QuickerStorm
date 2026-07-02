@@ -53,6 +53,28 @@ describe('j2c', () => {
 		expect(isWebp(image)).toBe(true)
 		expect(webpFourcc(image)).toBe('VP8L')
 	})
+
+	it('always reports the TRUE J2C-header dimensions regardless of the downscale cap', async () => {
+		// A 128×128 fixture is already within the 512 default cap, so srcWidth/srcHeight == width/height.
+		const r = await j2cToImageWithAlpha(fixture)
+		expect(r.srcWidth).toBe(128)
+		expect(r.srcHeight).toBe(128)
+	})
+
+	it('maxDim override downscales (cap<src) vs full-resolution (Infinity keeps src pixels)', async () => {
+		// Cap below source → the emitted WebP is downscaled but srcWidth/srcHeight stay the true dims.
+		const capped = await j2cToImageWithAlpha(fixture, 64)
+		expect(capped.width).toBe(64)
+		expect(capped.height).toBe(64)
+		expect(capped.srcWidth).toBe(128)
+		expect(capped.srcHeight).toBe(128)
+		// Full-res (Infinity) → the preview path: emitted pixels equal the true asset dimensions.
+		const full = await j2cToImageWithAlpha(fixture, Infinity)
+		expect(full.width).toBe(128)
+		expect(full.height).toBe(128)
+		expect(full.srcWidth).toBe(128)
+		expect(full.srcHeight).toBe(128)
+	})
 })
 
 describe('downscalePixels', () => {

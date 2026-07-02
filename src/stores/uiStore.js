@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, shallowRef, watch } from 'vue'
 import { useChatStore } from './chatStore'
 import { computeAutoGeomCacheMb } from '@/lib/geomCache.js'
+import { MAX_TEXTURE_PREVIEWS } from '@/lib/texturePreviewSizing.js'
 
 // WHY: One-shot guard so the Inventory floater auto-opens on the first world load of the
 // page session, but an SPA re-login (which re-mounts WorldView) respects a manual close —
@@ -309,6 +310,11 @@ export const useUiStore = defineStore('ui', () => {
 			closeProfile(key === 'self' ? null : key)
 			return
 		}
+		// WHY: texture-preview ids are 'texture-preview-<key>' (multi-instance, one per texture).
+		if (typeof topId === 'string' && topId.startsWith('texture-preview-')) {
+			closeTexturePreview(topId)
+			return
+		}
 		_FLOATER_CLOSE[topId]?.()
 	}
 
@@ -363,6 +369,32 @@ export const useUiStore = defineStore('ui', () => {
 	function openObjectEdit(localId) { editObjectId.value = localId; showObjectEdit.value = true; editLinked.value = false; closeObjectMenu() }
 	function toggleObjectEdit()      { showObjectEdit.value = !showObjectEdit.value }
 
+	// WHY: Texture-preview floater — MULTI-instance (mirrors FS llpreviewtexture: one window per
+	// texture so the user can compare many side by side). Keyed by the inventory item UUID (or the
+	// asset UUID when opened by asset); re-opening the same key focuses the existing floater instead
+	// of duplicating. Each entry: { id, key, assetId, name }. id = 'texture-preview-<key>'.
+	const texPreviewInstances = ref([])   // [{ id, key, assetId, name }]
+	function texturePreviewId(key) { return `texture-preview-${key}` }
+	function openTexturePreview(assetId, name, key) {
+		if (!assetId) return
+		const k = key ?? assetId          // default key = assetId (opened-by-asset path)
+		const id = texturePreviewId(k)
+		const existing = texPreviewInstances.value.find(t => t.id === id)
+		if (existing) { focusFloater(id); return }
+		// Practical cap — close the oldest if we're at the ceiling (FS lets you open many; we bound heap).
+		if (texPreviewInstances.value.length >= MAX_TEXTURE_PREVIEWS) {
+			const oldest = texPreviewInstances.value[0]
+			console.warn('[TexPreview] cap reached — closing oldest', oldest?.id)
+			closeTexturePreview(oldest.id)
+		}
+		texPreviewInstances.value = [...texPreviewInstances.value, { id, key: k, assetId, name: name || 'Texture' }]
+		focusFloater(id)
+	}
+	function closeTexturePreview(id) {
+		texPreviewInstances.value = texPreviewInstances.value.filter(t => t.id !== id)
+		floaterStack.value = floaterStack.value.filter(f => f !== id)
+	}
+
 	return {
 		mode, showAvatarList, showMinimap, showChat, chatActiveTab, openChatOnTab,
 		showInventory, showMap, showNotifications, showSettings, showDebug,
@@ -397,6 +429,7 @@ export const useUiStore = defineStore('ui', () => {
 		landMenu, openLandMenu, closeLandMenu,
 		pendingWarpPos, requestWarp, clearWarp,
 		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
+		texPreviewInstances, openTexturePreview, closeTexturePreview,
 		editLinked, setEditLinked,
 		gizmoMode, setGizmoMode,
 		teleportStatus,

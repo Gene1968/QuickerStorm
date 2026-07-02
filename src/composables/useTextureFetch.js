@@ -101,9 +101,51 @@ function _wire() {
 	if (_wired) return
 	_wired = true
 	useRealtimeSocket().on(S.ASSET_DATA, _onAssetData)
+	useRealtimeSocket().on(S.ASSET_DATA, _onFullAssetData)   // full-resolution preview path (below)
 	// WHY: populate failedHard from IDB on first use so reloads skip ~63 dead textures immediately,
 	// avoiding wasted grid fetches + event-loop-blocking J2C decodes for known-bad UUIDs.
 	texFailedLoad().then(uuids => { for (const u of uuids) failedHard.add(u) })
+}
+
+// ── Full-resolution texture-preview path (FS llpreviewtexture BOOST_PREVIEW) ────────────────────
+// The world pipeline decodes textures at MAX_TEX_DIM (512) to bound GPU/heap, so a 1024×128 asset is
+// served as 512×64 — the preview floater would then show HALF the true dimensions. FS fetches the
+// image at full resolution for the preview and labels it with the true asset size. This path asks the
+// server for `full:true` (no downscale cap), keeps its OWN small bounded cache so the full-res bytes
+// never bloat the world texture cache, and returns { url, width, height } where w/h are the TRUE dims.
+// Kept fully separate from the world _onAssetData/_wsFetch machinery (which is world-load-tuned and
+// keyed only by uuid); the two are disambiguated by the `full` flag on the S.ASSET_DATA reply.
+const FULL_PREVIEW_TIMEOUT_MS = 30_000
+const MAX_FULL_PREVIEWS       = 12   // bound resident full-res object URLs (matches MAX_TEXTURE_PREVIEWS)
+const fullInflight = new Map()  // uuid → Promise<{ url, width, height } | null>
+const fullUrlCache = new Map()  // uuid → { url, width, height }  (LRU-ish: oldest evicted past cap)
+const fullPending  = new Map()  // uuid → { resolve, timer }  (in-flight WS full-res request)
+
+// S.ASSET_DATA with full===true → resolve the matching full-res preview request. Ignores world-load
+// replies (full falsy) so the two ASSET_DATA listeners never steal each other's messages.
+function _onFullAssetData(d) {
+	if (!d || d.assetType !== 'texture' || !d.full) return
+	const p = fullPending.get(d.uuid)
+	if (!p) return
+	fullPending.delete(d.uuid)
+	if (d.error || !d.dataB64) { p.resolve(null); return }
+	let url = null
+	try {
+		const blob = b64ToBlob(d.dataB64, d.mime || 'image/webp')
+		url = URL.createObjectURL(blob)
+	} catch { p.resolve(null); return }
+	// srcWidth/srcHeight are the TRUE J2C-header dims; the full decode's own output equals them (no cap).
+	p.resolve({ url, width: d.srcWidth || 0, height: d.srcHeight || 0 })
+}
+
+// Evict the oldest full-res preview URL(s) once over the cap (revoke the object URL to free the blob).
+function _trimFullPreviews() {
+	while (fullUrlCache.size > MAX_FULL_PREVIEWS) {
+		const oldest = fullUrlCache.keys().next().value
+		const entry = fullUrlCache.get(oldest)
+		if (entry?.url) URL.revokeObjectURL(entry.url)
+		fullUrlCache.delete(oldest)
+	}
 }
 
 // Free an in-flight slot and start the next queued fetch (if any).
@@ -134,6 +176,7 @@ export function setTextureRenderer(r) { _renderer = r }
 // S.ASSET_DATA → resolve the pending WS request with a WebP Blob (or null on error/missing).
 function _onAssetData(d) {
 	if (!d || d.assetType !== 'texture') return
+	if (d.full) return   // full-resolution preview replies belong to _onFullAssetData, not the world path
 	const p = pending.get(d.uuid)
 	if (p) pending.delete(d.uuid)
 	if (d.error || !d.dataB64) { stats.failed++; failedHard.add(d.uuid); texFailedMark(d.uuid); p?.resolve(null); return }
@@ -405,8 +448,15 @@ export function getTexture(uuid, xform = null, priority = Infinity) {
 }
 
 /** Resolve a texture UUID to an object URL for an <img> preview. Null on missing/failed.
- *  Cached + reused per uuid; revoked by pruneTexturesLRU / clearTextureCache. */
-export function getTextureUrl(uuid) {
+ *  Cached + reused per uuid; revoked by pruneTexturesLRU / clearTextureCache.
+ *
+ *  With `{ full: true }` this returns a FULL-RESOLUTION decode for the texture-preview floater:
+ *  `{ url, width, height }` where width/height are the TRUE asset dimensions (from the J2C header),
+ *  NOT the world-load 512-downscaled size. Kept in a separate bounded cache so full-res bytes never
+ *  bloat the world texture cache. Resolves null on missing/failed. Without `full`, returns the object
+ *  URL string reusing the shared world blob (unchanged behavior). */
+export function getTextureUrl(uuid, opts = null) {
+	if (opts?.full) return getFullTexturePreview(uuid)
 	const existing = objUrlCache.get(uuid)
 	if (existing) return Promise.resolve(existing)
 	return getBlob(uuid).then(blob => {
@@ -415,6 +465,38 @@ export function getTextureUrl(uuid) {
 		objUrlCache.set(uuid, u)
 		return u
 	})
+}
+
+/** Fetch a texture at FULL resolution for the preview floater. Resolves { url, width, height } (true
+ *  asset dims) or null. Deduped per uuid; result cached + bounded (MAX_FULL_PREVIEWS). */
+export function getFullTexturePreview(uuid) {
+	if (!uuid || uuid === ZERO_UUID) return Promise.resolve(null)
+	const cached = fullUrlCache.get(uuid)
+	if (cached) return Promise.resolve(cached)
+	if (fullInflight.has(uuid)) return fullInflight.get(uuid)
+
+	_wire()
+	const p = new Promise((resolve) => {
+		const { emit } = useRealtimeSocket()
+		let settled = false
+		const settle = (val) => {
+			if (settled) return
+			settled = true
+			clearTimeout(timer)
+			fullPending.delete(uuid)
+			resolve(val)
+		}
+		const timer = setTimeout(() => settle(null), FULL_PREVIEW_TIMEOUT_MS)
+		fullPending.set(uuid, { resolve: settle, timer })
+		emit(C.ASSET_FETCH, { assetType: 'texture', uuid, full: true })
+	}).then(result => {
+		fullInflight.delete(uuid)
+		if (result) { fullUrlCache.set(uuid, result); _trimFullPreviews() }
+		return result
+	})
+
+	fullInflight.set(uuid, p)
+	return p
 }
 
 // Drop up to `maxPerCall` least-recently-applied textures (base + their UV clones) from the in-memory
@@ -491,6 +573,8 @@ export function clearTextureCache() {
 	xformCache.clear()
 	for (const u of objUrlCache.values()) URL.revokeObjectURL(u)
 	objUrlCache.clear()
+	for (const e of fullUrlCache.values()) if (e?.url) URL.revokeObjectURL(e.url)
+	fullUrlCache.clear()
 	blobCache.clear()
 	alphaCache.clear()
 	failedHard.clear()
@@ -498,5 +582,5 @@ export function clearTextureCache() {
 }
 
 export function useTextureFetch() {
-	return { getTexture, getTextureUrl, clearTextureCache }
+	return { getTexture, getTextureUrl, getFullTexturePreview, clearTextureCache }
 }

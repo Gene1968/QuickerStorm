@@ -96,11 +96,14 @@ function spawnPool(): void {
  * Decode a J2C codestream to WebP via a worker thread (or inline if the pool is degraded). Rejects
  * with the same Error the inline decode would throw (e.g. j2c_decode_incomplete) so the caller's
  * existing catch can send {error} to the client.
+ *
+ * `maxDim` overrides the world-load downscale cap; the texture-preview path passes Infinity for a
+ * full-resolution transcode. Omitted → the decoder's default MAX_TEX_DIM (world-load behavior).
  */
-export async function decodeInPool(bytes: Buffer): Promise<DecodeResult> {
+export async function decodeInPool(bytes: Buffer, maxDim?: number): Promise<DecodeResult> {
 	if (!workers && !degraded) spawnPool()
 	if (degraded || !workers || workers.length === 0) {
-		return j2cToImageWithAlpha(bytes)
+		return j2cToImageWithAlpha(bytes, maxDim)
 	}
 
 	const idx = pickWorkerIndex(workers.map(w => w.inflight.size))
@@ -113,7 +116,9 @@ export async function decodeInPool(bytes: Buffer): Promise<DecodeResult> {
 	return new Promise<DecodeResult>((resolve, reject) => {
 		pw.inflight.set(id, { resolve, reject })
 		try {
-			pw.worker.postMessage({ id, buf }, [buf])
+			// postMessage uses structured clone (not JSON), which PRESERVES Infinity, so maxDim=Infinity
+			// reaches j2cWorker unchanged (no null mapping); the worker's downscale loop simply never runs.
+			pw.worker.postMessage({ id, buf, maxDim }, [buf])
 		} catch (e) {
 			pw.inflight.delete(id)
 			reject(e as Error)
