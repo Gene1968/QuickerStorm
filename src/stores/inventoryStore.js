@@ -286,6 +286,25 @@ export const useInventoryStore = defineStore('inventory', () => {
 		return found || fallback
 	}
 
+	// True if the folder/item `id` already lives inside the Trash system folder (type 14) — Trash
+	// is an ancestor, or (for a folder) is itself. WHY: FS greys out Delete for rows already in the
+	// Trash, so pressing Del there is a no-op; we use this to skip a redundant "move to Trash" that
+	// would otherwise fire a pointless MoveInventoryItem/Folder at the sim. Cycle-safe walk.
+	function isInTrash(id) {
+		if (!id) return false
+		const trashId = findSystemFolder(14)
+		if (!trashId) return false
+		// Start from the containing folder for an item, or the folder itself for a folder.
+		let cur = folders.value.has(id) ? id : (findItem(id)?.folderId || '')
+		const seen = new Set()
+		while (cur && !seen.has(cur)) {
+			if (cur === trashId) return true
+			seen.add(cur)
+			cur = folders.value.get(cur)?.parentId || ''
+		}
+		return false
+	}
+
 	function select(id) { selectedId.value = id }
 
 	// ── Sort (folders stay system-then-name; items sort by the chosen mode) ──
@@ -857,7 +876,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		selectedId, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		markFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
-		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder,
+		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder, isInTrash,
 		select, descendantCounts,
 		setSort, setSystemFoldersToTop, toggleSystemFoldersToTop, sortItems, openContextMenu, closeContextMenu, resolveTarget, showProperties, closePropertiesFor, closeProperties, addToFavorites,
 		setItems, folderCount, itemCount, clear, findItem,

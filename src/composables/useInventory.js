@@ -417,6 +417,7 @@ export function useInventory() {
 
 	function trashItem(itemId) {
 		if (!itemId) return
+		if (inv.isInTrash(itemId)) return   // already in Trash — no-op (FS greys out Delete there)
 		const trashFolderId = inv.findSystemFolder(14)
 		inv.moveItemLocal(itemId, trashFolderId)
 		emit(C.INV_TRASH_ITEM, { itemId, trashFolderId })
@@ -424,6 +425,7 @@ export function useInventory() {
 
 	function trashFolder(folderId) {
 		if (!folderId) return
+		if (inv.isInTrash(folderId)) return   // already in Trash (or is Trash itself) — no-op
 		const trashFolderId = inv.findSystemFolder(14)
 		inv.moveFolderLocal(folderId, trashFolderId)
 		persistFolders()

@@ -62,6 +62,11 @@ Inventory is close to done. Small, mostly-independent gaps:
 - **Single-folder (flat) non-tree view** — a list mode showing one folder's contents (FS list/gallery vs tree).
 - **Search "viz" EyeIcon dropdown** — filter-visibility dropdown (which columns/types show) next to search.
 - **Create folder from selected** (context-menu item exists disabled — wrap selection into a new folder).
+- **Trash folder gets its own context menu** — right-clicking the Trash system folder should show a small
+  FS-style menu (not the generic folder menu) with at least **Empty Trash** (PurgeInventoryDescendents on
+  Trash → confirm "Empty the Trash?"; purge all contents locally + emit). FS's Trash menu is a short set —
+  Empty Trash, Expand/Collapse, Properties — no Delete/Cut/Rename (system folder). Pairs with the
+  already-shipped `isInTrash` no-op-delete guard (2026-07-02).
 - **Worn item → menu says "Detach", not "Wear/attach"** (reflect worn state on attachments).
 - **Double-click a clothing/bodypart/object → WEAR it**, not the "object preview isn't supported yet" toast
   (openInventoryItem default branch should wear wearables/attach objects). ⚠️ depends on wear pipeline below.
