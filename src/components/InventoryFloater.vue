@@ -592,7 +592,7 @@ onUnmounted(() => {
 				/>
 			</div>
 			<button v-if="true" class="ui-btn" title="Switch between views (TO-DO)"><ListIcon class="w-3.5 h-3.5" /></button>
-			<button v-else class="ui-btn" title="Switch between views (TO-DO)"><TableOfContentsIcon class="w-3.5 h-3.5" /></button>
+			<button v-else class="ui-btn" title="Switch between views"><TableOfContentsIcon class="w-3.5 h-3.5" /></button>
 			<div
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`

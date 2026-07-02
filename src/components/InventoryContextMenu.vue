@@ -248,13 +248,13 @@ const items = computed(() => {
 			? { label: 'Wear / attach',					action: () => wearAttach(o.itemId) }
 			: { label: 'Wear / attach',	disabled: true,
 			title: isWearable ? 'needs appearance bake (planned)' : undefined },
+			{ label: 'else Detach from yourself',
+			disabled: !isObject,
+			action: isObject ? () => doDetach(o.itemId) : undefined },
 			// Rez in world: object items only (rezObject re-guards). Rezzes ~2m in front of the avatar.
 			isObject
 			? { label: 'Rez in world',						action: () => rezInWorld(o.itemId) }
 			: { label: 'Rez in world',	disabled: true,	title: 'only objects can be rezzed' },
-			{ label: 'Detach',
-			disabled: !isObject,
-			action: isObject ? () => doDetach(o.itemId) : undefined },
 			{ sep: true },
 			{ label: 'Find original',		disabled: true },
 		]

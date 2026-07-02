@@ -53,6 +53,23 @@ Full FS-parity pass (5 waves + a dedicated data-loss fix).
   FS filter subsets (permission/date/links filters, Empty Trash) · bad/missing-asset resilience (100+ blob 404s;
   mark dead assets, retry/log noise) · "Inspect textures" floater.
 
+### Inventory — remaining polish (2026-07-02, from Gene) ⚡ mostly batch-ready
+Inventory is close to done. Small, mostly-independent gaps:
+- **Take** / **Take copy** (object → inventory; DeRezObject Destination=Take(4)/TakeCopy(1) — mirror the delete
+  path, now that DeRezObject is wired server-side). Both context-menu (object + inventory) + MenuBar surfaces.
+- **Clearing search keeps the selected item selected** (currently deselects on filter-clear).
+- **Del key deletes → then selects the next item** in the folder (keyboard-delete UX).
+- **Single-folder (flat) non-tree view** — a list mode showing one folder's contents (FS list/gallery vs tree).
+- **Search "viz" EyeIcon dropdown** — filter-visibility dropdown (which columns/types show) next to search.
+- **Create folder from selected** (context-menu item exists disabled — wrap selection into a new folder).
+- **Worn item → menu says "Detach", not "Wear/attach"** (reflect worn state on attachments).
+- **Double-click a clothing/bodypart/object → WEAR it**, not the "object preview isn't supported yet" toast
+  (openInventoryItem default branch should wear wearables/attach objects). ⚠️ depends on wear pipeline below.
+- 🧠 **Postponed — need the WEAR/appearance pipeline (brainstorm-first Appearance):** wear · folder-wear ·
+  folder "replace current outfit" · **Worn** tab · attachment points · LINK inventory type · Find-all-links ·
+  Replace-links · **wearing an item doesn't update the Appearance floater**. (All gated on AgentSetAppearance
+  bake — see 🧠 Appearance / baked textures below.)
+
 ### Object Build & Edit Floater — FEATURE-GAPS L170–186
 - edit name & description · numeric size/pos/rot input fields (fields editable → modify selected) · Select-Face radio
 - texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
@@ -192,6 +209,19 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## Recently shipped (don't re-pick)
+- **2026-07-02 (committed):** Inventory-share + object-delete + ghost-reconcile session — (1) **perms NM/NC/NT**
+  fixed: OpenSim EQ BulkUpdate sends masks as base64 `<binary>`, decoded to 0 → received/moved items showed
+  no-perms; now base64-decoded (`fix(inv): decode base64 perm masks in EQ ack`). (2) **drag rez + give** worked:
+  drag source `effectAllowed='move'` vs drop-zone `dropEffect='copy'` spec-blocked the drop → `copyMove`.
+  (3) **share notifications** FS-parity: "Items successfully shared." on send + "[recipient] received your
+  inventory offer." on OpenSim dialog-5 ack (ack carries giver's name → recipient resolved from give record).
+  (4) **folder-share** shipped: multi-entry bucket `[AT_FOLDER][folderUUID]+[assetType][itemUUID]` per direct
+  item; OpenSim copies subfolders server-side. (5) **rez sound** (`rezz.mp3`). (6) **object delete** fixed:
+  OpenSim ignores `ObjectDelete` (Low 89) → switched to `DeRezObject` (Low 291, Destination=Delete→Trash) +
+  wired MenuBar delete (MenuDropdownItem `disabled` now accepts a function). (7) **duplicate IM/offer toasts**
+  fixed: socket `on(type,cb,key)` keyed-dedup stops HMR/remount handler stacking. (8) **ghost objects after
+  delete** SHIPPED (built the approved 2026-06-27 stale-scene design — LIVE-VERIFIED 151 ghosts culled,
+  permanent). See [[ghost-reconcile-shipped]], [[inventory-share-perms-fixes-2026-07-02]].
 - **2026-07-01 (follow-up):** texture-preview KEY fix — `openTexturePreview(assetId,name,desc,key)`; the desc arg
   had shifted into the key slot so different textures with same/empty desc collided → "focus existing" instead of
   a new floater (Gene's report). Also wired the context-menu **Open** → open-by-type dispatch (was disabled).
