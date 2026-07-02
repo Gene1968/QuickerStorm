@@ -240,7 +240,10 @@ function onDragStartItem(e, it) {
 		kind = dragKindFor(ids)
 	}
 	inv.setDrag(ids, kind)
-	e.dataTransfer.effectAllowed = 'move'
+	// WHY 'copyMove' not 'move': the rez (world) + give (profile/IM) drop zones request dropEffect='copy';
+	// per the HTML5 DnD spec a dropEffect outside effectAllowed is rejected and the drop is SUPPRESSED, so
+	// effectAllowed='move' silently blocked every rez/give drop. 'copyMove' permits both move and copy.
+	e.dataTransfer.effectAllowed = 'copyMove'
 	try { e.dataTransfer.setData('text/plain', it.itemId) } catch { /* some browsers restrict */ }
 }
 
@@ -265,7 +268,8 @@ function onDragStartFolder(e) {
 		kind = dragKindFor(ids)
 	}
 	inv.setDrag(ids, kind)
-	e.dataTransfer.effectAllowed = 'move'
+	// Match the item drag path: 'copyMove' so a copy-effect drop zone isn't spec-rejected.
+	e.dataTransfer.effectAllowed = 'copyMove'
 	try { e.dataTransfer.setData('text/plain', props.folderId) } catch { /* some browsers restrict */ }
 }
 

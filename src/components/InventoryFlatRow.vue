@@ -128,7 +128,12 @@ function onDragStart(e) {
 		kind = dragKindFor(ids)
 	}
 	inv.setDrag(ids, kind)
-	e.dataTransfer.effectAllowed = 'move'
+	// WHY 'copyMove' not 'move': folder-move drop zones request dropEffect='move', but the rez (world
+	// canvas) and give (profile/IM) zones request dropEffect='copy'. Per the HTML5 DnD spec, a target
+	// whose dropEffect isn't within effectAllowed is rejected — the browser forces dropEffect=none and
+	// SUPPRESSES the drop entirely. effectAllowed='move' therefore silently blocked every rez/give drop
+	// (drag-verified: dragover fired + preventDefault ran, but drop never fired). 'copyMove' permits both.
+	e.dataTransfer.effectAllowed = 'copyMove'
 	try { e.dataTransfer.setData('text/plain', it.value.itemId) } catch { /* some browsers restrict */ }
 }
 
