@@ -59,6 +59,7 @@ export const C = {
 	FRIEND_RESPOND:   'friend_respond',   // { transactionId, accept:boolean, folderId? } — Accept(297)/Decline(298)Friendship
 	IM_OFFER_REPLY:   'im_offer_reply',   // { imId, accept:boolean, fromAgentId, offerDialog, destFolderId? } — reply to inventory offer via ImprovedInstantMessage (accept=offer+1, decline=offer+2; accept bucket=destFolderId UUID, decline bucket empty)
 	GIVE_INVENTORY:   'give_inventory',   // { toAgentId, itemId, assetType, name } — offer an inventory ITEM to another agent via ImprovedInstantMessage dialog 4 (IM_INVENTORY_OFFERED); fresh messageId (giver owns the tx), bucket=[assetType byte]+item UUID (LLGiveInventory::commitGiveInventoryItem)
+	GIVE_INVENTORY_FOLDER: 'give_inventory_folder', // { toAgentId, folderId, name, items:[{itemId, assetType}] } — offer an inventory FOLDER via ImprovedInstantMessage dialog 4; bucket=[AT_FOLDER(8)]+folder UUID then [assetType]+itemUUID per DIRECT item (OpenSim copies subfolders server-side; top-folder items must be listed — LLGiveInventory::commitGiveInventoryCategory)
 	FRIEND_REMOVE:    'friend_remove',    // { agentId } — TerminateFriendship (Low 300)
 	FRIEND_RIGHTS:    'friend_rights',    // { agentId, rights:number } — GrantUserRights (Low 320)
 	NAME_REQ:         'name_req',         // { ids:string[] } — UUIDNameRequest (Low 235) → resolve avatar UUIDs to names

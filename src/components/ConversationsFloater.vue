@@ -130,13 +130,13 @@ const imMapEnabled = computed(() => {
 })
 // ── Give inventory to the active IM recipient ─────────────────────────────
 const invStore = useInventoryStore()
-const { giveInventory } = useInventory()
+const { shareToAgent } = useInventory()
 const imDropActive = ref(false)
-// WHY: only item drags are transferable this pass (folder-give is a followup). dataTransfer.getData
-// is unreadable during dragover, so read inventoryStore.dragPayload set on dragstart.
-function imDragIsItem() { return invStore.dragPayload?.kind === 'item' && invStore.dragPayload.ids?.length > 0 }
+// WHY: accept ANY inventory drag (items, folders, or mixed) — shareToAgent routes each id to the right
+// give path. dataTransfer.getData is unreadable during dragover, so read inventoryStore.dragPayload.
+function imDragGivable() { const p = invStore.dragPayload; return !!p && p.ids?.length > 0 }
 function onImGiveDragOver(e) {
-	if (!activeConv.value || !imDragIsItem()) return
+	if (!activeConv.value || !imDragGivable()) return
 	e.preventDefault()
 	e.dataTransfer.dropEffect = 'copy'
 	imDropActive.value = true
@@ -145,9 +145,9 @@ function onImGiveDragLeave() { imDropActive.value = false }
 function onImGiveDrop(e) {
 	imDropActive.value = false
 	const c = activeConv.value
-	if (!c || !imDragIsItem()) return
+	if (!c || !imDragGivable()) return
 	e.preventDefault()
-	giveInventory(invStore.dragPayload.ids, c.agentId, c.agentName)
+	shareToAgent(invStore.dragPayload.ids, c.agentId, c.agentName)
 	invStore.clearDrag()
 }
 // Gift button: give the currently-selected inventory item to this conversation's agent.

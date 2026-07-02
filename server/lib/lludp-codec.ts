@@ -301,6 +301,29 @@ export function encodeAgentUpdate(p: AgentUpdateParams): Buffer {
   }, { seq: p.seq, reliable: false })
 }
 
+// AssetType.Folder / LLAssetType::AT_CATEGORY — bucket byte 0 for a folder (category) inventory offer.
+export const AT_FOLDER = 8
+
+/**
+ * Build the BinaryBucket for a FOLDER inventory offer (LLGiveInventory::commitGiveInventoryCategory).
+ * Layout: [AT_FOLDER][folder UUID] then, per DIRECT item of the folder, [item assetType][item UUID].
+ *
+ * WHY only the folder + its direct items (not the whole subtree): OpenSim's InventoryTransferModule
+ * (Scene.Inventory.cs GiveInventoryFolder) copies ALL subfolders and their contents SERVER-SIDE via
+ * GetFolderContent recursion — those never need to appear in the bucket. But the TOP folder's direct
+ * items are gated on the bucket's id map (`ids.Remove(item.ID)`), so any direct item NOT listed is
+ * silently dropped. Listing the direct items is therefore both necessary and sufficient on OpenSim.
+ * Each entry is 17 bytes; total = 17 * (1 + items.length), matching FS's (sizeof(U8)+UUID_BYTES) stride.
+ */
+export function buildGiveFolderBucket(folderId: string, items: { itemId: string; assetType: number }[] = []): Buffer {
+  const parts: Buffer[] = [Buffer.concat([Buffer.from([AT_FOLDER]), uuidToBytes(folderId)])]
+  for (const it of items) {
+    if (!it?.itemId) continue
+    parts.push(Buffer.concat([Buffer.from([(it.assetType | 0) & 0xff]), uuidToBytes(it.itemId)]))
+  }
+  return Buffer.concat(parts)
+}
+
 // ── ImprovedInstantMessage (Low #254) ────────────────────────────────────
 // Per phoenix-firestorm message_template.msg: NotTrusted Zerocoded. AgentData carries
 // AgentID + SessionID; MessageBlock carries FromGroup, ToAgentID, ParentEstateID, RegionID,

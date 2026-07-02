@@ -25,7 +25,7 @@ import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
 const ui   = useUiStore()
-const { createFolder, trashItem, trashFolder, wearAttachment, detach, pasteInto, giveInventory, rezObject, openInventoryItem } = useInventory()
+const { createFolder, trashItem, trashFolder, wearAttachment, detach, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 const im = useInstantMessage()
 const menu = computed(() => inv.contextMenu)
@@ -157,12 +157,13 @@ const activeIm = computed(() => {
 	if (!id) return null
 	return im.conversations.value.get(id) || { agentId: id, agentName: id }
 })
-const canGiveToIm = computed(() => !!activeIm.value && itemTargets.value.length > 0)
+// Give the whole selection (items AND/OR folders) to the active IM recipient — shareToAgent routes each.
+const canGiveToIm = computed(() => !!activeIm.value && selectionIds().length > 0)
 function giveToIm() {
 	const c = activeIm.value
 	if (!c) { inv.closeContextMenu(); return }
-	const ids = itemTargets.value.map(t => t.obj?.itemId).filter(Boolean)
-	if (ids.length) giveInventory(ids, c.agentId, c.agentName)
+	const ids = selectionIds()
+	if (ids.length) shareToAgent(ids, c.agentId, c.agentName)
 	inv.closeContextMenu()
 }
 // FS: "Open" = the double-click open-by-type dispatch (texture → preview floater, etc.).
@@ -266,6 +267,10 @@ const items = computed(() => {
 		{ label: 'Properties…',							action: properties },
 		{ sep: true },
 		{ label: 'Share',				disabled: true },
+		// "Give to <IM recipient>" — folder-give routes the folder (+ its direct items) to that agent.
+		...(canGiveToIm.value
+			? [{ label: `Give to ${activeIm.value.agentName}`, action: giveToIm }]
+			: [{ label: 'Give to…', disabled: true, title: 'open an IM conversation to give to that resident' }]),
 		{ label: 'New folder',								action: newFolder },
 		{ label: 'New script',			disabled: true },
 		{ label: 'New notecard',		disabled: true },

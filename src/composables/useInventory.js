@@ -492,6 +492,55 @@ export function useInventory() {
 		}
 	}
 
+	// Ensure a folder's DIRECT contents are loaded before a folder-give. Resolves immediately if the
+	// folder is already fetched; otherwise kicks a fetch and polls until it lands (or times out). WHY:
+	// the offer bucket must list the top folder's direct items (OpenSim gates them), so we can't build
+	// it until folderItems(folderId) is authoritative. Subfolders are copied server-side, so a deep
+	// recursive walk is NOT needed — only the one top folder.
+	function ensureFolderFetched(folderId, timeoutMs = 4000) {
+		return new Promise((resolve) => {
+			if (inv.isFetched(folderId)) { resolve(true); return }
+			fetchFolder(folderId)
+			const t0 = performance.now()
+			const tick = () => {
+				if (inv.isFetched(folderId)) { resolve(true); return }
+				if (performance.now() - t0 > timeoutMs) { resolve(false); return }
+				setTimeout(tick, 120)
+			}
+			setTimeout(tick, 120)
+		})
+	}
+
+	/**
+	 * Give (offer) an inventory FOLDER to another agent. Mirrors FS LLGiveInventory::commitGiveInventoryCategory:
+	 * one ImprovedInstantMessage (dialog 4) whose bucket is [AT_FOLDER][folderUUID] + [assetType][itemUUID]
+	 * per DIRECT item. OpenSim copies subfolders + their contents server-side; the top folder's direct items
+	 * must be listed or the sim drops them — so we ensure the folder is fetched, then send its direct items.
+	 */
+	async function giveInventoryFolder(folderId, toAgentId, toName) {
+		if (!folderId || !toAgentId) return
+		const folder = inv.folders.get(folderId)
+		if (!folder) return
+		// Remember recipient so the dialog-5 "received" ACK (carries giver's name) resolves the right name.
+		inv.noteGiveRecipient(toAgentId, toName || 'recipient')
+		await ensureFolderFetched(folderId)
+		const items = inv.folderItems(folderId).map(it => ({ itemId: it.itemId, assetType: it.assetType }))
+		emit(C.GIVE_INVENTORY_FOLDER, { toAgentId, folderId, name: folder.name, items })
+		notifyInfo('Inventory', 'Items successfully shared.')
+	}
+
+	/**
+	 * Share a drag/selection (items and/or folders) to an agent — the single entry point drop zones use.
+	 * Routes item ids → giveInventory (perm-gated, batched toast) and folder ids → giveInventoryFolder.
+	 */
+	function shareToAgent(ids, toAgentId, toName) {
+		const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean)
+		const itemIds   = list.filter(id => !inv.folders.has(id))
+		const folderIds = list.filter(id =>  inv.folders.has(id))
+		if (itemIds.length) giveInventory(itemIds, toAgentId, toName)
+		for (const fid of folderIds) giveInventoryFolder(fid, toAgentId, toName)
+	}
+
 	/**
 	 * REZ an inventory OBJECT into the world (FS: LLToolDragAndDrop::dropObject → RezObject).
 	 * The server holds no inventory, so we send the full InventoryData row (same fields as
@@ -582,6 +631,6 @@ export function useInventory() {
 		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder,
 		openInventoryItem,
 		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
-		purgeItem, updatePerms, wearAttachment, detach, giveInventory, rezObject,
+		purgeItem, updatePerms, wearAttachment, detach, giveInventory, giveInventoryFolder, shareToAgent, rezObject,
 	}
 }

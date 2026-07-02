@@ -33,16 +33,16 @@ const social   = useGridSocialStore()
 const { requestProfile, requestNames, offerFriendship, removeFriend } = useSocial()
 const im       = useInstantMessage()
 const invStore = useInventoryStore()
-const { giveInventory } = useInventory()
+const { shareToAgent } = useInventory()
 
 // Drop-zone state for the "give inventory" target (other-user profiles only).
 const dropActive = ref(false)
-// WHY: only item drags are transferable this pass (folder-give is a followup) — reject folders so
-// the zone doesn't falsely accept them. dataTransfer.getData is unreadable during dragover, so read
-// the shared inventoryStore.dragPayload set on dragstart.
-function invDragIsItem() { return invStore.dragPayload?.kind === 'item' && invStore.dragPayload.ids?.length > 0 }
+// WHY: accept ANY inventory drag (items, folders, or a mixed selection) — shareToAgent routes items
+// and folders to the right give path. dataTransfer.getData is unreadable during dragover, so read the
+// shared inventoryStore.dragPayload set on dragstart.
+function invDragGivable() { const p = invStore.dragPayload; return !!p && p.ids?.length > 0 }
 function onGiveDragOver(e) {
-	if (isSelf.value || !invDragIsItem()) return
+	if (isSelf.value || !invDragGivable()) return
 	e.preventDefault()
 	e.dataTransfer.dropEffect = 'copy'
 	dropActive.value = true
@@ -50,11 +50,11 @@ function onGiveDragOver(e) {
 function onGiveDragLeave() { dropActive.value = false }
 function onGiveDrop(e) {
 	dropActive.value = false
-	if (isSelf.value || !invDragIsItem()) return
+	if (isSelf.value || !invDragGivable()) return
 	e.preventDefault()
 	const toId = props.targetId
 	if (!toId) return
-	giveInventory(invStore.dragPayload.ids, toId, displayName.value)
+	shareToAgent(invStore.dragPayload.ids, toId, displayName.value)
 	invStore.clearDrag()
 }
 

@@ -35,6 +35,7 @@ import {
 	encodeUpdateInventoryFolder, encodeRemoveInventoryItem, encodeRemoveInventoryFolder,
 	encodeRezSingleAttachmentFromInv, encodeDetachAttachmentIntoInv, decodeBulkUpdateInventory,
 	encodeRezObject,
+	buildGiveFolderBucket,
 	uuidToBytes,
 } from '../lib/lludp-codec'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
@@ -1849,6 +1850,33 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ Give inventory "${d.name || '?'}" (type ${d.assetType | 0}) item=${d.itemId.slice(0, 8)}… to ${d.toAgentId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.GIVE_INVENTORY_FOLDER) {
+		// Offer an inventory FOLDER to another agent (LLGiveInventory::commitGiveInventoryCategory).
+		// Same ImprovedInstantMessage dialog 4 as an item offer; only the bucket shape differs
+		// ([AT_FOLDER][folderUUID] + [assetType][itemUUID] per direct item — buildGiveFolderBucket).
+		// OpenSim copies the subfolders + their contents server-side; the direct items must be listed.
+		const d = msg.d as { toAgentId: string; folderId: string; name?: string; items?: { itemId: string; assetType: number }[] }
+		if (!d.toAgentId || !d.folderId) return
+		const IM_INVENTORY_OFFERED = 4
+		const bucket = buildGiveFolderBucket(d.folderId, d.items || [])
+		const seq = nextSeq(session)
+		const pkt = encodeImprovedInstantMessage({
+			agentId:       session.agentId,
+			sessionId:     session.sessionId,
+			seq,
+			toAgentId:     d.toAgentId,
+			fromAgentName: session.agentName || 'User',
+			message:       d.name || '',
+			dialog:        IM_INVENTORY_OFFERED,
+			messageId:     crypto.randomUUID(),
+			binaryBucket:  bucket,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ Give inventory FOLDER "${d.name || '?'}" folder=${d.folderId.slice(0, 8)}… (${(d.items || []).length} direct item(s)) to ${d.toAgentId.slice(0, 8)}…`)
 		return
 	}
 

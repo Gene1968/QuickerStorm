@@ -183,7 +183,7 @@ export function useInstantMessage() {
 			// fromAgentId = the recipient but fromAgentName = the GIVER's name (verified 2026-07-02, an
 			// OpenSim quirk), so resolve the recipient's real name from our own give record first.
 			const rid = d.fromAgentId
-			const name = inventory.giveRecipientName(rid) || conversations.value.get(rid)?.name || d.fromAgentName || (rid || '').slice(0, 8)
+			const name = inventory.giveRecipientName(rid) || conversations.value.get(rid)?.agentName || d.fromAgentName || (rid || '').slice(0, 8)
 			const verb = d.dialog === IM_INVENTORY_ACCEPTED ? 'received' : 'declined'
 			notif.notify({ tab: 'system', title: `${name} ${verb} your inventory offer.` })
 			return
