@@ -2729,7 +2729,19 @@ export function decodeBulkUpdateInventoryFromLLSD(llsdBody: unknown): BulkUpdate
   const str = (v: unknown): string => (v == null ? '' : String(v))
   const num = (v: unknown): number => {
     if (typeof v === 'number') return v
-    const n = parseFloat(String(v)); return Number.isNaN(n) ? 0 : n
+    if (typeof v === 'string') {
+      // Plain LLSD <integer>/<real> → numeric string.
+      if (/^[-+]?\d+(\.\d+)?$/.test(v.trim())) { const n = parseFloat(v); return Number.isNaN(n) ? 0 : n }
+      // LLSD <binary> leaf: parseLLSD keeps binary as a base64 string. OpenSim's EventQueue
+      // SendBulkUpdateInventory serializes the U32 perm masks (and some numeric fields) as <binary>,
+      // big-endian (network order). parseFloat can't read that → the masks silently decoded to 0,
+      // making received/moved items show NM/NC/NT and move acks clobber good masks. Decode big-endian.
+      try {
+        const b = Buffer.from(v, 'base64')
+        if (b.length >= 1 && b.length <= 6) return b.readUIntBE(0, b.length)
+      } catch { /* not base64 → fall through to 0 */ }
+    }
+    return 0
   }
 
   const folders: BulkInventoryFolder[] = asArray(body.FolderData).map(f => ({

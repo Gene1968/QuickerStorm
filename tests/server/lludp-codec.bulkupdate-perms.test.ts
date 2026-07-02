@@ -120,6 +120,39 @@ describe('decodeUpdateCreateInventoryItem (Low 267) — single item, all perm ma
 	})
 })
 
+// Big-endian 4-byte base64 — how parseLLSD surfaces an LLSD <binary> leaf (kept as a base64 string).
+// OpenSim's EventQueue SendBulkUpdateInventory serializes the U32 perm masks as <binary>, so this is
+// the shape the EQ handler actually feeds decodeBulkUpdateInventoryFromLLSD in production.
+const b64be = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0, 0); return b.toString('base64') }
+
+describe('decodeBulkUpdateInventoryFromLLSD — masks arriving as LLSD <binary> (base64)', () => {
+	it('decodes big-endian base64 binary mask fields (OpenSim EQ give/move ack) to integers', () => {
+		// Regression: OpenSim sends the masks as <binary> (e.g. OwnerMask="AAjgAA=="), which parseLLSD
+		// keeps as a base64 string. The old num() did parseFloat("AAjgAA==") → NaN → 0, so every EQ
+		// BulkUpdate item decoded to zero masks → received/moved items wrongly showed NM/NC/NT, and a
+		// move ack OVERWROTE good masks with 0 via applyBulkUpdate. num() must base64-decode these.
+		const out = decodeBulkUpdateInventoryFromLLSD({
+			ItemData: [{
+				ItemID: ITEM, FolderID: FOLDER,
+				BaseMask: b64be(BASE), OwnerMask: b64be(OWNER), GroupMask: b64be(GROUP),
+				EveryoneMask: b64be(EVERYONE), NextOwnerMask: b64be(NEXTOWNER),
+				AssetID: ASSET, Type: 5, InvType: 18, Name: 'Received Full-Perm Item', Description: 'd',
+				CreationDate: 1700000000,
+			}],
+		})
+		expect(out.items).toHaveLength(1)
+		const it = out.items[0]
+		expect(it.baseMask).toBe(BASE)
+		expect(it.ownerMask).toBe(OWNER)
+		expect(it.groupMask).toBe(GROUP)
+		expect(it.everyoneMask).toBe(EVERYONE)
+		expect(it.nextOwnerMask).toBe(NEXTOWNER)
+		// Numeric fields must still decode when they arrive as plain LLSD <integer> numbers.
+		expect(it.assetType).toBe(5)
+		expect(it.invType).toBe(18)
+	})
+})
+
 describe('decodeBulkUpdateInventoryFromLLSD — all perm masks', () => {
 	it('surfaces base/owner/group/everyone/nextOwner from the LLSD ItemData', () => {
 		const out = decodeBulkUpdateInventoryFromLLSD({
