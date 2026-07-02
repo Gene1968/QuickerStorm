@@ -101,7 +101,7 @@ function onToggleNext(bit, on) { setMaskBit('nextOwnerMask', bit, on) }
 		v-if="target"
 		:id="floaterId"
 		:title="isItem ? 'Item Properties' : 'Folder Properties'"
-		:wrap-style="{ width: '16rem', maxHeight: '80vh' }"
+		:wrap-style="{ width: '17rem', maxHeight: '80vh' }"
 		:default-pos="defaultPos"
 		@close="inv.closePropertiesFor(target.key)"
 	>

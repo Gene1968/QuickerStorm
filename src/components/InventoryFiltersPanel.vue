@@ -4,7 +4,7 @@
 // We ship the two most-used, feasible controls (multi-select TYPE checkboxes + "Show empty folders")
 // wired to the floater's existing filter logic; the rest is tracked in docs/FEATURE-GAPS.md.
 import { computed } from 'vue'
-import { TYPE_FILTER_CHECKS } from '@/utils/inventoryIcons'
+import { TYPE_FILTER_CHECKS, itemIcon } from '@/utils/inventoryIcons'
 import { XIcon } from '@lucide/vue'
 
 const props = defineProps({
@@ -20,29 +20,33 @@ function toggleType(id) { emit('toggle-type', id) }
 </script>
 
 <template>
-	<div class="absolute bottom-full mb-1 right-0 z-[60] w-[13rem] max-h-[20rem] overflow-y-auto bg-panel border border-edge rounded-sm shadow-lg text-2xs text-fg" @click.stop>
+	<div class="absolute bottom-0 left-full mb-1 z-[60] h-full overflow-y-auto bg-panel border border-edge rounded-sm shadow-lg text-2xs text-fg" @click.stop>
 		<div class="flex items-center justify-between px-2 py-1 border-b border-edge">
-			<span class="font-semibold">Filters</span>
+			<span class="font-semibold">All items</span>
 			<button class="ui-btn px-1 py-0" title="Close filters" @click="emit('close')"><XIcon class="w-3 h-3" /></button>
 		</div>
 
-		<div class="px-2 py-1 text-fg-muted">Show item types</div>
-		<button
-			class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-white/10"
-			:class="allTypes ? 'text-accent' : 'text-fg'"
-			@click="emit('reset')"
-		><span class="w-3">{{ allTypes ? '✓' : '' }}</span>All Types</button>
+		<!-- <div class="px-2 py-1 text-fg-muted">Show item types</div> -->
 		<button
 			v-for="t in TYPE_FILTER_CHECKS"
 			:key="t.id"
-			class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-white/10"
+			class="flex w-full items-center justify-start gap-2 px-2 py-1 hover:bg-white/10 whitespace-nowrap"
 			:class="typeIds.has(t.id) ? 'text-accent' : 'text-fg'"
 			@click="toggleType(t.id)"
-		><span class="w-3">{{ typeIds.has(t.id) ? '✓' : '' }}</span>{{ t.label }}</button>
+		><span class="w-3">{{ itemIcon(t.types) }}</span><span class="w-2">{{ typeIds.has(t.id) ? '✓' : '' }}</span>{{ t.label }}</button>
+		<button
+			class="flex w-full items-center justify-start gap-2 px-2 py-1 text-left hover:bg-white/10"
+			:class="allTypes ? 'text-accent' : 'text-fg'"
+			@click="emit('reset')"
+		><span class="w-7 text-end">{{ allTypes ? '✓' : '' }}</span>All Types</button>
+		<button
+			class="flex w-full items-center justify-start gap-2 px-2 py-1 text-left hover:bg-white/10"
+			:class="typeIds.length === 0 ? 'text-accent' : 'text-fg'"
+		><span class="w-7 text-end">[&nbsp; ]</span>None (to-do)</button>
 
 		<div class="border-t border-edge mt-1"></div>
 		<button
-			class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-white/10"
+			class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-white/10 whitespace-nowrap"
 			:class="showEmptyFolders ? 'text-fg' : 'text-accent'"
 			@click="emit('update:showEmptyFolders', !showEmptyFolders)"
 		><span class="w-3">{{ showEmptyFolders ? '✓' : '' }}</span>Show empty folders</button>

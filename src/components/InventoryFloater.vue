@@ -438,10 +438,18 @@ onUnmounted(() => {
 						<button
 							v-for="t in TYPE_FILTERS"
 							:key="t.id"
-							class="block w-full text-left px-2 py-1 hover:bg-white/10"
+							class="flex items-center justify-start w-full px-2 py-1 hover:bg-white/10"
 							:class="typeChecked(t.id) ? 'text-accent' : 'text-fg'"
 							@click="setType(t.id)"
-						>{{ typeChecked(t.id) ? '✓ ' : '   ' }}{{ t.label }}</button>
+						><span class="w-3">{{ typeChecked(t.id) ? '✓' : '' }}</span>{{ t.label }}</button>
+						<button
+							class="flex items-center justify-start border-y px-2 py-1 w-full hover:bg-white/10"
+						>[ ] Only coalesced (to-do)</button>
+						<button
+							class="flex items-center justify-start w-full px-2 py-1 hover:bg-white/10"
+							:class="showFilters ? 'text-accent' : 'text-fg'"
+							@click.stop="showFilters = !showFilters; showTypeMenu = false"
+						>{{ showFilters ? '✓ ' : '   ' }}Custom</button>
 					</div>
 				</div>
 			</div>
@@ -566,7 +574,7 @@ onUnmounted(() => {
 				class="ui-btn"
 				@click="toggleNext"
 			><LuggageIcon class="w-3.5 h-3.5" /></button>
-			<div class="relative">
+			<div class="not-relative">
 				<button
 					class="ui-btn"
 					:class="filtersActive ? 'text-accent border-accent' : ''"
