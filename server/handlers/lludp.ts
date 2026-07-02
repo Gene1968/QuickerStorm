@@ -49,6 +49,7 @@ import {
 	interestEnabled, inInterest,
 	reconcileInterest, resolveRadius, type ObjLike,
 } from '../lib/interestFilter'
+import { findGhosts, ghostReconcileReady } from '../lib/ghostReconcile'
 
 // Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
 // WHY: High-freq = 1-byte prefix. Medium-freq = 0xFF + 1-byte ID. Low-freq = 0xFF 0xFF + U16LE.
@@ -141,6 +142,10 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	session.ownAvatarUpdate = undefined
 	// New region = browser cleared its scene; reset what we think it holds (mirrors objCache.clear).
 	session.sentToClient.clear()
+	// Ghost reconciliation is per-region-run: the client re-pre-seeds + re-sends OBJ_CLIENT_CACHED.
+	session.clientCached = null
+	session.ghostReconcileDone = false
+	session.regionEnteredAt = Date.now()
 	session.terrainCache.clear()
 	session.coveredLandPatches.clear()
 	session.caps.clear()
@@ -1621,6 +1626,17 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.OBJ_CLIENT_CACHED) {
+		// Client finished pre-seeding from qs-objects IDB and reports the localIds it is painting for
+		// this region. reconcileGhosts (heartbeat) diffs these against the sim's enumeration once it
+		// settles. See docs/superpowers/specs/2026-06-27-stale-scene-ghost-reconciliation-design.md.
+		const d = msg.d as { ids: number[] }
+		session.clientCached = new Set(d?.ids ?? [])
+		session.ghostReconcileDone = false
+		slog.info(session.ws, `[GhostReconcile] client cached set: ${session.clientCached.size} ids`)
+		return
+	}
+
 	if (msg.t === C.SET_ALWAYS_RUN) {
 		const d = msg.d as { alwaysRun: boolean }
 		const seq = nextSeq(session)
@@ -2281,6 +2297,33 @@ function reconcileInterestTick(s: CircuitState): void {
 	}
 }
 
+/**
+ * One-shot per region: evict ghosts — objects the client still paints from its IDB cache that the sim
+ * never mentioned this session (deleted while offline). Safe because distinctLocalIds is the sim's full
+ * enumeration (interest filter limits forwarding, not receiving). Sends a genuine KILL_OBJECT
+ * { deleted:true } so the client purges IDB. See the design doc cited on the session fields.
+ */
+function reconcileGhosts(s: CircuitState): void {
+	const now = Date.now()
+	if (!ghostReconcileReady({
+		hasClientCached: s.clientCached !== null,
+		done: s.ghostReconcileDone,
+		msSinceProbe: now - (s.lastProbeRxAt ?? 0),
+		msSinceLogin: now - (s.regionEnteredAt ?? 0),
+	})) return
+	s.ghostReconcileDone = true
+	const ghosts = findGhosts(s.clientCached, s.distinctLocalIds)
+	const cachedSize = s.clientCached!.size
+	if (ghosts.length === 0) {
+		slog.info(s.ws, `[GhostReconcile] clientCached=${cachedSize} distinct=${s.distinctLocalIds.size} ghosts=0`)
+		return
+	}
+	for (const id of ghosts) s.clientCached!.delete(id)
+	s.ws.send(JSON.stringify({ t: S.KILL_OBJECT, d: { ids: ghosts, deleted: true } }))
+	const shown = ghosts.slice(0, 20).join(',')
+	slog.info(s.ws, `[GhostReconcile] clientCached=${cachedSize} distinct=${s.distinctLocalIds.size} ghosts=${ghosts.length} killed=[${shown}${ghosts.length > 20 ? ',…' : ''}]`)
+}
+
 /** Send an AgentUpdate heartbeat to prevent sim 60s idle timeout */
 function sendHeartbeat(s: CircuitState): void {
 	const now = Date.now()
@@ -2341,6 +2384,7 @@ export function startCircuitTimers(sessionId: string): () => void {
 		drainCacheMissQueue(s)
 		drainProbeResync(s)
 		reconcileInterestTick(s)
+		reconcileGhosts(s)
 	}, 500)
 	return () => clearInterval(timer)
 }

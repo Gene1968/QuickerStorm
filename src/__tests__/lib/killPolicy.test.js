@@ -14,4 +14,10 @@ describe('shouldEvictOnKill', () => {
 	it('treats a missing cull flag as a delete (back-compat with old server frames)', () => {
 		expect(shouldEvictOnKill({ cull: undefined, keepCacheEnv: false })).toBe(true)
 	})
+	it('evicts when deleted=true, even with keepCacheEnv (confirmed-dead reconciliation)', () => {
+		expect(shouldEvictOnKill({ deleted: true, cull: true, keepCacheEnv: true })).toBe(true)
+	})
+	it('falls through to existing logic when deleted is absent', () => {
+		expect(shouldEvictOnKill({ cull: true, keepCacheEnv: false })).toBe(false)
+	})
 })

@@ -249,6 +249,9 @@ export async function handleLogin(
 		coveredLandPatches: new Set(),
 		objCache:           new Map(),
 		sentToClient:       new Set<number>(),
+		clientCached:       null,
+		ghostReconcileDone: false,
+		regionEnteredAt:    Date.now(),
 	}
 
 	// WHY: wsId is the first WS's per-connection UUID — used as both the circuitId and

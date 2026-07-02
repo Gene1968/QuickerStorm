@@ -66,6 +66,7 @@ export const C = {
 	AVATAR_PICKER_REQ: 'avatar_picker_req', // { query, queryId } — AvatarPickerRequest (Low 26) for Add-Friend name search
 	OBJ_CACHE_MISS:   'obj_cache_miss',   // { ids:number[] } — client cache lacks/mismatches these probed localIds; request full updates
 	OBJ_PROBE_RESYNC: 'obj_probe_resync', // {} — engine mounted; replay the session's buffered ObjectUpdateCached probes (initial flood predates handler registration)
+	OBJ_CLIENT_CACHED: 'obj_client_cached', // { ids:number[] } — localIds the client pre-seeded from qs-objects IDB this region; server diffs vs distinctLocalIds to find ghosts (objects deleted while offline)
 	CAP_CALL:       'cap_call',     // { id, cap, params, method? } — generic HTTP capability call by name
 }
 
@@ -87,7 +88,7 @@ export const S = {
 	DEBUG:        'debug',      // { level:'info'|'warn'|'error', msg: string } — server log forwarded to browser
 	DISCONNECTED:    'disconnected',   // { reason: string } — sim killed the circuit
 	AGENT_SPAWN_POS: 'spawn_pos',     // { pos: [slX, slY, slZ] } — AgentMovementComplete confirmed position
-	KILL_OBJECT:     'kill_obj',      // { ids: number[] } — sim removed these localIds from scene
+	KILL_OBJECT:     'kill_obj',      // { ids:number[], cull?:boolean, deleted?:boolean } — sim/relay removed these localIds. cull:true = interest-leave (keep IDB descriptor); deleted:true = ghost reconciliation (always purge IDB)
 	TERRAIN_PATCH:   'terrain_patch', // { layerType:'LAND'|'WATER', patchSize:16, patches:[{x,y,heights:number[]}] }
 	ENVIRONMENT_TIME:'environment_time', // { sunDirection:[x,y,z], sunPhase, sunAngVelocity:[x,y,z], secPerDay, usecSinceStart } — SimulatorViewerTimeMessage (Low 150) → day/night cycle
 

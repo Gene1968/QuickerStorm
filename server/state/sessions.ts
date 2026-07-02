@@ -154,6 +154,14 @@ export interface CircuitState {
 	// (ever-received) and objCache (everything cached server-side) — this is what the browser
 	// is holding RIGHT NOW, the set we keep bounded so the tab heap stays bounded.
 	sentToClient: Set<number>
+	// ── Stale-scene ghost reconciliation (see docs/superpowers/specs/2026-06-27-…-design.md) ──
+	/** localIds the client pre-seeded from its qs-objects IDB for the current region run. Diffed
+	 *  against distinctLocalIds to find ghosts. Null until OBJ_CLIENT_CACHED arrives. */
+	clientCached: Set<number> | null
+	/** One-shot guard: ghost reconciliation has already run for the current region run. */
+	ghostReconcileDone: boolean
+	/** Timestamp of region entry / login — min-age gate so reconcile never fires during the flood. */
+	regionEnteredAt: number
 	lastInterestLogAt?: number   // throttle the [Interest] telemetry line
 	// The own avatar's last full ObjectUpdate (pcode 47, fullId == agentId), captured at receive time.
 	// WHY: on session resume the sim won't re-broadcast the avatar (agent already present) and a

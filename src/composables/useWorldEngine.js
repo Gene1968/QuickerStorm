@@ -642,6 +642,14 @@ export function useWorldEngine(canvasRef) {
 			_crcMapP = Promise.resolve(seeded)
 			if (n) debugStore.push('info', `[ObjCache] pre-seeded ${n} cached objects for ${key} (run ${runId.slice(0, 8)}, crcMap=${seeded.size})`)
 			objCachePruneRegions()  // LRU housekeeping (fire-and-forget)
+			// Report the localIds we just painted so the server can diff them against the sim's
+			// enumeration and KillObject ghosts (objects deleted while we were offline). Skipped on the
+			// purge path above (nothing painted → clientCached stays null → no reconcile).
+			const cachedIds = []
+			for (const o of (cached ?? [])) {
+				if (typeof o?.localId === 'number' && o.pcode !== PCODE_AVATAR) cachedIds.push(o.localId)
+			}
+			try { wsEmit(C.OBJ_CLIENT_CACHED, { ids: cachedIds }) } catch { /* not connected — reconciles next session */ }
 			requestProbeResync()
 		}
 		// WHY: the sim floods ObjectUpdateCached probes in the first seconds after login — before this
@@ -3070,7 +3078,7 @@ export function useWorldEngine(canvasRef) {
 		// WHY: an interest-driven leave (cull:true) is a temporary cull, not a delete — keep the
 		// qs-objects descriptor so re-enter is cheap and the warm-reload cache survives touring.
 		// A genuine sim delete (cull:false / absent) evicts. See src/lib/killPolicy.js.
-		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv })
+		const evict = shouldEvictOnKill({ cull: payload?.cull, keepCacheEnv, deleted: payload?.deleted })
 		for (const id of all) {
 			pendingMeshIds.delete(id)  // perf: drop a queued-but-unbuilt mesh
 			evicted.delete(id)
