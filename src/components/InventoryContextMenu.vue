@@ -25,7 +25,7 @@ import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
 const ui   = useUiStore()
-const { createFolder, trashItem, trashFolder, wearAttachment, detach, pasteInto, giveInventory, rezObject } = useInventory()
+const { createFolder, trashItem, trashFolder, wearAttachment, detach, pasteInto, giveInventory, rezObject, openInventoryItem } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 const im = useInstantMessage()
 const menu = computed(() => inv.contextMenu)
@@ -165,6 +165,8 @@ function giveToIm() {
 	if (ids.length) giveInventory(ids, c.agentId, c.agentName)
 	inv.closeContextMenu()
 }
+// FS: "Open" = the double-click open-by-type dispatch (texture → preview floater, etc.).
+function openItem() { const it = menu.value?.obj; if (it) openInventoryItem(it); inv.closeContextMenu() }
 
 function cutSelection() {
 	const ids = selectionIds()
@@ -218,7 +220,7 @@ const items = computed(() => {
 			...(canGiveToIm.value
 				? [{ label: `Give to ${activeIm.value.agentName}`, action: giveToIm }]
 				: [{ label: 'Give to…', disabled: true, title: 'open an IM conversation to give to that resident' }]),
-			{ label: 'Open',								disabled: true },
+			{ label: 'Open',								action: openItem },
 			{ label: 'Properties…',							action: properties },
 			// Rename is single-target only (FS hides it in a multi-selection).
 			...(multi.value ? [] : [{ label: 'Rename',		action: () => beginRename(o.itemId, 'item') }]),

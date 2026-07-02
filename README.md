@@ -8,7 +8,7 @@ Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 
 **Phases 1 and 2 complete.** Login, movement, terrain, cross-region teleport, 1 500–1 800 prim rendering per region, Map 2D, IM, and avatar/object context menus all ship.
 
-**Phase 3 ~70% complete.** Full asset pipeline live: server-side J2C→WebP transcode, IndexedDB texture + geometry-bake caches, worker-thread mesh bake. Warm reloads skip all re-fetching. Firestorm-style CRC object cache restores the full scene from disk on reload without re-asking the sim. Inventory browse, friends/contacts, saved accounts, and profile floater wired. Remaining: inventory management, appearance/bake, groups, voice gateway, environment.
+**Phase 3 ~75% complete.** Full asset pipeline live: server-side J2C→WebP transcode, IndexedDB texture + geometry-bake caches, worker-thread mesh bake. Warm reloads skip all re-fetching. Firestorm-style CRC object cache restores the full scene from disk on reload without re-asking the sim. Inventory now spans browse/filter, manage (rename/move/trash/perms), give & accept offers, rez-to-world, and a multi-instance texture preview — with a move-reconciliation cache that keeps created/moved items through OpenSim's write-back lag (no lost items). Friends/contacts, saved accounts, day/night environment, and profile floater wired. Remaining: appearance/bake, groups, voice gateway, large-account inventory load throughput.
 
 **✨ Standouts:**
 - Camera-driven interest streaming: the relay forwards only objects inside a camera-centred volume and streams them in/out as you move, so heavy regions (tested ~24k objects on Aspen) hold a bounded working set — the browser tab stays around ~10% heap instead of OOMing on the full region
@@ -39,9 +39,9 @@ Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 | Minimap | 🟡 ~75% |
 | Nearby chat | 🟡 ~75% |
 | Instant Messaging | 🟡 ~70% |
-| Inventory (view/browse/filter) | 🟡 ~70% |
-| Inventory (manage/modify/rezz) | 🔜 |
-| Inventory (take/copy/share) | 🔜 |
+| Inventory (view/browse/filter) | 🟡 ~85% |
+| Inventory (manage/modify/rezz) | 🟡 ~65% (rename/move/trash/perms/rez; pending live-verify) |
+| Inventory (take/copy/share) | 🟡 ~55% (give/copy/accept-offer; pending live-verify) |
 | Friends / Contacts | 🟡 ~70% |
 | Profile floater | 🟡 ~60% |
 | Places floater | 🟡 ~65% |
@@ -50,7 +50,7 @@ Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 | Neighboring-sim terrain | 🔜 |
 | Voice (WebRTC) | 🔜 signaling done, gateway TODO |
 | Groups + Group IM | 🔜 |
-| Environment (sky, day/night) | 🔜 |
+| Environment (sky, day/night) | 🟡 ~70% (sun sky dome + day/night cycle + ocean; trees/shadows TODO) |
 | UI sounds | 🟡 ~25% |
 | Media (sounds, parcel audio, video) | 🔜 |
 | Web-on-prim | 🔜 |

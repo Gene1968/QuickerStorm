@@ -31,34 +31,27 @@ delete→Trash · change permissions · wear/attach (objects) · detach · post-
 root relabeled "Inventory" · inline thumbnails removed (traffic). Live-verified osgrid. **Deferred:** generic
 create-item (asset-upload cap), clothing-layer wearables (bake pipeline → brainstorm-first Appearance).
 
-### 🔧 Inventory — solidify (finish Inventory before other clusters; order = reliability → features → polish)
-**Reliability first (the "solid" bar):**
-- **🐛 OpenSim write-back LAG on fresh folders** — cap returns 200 (region cache has it) but flush to grid
-  Robust DB lags; a hard-reload minutes later re-fetches before the write lands → folder GONE. OpenSim-side.
-  OPTIONS: (a) LogoutRequest on page unload to force flush; (b) confirm self-heal after periodic write-back;
-  (c) persist created folders in client IDB + reconcile. (See [[inventory-write-side-shipped]].)
-- **🐛 Bad/missing-asset resilience** — 100+ blob 404s on this grid; cap retries/log noise, mark dead assets.
-- (Large-inventory load reliability — the 50–150k "spins forever / don't trust the cache" concern — lives in
-  🧠 BRAINSTORM-FIRST; it's structural.)
-
-**Missing core features:**
-- **Accept inventory offer** (inbound give from another agent).
-- **Multi-select move** — drag currently moves only the pointed-at item; should move ALL selected.
-- **Double-click "open" semantics per asset type:** texture → preview floater (port FS `floater_preview_texture.xml`);
-  sound → play locally; animation → "Play inworld / Play locally" (`floater_preview_animation.xml`);
-  gesture → editor (`floater_preview_gesture.xml`). Define the dispatch once, wire per type.
-- **"Inspect textures!" item/floater** (per FS) — pairs with the texture-preview work.
-
-**Polish / UX:**
-- **Texture preview (hover)** — FS model: 256² floating preview on hover after a short delay, fetched
-  on-demand (NOT per-row auto-fetch — 24k-texture accounts = traffic). `useInventoryThumbnail.js` exists to build on.
-- **No "(empty)" label** under an open empty folder.
-- **Start with one open** - Simply have the first Inventory floater open on page load as Conversations and Nearby already are.
-- **"Drop inventory item here" → give to agent** — drop-zone already renders in Profile/IM; wire to transfer-to-agent.
-- **Recent / Worn tabs as a tree** (currently flat) + flat tabs lack right-click/F2 (Gap C): give them the tree
-  component or wire the row handlers in.
-- **Bug B — BulkUpdateInventory reconcile:** on OpenSim the ack arrives over the EventQueue (LLSD), not UDP;
-  our decoder is UDP-path-only so S.INV_BULK_UPDATE never fires (optimistic UX works regardless).
+### ✅ Inventory — solidify SHIPPED 2026-07-01 (committed; NOT live-verified)
+Full FS-parity pass (5 waves + a dedicated data-loss fix).
+- **Reliability / data:** item **move-reconciliation state machine** + folder **dirty-flag** + **non-shrinking
+  cache save** → created/moved items survive OpenSim grid write-back lag with **no loss / duplicate / stuck /
+  resurrection** (meets the "never lose items" cache-trust bar). Perms decode **all** masks + enrich on the
+  **receive** path (fixes NM/NC/NT-until-reload); `itemServerFields` round-trips all masks so rename/perms edits
+  no longer relax next-owner/group/everyone.
+- **Features:** accept inventory offer (dialog 4/5/6; inline IM Accept/Decline + toast) · give/send inventory
+  (Profile + IM drop-zones + Gift/context-menu; transfer-perm gated) · rez object (RezObject Low 293 + CRC;
+  context-menu + drag-to-canvas raycast) · double-click **open-by-type** dispatch · **multi-instance texture
+  preview** (full-res fetch + true asset dims + aspect-ratio dropdown + auto-open-on-receive + 5/10s throttle) ·
+  folder + **mixed** multi-drag · context-menu acts on **full selection** · **Ctrl+X/C/V** (cut=move, copy=
+  CopyInventoryItem).
+- **Polish:** gear/cog menu FS-parity + **Filters side panel** + sort default = **most recent** + Collapse clears
+  search + Item Properties **real checkboxes**. (Start-with-one-open + Gap-C flat-tab right-click/F2 were already
+  shipped.)
+- **Deferred followups (small, own passes):** sound/animation/gesture preview floaters (need those client
+  pipelines) · folder-give (category bucket) · arbitrary-recipient avatar picker · rez-failed toast (no-build
+  parcel) · texture-preview auto-open focus-steal + on-screen-nudge persistence (FloaterWindow pos ownership) ·
+  FS filter subsets (permission/date/links filters, Empty Trash) · bad/missing-asset resilience (100+ blob 404s;
+  mark dead assets, retry/log noise) · "Inspect textures" floater.
 
 ### Object Build & Edit Floater — FEATURE-GAPS L170–186
 - edit name & description · numeric size/pos/rot input fields (fields editable → modify selected) · Select-Face radio
@@ -152,9 +145,10 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 
 ## 🧠 BRAINSTORM-FIRST (one at a time — do NOT blind-batch)
 
-- **Inventory load-at-scale & cache trust** — small accounts load fine; 50–150k-item accounts often fail / spin
-  forever. HMR is one (dev-only) cause but the cache isn't trusted. Need a genuinely FS-like buffer/cache that's
-  workable and **never loses items**. Structural — design the load pipeline + IDB cache before touching.
+- **Inventory load-at-scale (large accounts)** — the **"never loses items" cache-trust bar is now MET**
+  (2026-07-01 move-reconciliation state machine + non-shrinking cache save; see ✅ Inventory — solidify above).
+  REMAINING is throughput, not correctness: 50–150k-item accounts still often spin/fail on the **initial full
+  walk** (HMR is one dev-only cause). Design the load pipeline (paced walk + trusted incremental cache) before touching.
 - **2D / mobile mode** — responsive layout already hides the login iframe on mobile; should also hide the canvas
   at phone sizes and **default to 2D**. Build a useful overhead 2D view (Map-like but richer); default for
   mobile/low-end (detect on entry) + a Preferences option for anyone. Learn from speedlight.io.
@@ -185,6 +179,12 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## 📋 Meta / project hygiene
+- **🐛 Fix the pre-existing broken tests / errors (STOP saying "not my bug")** — Gene's rule: don't keep waving
+  off known-red tests. Schedule a hygiene pass: (a) **ESLint flat-config** so `npm run lint` runs repo-wide again;
+  (b) the ~22 `src/__tests__/lib/*` + `utils/*` suites that FAIL TO COLLECT under vitest because they
+  `import from 'bun:test'` (either move them to run under `bun test`, or make them vitest-compatible) so the vitest
+  run is actually green; (c) `useTeleport.test.js` (5 fails: Pinia-not-active setup + stale `TELEPORT_SOURCES`
+  status/coord-clamp assertions — code moved, test didn't). Green baseline = we stop hand-waving failures.
 - **Retire "Phase 3" terminology** — means nothing to users (readme + UI titles/to-dos). Switch to status labels:
   done / partial / in-progress / soon / exploring-longterm / "no plans · can't in browser". Internally the
   phase naming has gotten fuzzy — decide on a referencing scheme or adopt **versioning**.
@@ -192,6 +192,15 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## Recently shipped (don't re-pick)
+- **2026-07-01 (follow-up):** texture-preview KEY fix — `openTexturePreview(assetId,name,desc,key)`; the desc arg
+  had shifted into the key slot so different textures with same/empty desc collided → "focus existing" instead of
+  a new floater (Gene's report). Also wired the context-menu **Open** → open-by-type dispatch (was disabled).
+- **2026-07-01:** **Inventory FS-parity program committed** — accept-offer · give · rez · open-by-type ·
+  multi-instance full-res texture preview (aspect dropdown + auto-open + 5/10s throttle) · perms all-masks +
+  receive-path enrich · folder+mixed multi-drag · ctx-menu multi-select · Ctrl+X/C/V · gear menu + Filters panel +
+  sort-default-recent + collapse-clears-search · Properties checkboxes · **item data-loss fix** (move-reconciliation
+  state machine + non-shrinking cache save — created/moved items survive write-back lag, no loss/dup/stuck).
+  NOT live-verified. See [[inventory-dataloss-rootcause]], [[inventory-fs-parity-gaps-2026-06-30]].
 - **2026-06-30:** Prim face-UV fix (upside-down caps+sides, GEOM_VERSION→4, commit 6ed408d) · alpha-edge
   foliage halo over water fix (waterMesh.renderOrder, commit cba5e84).
 - **2026-06-29/30:** Day/Night Environment system (sun-driven sky dome + exposure cycle + clouds + prefs;
@@ -206,4 +215,29 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## ⬇️ Raw inbox (Gene dumps here; Claude triages up into the clusters above)
-*(empty — last batch triaged 2026-06-28)*
+
+**2026-07-01 dump (from Gene — file for when we reach each feature/fix):**
+- **🐛 Perms STILL false NM/NC/NT on SOME items** received / moved / **unboxed** — 2026-07-01 fix enriched the
+  create/receive path (addCreatedItems) + itemServerFields all-masks, but Gene still sees it on some. Suspect the
+  MOVE path (move-reconciliation may not re-derive canX flags on the re-placed row) and the UNBOX/object-contents
+  path (Xfer — not built). Re-investigate which insert path skips `_permFlags`; add a shared `enrichItem()` used by
+  EVERY insert (setItems/applyBulkUpdate/addCreatedItems/moveItemLocal). → Inventory reliability.
+- **🐛 Can't drag-to-REZZ and can't drag-to-SHARE** (both shipped 2026-07-01 but not working live) — verify the
+  WorldCanvas drop→rez raycast and the Profile/IM drop→give handlers actually fire; likely a dragover/drop wiring
+  or dragPayload-kind mismatch. → Inventory (give) + Rez.
+- **🐛 GHOST objects persist after delete** — as a FS user rezzes/deletes his own objects, ghosts stay in our
+  object cache even after a HARD reload. Selectable but show NO name/desc/etc → that's the tell for "not real."
+  FS confirms deletion / polls for realness somehow (KillObject we may be missing, or a RequestObjectProperties
+  "~check" — no reply = stale → cull). Add a context-menu re-check / cull-unconfirmed. → 🧠 Stale-scene genuine
+  deletes (brainstorm-first) — this is the confirmation-gated piece.
+- **Should be able to RIGHT-CLICK → Open a box** (open object contents / Xfer) → Right-click menus (object) +
+  Object Build&Edit.
+- **Create tool NEEDED soon** (rez/create a prim in-world) → Object Build & Edit (Build-tools).
+- **Working GIZMO handles NEEDED soon** (move/rotate/scale/copy) → Object Build & Edit.
+- **Scripted motion**: some works now, some doesn't — investigate which ObjectUpdate/TerseUpdate motion paths we
+  handle vs miss. **Scripted texture pos/anim** (TextureAnim: moving water, scrolling text, cell-anim) would help
+  tie it together → Object Build & Edit (texture anim/scripts).
+- **Neighboring regions** should be prioritized, THEN crossings → 🧠 Cross-region / neighbor sims (bump priority).
+- **More SOUND** — UI sounds + media (parcel/object audio) → Media/audio streaming + UI sounds.
+
+*(Triaged pointers above; promote into clusters when a sweep targets them.)*

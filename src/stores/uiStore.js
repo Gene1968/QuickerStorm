@@ -373,11 +373,15 @@ export const useUiStore = defineStore('ui', () => {
 	// texture so the user can compare many side by side). Keyed by the inventory item UUID (or the
 	// asset UUID when opened by asset); re-opening the same key focuses the existing floater instead
 	// of duplicating. Each entry: { id, key, assetId, name }. id = 'texture-preview-<key>'.
-	const texPreviewInstances = ref([])   // [{ id, key, assetId, name }]
+	const texPreviewInstances = ref([])   // [{ id, key, assetId, name, desc }]
 	function texturePreviewId(key) { return `texture-preview-${key}` }
-	function openTexturePreview(assetId, name, key) {
+	// WHY the explicit `key` (distinct from assetId): two DIFFERENT inventory items can point at the SAME
+	// texture asset, and one item can be opened repeatedly — key by itemId so each item gets its own floater
+	// and re-opening the same item focuses it. `desc` is display-only (shown in the floater). Callers pass
+	// (assetId, name, desc, key=itemId); key defaults to assetId for the opened-by-asset path.
+	function openTexturePreview(assetId, name, desc, key) {
 		if (!assetId) return
-		const k = key ?? assetId          // default key = assetId (opened-by-asset path)
+		const k = key ?? assetId
 		const id = texturePreviewId(k)
 		const existing = texPreviewInstances.value.find(t => t.id === id)
 		if (existing) { focusFloater(id); return }
@@ -387,7 +391,7 @@ export const useUiStore = defineStore('ui', () => {
 			console.warn('[TexPreview] cap reached — closing oldest', oldest?.id)
 			closeTexturePreview(oldest.id)
 		}
-		texPreviewInstances.value = [...texPreviewInstances.value, { id, key: k, assetId, name: name || 'Texture' }]
+		texPreviewInstances.value = [...texPreviewInstances.value, { id, key: k, assetId, name: name || 'Texture', desc: desc || '' }]
 		focusFloater(id)
 	}
 	function closeTexturePreview(id) {

@@ -151,7 +151,8 @@ export function useInstantMessage() {
 			// gated by the rolling-window throttle so a flood of offers doesn't bury the screen.
 			// MANUAL double-click opens go through uiStore directly and bypass this path entirely.
 			if (accept && isTexture && bucket.offeredId && checkOfferThrottle()) {
-				ui.openTexturePreview(bucket.offeredId, offeredName, bucket.offeredId)
+				// (assetId, name, desc, key) — key by the offered inventory id so a re-offer focuses.
+				ui.openTexturePreview(bucket.offeredId, offeredName, '', bucket.offeredId)
 			}
 		}
 		// Expose the reply handler on the inline entry so ConversationsFloater can call it.

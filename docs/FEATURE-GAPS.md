@@ -11,6 +11,20 @@
 
 ## Current Priority Queue
 
+> ✅ **SHIPPED 2026-07-01 — Inventory FS-parity program (committed on phase3; NOT live-verified).** Five waves +
+> a dedicated data-loss fix. **Data/reliability:** item **move-reconciliation state machine** (`pendingMoves`) +
+> folder **dirty-flag** + **non-shrinking cache save** → created/moved items survive OpenSim grid write-back lag
+> with no loss / duplicate / stuck-in-wrong-folder / resurrection (**resolves the "OpenSim write-back LAG on fresh
+> folders" bug + the "never lose items" cache-trust bar**; large-account *load throughput* still open). Perms:
+> decode all five masks on every path + enrich flags on the RECEIVE path (fixes NM/NC/NT-until-reload);
+> `itemServerFields` round-trips all masks (rename/perms edits no longer relax next-owner). **Features:** accept
+> offer (dialog 4/5/6, inline IM + toast) · give/send (Profile+IM drop-zones + menu) · rez object (RezObject Low
+> 293 + drag-to-canvas) · open-by-type · multi-instance full-res texture preview (aspect dropdown + auto-open +
+> 5/10s throttle) · folder+mixed multi-drag · ctx-menu multi-select · Ctrl+X/C/V. **Polish:** gear menu FS-parity +
+> Filters panel + sort default=recent + collapse-clears-search + Properties real checkboxes. Tests: bun 237/0,
+> vitest 365 pass. **Deferred:** sound/anim/gesture preview · folder-give · avatar-picker · rez-failed toast ·
+> preview focus/nudge polish · FS filter subsets · bad-asset resilience. See [[inventory-dataloss-rootcause]].
+
 ### Render / Cache (near-term)
 
 > 📐 **READ FIRST: [docs/render-cache-model.md](render-cache-model.md)** — the unified model for how
