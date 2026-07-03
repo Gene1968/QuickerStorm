@@ -408,7 +408,7 @@ function saveNotes() {
 			>Drop inventory item here.</button>
 			<div
 				v-else
-				class="px-2.5 py-2 text-xs text-center rounded-sm border border-dashed transition-colors"
+				class="px-2.5 py-2 text-xs text-center rounded-sm border border-dashed transition-colors truncate"
 				:class="dropActive ? 'border-accent bg-accent/10 text-accent' : 'border-edge text-fg'"
 				@dragover="onGiveDragOver"
 				@dragleave="onGiveDragLeave"

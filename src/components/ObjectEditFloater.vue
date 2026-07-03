@@ -8,7 +8,8 @@ import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useLLUDP } from '@/composables/useLLUDP'
 import { C } from '@shared/protocol.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
-import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
+import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
+// import { ChevronDownIcon } from '@lucide/vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
@@ -24,11 +25,11 @@ const texSubTab = ref('bp')
 // also driven by Ctrl / Ctrl+Shift modifier keys in useWorldEngine.
 const buildTool = ref('edit')
 const tools = [
-	{ id: 'focus',  label: 'Focus',  icon: ZoomInIcon,    disabled: true  },
-	{ id: 'move',   label: 'Move',   icon: HandIcon,     disabled: false },
-	{ id: 'edit',   label: 'Edit',   icon: SquareMousePointerIcon,   disabled: false },
-	{ id: 'create', label: 'Create', icon: WandIcon,      disabled: true  },
-	{ id: 'land',   label: 'Land',   icon: PickaxeIcon, disabled: true  },
+	{ id: 'focus',  label: 'Focus',  icon: ZoomInIcon },
+	{ id: 'move',   label: 'Move',   icon: HandIcon },
+	{ id: 'edit',   label: 'Edit',   icon: SquareMousePointerIcon },
+	{ id: 'create', label: 'Create', icon: WandIcon },
+	{ id: 'land',   label: 'Land',   icon: PickaxeIcon  },
 ]
 function pickTool(t) {
 	if (t.disabled) return
@@ -38,8 +39,10 @@ function pickTool(t) {
 // Gizmo operation radios — tied to uiStore.gizmoMode (and the Ctrl / Ctrl+Shift modifiers).
 const gizmoOps = [
 	{ id: 'move',   label: 'Move',    hint: 'Position handles' },
-	{ id: 'rotate', label: 'Rotate',  hint: 'Rotation rings (Ctrl)' },
-	{ id: 'scale',  label: 'Stretch', hint: 'Scale handles (Ctrl+Shift)' },
+	{ id: 'rotate', label: 'Rotate (Ctrl)',  hint: 'Rotation rings' },
+	{ id: 'scale',  label: 'Stretch (Ctrl+Shift)', hint: 'Scale handles' },
+	{ id: 'scale',  label: 'Select Face (to-do)', hint: 'to-do' },
+	{ id: 'scale',  label: 'Align (to-do)', hint: 'to-do' },
 ]
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
@@ -211,20 +214,21 @@ const CLICK_ACTION_OPTIONS = [
 	{ value: 8, label: 'None' },
 	{ value: 9, label: 'Ignore object' },
 ]
+// SL sale types (LLSaleInfo): 1=Original, 2=Copy, 3=Contents. (0=not-for-sale is the checkbox.)
 const SALE_TYPE_OPTIONS = [
-	{ value: 0, label: 'Not for sale' },
-	{ value: 1, label: 'Original' },
 	{ value: 2, label: 'Copy' },
 	{ value: 3, label: 'Contents' },
+	{ value: 1, label: 'Original' },
 ]
 
 // WHY: SL permission bits — bit 13=Modify, bit 14=Copy, bit 15=Transfer, bit 19=Export.
-// Display as concatenated letters like "CMT" (Copy/Modify/Transfer) per SL/Firestorm convention.
+// Display as concatenated letters like "VMCTX" (Copy/Modify/Transfer) per SL/Firestorm convention.
 function permLetters(mask) {
 	if (mask == null) return '—'
 	let s = ''
-	if (mask & (1 << 14)) s += 'C'
+	// to-do: what is the bit for V?
 	if (mask & (1 << 13)) s += 'M'
+	if (mask & (1 << 14)) s += 'C'
 	if (mask & (1 << 15)) s += 'T'
 	if (mask & (1 << 19)) s += 'X'
 	return s || '–'
@@ -485,21 +489,20 @@ function close() {
 		id="object-edit"
 		title="Build Tools"
 		build-tool
-		:wrap-style="{ width: '22rem', height: '42rem', resize: 'both' }"
+		:wrap-style="{ width: '19rem', height: '41.35rem', resize: 'none' }"
 		:default-pos="{ right: '0.0625rem', top: 'calc(100vh - 2.3125rem - 42rem' }"
 		@close="close"
 	>
 		<div class="relative flex flex-col h-full text-xs">
 			<!-- Build-tools toolbar (FS-parity) ──────────────────────────────────── -->
-			<div class="shrink-0 px-2 py-1.5 border-b border-edge space-y-1.5">
+			<div class="shrink-0 border-b border-edge pt-1.5 px-2 min-h-44">
 				<!-- Top row: five major tools (icon radio) -->
 				<div class="flex items-center gap-1">
 					<button
 						v-for="t in tools"
 						:key="t.id"
 						:title="t.label"
-						:disabled="t.disabled"
-						class="ui-btn flex-1 flex items-center justify-center px-1.5 py-1.5 rounded-sm border transition-colors"
+						class="ui-btn flex-1 flex items-center justify-center p-1 rounded-sm border transition-colors"
 						:class="t.disabled
 							? 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'
 							: buildTool === t.id
@@ -510,544 +513,671 @@ function close() {
 						<component :is="t.icon" class="w-4 h-4" />
 					</button>
 				</div>
-				<!-- Sub row: gizmo operation (Move / Rotate / Stretch), tied to modifier keys -->
-				<div role="radiogroup" aria-label="Gizmo operation" class="flex items-center gap-2">
-					<label
-						v-for="g in gizmoOps"
-						:key="g.id"
-						:title="g.hint"
-						class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-fg cursor-pointer select-none"
-					>
-						<input
-							type="radio"
-							name="gizmo-op"
-							class="accent-accent shrink-0"
-							:value="g.id"
-							v-model="ui.gizmoMode"
-						/>
-						<span class="truncate">{{ g.label }}</span>
-					</label>
-					<label title="Select Face" class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-fg cursor-pointer select-none">
-						<input type="radio" name="select-face" class="accent-accent shrink-0" value="face" />
-						<span class="truncate">Select Face (to-do)</span>
-					</label>
+				<div v-if="buildTool === tools[0].id">
+					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to move camera</p>
+					<div class="flex items-center gap-3">
+						<div class="flex flex-col whitespace-nowrap">
+							<label for="">🔘 Zoom</label>
+							<label for="">🔘 Orbit (Ctrl)</label>
+							<label for="">🔘 Pan (Ctrl+Shift)</label>
+						</div>
+						<div class="w-full">
+							<div class="bg-accent w-full">slider</div>
+						</div>
+					</div>
 				</div>
-			</div>
-			<div class="shrink-0 px-2 py-1 flex items-center gap-2 border-b border-edge">
-				<label
-					class="flex items-center gap-1.5 text-2xs text-fg cursor-pointer select-none"
-					title="Off: clicking selects the whole linked object. On: selects the individual prim under the cursor."
-				>
-					<input type="checkbox" v-model="ui.editLinked" class="accent-accent" />
-					Edit linked
-				</label>
-				<span class="text-2xs text-fg/40 italic ml-auto truncate">Ctrl = rotate • Ctrl+Shift = scale</span>
+				<div v-else-if="buildTool === tools[1].id">
+					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Drag to move, Ctrl to lift, Ctrl+Shift to rotate</p>
+					<div class="flex flex-col whitespace-nowrap">
+						<label for="">🔘 Move</label>
+						<label for="">🔘 Lift (Ctrl)</label>
+						<label for="">🔘 Spin (Ctrl+Shift)</label>
+					</div>
+				</div>
+				<div v-else-if="buildTool === tools[2].id">
+					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Drag to move, shift-drag to copy</p>
+					<!-- Sub row: gizmo operation (Move / Rotate / Stretch), tied to modifier keys -->
+					<div class="flex items-center gap-3">
+						<div role="radiogroup" aria-label="Gizmo operation" class="flex flex-col items-start gap-0 mb-0.5">
+							<label
+								v-for="g in gizmoOps"
+								:key="g.id"
+								:title="g.hint"
+								class="flex flex-1 items-center justify-center gap-1 min-w-0 text-2xs text-fg cursor-pointer select-none"
+							>
+								<input
+									type="radio"
+									name="gizmo-op"
+									class="accent-accent shrink-0"
+									:value="g.id"
+									v-model="ui.gizmoMode"
+								/>
+								<span class="truncate">{{ g.label }}</span>
+							</label>
+							<label
+								class="flex items-center gap-1.5 text-2xs text-fg cursor-pointer select-none"
+								title="Off: clicking selects the whole linked object. On: selects the individual prim under the cursor."
+							>
+								<input type="checkbox" v-model="ui.editLinked" class="accent-accent" />
+								Edit linked
+							</label>
+						</div>
+						<div class="flex flex-col text-2xs text-fg whitespace-nowrap">
+							<label for="">⬜ Stretch both sides</label>
+							<label for="">✅ Stretch textures</label>
+							<label for="">⬜ Snap</label>
+							<label for="">⬜ Edit axis at root</label>
+							<label for="">✅ Show highlight</label>
+							<label for="">⬜ Select reflection probes</label>
+						</div>
+						<div class="text-lg" title="See more grid options (to-do)">➡️</div>
+					</div>
+
+					<!-- Link controls (FS-parity) ─────────────────────────────────────── -->
+					<div class="flex items-center gap-1 pb-0.5">
+						<button
+							title="Select previous linked part or face"
+							:disabled="!canCycle"
+							class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
+							:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
+							@click="selectLink(-1)"
+						><ChevronLeftIcon class="w-3 h-3" /></button>
+						<button
+							title="Select next linked part or face"
+							:disabled="!canCycle"
+							class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
+							:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
+							@click="selectLink(1)"
+						><ChevronRightIcon class="w-3 h-3" /></button>
+						<button
+							title="Link selected objects (Phase 3 — perms)"
+							disabled
+							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
+						>Link</button>
+						<button
+							title="Unlink selected object (Phase 3 — perms)"
+							disabled
+							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
+						>Unlink</button>
+						<select
+							title="World (Phase 3)"
+							disabled
+							class="ui-btn ml-auto p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
+						>
+							<option value="">World</option>
+							<option value="">Local</option>
+							<option value="">Reference</option>
+						</select>
+					</div>
+				</div>
+				<div v-else-if="buildTool === tools[3].id">
+					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click inworld to build</p>
+					<div class="flex items-center gap-2 pe-2">
+						<div class="flex flex-wrap gap-0.5">
+							<label for="" class="text-xl" title="Cube">🧊</label>
+							<label for="" class="text-xl" title="Prism">🧊</label>
+							<label for="" class="text-xl" title="Pyramid">🧊</label>
+							<label for="" class="text-xl" title="Tetrahedron">🧊</label>
+							<label for="" class="text-xl" title="Cylinder">🧊</label>
+							<label for="" class="text-xl" title="Hemicylinder">🧊</label>
+							<label for="" class="text-xl" title="Cone">🧊</label>
+							<label for="" class="text-xl" title="Hemicone">🧊</label>
+							<label for="" class="text-xl" title="Sphere">🟠</label>
+							<label for="" class="text-xl" title="Hemisphere">🧊</label>
+							<label for="" class="text-xl" title="Torus">🧊</label>
+							<label for="" class="text-xl" title="Tube">🧊</label>
+							<label for="" class="text-xl" title="Ring">⭕</label>
+							<label for="" class="text-xl" title="Tree">🌳</label>
+							<label for="" class="text-xl" title="Grass">🧊</label>
+						</div>
+						<div class="flex flex-col whitespace-nowrap">
+							<label for="">⬜ Keep tool selected</label>
+							<label for="">⬜ Copy selection</label>
+							<label for="" class="ms-4">✅ Center copy</label>
+							<label for="" class="ms-4">⬜ Rotate copy</label>
+							<select class="ui-select bg-fg/20 border border-edge rounded-sm mb-1 ms-2 mt-1 py-0 px-1.5 w-full text-fg">
+								<option value="">Random</option>
+								<option value="">Grass 0</option>
+								<option value="">Grass 1</option>
+								<option value="">Grass 2</option>
+								<option value="">Grass 3</option>
+								<option value="">Grass 4</option>
+								<option value="">undergrowth_1</option>
+							</select>
+						</div>
+					</div>
+				</div>
+				<div v-else-if="buildTool === tools[4].id">
+					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to select land</p>
+					<div class="flex gap-5">
+						<div class="flex flex-col whitespace-nowrap">
+							<label for="">🔘 Select land</label>
+							<label for="">🔘 Flatten</label>
+							<label for="">🔘 Raise</label>
+							<label for="">🔘 Lower</label>
+							<label for="">🔘 Smooth</label>
+							<label for="">🔘 Roughen</label>
+							<label for="">🔘 Revert</label>
+						</div>
+						<div class="w-full">
+							<p>Bulldozer:</p>
+							<div class="grid grid-cols-[3.5rem_1fr] gap-x-1 mb-1">
+								<p>Size</p>
+								<div class="bg-accent w-full">slider</div>
+							</div>
+							<div class="grid grid-cols-[3.5rem_1fr] gap-x-1 mb-1">
+								<p>Strength</p>
+								<div class="bg-accent w-full">slider</div>
+							</div>
+							<button title="Modify selected land" class="ui-btn py-0.5 px-5 text-xs rounded-sm border transition-colors">Apply</button>
+						</div>
+					</div>
+					<div class="w-36 my-8 ps-2">
+						<h4 class="mb-1 text-sm">Parcel Information</h4>
+						<div class="ps-4">
+							<p class="mb-2">Area: ##### m<sup>2</sup></p>
+							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors">About land</button>
+							<label for="" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public">⬜ Show owners</label>
+						</div>
+					</div>
+					<div class="w-36 my-8 ps-2">
+						<h4 class="mb-1 text-sm">Modify Parcel</h4>
+						<div class="ps-4">
+							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors" disabled>Subdivide</button>
+							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors" disabled>Join</button>
+						</div>
+					</div>
+					<div class="w-36 my-8 ps-2">
+						<h4 class="mb-1 text-sm">Land transactions</h4>
+						<div class="ps-4">
+							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors" disabled>Buy land</button>
+							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors" disabled>Abandon land</button>
+						</div>
+					</div>
+				</div>
 			</div>
 
-			<!-- Link controls (FS-parity) ─────────────────────────────────────── -->
-			<div class="shrink-0 px-2 py-1.5 border-b border-edge space-y-1.5">
-				<div class="flex items-center gap-1">
-					<button
-						title="Select previous linked part or face"
-						:disabled="!canCycle"
-						class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
-						@click="selectLink(-1)"
-					><ChevronLeftIcon class="w-3 h-3" /></button>
-					<button
-						title="Select next linked part or face"
-						:disabled="!canCycle"
-						class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-						:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
-						@click="selectLink(1)"
-					><ChevronRightIcon class="w-3 h-3" /></button>
-					<button
-						title="Link selected objects (Phase 3 — perms)"
-						disabled
-						class="ui-btn flex-1 px-2 py-1 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
-					>Link</button>
-					<button
-						title="Unlink selected object (Phase 3 — perms)"
-						disabled
-						class="ui-btn flex-1 px-2 py-1 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
-					>Unlink</button>
-					<button
-						title="World (Phase 3)"
-						disabled
-						class="ui-btn ml-auto px-2 py-1 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
-					>World <ChevronDownIcon class="w-4 h-4" /></button>
-				</div>
-				<div class="text-2xs text-fg/60 font-mono space-y-0.5">
+			<div v-if="buildTool !== tools[4].id">
+				<div class="text-2xs text-fg/60 font-mono pt-1 px-2">
 					<div v-show="ui.editLinked">Link number: <span class="text-fg">{{ linkNumber }}</span></div>
-					<div>{{ objectsSelected }} object{{ objectsSelected === 1 ? '' : 's' }} selected, land impact <span class="text-fg">{{ landImpact }}</span></div>
-					<div>
-						Remaining capacity <span class="me-2 text-fg">{{ remainingCapacity || '??' }}</span>
+					<p class="leading-3">{{ objectsSelected }} object{{ objectsSelected === 1 ? '' : 's' }} selected, land impact <span class="text-fg">{{ landImpact }}</span></p>
+					<p class="leading-3">
+						Remaining capacity <span class="me-2 text-fg">{{ remainingCapacity || '??' }}.</span>
 						<a href="https://docs.opensimulator.org/en/latest/features/build-tools/" target="_blank" rel="noopener noreferrer"
 							title="More info (Phase 3)"
 							disabled
 							class="text-fg/30 cursor-not-allowed"
 						>More info</a>
-					</div>
+					</p>
 				</div>
-			</div>
-
-			<!-- Tab strip -->
-			<nav class="tabs">
-				<button
-					v-for="tab in tabs"
-					:key="tab.id"
-					:class="activeTab === tab.id
-						? 'active'
-						: ''"
-					@click="activeTab = tab.id"
-				>{{ tab.label }}</button>
-			</nav>
-
-			<div v-if="!obj" class="flex-1 flex items-center justify-center text-fg/30 italic px-4 text-center">
-				Right-click a prim → Edit to inspect properties.
-			</div>
-
-			<div v-else class="flex-1 overflow-y-auto px-2 py-2 space-y-3">
-				<!-- General ─────────────────────────────────────────────── -->
-				<template v-if="activeTab === 'general'">
-					<div class="grid grid-cols-[4.5rem_auto] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-fg/50 text-end" title="63 chars, ASCII-7 + pipe.">Name:</div>
-						<input v-model="editName" :readonly="!canModify" maxlength="63" :title="canModify ? 'Enter or Tab to apply (ObjectName)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitName, $event)" @blur="onBlur(commitName)" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
-						<div class="text-fg/50 text-end" title="127 chars. May get used in hover tips or scripting">Description:</div>
-						<input v-model="editDesc" :readonly="!canModify" maxlength="127" placeholder="—" :title="canModify ? 'Enter or Tab to apply (ObjectDescription)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitDesc, $event)" @blur="onBlur(commitDesc)" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
-						<div class="text-fg/50 text-end">UUID:</div>
-						<input :value="obj.fullId" readonly class="px-1.5 py-0.5 text-fg font-mono text-2xs" />
-						<div class="text-fg/50 text-end">Type:</div>
-						<input :value="typeInfo.label" readonly class="px-1.5 py-0.5 text-fg" />
-						<div class="text-fg/50 text-end">Hover Text:</div>
-						<div class="text-fg whitespace-pre-wrap">{{ obj.text || '—' }}</div>
-					</div>
-					<div v-if="obj.creatorId" class="border-t border-edge pt-2">
-						<div class="grid grid-cols-[4.5rem_1fr] text-xs">
-							<div class="pe-2 text-fg/50 text-end">Creator:</div>
-							<input :value="obj.creatorId" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="pe-2 text-fg/50 text-end">Owner:</div>
-							<input :value="obj.ownerId" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="pe-2 text-fg/50 text-end">Last Owner:</div>
-							<input :value="obj.lastOwnerId || '—'" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="pe-2 text-fg/50 text-end">Group:</div>
-							<input :value="obj.groupId" readonly class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg font-mono text-2xs" />
-							<div class="pe-2 text-fg/50 text-end">Created:</div>
-							<div class="mb-1 px-1.5 py-0.5 text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
-							<div class="flex items-center justify-end gap-2 pe-2 text-fg/50 text-end">Click to:</div>
-							<select title="A click action enables you to interact with an object with a single left click." disabled class="qs-input mb-1 px-2 py-1 rounded-sm bg-panel border border-edge text-fg">
-								<option v-for="o in CLICK_ACTION_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.clickAction ?? 0)">{{ o.label }}</option>
-							</select>
-							<template v-if="obj.touchName">
-								<div class="pe-2 text-fg/50 text-end">Touch label:</div>
-								<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.touchName }}</div>
-							</template>
-							<template v-if="obj.sitName">
-								<div class="pe-2 text-fg/50 text-end">Sit label:</div>
-								<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.sitName }}</div>
-							</template>
-							<label class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 ps-1 text-fg/50 whitespace-nowrap"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
-							<div class="flex items-center gap-1 bg-fg/20 py-1">
-								<select title="Whether purchaser receives original, copy, or contents." disabled class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 text-fg">
-									<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
+				<!-- Tab strip -->
+				<nav class="tabs">
+					<button
+						v-for="tab in tabs"
+						:key="tab.id"
+						:class="activeTab === tab.id
+							? 'active'
+							: ''"
+						@click="activeTab = tab.id"
+					>{{ tab.label }}</button>
+				</nav>
+				<div v-if="!obj" class="flex-1 flex items-center justify-center text-fg/30 italic px-4 text-center">
+					Right-click a prim → Edit to inspect properties.
+				</div>
+				<div v-else class="flex-1 overflow-y-auto pt-2 px-2 pb-0.5 space-y-3">
+					<!-- General ─────────────────────────────────────────────── -->
+					<template v-if="activeTab === 'general'">
+						<div class="grid grid-cols-[3.5rem_1fr] gap-x-1.5 mb-1 text-xs">
+							<div class="text-fg/50 text-2xs text-end" title="63 chars, ASCII-7 + pipe.">Name:</div>
+							<input v-model="editName" :readonly="!canModify" maxlength="63" :title="canModify ? 'Enter or Tab to apply (ObjectName)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitName, $event)" @blur="onBlur(commitName)" class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
+							<div class="text-fg/50 text-2xs text-end" title="127 chars. May get used in hover tips or scripting">Description:</div>
+							<input v-model="editDesc" :readonly="!canModify" maxlength="127" placeholder="—" :title="canModify ? 'Enter or Tab to apply (ObjectDescription)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitDesc, $event)" @blur="onBlur(commitDesc)" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
+							<div class="text-fg/50 text-2xs text-end">UUID:</div>
+							<input :value="obj.fullId" readonly class="px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<div class="text-fg/50 text-2xs text-end">Type:</div>
+							<input :value="typeInfo.label" readonly class="px-1.5 py-0.5 text-fg" />
+							<div class="text-fg/50 text-2xs text-end">Hover Text:</div>
+							<div class="text-fg whitespace-pre-wrap">{{ obj.text || '—' }}</div>
+						</div>
+						<div v-if="obj.creatorId" class="border-t border-edge mb-1 pt-1">
+							<div class="grid grid-cols-[3.5rem_1fr] text-xs">
+								<div class="text-fg/50 text-2xs text-end">Creator:</div>
+								<input :value="obj.creatorId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<div class="text-fg/50 text-2xs text-end">Owner:</div>
+								<input :value="obj.ownerId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<div class="text-fg/50 text-2xs text-end whitespace-nowrap">Last Owner:</div>
+								<input :value="obj.lastOwnerId || '—'" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<div class="text-fg/50 text-2xs text-end">Group:</div>
+								<input :value="obj.groupId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<div class="text-fg/50 text-2xs text-end">Created:</div>
+								<div class="ms-1 px-1.5 py-0 text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
+								<div class="flex items-center justify-end text-fg/50 text-2xs text-end">Click to:</div>
+								<select title="A click action enables you to interact with an object with a single left click." disabled class="ui-select bg-fg/20 border border-edge rounded-sm mb-1 ms-2 px-1.5 py-0.5 text-fg">
+									<option v-for="o in CLICK_ACTION_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.clickAction ?? 0)">{{ o.label }}</option>
 								</select>
-							</div>
-							<div class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 text-fg/50 text-end self-center">Price ??$</div>
-							<div class="flex items-center gap-1 bg-fg/20 pb-1">
-								<input type="number" min="0" max="999999999" step="1" :value="obj.salePrice" readonly
-								class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 w-20 text-fg" />
-								<button title="Mark/Update object(s) for sale." class="ui-btn p-1 px-5 text-xs rounded-sm border transition-colors">Apply</button>
-							</div>
-						</div>
-					</div>
-					<div v-if="obj.baseMask != null" class="border-t border-edge pt-2">
-						<div class="text-fg/50 text-2xs uppercase tracking-wide">Permissions</div>
-						<h6 class="mb-1 text-2xs text-accent">You {can/can't} modify this object</h6>
-						<div class="flex gap-2 text-3xs font-mono">
-							<div class="text-fg/50">Base:</div>
-							<div class="text-fg">{{ permLetters(obj.baseMask) }}</div>
-							<div class="text-fg/50">Owner:</div>
-							<div class="text-fg">{{ permLetters(obj.ownerMask) }}</div>
-							<div class="text-fg/50">Group:</div>
-							<div class="text-fg">{{ permLetters(obj.groupMask) }}</div>
-							<div class="text-fg/50">Everyone:</div>
-							<div class="text-fg">{{ permLetters(obj.everyoneMask) }}</div>
-							<div class="text-fg/50">Next Owner:</div><div class="text-fg">{{ permLetters(obj.nextOwnerMask) }}</div>
-						</div>
-						<h6 class="w-12 text-3xs text-fg-muted">Anyone:</h6>
-						<div class="flex align-center gap-3 mb-1">
-							<span class="w-18">[&nbsp; ] Move</span>
-							<span class="w-18">[✓] Copy</span>
-							<span class="w-18">[&nbsp; ] Export</span>
-						</div>
-						<h6 class="mb-0 text-3xs text-fg-muted">Next owner:</h6>
-						<div class="flex gap-3 mb-1">
-							<span class="w-18">[✓] Modify</span>
-							<span class="w-18">[✓] Copy</span>
-							<span class="w-18">[✓] Transfer</span>
-						</div>
-						<h6 class="mb-0 text-3xs text-fg-muted">Pathfinding attributes: <span class="text-xs text-fg">none</span></h6>
-					</div>
-					<div v-if="!obj.creatorId" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
-						Loading properties from sim…
-					</div>
-				</template>
-
-				<!-- Object ──────────────────────────────────────────────── -->
-				<!-- WHY: FS-parity — the Object tab carries identity, transform AND the parametric
-					prim-shape params + the building-block / mesh / sculpt type. The type row is how
-					you tell a mesh from a sculpt from a plain prim. -->
-				<template v-else-if="activeTab === 'object'">
-					<div class="flex gap-2">
-						<div class="w-2/5">
-							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Modify permission — object is locked against edits"><input type="checkbox" :checked="!(obj.ownerMask & 0x4000)" disabled class="accent-accent" /> Locked</label>
-							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" :checked="!!obj.physical" disabled class="accent-accent" /> Physical</label>
-							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" :checked="!!obj.temporary" disabled class="accent-accent" /> Temporary</label>
-							<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" :checked="!!obj.phantom" disabled class="accent-accent" /> Phantom</label>
-							<!-- Transform -->
-							<div class="my-2">
-								<div class="text-fg/50 text-2xs uppercase tracking-wide">Position (meters)</div>
-								<div class="grid gap-1 text-xs">
-									<div><span class="text-red-500 font-bold">X</span> <span class="text-fg font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
-									<div><span class="text-green-500 font-bold">Y</span> <span class="text-fg font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
-									<div><span class="text-blue-500 font-bold">Z</span> <span class="text-fg font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
-								</div>
-							</div>
-							<div class="mb-2">
-								<div class="text-fg/50 text-2xs uppercase tracking-wide">Size (meters)</div>
-								<div class="grid gap-1 text-xs">
-									<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
-									<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
-									<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
-								</div>
-							</div>
-							<div class="mb-2">
-								<div class="text-fg/50 text-2xs uppercase tracking-wide">Rotation (degrees)</div>
-								<div class="grid gap-1 text-xs">
-									<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
-									<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
-									<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
-								</div>
-							</div>
-						</div>
-						<div class="w-3/5">
-							<div class="flex justify-end">
-								<button title="Copy object parameters to clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
-								<button title="Paste object parameters from clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
-							</div>
-							<!-- Identity / linkset -->
-							<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-								<div class="text-fg/50">Building Block</div>
-								<div class="text-fg">{{ typeInfo.label }}</div>
-								<template v-if="typeInfo.detail">
-									<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
-									<div class="flex items-center gap-1.5 min-w-0">
-										<button
-											class="w-10 h-10 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
-											:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
-											@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
-										>
-											<span>{{ typeInfo.kind === 'mesh' ? '◰' : '⛰' }}</span>
-										</button>
-										<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
-									</div>
-									LOD: Num Triangles
-									High: ####
-									Medium: ###
-									Low: ##
-									Lowest: ##
+								<template v-if="obj.touchName">
+									<div class="pe-2 text-fg/50 text-2xs text-end">Touch label:</div>
+									<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.touchName }}</div>
 								</template>
-								<div class="text-fg/50">LocalID</div>
-								<div class="text-fg font-mono">{{ obj.localId }}</div>
-								<div class="text-fg/50">Parent ID</div>
-								<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
-								<div class="text-fg/50">Link Count</div>
-								<div class="text-fg">{{ linkCount }}</div>
-							</div>
-							<!-- Parametric prim shape (FS: lives on the Object tab) -->
-							<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
-								<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
-								<div class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-									<div class="text-fg/50">Profile</div>
-									<div class="text-fg">{{ profileCurveLabel }}</div>
-									<div class="text-fg/50">Path Cut (B/E)</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
-									<div class="text-fg/50">Profile Cut (B/E)</div>
-									<div class="text-fg font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
-									<div class="text-fg/50">Hollow</div>
-									<div class="text-fg font-mono">{{ obj.shape.profileHollow }}</div>
-									<div class="text-fg/50">Twist (B/E)</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
-									<div class="text-fg/50">Taper X/Y</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
-									<div class="text-fg/50">Top Shear X/Y</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
-									<div class="text-fg/50">Hole Size X/Y</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
-									<div class="text-fg/50">Revolutions</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathRevolutions }}</div>
-									<div class="text-fg/50">Radius Offset</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathRadiusOffset }}</div>
-									<div class="text-fg/50">Skew</div>
-									<div class="text-fg font-mono">{{ obj.shape.pathSkew }}</div>
-								</div>
-							</div>
-							<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
-								Geometry comes from the mesh asset above. LOD triangle counts arrive with the
-								mesh-info decode (Phase 3).
-							</div>
-						</div>
-					</div>
-				</template>
-
-				<!-- Features ────────────────────────────────────────────── -->
-				<!-- WHY: FS-parity LLPanelVolume layout — Flexible Path, Light, Reflection Probe and
-					Physics. Material (mcode), Flexi (0x10), Light (0x20) and Reflection Probe (0x90)
-					are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the Phase 3
-					ObjectPhysicsProperties work, so it still shows "not decoded". -->
-				<template v-else-if="activeTab === 'features'">
-					<div class="grid grid-cols-[8rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-						<div class="text-fg/50">Flexible Path</div>
-						<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
-						<div v-else class="text-fg/40 italic">Off</div>
-						<div class="text-fg/50">Light</div>
-						<div v-if="obj.light" class="flex items-center gap-2 text-fg text-2xs">
-							<span class="w-4 h-4 shrink-0 rounded-sm border border-edge" :style="{ background: `rgb(${lightRgb})` }"></span>
-							<span>intensity {{ obj.light.intensity.toFixed(2) }} · radius {{ obj.light.radius.toFixed(1) }}m · falloff {{ obj.light.falloff.toFixed(1) }}</span>
-						</div>
-						<div v-else class="text-fg/40 italic">Off</div>
-						<div class="text-fg/50">Reflection Probe</div>
-						<div v-if="reflectionProbeLabel" class="text-fg text-2xs">{{ reflectionProbeLabel }}</div>
-						<div v-else class="text-fg/40 italic">Off</div>
-						<div class="text-fg/50">Physics Shape</div>
-						<div class="text-fg/40 italic">not decoded</div>
-						<div class="text-fg/50">Material (physics)</div>
-						<div class="text-fg">{{ materialLabel }}</div>
-					</div>
-					<div class="text-2xs text-fg/30 italic pt-1">
-						Physics-shape type isn't carried in the object update — it arrives in a separate
-						ObjectPhysicsProperties packet (Phase 3 physics-flags work).
-					</div>
-				</template>
-
-				<!-- Texture ─────────────────────────────────────────────── -->
-				<!-- WHY: FS matmedia split — Blinn-Phong (legacy diffuse/normal/specular) vs PBR
-					(GLTF metallic-roughness) sub-tabs. "Multiple" surfaces when faces differ; every
-					texture chip opens a larger preview ("texture picker"). Read-only (Phase 3 edit). -->
-				<template v-else-if="activeTab === 'texture'">
-					<!-- Sub-tab strip -->
-					<nav class="tabs -mt-1 whitespace-nowrap">
-						<button :class="texSubTab === 'pbr' ? 'active' : ''" @click="texSubTab = 'pbr'">PBR</button>
-						<button :class="texSubTab === 'bp' ? 'active' : ''" @click="texSubTab = 'bp'">Blinn-Phong</button>
-						<button :class="texSubTab === 'mdia' ? 'active' : ''" @click="texSubTab = 'mdia'">Media</button>
-					</nav>
-
-					<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
-					<template v-if="texSubTab === 'bp'">
-						<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-2 text-xs">
-							<div class="text-fg/50 self-center">Texture</div>
-							<div class="flex items-center gap-1 min-w-0">
-								<div class="flex flex-col items-center gap-1">
-									<button
-										class="w-16 h-16 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xs overflow-hidden hover:border-accent"
-										:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
-										@click="openPreview(obj.defaultTexture)"
-									>
-										<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
-										<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
-									</button>
-									Diffuse
-								</div>
-								<div class="flex-1 min-w-0">
-									<div v-if="isMultiTexture" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctTextures.length }})</div>
-									<input
-										:value="obj.defaultTexture || '(none)'"
-										readonly
-										class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
-									/>
-								</div>
-							</div>
-							<div class="text-fg/50 self-center">Tint</div>
-							<div class="flex items-center gap-2">
-								<div
-									class="w-6 h-6 rounded-sm border border-edge"
-									:style="obj.defaultColor
-										? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
-										: { background: 'rgba(255,255,255,0.05)' }"
-								></div>
-								<span v-if="isMultiColor" class="text-accent font-semibold">Multiple</span>
-								<input
-									v-else
-									:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
-									readonly
-									class="flex-1 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
-								/>
-							</div>
-							<div class="text-fg/50 self-center">Full bright</div>
-							<div class="text-fg">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
-							<div class="text-fg/50 self-center">Glow</div>
-							<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-							<div class="text-fg/50 self-center">Trans %</div>
-							<input
-								:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
-								readonly
-								class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
-							/>
-							<div class="text-fg/50 self-center">Alpha mode</div>
-							<div class="text-fg">
-								<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
-									texture has alpha. Emissive mask renders as None (unlit materials). -->
-								<select
-									v-model="alphaMode"
-									class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg"
-								>
-									<option value="">Auto (blend if alpha)</option>
-									<option value="none">None</option>
-									<option value="blend">Alpha blending</option>
-									<option value="mask">Alpha masking</option>
-									<option value="emissive">Emissive mask</option>
-								</select>
-							</div>
-							<div class="text-fg/50 self-center">Mask cutoff</div>
-							<div class="text-fg">to-do</div>
-							<div class="text-fg/50 self-center">Bumpiness</div>
-							<div class="text-fg">{{ bumpLabel }}</div>
-							<div class="text-fg/50 self-center">Shininess</div>
-							<div class="text-fg">{{ shinyLabel }}</div>
-							<div class="text-fg/50 self-center">Glossiness</div>
-							<div class="text-fg">to-do</div>
-							<div class="text-fg/50 self-center">Environment</div>
-							<div class="text-fg">to-do</div>
-						</div>
-
-						<!-- Per-face diffuse chips (only faces overriding the default) -->
-						<div v-if="faceTexChips.length" class="border-t border-edge pt-2">
-							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face textures</div>
-							<div class="flex flex-wrap gap-1.5">
-								<button
-									v-for="c in faceTexChips"
-									:key="c.face"
-									class="relative w-10 h-10 bg-fg/20 border border-edge rounded-sm overflow-hidden hover:border-accent"
-									:title="`Face ${c.face} — click for preview`"
-									@click="openPreview(c.uuid)"
-								>
-									<img v-if="texUrls[c.uuid]" :src="texUrls[c.uuid]" class="w-full h-full object-cover" alt="" @error="reloadTex(c.uuid)" />
-									<span v-else class="absolute inset-0 flex items-center justify-center text-fg/30 text-2xs">…</span>
-									<span class="absolute bottom-0 right-0 px-0.5 bg-black/60 text-[0.5rem] text-fg/80 rounded-tl">{{ c.face }}</span>
-								</button>
-							</div>
-						</div>
-
-						<!-- Per-face mapping overrides (Scale / Offset / Rotation / Mapping, planar-aware) -->
-						<div v-if="faceUvRows.length" class="border-t border-edge pt-2">
-							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face mapping</div>
-							<div class="space-y-1">
-								<div v-for="r in faceUvRows" :key="r.face" class="grid grid-cols-[2rem,1fr] gap-x-2 items-baseline text-2xs">
-									<span class="text-fg/50">F{{ r.face }}</span>
-									<div class="font-mono text-fg">
-										<span v-if="r.mapping !== 'Default'" class="text-accent">{{ r.mapping }}</span>
-										Scale {{ r.repeats[0].toFixed(5) }}×{{ r.repeats[1].toFixed(5) }}
-										<template v-if="r.rpm != null">· RPM {{ r.rpm.toFixed(5) }}</template>
-										· Off {{ r.offset[0].toFixed(5) }},{{ r.offset[1].toFixed(5) }}
-										· Rot {{ (r.rotation * 180 / Math.PI).toFixed(5) }}°
+								<template v-if="obj.sitName">
+									<div class="pe-2 text-fg/50 text-2xs text-end">Sit label:</div>
+									<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.sitName }}</div>
+								</template>
+								<div class="grid grid-cols-[4rem_1fr] gap-x-0 text-xs">
+									<label class="flex items-center justify-end gap-1 bg-fg/10 h-full px-1 text-fg/50 text-2xs text-end whitespace-nowrap"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
+									<div class="flex items-center gap-1 bg-fg/10 p-1">
+										<select title="Whether purchaser receives original, copy, or contents." class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" :disabled="!(obj.saleType ?? 0)">
+											<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
+										</select>
+									</div>
+									<div class="flex items-center justify-end gap-1 bg-fg/10 h-full pe-1 text-fg/50 text-2xs text-end self-center">Price ??$</div>
+									<div class="flex items-center gap-1 bg-fg/10 p-1 pt-0">
+										<input type="number" min="0" max="999999" step="1" :value="obj.salePrice" readonly
+										class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 w-15 text-fg font-mono" />
+										<button title="Mark/Update object(s) for sale." class="ui-btn p-1 px-5 text-xs rounded-sm border transition-colors">Apply</button>
 									</div>
 								</div>
 							</div>
 						</div>
-
-						<!-- Mapping (default face) — FS-style: Mapping mode + Scale H/V + Offset H/V + Rotation -->
-						<div class="border-t border-edge pt-2">
-							<div class="tabnav my-1 text-gray-500">|| DIFFUSE | Normal | Specular ||</div>
-							<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-								<div class="text-fg/50 self-center">Scale H / V</div>
-								<div class="grid grid-cols-2 gap-1">
-									<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-									<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+						<div v-if="obj.baseMask != null" class="border-t border-edge pt-1">
+							<div class="text-fg/50 text-2xs uppercase tracking-wide">Permissions</div>
+							<div class="flex gap-2">
+								<div>
+									<h6 v-if="false" class="mb-1 text-2xs text-accent">You must select entire object to set permissions</h6>
+									<h6 v-else class="mb-1 text-2xs text-accent">You {can/can't} modify this object</h6>
+									<h6 class="mb-0 text-3xs text-fg-muted leading-1.5">Anyone:</h6>
+									<div class="flex align-center gap-3 mb-2">
+										<label class="w-15 whitespace-nowrap" title="Anyone can move the object.">⬜ Move</label>
+										<label class="w-13 whitespace-nowrap" title="Anyone can take a copy of the object. Object and all of its contents must be copy and transfer permissive.">[✓] Copy</label>
+										<label class="w-15 whitespace-nowrap" title="Anyone can export this Object.">⬜ Export</label>
+									</div>
+									<h6 class="mb-0 text-3xs text-fg-muted leading-1.5">Next owner:</h6>
+									<div class="flex gap-3 mb-0.5">
+										<label class="w-15 whitespace-nowrap" title="Next owner can edit properties like item name or scale of this object.">[✓] Modify</label>
+										<label class="w-13 whitespace-nowrap" title="Next owner can make unlimited copies of this object. Copies maintain creator information, and can never be more permissive than the item being copied.">[✓] Copy</label>
+										<label class="w-15 whitespace-nowrap" title="Next owner can give away or resell this object.">[✓] Transfer</label>
+									</div>
+									<h6 class="mb-0 text-3xs text-fg-muted">Pathfinding attributes: <span class="text-xs text-fg">none</span></h6>
 								</div>
-								<div class="text-fg/50 self-center">Offset H / V</div>
-								<div class="grid grid-cols-2 gap-1">
-									<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-									<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+								<!-- B/O/G/E/N/F debugging perms -->
+								<div class="flex flex-col gap-1 mb-2 text-3xs font-mono leading-2">
+									<div class="flex justify-between gap-1 w-full text-fg/50">
+										<span class="w-12 text-end">Base:</span>
+										<span class="w-7 text-fg">{{ permLetters(obj.baseMask) }}</span>
+									</div>
+									<div class="flex justify-between gap-1 w-full text-fg/50">
+										<span class="w-12 text-end">Owner:</span>
+										<span class="w-7 text-fg">{{ permLetters(obj.ownerMask) }}</span>
+									</div>
+									<div class="flex justify-between gap-1 w-full text-fg/50">
+										<span class="w-12 text-end">Group:</span>
+										<span class="w-7 text-fg">{{ permLetters(obj.groupMask) }}</span>
+									</div>
+									<div class="flex justify-between gap-1 w-full text-fg/50">
+										<span class="w-12 text-end">Everyone:</span>
+										<span class="w-7 text-fg">{{ permLetters(obj.everyoneMask) }}</span>
+									</div>
+									<div class="flex justify-between gap-1 w-full text-fg/50">
+										<span class="w-12 text-end">Nextowner:</span>
+										<span class="w-7 text-fg">{{ permLetters(obj.nextOwnerMask) }}</span>
+									</div>
+									<div class="flex justify-between gap-1 w-full text-fg/50">
+										<span class="w-12 text-end">F:</span>
+										<span class="w-7 text-fg">fmask</span>
+									</div>
 								</div>
-								<div class="text-fg/50 self-center">Rotation°</div>
-								<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-								<template v-if="defaultMapping.rpm != null">
-									<div class="text-fg/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
-									<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-								</template>
-								<div class="text-fg/50 self-center">Mapping</div>
-								<div class="text-fg">{{ defaultMapping.mapping }}</div>
 							</div>
-							<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Synchronize materials</label>
-							<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Align planar faces</label>
 						</div>
-						<div v-if="obj.defaultMaterialId" class="border-t border-edge pt-2">
-							<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
-							<input :value="obj.defaultMaterialId" readonly class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+						<div v-if="!obj.creatorId" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
+							Loading properties from sim…
 						</div>
 					</template>
-
-					<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
-					<template v-else-if="texSubTab === 'pbr'">
-						<div v-if="!hasPbr" class="text-fg/40 italic px-1 py-3 text-center">
-							No PBR material on this object — it uses Blinn-Phong (legacy) textures.
+					<!-- Object ──────────────────────────────────────────────── -->
+					<!-- WHY: FS-parity — the Object tab carries identity, transform AND the parametric
+						prim-shape params + the building-block / mesh / sculpt type. The type row is how
+						you tell a mesh from a sculpt from a plain prim. -->
+					<template v-else-if="activeTab === 'object'">
+						<div class="flex gap-2">
+							<div class="w-2/5">
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Modify permission — object is locked against edits"><input type="checkbox" :checked="!(obj.ownerMask & 0x4000)" disabled class="accent-accent" /> Locked</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" :checked="!!obj.physical" disabled class="accent-accent" /> Physical</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" :checked="!!obj.temporary" disabled class="accent-accent" /> Temporary</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" :checked="!!obj.phantom" disabled class="accent-accent" /> Phantom</label>
+								<!-- Transform -->
+								<div class="my-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide">Position (meters)</div>
+									<div class="grid gap-1 text-xs">
+										<div><span class="text-red-500 font-bold">X</span> <span class="text-fg font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
+										<div><span class="text-green-500 font-bold">Y</span> <span class="text-fg font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
+										<div><span class="text-blue-500 font-bold">Z</span> <span class="text-fg font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
+									</div>
+								</div>
+								<div class="mb-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide">Size (meters)</div>
+									<div class="grid gap-1 text-xs">
+										<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
+										<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
+										<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
+									</div>
+								</div>
+								<div class="mb-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide">Rotation (degrees)</div>
+									<div class="grid gap-1 text-xs">
+										<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
+										<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
+										<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
+									</div>
+								</div>
+							</div>
+							<div class="w-3/5">
+								<div class="flex justify-end">
+									<button title="Copy object parameters to clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
+									<button title="Paste object parameters from clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
+								</div>
+								<!-- Identity / linkset -->
+								<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+									<div class="text-fg/50">Building Block</div>
+									<div class="text-fg">{{ typeInfo.label }}</div>
+									<template v-if="typeInfo.detail">
+										<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
+										<div class="flex items-center gap-1.5 min-w-0">
+											<button
+												class="w-10 h-10 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xl overflow-hidden hover:border-accent"
+												:title="typeInfo.kind === 'mesh' ? 'Mesh asset (no image preview)' : 'Preview sculpt map'"
+												@click="typeInfo.kind === 'sculpt' ? openPreview(typeInfo.detail) : copyText(typeInfo.detail)"
+											>
+												<span>{{ typeInfo.kind === 'mesh' ? '◰' : '⛰' }}</span>
+											</button>
+											<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+										</div>
+										LOD: Num Triangles
+										High: ####
+										Medium: ###
+										Low: ##
+										Lowest: ##
+									</template>
+									<div class="text-fg/50">LocalID</div>
+									<div class="text-fg font-mono">{{ obj.localId }}</div>
+									<div class="text-fg/50">Parent ID</div>
+									<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
+									<div class="text-fg/50">Link Count</div>
+									<div class="text-fg">{{ linkCount }}</div>
+								</div>
+								<!-- Parametric prim shape (FS: lives on the Object tab) -->
+								<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
+									<div class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+										<div class="text-fg/50">Profile</div>
+										<div class="text-fg">{{ profileCurveLabel }}</div>
+										<div class="text-fg/50">Path Cut (B/E)</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
+										<div class="text-fg/50">Profile Cut (B/E)</div>
+										<div class="text-fg font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
+										<div class="text-fg/50">Hollow</div>
+										<div class="text-fg font-mono">{{ obj.shape.profileHollow }}</div>
+										<div class="text-fg/50">Twist (B/E)</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
+										<div class="text-fg/50">Taper X/Y</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
+										<div class="text-fg/50">Top Shear X/Y</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
+										<div class="text-fg/50">Hole Size X/Y</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
+										<div class="text-fg/50">Revolutions</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathRevolutions }}</div>
+										<div class="text-fg/50">Radius Offset</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathRadiusOffset }}</div>
+										<div class="text-fg/50">Skew</div>
+										<div class="text-fg font-mono">{{ obj.shape.pathSkew }}</div>
+									</div>
+								</div>
+								<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
+									Geometry comes from the mesh asset above. LOD triangle counts arrive with the
+									mesh-info decode (Phase 3).
+								</div>
+							</div>
 						</div>
-						<template v-else>
-							<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
-								<div class="text-fg/50 self-center">Material</div>
-								<div class="flex-1 min-w-0">
-									<div v-if="isMultiPbr" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctPbr.length }})</div>
-									<div class="flex items-center gap-1.5">
+					</template>
+					<!-- Features ────────────────────────────────────────────── -->
+					<!-- WHY: FS-parity LLPanelVolume layout — Flexible Path, Light, Reflection Probe and
+						Physics. Material (mcode), Flexi (0x10), Light (0x20) and Reflection Probe (0x90)
+						are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the Phase 3
+						ObjectPhysicsProperties work, so it still shows "not decoded". -->
+					<template v-else-if="activeTab === 'features'">
+						<div class="grid grid-cols-[8rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+							<div class="text-fg/50">Flexible Path</div>
+							<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
+							<div v-else class="text-fg/40 italic">Off</div>
+							<div class="text-fg/50">Light</div>
+							<div v-if="obj.light" class="flex items-center gap-2 text-fg text-2xs">
+								<span class="w-4 h-4 shrink-0 rounded-sm border border-edge" :style="{ background: `rgb(${lightRgb})` }"></span>
+								<span>intensity {{ obj.light.intensity.toFixed(2) }} · radius {{ obj.light.radius.toFixed(1) }}m · falloff {{ obj.light.falloff.toFixed(1) }}</span>
+							</div>
+							<div v-else class="text-fg/40 italic">Off</div>
+							<div class="text-fg/50">Reflection Probe</div>
+							<div v-if="reflectionProbeLabel" class="text-fg text-2xs">{{ reflectionProbeLabel }}</div>
+							<div v-else class="text-fg/40 italic">Off</div>
+							<div class="text-fg/50">Physics Shape</div>
+							<div class="text-fg/40 italic">not decoded</div>
+							<div class="text-fg/50">Material (physics)</div>
+							<div class="text-fg">{{ materialLabel }}</div>
+						</div>
+						<div class="text-2xs text-fg/30 italic pt-1">
+							Physics-shape type isn't carried in the object update — it arrives in a separate
+							ObjectPhysicsProperties packet (Phase 3 physics-flags work).
+						</div>
+					</template>
+					<!-- Texture ─────────────────────────────────────────────── -->
+					<!-- WHY: FS matmedia split — Blinn-Phong (legacy diffuse/normal/specular) vs PBR
+						(GLTF metallic-roughness) sub-tabs. "Multiple" surfaces when faces differ; every
+						texture chip opens a larger preview ("texture picker"). Read-only (Phase 3 edit). -->
+					<template v-else-if="activeTab === 'texture'">
+						<!-- Sub-tab strip -->
+						<nav class="tabs -mt-1 whitespace-nowrap">
+							<button :class="texSubTab === 'pbr' ? 'active' : ''" @click="texSubTab = 'pbr'">PBR</button>
+							<button :class="texSubTab === 'bp' ? 'active' : ''" @click="texSubTab = 'bp'">Blinn-Phong</button>
+							<button :class="texSubTab === 'mdia' ? 'active' : ''" @click="texSubTab = 'mdia'">Media</button>
+						</nav>
+						<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
+						<template v-if="texSubTab === 'bp'">
+							<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-2 text-xs">
+								<div class="text-fg/50 self-center">Texture</div>
+								<div class="flex items-center gap-1 min-w-0">
+									<div class="flex flex-col items-center gap-1">
+										<button
+											class="w-16 h-16 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xs overflow-hidden hover:border-accent"
+											:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
+											@click="openPreview(obj.defaultTexture)"
+										>
+											<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
+											<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
+										</button>
+										Diffuse
+									</div>
+									<div class="flex-1 min-w-0">
+										<div v-if="isMultiTexture" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctTextures.length }})</div>
 										<input
-											:value="obj.defaultPbrMaterial || distinctPbr[0] || '(none)'"
+											:value="obj.defaultTexture || '(none)'"
 											readonly
-											class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
+											class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
 										/>
-										<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
 									</div>
 								</div>
+								<div class="text-fg/50 self-center">Tint</div>
+								<div class="flex items-center gap-2">
+									<div
+										class="w-6 h-6 rounded-sm border border-edge"
+										:style="obj.defaultColor
+											? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
+											: { background: 'rgba(255,255,255,0.05)' }"
+									></div>
+									<span v-if="isMultiColor" class="text-accent font-semibold">Multiple</span>
+									<input
+										v-else
+										:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
+										readonly
+										class="flex-1 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
+									/>
+								</div>
+								<div class="text-fg/50 self-center">Full bright</div>
+								<div class="text-fg">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
+								<div class="text-fg/50 self-center">Glow</div>
+								<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+								<div class="text-fg/50 self-center">Trans %</div>
+								<input
+									:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
+									readonly
+									class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
+								/>
+								<div class="text-fg/50 self-center">Alpha mode</div>
+								<div class="text-fg">
+									<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
+										texture has alpha. Emissive mask renders as None (unlit materials). -->
+									<select
+										v-model="alphaMode"
+										class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg"
+									>
+										<option value="">Auto (blend if alpha)</option>
+										<option value="none">None</option>
+										<option value="blend">Alpha blending</option>
+										<option value="mask">Alpha masking</option>
+										<option value="emissive">Emissive mask</option>
+									</select>
+								</div>
+								<div class="text-fg/50 self-center">Mask cutoff</div>
+								<div class="text-fg">to-do</div>
+								<div class="text-fg/50 self-center">Bumpiness</div>
+								<div class="text-fg">{{ bumpLabel }}</div>
+								<div class="text-fg/50 self-center">Shininess</div>
+								<div class="text-fg">{{ shinyLabel }}</div>
+								<div class="text-fg/50 self-center">Glossiness</div>
+								<div class="text-fg">to-do</div>
+								<div class="text-fg/50 self-center">Environment</div>
+								<div class="text-fg">to-do</div>
 							</div>
-							<div v-if="pbrFaceChips.length" class="border-t border-edge pt-2">
-								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face PBR materials</div>
+							<!-- Per-face diffuse chips (only faces overriding the default) -->
+							<div v-if="faceTexChips.length" class="border-t border-edge pt-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face textures</div>
+								<div class="flex flex-wrap gap-1.5">
+									<button
+										v-for="c in faceTexChips"
+										:key="c.face"
+										class="relative w-10 h-10 bg-fg/20 border border-edge rounded-sm overflow-hidden hover:border-accent"
+										:title="`Face ${c.face} — click for preview`"
+										@click="openPreview(c.uuid)"
+									>
+										<img v-if="texUrls[c.uuid]" :src="texUrls[c.uuid]" class="w-full h-full object-cover" alt="" @error="reloadTex(c.uuid)" />
+										<span v-else class="absolute inset-0 flex items-center justify-center text-fg/30 text-2xs">…</span>
+										<span class="absolute bottom-0 right-0 px-0.5 bg-black/60 text-[0.5rem] text-fg/80 rounded-tl">{{ c.face }}</span>
+									</button>
+								</div>
+							</div>
+							<!-- Per-face mapping overrides (Scale / Offset / Rotation / Mapping, planar-aware) -->
+							<div v-if="faceUvRows.length" class="border-t border-edge pt-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face mapping</div>
 								<div class="space-y-1">
-									<div v-for="c in pbrFaceChips" :key="c.face" class="flex items-center gap-1.5 text-2xs">
-										<span class="w-8 shrink-0 text-fg/50">F{{ c.face }}</span>
-										<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
+									<div v-for="r in faceUvRows" :key="r.face" class="grid grid-cols-[2rem,1fr] gap-x-2 items-baseline text-2xs">
+										<span class="text-fg/50">F{{ r.face }}</span>
+										<div class="font-mono text-fg">
+											<span v-if="r.mapping !== 'Default'" class="text-accent">{{ r.mapping }}</span>
+											Scale {{ r.repeats[0].toFixed(5) }}×{{ r.repeats[1].toFixed(5) }}
+											<template v-if="r.rpm != null">· RPM {{ r.rpm.toFixed(5) }}</template>
+											· Off {{ r.offset[0].toFixed(5) }},{{ r.offset[1].toFixed(5) }}
+											· Rot {{ (r.rotation * 180 / Math.PI).toFixed(5) }}°
+										</div>
 									</div>
 								</div>
 							</div>
-							<div class="text-2xs text-fg/30 italic pt-1">
-								GLTF material assets (base color / metallic-roughness / emissive / normal maps)
-								render via the materials cap. Per-channel editing arrives in Phase 3.
+							<!-- Mapping (default face) — FS-style: Mapping mode + Scale H/V + Offset H/V + Rotation -->
+							<div class="border-t border-edge pt-2">
+								<div class="tabnav my-1 text-gray-500">|| DIFFUSE | Normal | Specular ||</div>
+								<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+									<div class="text-fg/50 self-center">Scale H / V</div>
+									<div class="grid grid-cols-2 gap-1">
+										<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+										<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									</div>
+									<div class="text-fg/50 self-center">Offset H / V</div>
+									<div class="grid grid-cols-2 gap-1">
+										<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+										<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									</div>
+									<div class="text-fg/50 self-center">Rotation°</div>
+									<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<template v-if="defaultMapping.rpm != null">
+										<div class="text-fg/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
+										<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									</template>
+									<div class="text-fg/50 self-center">Mapping</div>
+									<div class="text-fg">{{ defaultMapping.mapping }}</div>
+								</div>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Synchronize materials</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Align planar faces</label>
+							</div>
+							<div v-if="obj.defaultMaterialId" class="border-t border-edge pt-2">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
+								<input :value="obj.defaultMaterialId" readonly class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							</div>
+						</template>
+						<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
+						<template v-else-if="texSubTab === 'pbr'">
+							<div v-if="!hasPbr" class="text-fg/40 italic px-1 py-3 text-center">
+								No PBR material on this object — it uses Blinn-Phong (legacy) textures.
+							</div>
+							<template v-else>
+								<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
+									<div class="text-fg/50 self-center">Material</div>
+									<div class="flex-1 min-w-0">
+										<div v-if="isMultiPbr" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctPbr.length }})</div>
+										<div class="flex items-center gap-1.5">
+											<input
+												:value="obj.defaultPbrMaterial || distinctPbr[0] || '(none)'"
+												readonly
+												class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
+											/>
+											<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
+										</div>
+									</div>
+								</div>
+								<div v-if="pbrFaceChips.length" class="border-t border-edge pt-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face PBR materials</div>
+									<div class="space-y-1">
+										<div v-for="c in pbrFaceChips" :key="c.face" class="flex items-center gap-1.5 text-2xs">
+											<span class="w-8 shrink-0 text-fg/50">F{{ c.face }}</span>
+											<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
+										</div>
+									</div>
+								</div>
+								<div class="text-2xs text-fg/30 italic pt-1">
+									GLTF material assets (base color / metallic-roughness / emissive / normal maps)
+									render via the materials cap. Per-channel editing arrives in Phase 3.
+								</div>
+							</template>
+						</template>
+						<template v-else>
+							<div class="text-fg/40 italic px-1 py-3 text-center">
+								Media to-do
 							</div>
 						</template>
 					</template>
-
-					<template v-else>
-						<div class="text-fg/40 italic px-1 py-3 text-center">
-							Media to-do
+					<!-- Content ─────────────────────────────────────────────── -->
+					<!-- WHY: FS-parity layout. Phase 2: empty inventory placeholder + disabled
+						New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
+					<template v-else-if="activeTab === 'content'">
+						<div class="flex items-center gap-1 pb-1">
+							<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
+							<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
+							<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
+							<div class="ml-auto text-2xs text-fg/40">0 items</div>
+						</div>
+						<div class="border border-edge rounded-sm bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-fg/30 italic text-xs px-4 text-center">
+							Inventory contents will appear here (Phase 3).
+						</div>
+						<div class="text-2xs text-fg/30 italic pt-1">
+							Object inventory uses HTTP capabilities — wired with Phase 3 cap layer.
 						</div>
 					</template>
-
-				</template>
-
-				<!-- Content ─────────────────────────────────────────────── -->
-				<!-- WHY: FS-parity layout. Phase 2: empty inventory placeholder + disabled
-					New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
-				<template v-else-if="activeTab === 'content'">
-					<div class="flex items-center gap-1 pb-1">
-						<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
-						<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
-						<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
-						<div class="ml-auto text-2xs text-fg/40">0 items</div>
-					</div>
-					<div class="border border-edge rounded-sm bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-fg/30 italic text-xs px-4 text-center">
-						Inventory contents will appear here (Phase 3).
-					</div>
-					<div class="text-2xs text-fg/30 italic pt-1">
-						Object inventory uses HTTP capabilities — wired with Phase 3 cap layer.
-					</div>
-				</template>
+				</div>
 			</div>
 
 			<!-- Texture preview ("texture picker") overlay ─────────────────────── -->

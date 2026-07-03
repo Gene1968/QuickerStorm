@@ -108,13 +108,29 @@ LOOK dead, all small:
 - texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
 - Link/Unlink prims · Link-number ordering bug (L183) · **create/rez a prim in-world** (Build-tools)
 - **🐛 creator/owner names still not resolving** in the floater
-- **Take / Take copy perm gating** — grey out when the sim would refuse; needs per-object ownerId + perm
-  masks in worldStore (ObjectProperties on select — same data as the creator/owner-names bug above; wire
-  both together). VERIFIED root cause of "no response" (opensim PermissionsModule.cs): a stranger's perms
-  = the linkset's **EffectiveEveryOnePerms** (folded over EVERY prim + contents, :1045) and take-copy
-  needs Copy AND **Transfer** (:2017/:2023) — and BOTH refusal branches are **silent** (the alert at
-  :2019 is commented out upstream), so no AlertMessage ever arrives. Mitigated 2026-07-02: 10s
-  **take-watchdog** (useTakeWatch.js) toasts "no response from region" when no inventory ack lands.
+- **⚡ ObjectProperties-data BATCH (2026-07-03, from Gene — one pass, shared data plumbing):** all of
+  these are fed by getting per-object ObjectProperties/linkset data (ownerId, creatorId, perm masks,
+  link order) into worldStore on select:
+  · **Take / Take copy perm gating** — grey out when the sim would refuse (FS enable_take)
+  · **🐛 creator/owner names** (line above)
+  · **Link-number ordering bug (L183)** — match FS linkset child-prim link #s order
+  · **FS perms-checkbox TRI-STATE** — FS's Edit-floater perm checkboxes have a third look (faded /
+    different-color check, independent of enabled) = the linkset's prims/contents DISAGREE on that bit
+    ("mixed"/tentative state). Gene reads our missing tri-state as a clue that perms bits are being
+    folded/lost somewhere on our side — reproduce FS's per-bit aggregate before painting checkboxes.
+  · **🐛 rezzed copies often LOSE perms vs the inventory item** — suspect our REZ_OBJECT perm-mask
+    round-trip (client sends all five masks; verify against FS RezObject packing + what the rezzed
+    object reports) — investigate in this batch while the mask plumbing is open.
+  NOTE: Gene reworked **ObjectEditFloater layout** (2026-07-03) toward the editable-fields end state —
+  build the "numeric size/pos/rot editable fields" task ON his layout, don't restructure it.
+  **✅ ACTUAL "no response" root cause FIXED 2026-07-03**: DeRezObject must reference the linkset **ROOT**
+  prim — OpenSim silently `continue`s on child-prim ids BEFORE any perm check (Scene.Inventory.cs:2258-2260)
+  and FS always sends the root via selection. We sent the CLICKED prim → every multi-prim build no-op'd
+  (18/20; the 2 single-prim ones worked). Fix = `linksetRootLocalId()` resolver in useLLUDP
+  takeObject/takeObjectCopy/sendDelete (also fixes latent linkset-DELETE no-op). Perm refusals, when they
+  DO happen, are still silent upstream (PermissionsModule.cs:2019 alert commented out; take-copy of
+  others' objects needs everyone Copy+Transfer folded over every prim + contents, :1045/:2017/:2023) —
+  covered by the 10s **take-watchdog** toast (useTakeWatch.js).
 - **drag-select multiple objects** while the Edit floater is open · **edit gizmo handles** (move/rotate/scale/copy)
 - **texture anim/scripts** (moving water, scrolling text, "cell animation," etc.)
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**

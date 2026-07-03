@@ -610,7 +610,7 @@ onUnmounted(() => {
 						><span class="w-3">{{ typeChecked(t.id) ? '✓' : '' }}</span>{{ t.label }}</button>
 						<button
 							class="flex items-center justify-start border-y px-2 py-1 w-full hover:bg-white/10"
-						>[ ] Only coalesced (to-do)</button>
+						>⬜ Only coalesced (to-do)</button>
 						<button
 							class="flex items-center justify-start w-full px-2 py-1 hover:bg-white/10"
 							:class="showFilters ? 'text-accent' : 'text-fg'"

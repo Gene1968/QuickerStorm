@@ -42,7 +42,7 @@ function toggleType(id) { emit('toggle-type', id) }
 		<button
 			class="flex w-full items-center justify-start gap-2 px-2 py-1 text-left hover:bg-white/10"
 			:class="typeIds.length === 0 ? 'text-accent' : 'text-fg'"
-		><span class="w-7 text-end">[&nbsp; ]</span>None (to-do)</button>
+		><span class="w-7 text-end">⬜</span>None (to-do)</button>
 
 		<div class="border-t border-edge mt-1"></div>
 		<button

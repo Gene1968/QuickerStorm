@@ -33,7 +33,7 @@ const router	= useRouter()
 const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
 const { requestHomeTeleport, setHomeHere } = useTeleport()
-const { takeObject, takeObjectCopy } = useLLUDP()
+const { takeObject, takeObjectCopy, sendDelete } = useLLUDP()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -157,7 +157,9 @@ function hasSelectedObject() { return ui.showObjectEdit && ui.editObjectId != nu
 // the mesh. Close the Edit floater since its target is gone. Mirrors the object context-menu Delete.
 function deleteSelectedObject() {
 	if (!hasSelectedObject()) return
-	emit(C.OBJECT_DELETE, { localId: ui.editObjectId })
+	// sendDelete (not a raw emit): the wrapper resolves child prim → linkset ROOT — OpenSim
+	// silently skips DeRezObject on non-root prims (Scene.Inventory.cs:2258-2260).
+	sendDelete(ui.editObjectId)
 	ui.showObjectEdit = false
 }
 

@@ -35,9 +35,9 @@ const obj    = computed(() => {
 
 // SL sale types (LLSaleInfo): 1=Original, 2=Copy, 3=Contents. (0=not-for-sale is the checkbox.)
 const SALE_TYPE_OPTIONS = [
-	{ value: 1, label: 'Original' },
 	{ value: 2, label: 'Copy' },
 	{ value: 3, label: 'Contents' },
+	{ value: 1, label: 'Original' },
 ]
 
 // WHY: cascade each new Properties floater down-right so stacked ones don't perfectly overlap.

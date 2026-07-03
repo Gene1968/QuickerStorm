@@ -1,10 +1,16 @@
 // src/composables/useLLUDP.js — client-side encoder: encode move/chat → WS → Bun → UDP
 import { useRealtimeSocket } from './useRealtimeSocket'
+import { useWorldStore } from '@/stores/worldStore'
 import { armTakeWatch } from './useTakeWatch'
+import { linksetRootLocalId } from '@/utils/linksetRoot'
 import { C } from '@shared/protocol.js'
 
 export function useLLUDP() {
 	const { emit } = useRealtimeSocket()
+	const world = useWorldStore()
+	// DeRezObject (take / take-copy / delete) MUST reference the linkset ROOT — OpenSim silently
+	// skips child-prim ids (Scene.Inventory.cs:2258-2260). Resolve every clicked prim to its root.
+	const rootOf = (id) => linksetRootLocalId(world.objects, id)
 
 	/**
 	 * Send avatar movement update.
@@ -63,21 +69,21 @@ export function useLLUDP() {
 	}
 
 	function sendDelete(localId) {
-		emit(C.OBJECT_DELETE, { localId })
+		emit(C.OBJECT_DELETE, { localId: rootOf(localId) })
 	}
 
 	// FS "Take": DeRezObject Destination=Take(4); destinationFolderId = FS's destination category
 	// UUID (Objects folder default) — optional, sim re-resolves if omitted. armTakeWatch: OpenSim
 	// refuses takes SILENTLY (no packet) — the watchdog toasts if no inventory ack arrives.
 	function takeObject(localIds, destinationFolderId) {
-		const ids = Array.isArray(localIds) ? localIds : [localIds]
+		const ids = [...new Set((Array.isArray(localIds) ? localIds : [localIds]).map(rootOf))]
 		emit(C.OBJECT_TAKE, { localIds: ids, destinationFolderId })
 		armTakeWatch('Take')
 	}
 
 	// FS "Take Copy": DeRezObject Destination=TakeCopy(1); copy lands in Objects, original stays in world.
 	function takeObjectCopy(localIds) {
-		const ids = Array.isArray(localIds) ? localIds : [localIds]
+		const ids = [...new Set((Array.isArray(localIds) ? localIds : [localIds]).map(rootOf))]
 		emit(C.OBJECT_TAKE_COPY, { localIds: ids })
 		armTakeWatch('Take copy')
 	}
