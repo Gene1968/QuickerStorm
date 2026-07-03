@@ -17,10 +17,15 @@ const emptyTrash     = vi.fn()
 const wearAttachment = vi.fn()
 const detach         = vi.fn()
 const isItemWorn     = vi.fn(() => false)
+const purgeItem      = vi.fn()
+const purgeFolder    = vi.fn()
+const restoreItem    = vi.fn()
+const restoreFolder  = vi.fn()
 vi.mock('@/composables/useInventory', () => ({
 	useInventory: () => ({
 		createFolder, createFolderFromSelected, trashItem, trashFolder, emptyTrash,
 		wearAttachment, detach, isItemWorn,
+		purgeItem, purgeFolder, restoreItem, restoreFolder,
 	}),
 }))
 // Silence the tick sound on click.
@@ -57,6 +62,7 @@ beforeEach(() => {
 	trashItem.mockClear(); trashFolder.mockClear()
 	createFolder.mockClear(); createFolderFromSelected.mockClear(); emptyTrash.mockClear()
 	wearAttachment.mockClear(); detach.mockClear()
+	purgeItem.mockClear(); purgeFolder.mockClear(); restoreItem.mockClear(); restoreFolder.mockClear()
 	isItemWorn.mockReset(); isItemWorn.mockReturnValue(false)
 	writeText = vi.fn().mockResolvedValue(undefined)
 	// jsdom has no clipboard by default.
@@ -261,5 +267,86 @@ describe('InventoryContextMenu — worn object shows Detach, not Wear', () => {
 		const w = mount(InventoryContextMenu)
 		await clickLabel(w, 'Detach from yourself')
 		expect(detach).toHaveBeenCalledWith('item-1')
+	})
+})
+
+// ── Rows INSIDE Trash → FS trash menu (llinventorybridge.cpp:1151-1169 addTrashContextMenuOptions) ──
+describe('InventoryContextMenu — rows inside Trash get Purge/Restore', () => {
+	function seedTrashRows() {
+		inv.folders.set('trash',   { folderId: 'trash',   parentId: 'root',  name: 'Trash',   typeDefault: 14, source: 'agent' })
+		inv.folders.set('deadDir', { folderId: 'deadDir', parentId: 'trash', name: 'Old Box', typeDefault: -1, source: 'agent' })
+		inv.setItems('trash', [{ itemId: 'dead-1', parentId: 'trash', name: 'Old Hat', assetType: 6 }])
+	}
+
+	it('item in Trash shows ONLY Purge Item + Restore Item (no Delete/Wear/Rename)', () => {
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'item', inv.folderItems('trash')[0])
+		const w = mount(InventoryContextMenu)
+		const l = labels(w)
+		expect(l).toContain('Purge Item')
+		expect(l).toContain('Restore Item')
+		expect(l).not.toContain('Delete')
+		expect(l).not.toContain('Wear / attach')
+		expect(l).not.toContain('Rename')
+	})
+
+	it('Purge Item confirms then purges the item', async () => {
+		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'item', inv.folderItems('trash')[0])
+		const w = mount(InventoryContextMenu)
+		await clickLabel(w, 'Purge Item')
+		expect(purgeItem).toHaveBeenCalledWith('dead-1')
+		confirmSpy.mockRestore()
+	})
+
+	it('cancelling the confirm purges nothing', async () => {
+		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'item', inv.folderItems('trash')[0])
+		const w = mount(InventoryContextMenu)
+		await clickLabel(w, 'Purge Item')
+		expect(purgeItem).not.toHaveBeenCalled()
+		confirmSpy.mockRestore()
+	})
+
+	it('Restore Item restores the item (no confirm)', async () => {
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'item', inv.folderItems('trash')[0])
+		const w = mount(InventoryContextMenu)
+		await clickLabel(w, 'Restore Item')
+		expect(restoreItem).toHaveBeenCalledWith('dead-1')
+	})
+
+	it('folder in Trash purges via purgeFolder and restores via restoreFolder', async () => {
+		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'folder', inv.folders.get('deadDir'))
+		let w = mount(InventoryContextMenu)
+		await clickLabel(w, 'Purge Item')
+		expect(purgeFolder).toHaveBeenCalledWith('deadDir')
+		inv.openContextMenu(10, 10, 'folder', inv.folders.get('deadDir'))
+		w = mount(InventoryContextMenu)
+		await clickLabel(w, 'Restore Item')
+		expect(restoreFolder).toHaveBeenCalledWith('deadDir')
+		confirmSpy.mockRestore()
+	})
+
+	it('Purge is disabled for a WORN item in Trash (FS isItemRemovable gate)', () => {
+		isItemWorn.mockImplementation(id => id === 'dead-1')
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'item', inv.folderItems('trash')[0])
+		const w = mount(InventoryContextMenu)
+		const btn = w.findAll('button').find(b => b.text() === 'Purge Item')
+		expect(btn.attributes('disabled')).toBeDefined()
+	})
+
+	it('the Trash ROOT itself still shows Empty Trash, not Purge/Restore', () => {
+		seedTrashRows()
+		inv.openContextMenu(10, 10, 'folder', inv.folders.get('trash'))
+		const w = mount(InventoryContextMenu)
+		const l = labels(w)
+		expect(l).toContain('Empty Trash')
+		expect(l).not.toContain('Purge Item')
 	})
 })

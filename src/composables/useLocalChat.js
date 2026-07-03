@@ -34,8 +34,13 @@ export function useLocalChat() {
 		chatStore.addMessage({ fromName: 'Grid', message: d.message, chatType: 1 })
 	}
 
+	// WHY no off() for the alert handler: it's registered under a KEY (idempotent — a later mount
+	// replaces the earlier callback), and two components use this composable (SimpleWorldView is
+	// permanent, ConversationsFloater comes and goes). If the floater's unmount off()'d the keyed
+	// handler it would remove the ONE live registration and alerts would go silent until a remount.
+	// The handler only touches global stores, so a stale closure is harmless.
 	onMounted(() => { on(S.CHAT_MSG, onChatMsg); on(S.ALERT_MESSAGE, onAlert, 'localchat-alert') })
-	onUnmounted(() => { off(S.CHAT_MSG, onChatMsg); off(S.ALERT_MESSAGE, onAlert) })
+	onUnmounted(() => { off(S.CHAT_MSG, onChatMsg) })
 
 	function send(message, channel = 0) {
 		sendChat(message, 1 /* normal */, channel)

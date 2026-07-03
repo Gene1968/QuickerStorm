@@ -1536,6 +1536,19 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.INV_REMOVE_FOLDER) {
+		// Single-folder purge (FS "Purge Item" on a trashed category): the client first sends
+		// INV_PURGE_FOLDER (contents), then this deletes the folder row itself.
+		const d = msg.d as { folderId: string }
+		if (!d.folderId) { slog.warn(session.ws, 'InvRemoveFolder: missing folderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeRemoveInventoryFolder({ agentId: session.agentId, sessionId: session.sessionId, seq, folderId: d.folderId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ RemoveInventoryFolder (purge) ${d.folderId.slice(0, 8)}…`)
+		return
+	}
+
 	if (msg.t === C.INV_PURGE_FOLDER) {
 		// Empty Trash: PurgeInventoryDescendents (Low 285) permanently deletes the folder's CONTENTS;
 		// the folder itself survives. OpenSim: LLClientView HandlePurgeInventoryDescendents →

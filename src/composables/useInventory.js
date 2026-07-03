@@ -13,6 +13,7 @@ import { useWorldStore } from '@/stores/worldStore'
 import { useUiStore } from '@/stores/uiStore'
 import { loadCachedInventory, saveCachedInventory, saveCachedFolders, removeCachedFolder, makeInvSavePairs, foldersToPairs } from '@/lib/inventoryCache'
 import { useNotifications } from '@/composables/useNotifications'
+import { disarmTakeWatch } from '@/composables/useTakeWatch'
 import { playSound } from '@/composables/useAudio'
 import { assetTypeName } from '@/utils/inventoryIcons'
 import { C, S } from '@shared/protocol.js'
@@ -512,6 +513,44 @@ export function useInventory() {
 	}
 
 	/**
+	 * FS "Purge Item" on a trashed FOLDER (llinventorybridge.cpp:1163 — categories use the same
+	 * menu entry): permanently delete the subtree. Wire = PurgeInventoryDescendents (contents) +
+	 * RemoveInventoryFolder (the row itself). Local shrink mirrors emptyTrash — purgeDescendantsLocal
+	 * is the AUTHORIZED shrink, then the folder row goes, then IDB folder-cache eviction + immediate
+	 * item-snapshot save so a reload cannot resurrect the purged subtree.
+	 */
+	function purgeFolder(folderId) {
+		if (!folderId) return
+		purgeInventoryFolder(folderId)
+		emit(C.INV_REMOVE_FOLDER, { folderId })
+		const { folderIds } = inv.purgeDescendantsLocal(folderId)
+		inv.removeFolderLocal(folderId)
+		persistFolders()
+		if (session.agentId) {
+			for (const fid of [...folderIds, folderId]) removeCachedFolder(session.agentId, fid)
+			saveCachedInventory(session.agentId, makeInvSavePairs(inv.items), id => inv.isFetched(id))
+		}
+	}
+
+	// FS "Restore Item" (llinventorybridge.cpp:1168 + the restoreItem/Move-to-Default mapping at
+	// :1362): move a trashed row back to findCategoryUUIDForType(assetTypeToFolderType(type)).
+	// For the standard LL types asset→folder type is identity; unmapped types restore to the root
+	// (FS's FT_NONE fallback). Routed through moveItem/moveFolder so the move-reconciliation state
+	// machine owns the row like any other move.
+	const RESTORE_TYPE_MAP = new Set([0, 1, 2, 3, 5, 6, 7, 10, 13, 20, 21])
+	function restoreItem(itemId) {
+		const found = inv.findItem(itemId)
+		if (!found) return
+		const t = Number(found.item.assetType)
+		const dest = (RESTORE_TYPE_MAP.has(t) ? inv.findSystemFolder(t) : null) || inv.rootId
+		if (dest) moveItem(itemId, dest)
+	}
+	// FS: category restore → assetTypeToFolderType(AT_CATEGORY) → the inventory ROOT.
+	function restoreFolder(folderId) {
+		if (folderId && inv.rootId) moveFolder(folderId, inv.rootId)
+	}
+
+	/**
 	 * FS "Empty Trash" (llinventorybridge.cpp:5054) → purge_descendents_of(trash_id)
 	 * (llinventorymodel.cpp:4407-4444 callbackEmptyFolderType/emptyFolderType). On OpenSim the
 	 * purge is the PurgeInventoryDescendents message and the viewer "Update[s] model immediately
@@ -716,8 +755,10 @@ export function useInventory() {
 		if (!registered) {
 			on(S.INV_FOLDER,       onInvFolder)
 			on(S.CAPS_READY,       onCapsReady)
-			on(S.INV_ITEM_CREATED, onItemCreated)
-			on(S.INV_BULK_UPDATE,  d => inv.applyBulkUpdate(d || {}))
+			// disarmTakeWatch: an inventory create/bulk ack is the confirmation a Take/Take-copy
+			// watchdog is waiting for (OpenSim refuses silently — see useTakeWatch.js).
+			on(S.INV_ITEM_CREATED, d => { disarmTakeWatch(); onItemCreated(d) })
+			on(S.INV_BULK_UPDATE,  d => { disarmTakeWatch(); inv.applyBulkUpdate(d || {}) })
 			on(S.INV_ITEM_REMOVED, d => (d?.itemIds || []).forEach(id => inv.removeItemLocal(id)))
 			// CreateInventoryCategory cap confirmed the folder persisted — re-affirm it in the store
 			// (server may have truncated the name); the optimistic add already used the same folderId.
@@ -758,7 +799,7 @@ export function useInventory() {
 		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder,
 		createFolderFromSelected, openInventoryItem,
 		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
-		purgeItem, emptyTrash, updatePerms, wearAttachment, detach, isItemWorn,
+		purgeItem, purgeFolder, restoreItem, restoreFolder, emptyTrash, updatePerms, wearAttachment, detach, isItemWorn,
 		giveInventory, giveInventoryFolder, shareToAgent, rezObject,
 	}
 }

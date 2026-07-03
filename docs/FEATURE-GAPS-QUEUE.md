@@ -108,6 +108,13 @@ LOOK dead, all small:
 - texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
 - Link/Unlink prims · Link-number ordering bug (L183) · **create/rez a prim in-world** (Build-tools)
 - **🐛 creator/owner names still not resolving** in the floater
+- **Take / Take copy perm gating** — grey out when the sim would refuse; needs per-object ownerId + perm
+  masks in worldStore (ObjectProperties on select — same data as the creator/owner-names bug above; wire
+  both together). VERIFIED root cause of "no response" (opensim PermissionsModule.cs): a stranger's perms
+  = the linkset's **EffectiveEveryOnePerms** (folded over EVERY prim + contents, :1045) and take-copy
+  needs Copy AND **Transfer** (:2017/:2023) — and BOTH refusal branches are **silent** (the alert at
+  :2019 is commented out upstream), so no AlertMessage ever arrives. Mitigated 2026-07-02: 10s
+  **take-watchdog** (useTakeWatch.js) toasts "no response from region" when no inventory ack lands.
 - **drag-select multiple objects** while the Edit floater is open · **edit gizmo handles** (move/rotate/scale/copy)
 - **texture anim/scripts** (moving water, scrolling text, "cell animation," etc.)
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**
@@ -242,6 +249,19 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## Recently shipped (don't re-pick)
+- **2026-07-02 eve (uncommitted):** Post-live-test follow-ups — (1) **Take Copy "no response" root-caused**:
+  OpenSim refuses take-copy without the everyone-copy bit ("full perm" = next-owner perms, not everyone);
+  refusals arrived as **AlertMessage (Low 134) we dropped** → now decoded + surfaced as toast + "Grid:"
+  nearby-chat line (also catches every future sim refusal/notice). GAP queued: grey out Take/Take copy
+  client-side (needs per-object owner/perms in worldStore from ObjectProperties — same data as the
+  creator/owner-names bug). (2) **Trash-row context menu** = FS Purge Item / Restore Item
+  (llinventorybridge.cpp:1151-1169; restore → asset-type default folder via move machinery; folder purge =
+  PurgeInventoryDescendents + new INV_REMOVE_FOLDER; worn-gate on purge). (3) **EyeIcon menu redone as FS
+  search-visibility scopes** (Search outfit folders / Trash / Library; type-checkbox duplicate removed;
+  Include-links omitted until links exist). (4) **Recent + Worn tabs are TREES** (FS filtered
+  inventory-panel style, via new InventoryScopedTree shadowed-invFilter wrapper; view-mode "list" keeps the
+  old flat rows). NOTE: two subagents were killed mid-flight by the org spend limit — their partial work
+  (eye scopes, purgeItem) landed in d3f950e and was completed by hand.
 - **2026-07-02 pm (uncommitted, NOT live-verified):** Inventory remaining-polish ultracode sweep — Take/Take
   copy (all surfaces + wire contract) · Trash menu + Empty Trash (purge + authorized cache shrink) · create
   folder from selected · worn→Detach · search-clear keeps selection · Del→select-next (with focus hand-off) ·

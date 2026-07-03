@@ -25,7 +25,7 @@ import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
 const ui   = useUiStore()
-const { createFolder, createFolderFromSelected, trashItem, trashFolder, emptyTrash, wearAttachment, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
+const { createFolder, createFolderFromSelected, trashItem, trashFolder, emptyTrash, purgeItem, purgeFolder, restoreItem, restoreFolder, wearAttachment, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 const im = useInstantMessage()
 const menu = computed(() => inv.contextMenu)
@@ -167,6 +167,40 @@ function trashHasWornAttachment(trashId) {
 	return false
 }
 
+// ── Rows INSIDE Trash: FS replaces the whole normal menu with the trash menu —
+// addTrashContextMenuOptions (llinventorybridge.cpp:1151-1169): "Purge Item" (disabled when
+// !isItemRemovable, e.g. worn) + "Restore Item". The link-only "Find Original" and the generic
+// Replace-Links / Move-to-Default tail are omitted — inventory links aren't implemented here.
+// The Trash ROOT itself keeps its own Empty-Trash menu (typeDefault check below).
+const inTrashSelection = computed(() => {
+	const m = menu.value
+	if (!m?.obj) return false
+	if (m.kind === 'folder' && Number(m.obj.typeDefault) === FOLDER_TYPE_TRASH) return false
+	const id = m.obj.itemId || m.obj.folderId
+	return !!id && inv.isInTrash(id)
+})
+// FS Purge gate (llinventorybridge.cpp:1164 isItemRemovable): a worn attachment — or a folder
+// still holding one — must not be purged out from under the live attachment.
+const purgeBlockedByWorn = computed(() =>
+	itemTargets.value.some(t => isItemWorn(t.obj.itemId)) ||
+	folderTargets.value.some(t => trashHasWornAttachment(t.obj.folderId)))
+
+function purgeSelection() {
+	const n = targets.value.length
+	// FS purges without an extra prompt; we confirm — RemoveInventory* is irreversible (deliberate deviation).
+	const what = n > 1 ? `${n} rows` : `"${menu.value.obj.name}"`
+	if (window.confirm(`Permanently delete ${what} from Trash? This cannot be undone.`)) {
+		for (const t of itemTargets.value) purgeItem(t.obj.itemId)
+		for (const t of folderTargets.value) purgeFolder(t.obj.folderId)
+	}
+	inv.closeContextMenu()
+}
+function restoreSelection() {
+	for (const t of itemTargets.value) restoreItem(t.obj.itemId)
+	for (const t of folderTargets.value) restoreFolder(t.obj.folderId)
+	inv.closeContextMenu()
+}
+
 // FS gates "New folder from selected" to an all-items or all-folders selection —
 // llinventorybridge.cpp:915-919 disables it unless is_only_items_selected || is_only_cats_selected.
 // We additionally exclude system folders (typeDefault >= 0): they must never be moved.
@@ -253,6 +287,18 @@ function copyUuids(pick) {
 const items = computed(() => {
 	const m = menu.value
 	if (!m) return []
+	// Rows INSIDE Trash get FS's short trash menu instead of the normal item/folder sets.
+	if (inTrashSelection.value) {
+		return [
+			{
+				label: multi.value ? `Purge ${targets.value.length} rows` : 'Purge Item',
+				disabled: purgeBlockedByWorn.value,
+				title: purgeBlockedByWorn.value ? 'detach the worn attachment first' : undefined,
+				action: purgeBlockedByWorn.value ? undefined : purgeSelection,
+			},
+			{ label: multi.value ? `Restore ${targets.value.length} rows` : 'Restore Item',	action: restoreSelection },
+		]
+	}
 	if (m.kind === 'item') {
 		const o = m.obj
 		const isMedia    = o.assetType === 1 || o.assetType === 20 || o.assetType === 21

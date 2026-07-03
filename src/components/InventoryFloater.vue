@@ -52,6 +52,7 @@ import InventoryFlatRow from '@/components/InventoryFlatRow.vue'
 import InventoryFiltersPanel from '@/components/InventoryFiltersPanel.vue'
 import InventorySearchVisibilityMenu from '@/components/InventorySearchVisibilityMenu.vue'
 import InventoryFolderListView from '@/components/InventoryFolderListView.vue'
+import InventoryScopedTree from '@/components/InventoryScopedTree.vue'
 import { ChevronDownIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
 
 const props = defineProps({
@@ -60,7 +61,7 @@ const props = defineProps({
 
 const ui  = useUiStore()
 const inv = useInventoryStore()
-const { fetchFolder, createFolder, trashItem, trashFolder, pasteInto } = useInventory()
+const { fetchFolder, createFolder, trashItem, trashFolder, pasteInto, isItemWorn } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 
 const showAddMenu = ref(false)
@@ -103,7 +104,7 @@ watch(activeTab, (t) => {
 const tabFills = computed(() => {
 	if (activeTab.value === 'inventory') return !!inv.rootId
 	if (activeTab.value === 'recent')    return recentItems.value.length > 0
-	if (activeTab.value === 'worn')      return wornItems.value.length > 0
+	if (activeTab.value === 'worn')      return wornItems.value.length > 0 || wornIdSet.value.size > 0
 	if (activeTab.value === 'favorites') return favItems.value.length > 0
 	return false
 })
@@ -281,6 +282,17 @@ function selectionSelectFlat(id, order, event) {
 const recentIds = computed(() => recentItems.value.map(i => i.itemId))
 const wornIds   = computed(() => wornItems.value.map(i => i.itemId))
 const favIds    = computed(() => favItems.value.map(i => i.itemId))
+
+// ── Scoped-tree id sets for the Recent / Worn TREE views (FS renders those tabs as filtered
+// inventory-panel trees — see InventoryScopedTree). Recent keeps the flat tab's exact
+// membership (top-40 newest). Worn = COF contents + anything isItemWorn flags (attachments
+// worn via the wear/detach paths or detected from scene AttachItemID).
+const recentIdSet = computed(() => new Set(recentIds.value))
+const wornIdSet = computed(() => {
+	const s = new Set(wornIds.value)
+	inv.items.forEach(list => { for (const it of list) if (isItemWorn(it.itemId)) s.add(it.itemId) })
+	return s
+})
 
 // ── Footer Trash button: trash the anchor (last-clicked) row ─────────────────
 // WHY: mirrors the Trash2Icon button that was previously a TO-DO. Guarding system
@@ -654,8 +666,11 @@ onUnmounted(() => {
 				<p class="text-xs mt-2 opacity-60">Folder tree loads at login. Folder contents (items) arrive with the Phase 3 cap layer.</p>
 			</div>
 		</template>
+		<!-- Recent/Worn: TREE by default (FS renders these tabs as filtered inventory panels);
+		     the view-mode toggle's "list" shows the original flat rows. -->
 		<template v-else-if="activeTab === 'recent'">
-			<div v-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+			<InventoryScopedTree v-if="recentItems.length && viewMode !== 'list'" :item-ids="recentIdSet" />
+			<div v-else-if="recentItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
 				<InventoryFlatRow v-for="it in recentItems" :key="it.itemId" :item="it" :order="recentIds" />
 			</div>
 			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">
@@ -664,7 +679,8 @@ onUnmounted(() => {
 			</div>
 		</template>
 		<template v-else-if="activeTab === 'worn'">
-			<div v-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+			<InventoryScopedTree v-if="wornIdSet.size && viewMode !== 'list'" :item-ids="wornIdSet" />
+			<div v-else-if="wornItems.length" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
 				<InventoryFlatRow v-for="it in wornItems" :key="it.itemId" :item="it" :order="wornIds" />
 			</div>
 			<div v-else class="p-4 text-center text-fg-muted text-sm italic pt-12">

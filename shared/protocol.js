@@ -51,6 +51,7 @@ export const C = {
 	INV_TRASH_FOLDER:   'inv_trash_folder',   // { folderId } — delete = MoveInventoryFolder into Trash
 	INV_PURGE_ITEM:     'inv_purge_item',     // { itemId } — permanent RemoveInventoryItem (empty-trash); encoder+handler wired, UI may leave hidden
 	INV_PURGE_FOLDER:   'inv_purge_folder',   // { folderId } — outbound PurgeInventoryDescendents (Low 285): permanently delete a folder's CONTENTS (Empty Trash — the folder itself survives)
+	INV_REMOVE_FOLDER:  'inv_remove_folder',  // { folderId } — permanent RemoveInventoryFolder (Low 272): delete the folder ROW itself (single-folder purge in Trash; send after INV_PURGE_FOLDER cleared its contents)
 	INV_UPDATE_PERMS:   'inv_update_perms',   // { itemId, folderId, nextOwnerMask, everyoneMask?, groupMask? } — UpdateInventoryItem permission change
 	INV_WEAR_ATTACHMENT:'inv_wear_attachment',// { itemId, attachPoint? } — RezSingleAttachmentFromInv (attachPoint 0 = default)
 	INV_DETACH:         'inv_detach',         // { itemId } — detach attached object back to inventory
