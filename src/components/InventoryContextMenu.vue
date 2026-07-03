@@ -25,7 +25,7 @@ import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
 const ui   = useUiStore()
-const { createFolder, trashItem, trashFolder, wearAttachment, detach, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
+const { createFolder, createFolderFromSelected, trashItem, trashFolder, emptyTrash, wearAttachment, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 const im = useInstantMessage()
 const menu = computed(() => inv.contextMenu)
@@ -127,6 +127,60 @@ function deleteSelection() {
 /** Move a single folder to Trash (system-folder guard applied at the call site). */
 function deleteFolder(folderId) {
 	trashFolder(folderId)
+	inv.closeContextMenu()
+}
+
+// SL preferred folder type for Trash (LLFolderType::FT_TRASH) — drives the short Trash menu.
+const FOLDER_TYPE_TRASH = 14
+
+/**
+ * Empty Trash — FS trash-folder menu (llinventorybridge.cpp:5054 "Empty Trash") → confirm →
+ * purge_descendents_of. Confirm text mirrors FS ConfirmEmptyTrash (notifications.xml:7049:
+ * "[COUNT] items and folders will be permanently deleted. Are you sure you want to permanently
+ * delete the contents of your Trash?"). window.confirm is this codebase's confirm pattern
+ * (same as the non-empty-folder trash confirms in InventoryTreeNode.vue / InventoryFloater.vue).
+ */
+function emptyTrashAction() {
+	const o = menu.value?.obj
+	if (!o?.folderId) { inv.closeContextMenu(); return }
+	const { items: ci, folders: cf } = inv.descendantCounts(o.folderId)
+	if (window.confirm(`${ci + cf} items and folders will be permanently deleted. Are you sure you want to permanently delete the contents of your Trash?`)) {
+		emptyTrash()
+	}
+	inv.closeContextMenu()
+}
+
+// FS disables Empty Trash while a WORN attachment sits in the Trash
+// (llinventorybridge.cpp:5068 gAgentAvatarp->hasAttachmentsInTrash(), llvoavatarself.cpp:1785) —
+// purging would delete the inventory row out from under a live attachment. Same walk here over
+// the loaded descendant item lists.
+function trashHasWornAttachment(trashId) {
+	const stack = [trashId]
+	const seen = new Set()
+	while (stack.length) {
+		const id = stack.pop()
+		if (seen.has(id)) continue
+		seen.add(id)
+		for (const it of inv.folderItems(id)) if (isItemWorn(it.itemId)) return true
+		for (const c of inv.childFolders(id)) stack.push(c.folderId)
+	}
+	return false
+}
+
+// FS gates "New folder from selected" to an all-items or all-folders selection —
+// llinventorybridge.cpp:915-919 disables it unless is_only_items_selected || is_only_cats_selected.
+// We additionally exclude system folders (typeDefault >= 0): they must never be moved.
+const canCreateFolderFromSelected = computed(() => {
+	if (!targets.value.length) return false
+	const onlyItems   = folderTargets.value.length === 0
+	const onlyFolders = itemTargets.value.length === 0
+	if (!onlyItems && !onlyFolders) return false
+	return !folderTargets.value.some(t => Number(t.obj?.typeDefault) >= 0)
+})
+// Create a new folder in the selection's common parent and move the whole selection into it.
+// Same-parent validation (FS SameFolderRequired) happens inside createFolderFromSelected.
+function createFolderFromSelection() {
+	createFolderFromSelected(selectionIds())
 	inv.closeContextMenu()
 }
 
@@ -240,27 +294,62 @@ const items = computed(() => {
 			{ label: deleteLabel(),							action: deleteSelection },
 			{ label: 'Move to default folder',						disabled: true },
 			{ sep: true },
-			{ label: 'Create folder from selected',						disabled: true },
+			// FS "New folder from selected" (llinventorybridge.cpp:912): create a subfolder in the
+			// selection's common parent and move the selection into it. Disabled for a mixed
+			// item+folder selection (FS is_only_items/is_only_cats gate) or a system folder.
+			{
+				label: 'Create folder from selected',
+				disabled: !canCreateFolderFromSelected.value,
+				title: !canCreateFolderFromSelected.value ? 'select only items or only folders' : undefined,
+				action: canCreateFolderFromSelected.value ? createFolderFromSelection : undefined,
+			},
 			{ label: 'Add to favorites',					action: addFav },
 			...(isMedia ? [{ label: `Play ${assetTypeName(o.assetType)}`, disabled: true }] : []),
-			// Objects → wearAttachment; Wearables → disabled with tooltip (needs appearance bake).
-			isObject
-			? { label: 'Wear / attach',					action: () => wearAttach(o.itemId) }
-			: { label: 'Wear / attach',	disabled: true,
-			title: isWearable ? 'needs appearance bake (planned)' : undefined },
-			{ label: 'else Detach from yourself',
-			disabled: !isObject,
-			action: isObject ? () => doDetach(o.itemId) : undefined },
-			// Rez in world: object items only (rezObject re-guards). Rezzes ~2m in front of the avatar.
-			isObject
-			? { label: 'Rez in world',						action: () => rezInWorld(o.itemId) }
-			: { label: 'Rez in world',	disabled: true,	title: 'only objects can be rezzed' },
+			// FS LLObjectBridge::buildContextMenu (llinventorybridge.cpp:8245-8272): a WORN object
+			// (get_is_item_worn) offers "Detach From Yourself" INSTEAD of the Wear/Attach (and Rez)
+			// rows; a non-worn object offers Wear + Rez and no Detach.
+			...(isObject && isItemWorn(o.itemId)
+			? [{ label: 'Detach from yourself',				action: () => doDetach(o.itemId) }]
+			: [
+				// Objects → wearAttachment; Wearables → disabled with tooltip (needs appearance bake).
+				isObject
+				? { label: 'Wear / attach',					action: () => wearAttach(o.itemId) }
+				: { label: 'Wear / attach',	disabled: true,
+				title: isWearable ? 'needs appearance bake (planned)' : undefined },
+				// Rez in world: object items only (rezObject re-guards). Rezzes ~2m in front of the avatar.
+				isObject
+				? { label: 'Rez in world',						action: () => rezInWorld(o.itemId) }
+				: { label: 'Rez in world',	disabled: true,	title: 'only objects can be rezzed' },
+			]),
 			{ sep: true },
 			{ label: 'Find original',		disabled: true },
 		]
 	}
 	// folder
 	const o = m.obj
+	// TRASH system folder → FS's SHORT menu (llinventorybridge.cpp:5049-5075: trash_id == mUUID
+	// pushes "Empty Trash" and none of the Delete/Cut/Rename/New-folder rows — it's a system
+	// folder). Empty Trash is enabled "only when there is something to act upon" (:5058) and not
+	// while a worn attachment sits inside (:5068 hasAttachmentsInTrash).
+	if (Number(o.typeDefault) === FOLDER_TYPE_TRASH) {
+		const counts = inv.descendantCounts(o.folderId)
+		const isEmpty = counts.items + counts.folders === 0
+		const wornInside = !isEmpty && trashHasWornAttachment(o.folderId)
+		return [
+			{
+				label: 'Empty Trash',
+				disabled: isEmpty || wornInside,
+				// WHY the "(or not loaded)" hedge: descendantCounts only sees folders fetched this
+				// session — an unfetched Trash reads 0 even when the grid has rows (FS disables on
+				// VERSION_UNKNOWN the same way, llinventorybridge.cpp:5058).
+				title: isEmpty ? 'Trash is empty (or not loaded yet — expand it first)' : (wornInside ? 'detach the worn attachment in Trash first' : undefined),
+				action: (isEmpty || wornInside) ? undefined : emptyTrashAction,
+			},
+			{ sep: true },
+			{ label: inv.isExpanded(activeFid(), o.folderId) ? 'Collapse' : 'Expand',	action: toggleFolder },
+			{ label: 'Properties…',							action: properties },
+		]
+	}
 	// System folders (typeDefault >= 0: Objects, Clothing, Trash, etc.) must not be trashed.
 	const isSystemFolder = Number(o.typeDefault) >= 0
 	return [
@@ -311,7 +400,13 @@ const items = computed(() => {
 			action: isSystemFolder ? undefined : () => deleteFolder(o.folderId),
 		},
 		{ sep: true },
-		{ label: 'Create folder from selected',	disabled: true },
+		// FS "New folder from selected" — same action + gating as the item menu (llinventorybridge.cpp:912-919).
+		{
+			label: 'Create folder from selected',
+			disabled: !canCreateFolderFromSelected.value,
+			title: !canCreateFolderFromSelected.value ? 'select only items or only folders (no system folders)' : undefined,
+			action: canCreateFolderFromSelected.value ? createFolderFromSelection : undefined,
+		},
 		{ label: 'Ungroup folder items',		disabled: true },
 		{ label: 'Add to favorites',			disabled: true },
 		{ label: inv.isExpanded(activeFid(), o.folderId) ? 'Collapse' : 'Expand',	action: toggleFolder },

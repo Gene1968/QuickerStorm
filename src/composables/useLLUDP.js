@@ -65,6 +65,24 @@ export function useLLUDP() {
 		emit(C.OBJECT_DELETE, { localId })
 	}
 
+	// FS "Take": DeRezObject Destination=Take(4); destinationFolderId = FS's destination category
+	// UUID (Objects folder default) — optional, sim re-resolves if omitted.
+	function takeObject(localIds, destinationFolderId) {
+		const ids = Array.isArray(localIds) ? localIds : [localIds]
+		emit(C.OBJECT_TAKE, { localIds: ids, destinationFolderId })
+	}
+
+	// FS "Take Copy": DeRezObject Destination=TakeCopy(1); copy lands in Objects, original stays in world.
+	function takeObjectCopy(localIds) {
+		const ids = Array.isArray(localIds) ? localIds : [localIds]
+		emit(C.OBJECT_TAKE_COPY, { localIds: ids })
+	}
+
+	// Empty Trash: PurgeInventoryDescendents — permanently deletes the folder's contents.
+	function purgeInventoryFolder(folderId) {
+		emit(C.INV_PURGE_FOLDER, { folderId })
+	}
+
 	function sendSetAlwaysRun(alwaysRun) {
 		emit(C.SET_ALWAYS_RUN, { alwaysRun: !!alwaysRun })
 	}
@@ -81,5 +99,5 @@ export function useLLUDP() {
 		emit(C.MAP_TELEPORT, { regionX, regionY, x, y, z })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendRename, sendDescription, sendDelete, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
 }

@@ -597,7 +597,16 @@ export function encodeObjectDelete(p: {
  *  and logs "ignoring unhandled packet ObjectDelete", so owner-delete must go through DeRezObject with
  *  Destination = DeRezAction.Delete (6). The sim resolves the agent's Trash folder itself
  *  (Scene.Inventory GetFolderForType Trash), so DestinationID may be zero. Mirrors FS "Delete". */
-const DEREZ_DELETE = 6   // DeRezAction.Delete (opensim OpenSim/Framework/IScene.cs) — route to Trash
+// DeRezAction values verified against opensim OpenSim/Framework/IScene.cs:47-55 (TakeCopy=1, Take=4,
+// Delete=6) and FS EDeRezDestination indra/newview/llselectmgr.h:83-98 (DRD_ACQUIRE_TO_AGENT_INVENTORY=1,
+// DRD_TAKE_INTO_AGENT_INVENTORY=4, DRD_TRASH=6) — the two enums agree on the wire values.
+const DEREZ_DELETE = 6          // DeRezAction.Delete — route to Trash
+export const DEREZ_TAKE = 4     // DeRezAction.Take — move to inventory, delete from world. FS sends the
+                                // destination category UUID (llviewermenu.cpp confirm_take:6882); OpenSim
+                                // re-resolves it anyway (FromFolderID, else Objects — InventoryAccessModule.cs:840)
+export const DEREZ_TAKE_COPY = 1 // DeRezAction.TakeCopy — copy to inventory, leave in world. FS sends the
+                                // Objects-folder UUID (llviewermenu.cpp handle_take_copy:6593-6594); OpenSim
+                                // forces the Objects folder regardless (InventoryAccessModule.cs:838-839)
 export function encodeDeRezObject(p: {
   agentId: string; sessionId: string; seq: number; localIds: number[]
   destination?: number; destinationId?: string; transactionId?: string
@@ -2654,6 +2663,19 @@ export function encodeRemoveInventoryFolder(p: {
   return encode('RemoveInventoryFolder', {
     AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
     FolderData: { FolderID: p.folderId },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** PurgeInventoryDescendents (Low 285) — permanently delete EVERYTHING inside a folder (Empty Trash;
+ *  the folder itself survives). Template: server/lib/protocol/message_template.msg:6405-6415 —
+ *  AgentData Single { AgentID, SessionID } + InventoryData Single { FolderID }. OpenSim handles it in
+ *  LLClientView.cs HandlePurgeInventoryDescendents (10159) → Scene.PacketHandlers.cs:705. */
+export function encodePurgeInventoryDescendents(p: {
+  agentId: string; sessionId: string; seq: number; folderId: string
+}): Buffer {
+  return encode('PurgeInventoryDescendents', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    InventoryData: { FolderID: p.folderId },
   }, { seq: p.seq, reliable: true })
 }
 

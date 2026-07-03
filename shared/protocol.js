@@ -23,6 +23,8 @@ export const C = {
 	OBJECT_RENAME:  'object_rename',  // { localId, name } — outbound ObjectName (Low 107)
 	OBJECT_SET_DESC:'object_set_desc',// { localId, description } — outbound ObjectDescription (Low 108)
 	OBJECT_DELETE:  'object_delete',  // { localId } — outbound ObjectDelete (Low 89), Force=false
+	OBJECT_TAKE:    'object_take',    // { localIds: number[], destinationFolderId } — outbound DeRezObject Destination=Take(4); FS passes the destination category UUID (llviewermenu.cpp confirm_take)
+	OBJECT_TAKE_COPY:'object_take_copy',// { localIds: number[] } — outbound DeRezObject Destination=TakeCopy(1); OpenSim resolves the Objects folder itself so no DestinationID needed
 	SET_ALWAYS_RUN: 'set_always_run', // { alwaysRun: boolean } — outbound SetAlwaysRun (Low 88)
 	CLIENT_DIAG:    'client_diag',    // { received, stored, prims, av, meshes, upsertFails } — periodic mesh-side stats forwarded to server-log
 	CLIENT_LOG:     'client_log',     // { level, msg, stack } — dev: forward matched console errors/warns (e.g. NaN) to server-log
@@ -48,6 +50,7 @@ export const C = {
 	INV_TRASH_ITEM:     'inv_trash_item',     // { itemId } — delete = MoveInventoryItem into Trash; server resolves Trash via skeleton (client may also pass trashFolderId)
 	INV_TRASH_FOLDER:   'inv_trash_folder',   // { folderId } — delete = MoveInventoryFolder into Trash
 	INV_PURGE_ITEM:     'inv_purge_item',     // { itemId } — permanent RemoveInventoryItem (empty-trash); encoder+handler wired, UI may leave hidden
+	INV_PURGE_FOLDER:   'inv_purge_folder',   // { folderId } — outbound PurgeInventoryDescendents (Low 285): permanently delete a folder's CONTENTS (Empty Trash — the folder itself survives)
 	INV_UPDATE_PERMS:   'inv_update_perms',   // { itemId, folderId, nextOwnerMask, everyoneMask?, groupMask? } — UpdateInventoryItem permission change
 	INV_WEAR_ATTACHMENT:'inv_wear_attachment',// { itemId, attachPoint? } — RezSingleAttachmentFromInv (attachPoint 0 = default)
 	INV_DETACH:         'inv_detach',         // { itemId } — detach attached object back to inventory
@@ -92,6 +95,7 @@ export const S = {
 	TERRAIN_PATCH:   'terrain_patch', // { layerType:'LAND'|'WATER', patchSize:16, patches:[{x,y,heights:number[]}] }
 	ENVIRONMENT_TIME:'environment_time', // { sunDirection:[x,y,z], sunPhase, sunAngVelocity:[x,y,z], secPerDay, usecSinceStart } — SimulatorViewerTimeMessage (Low 150) → day/night cycle
 
+	ALERT_MESSAGE:   'alert_message', // { message, modal } — sim AlertMessage (Low 134) / AgentAlertMessage (Low 135): perm refusals ("You cannot copy…"), grid notices; client shows toast + Grid chat line
 	CIRCUIT_STATUS:  'circuit_status',// { alive: boolean } — response to CHECK_CIRCUIT
 	IM_RECV:         'im_recv',       // { fromAgentId, fromAgentName, toAgentId, dialog, message, timestamp, imId, binaryBucket } — incoming IM (binaryBucket = base64; inventory offer dialog 4 = S8 assetType + 16-byte item UUID)
 	OBJECT_PROPS:    'object_props',  // { items: [{ fullId, creatorId, ownerId, name, description, ... }] } — sim's ObjectProperties reply

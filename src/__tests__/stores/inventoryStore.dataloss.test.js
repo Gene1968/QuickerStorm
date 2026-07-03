@@ -288,6 +288,72 @@ describe('state machine — pending item lives in exactly ONE folder (to)', () =
 	})
 })
 
+// ── Perm-flag enrichment through the state machine: a re-placed pending row always carries canX. ──
+// (Derivation: PERM_COPY 0x8000 / PERM_MODIFY 0x4000 / PERM_TRANSFER 0x2000 — FS llpermissionsflags.h.)
+describe('state machine — re-placed pending rows carry derived perm flags', () => {
+	// Legacy row: masks present, NO derived canX (as an old cache / pre-enrichment path wrote it).
+	const rawItem = (id, parentId) => ({
+		itemId: id, parentId, name: 'Raw', assetType: 0, invType: 0, assetId: 'asset-0001',
+		flags: 0, createdAt: 1700000000, ownerMask: 0x8000, nextOwnerMask: 0x8000,
+	})
+
+	it('a moved-in row re-added by a lagging DST fetch keeps derived flags (move-reconciliation re-place)', () => {
+		const s = useInventoryStore()
+		login(s)
+		// Inject the source row DIRECTLY (bypassing setItems) to simulate a legacy un-enriched row.
+		s.items.set(SRC, [rawItem('X', SRC)])
+		s.moveItemLocal('X', DST)
+		// The optimistic re-place must already derive the flags…
+		let row = s.folderItems(DST).find(i => i.itemId === 'X')
+		expect(row.canCopy).toBe(true)
+		expect(row.canModify).toBe(false)
+		expect(row.canTransfer).toBe(false)
+		// …and the lagging-DST-fetch RE-ADD (the reconciliation re-place step) must keep them derived.
+		s.setItems(DST, [])
+		row = s.folderItems(DST).find(i => i.itemId === 'X')
+		expect(row).toBeTruthy()
+		expect(row.pendingMove).toBeTruthy()
+		expect(row.canCopy).toBe(true)
+		expect(row.canModify).toBe(false)
+		expect(row.canTransfer).toBe(false)
+		expect(row.nextCanCopy).toBe(true)
+	})
+
+	it('a FAILED move returns the row to SRC with derived flags (ensure-at re-place)', () => {
+		const s = useInventoryStore()
+		login(s)
+		s.items.set(SRC, [rawItem('X', SRC)])
+		s.moveItemLocal('X', DST)
+		// Grid rejected the move: DST fetched without X, SRC fetched WITH X → FAILED → X back at SRC.
+		s.setItems(DST, [])
+		s.setItems(SRC, [rawItem('X', SRC)])
+		const row = s.folderItems(SRC).find(i => i.itemId === 'X')
+		expect(row).toBeTruthy()
+		expect(row.pendingMove).toBeUndefined()
+		expect(row.canCopy).toBe(true)
+		expect(row.canModify).toBe(false)
+	})
+
+	it('cache-restored pending rows carry derived flags after applyCachedItems', () => {
+		const s = useInventoryStore()
+		login(s)
+		s.items.set(SRC, [rawItem('X', SRC)])
+		s.moveItemLocal('X', DST)
+		const pairs = makeInvSavePairs(s.items)
+		// Strip the derived flags from the persisted rows to model a pre-enrichment snapshot.
+		const legacy = pairs.map(([fid, list]) => [fid, list.map(({ canCopy, canModify, canTransfer, nextCanCopy, nextCanModify, nextCanTransfer, ...rest }) => rest)])
+		const reloaded = useInventoryStore()
+		login(reloaded)
+		reloaded.applyCachedItems(legacy)
+		const row = reloaded.folderItems(DST).find(i => i.itemId === 'X')
+		expect(row).toBeTruthy()
+		expect(row.pendingMove).toBeTruthy()   // stamp survives the reload
+		expect(row.canCopy).toBe(true)         // …and the flags are re-derived on load
+		expect(row.canModify).toBe(false)
+		expect(row.nextCanCopy).toBe(true)
+	})
+})
+
 // ── applyBulkUpdate is authoritative: it retires the pending record. ──
 describe('applyBulkUpdate retires the pending record', () => {
 	it('an authoritative BulkUpdate for a moved item clears its pending stamp', () => {

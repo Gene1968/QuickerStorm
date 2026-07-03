@@ -6,6 +6,7 @@
 // the cap fetch runs in the background and overwrites with current grid data.
 import { onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRealtimeSocket } from './useRealtimeSocket'
+import { useLLUDP } from './useLLUDP'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
@@ -60,6 +61,45 @@ export const ASSET_TYPE_OBJECT = 6
 // a no-copy object is consumed (the sim removes it — expected FS behaviour, still allowed to rez).
 const PERM_COPY = 0x00008000
 
+// SL preferred folder type for Trash (LLFolderType::FT_TRASH = 14) — matches the isInTrash guard.
+export const FOLDER_TYPE_TRASH = 14
+
+/**
+ * Extract the inventory itemId from an ObjectUpdate NameValue string, or '' when absent.
+ * An attachment's ObjectUpdate carries the entry "AttachItemID STRING RW SV <itemUUID>" —
+ * FS reads it in LLViewerObject::extractAttachmentItemID (llviewerobject.cpp:7683 —
+ * getNVPair("AttachItemID")). Entry layout is "Name Type Class SendTo Value", the same
+ * 5-field shape worldStore.parseNameValue matches for FirstName/LastName. Pure → unit-testable.
+ */
+export function parseAttachItemId(nameValue) {
+	return nameValue?.match(/AttachItemID\s+\S+\s+\S+\s+\S+\s+(\S+)/)?.[1] ?? ''
+}
+
+/**
+ * Resolve the single COMMON parent folder of a selection, or '' when the selection is empty,
+ * contains an unknown id, or spans more than one folder. FS "New folder from selected" requires
+ * every selected row to share one parent — llinventoryfunctions.cpp:4032-4041 walks the ids and
+ * raises the "SameFolderRequired" notification ("Selected items must be in the same folder.",
+ * notifications.xml:14756) on a mismatch. Pure (lookups injected) → unit-testable.
+ *
+ * @param ids        selected folderIds/itemIds
+ * @param getFolder  (id) => folder row | undefined       (inventoryStore.folders.get)
+ * @param findItem   (id) => { item, folderId } | null    (inventoryStore.findItem)
+ */
+export function commonParentOf(ids, { getFolder, findItem }) {
+	const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean)
+	if (!list.length) return ''
+	let parentId = ''
+	for (const id of list) {
+		const f = getFolder(id)
+		const p = f ? (f.parentId || '') : (findItem(id)?.folderId || '')
+		if (!p) return ''
+		if (!parentId) parentId = p
+		else if (p !== parentId) return ''
+	}
+	return parentId
+}
+
 /**
  * Compute a rez drop point ~`distance` metres in FRONT of the avatar, at avatar height.
  * Pure so it is unit-testable without the world engine.
@@ -96,6 +136,7 @@ let _stopMutationSave = null
 
 export function useInventory() {
 	const { on, off, emit } = useRealtimeSocket()
+	const { purgeInventoryFolder } = useLLUDP()
 	const inv     = useInventoryStore()
 	const session = useSessionStore()
 	const world   = useWorldStore()
@@ -296,6 +337,38 @@ export function useInventory() {
 		return folderId
 	}
 
+	/**
+	 * FS "New folder from selected" (menu_inventory.xml:854 → llinventoryfunctions.cpp:4025-4062):
+	 * create a subfolder in the selection's COMMON parent, then move the whole selection into it
+	 * (move_items_to_new_subfolder, llinventoryfunctions.cpp:2406 — createNewCategory + move).
+	 * Every selected row must share one parent (SameFolderRequired). Differences from FS, both
+	 * deliberate: FS prompts for the name up-front (CreateSubfolder notification); we reuse our
+	 * createFolder flow, which drops the new folder straight into inline-rename — the same
+	 * name-it-immediately UX without a modal. Moves route through moveItem/moveFolder so the
+	 * move-reconciliation state machine (items) + dirty flags (folders) protect every row — no
+	 * raw store writes. Returns the new folderId, or '' when nothing was created.
+	 */
+	function createFolderFromSelected(ids) {
+		const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean)
+		if (!list.length) return ''
+		const parentId = commonParentOf(list, {
+			getFolder: id => inv.folders.get(id),
+			findItem:  id => inv.findItem(id),
+		})
+		if (!parentId) {
+			// FS SameFolderRequired (notifications.xml:14756): "Selected items must be in the same folder."
+			notifyInfo('Create folder', 'Selected items must be in the same folder.')
+			return ''
+		}
+		const folderId = createFolder({ name: 'New Folder', parentId })
+		if (!folderId) return ''
+		for (const id of list) {
+			if (inv.folders.has(id)) moveFolder(id, folderId)
+			else moveItem(id, folderId)
+		}
+		return folderId
+	}
+
 	// ── Inventory mutation (rename/move/trash/purge/perms/wear) ──
 	// Each wrapper applies the optimistic store mutation first (instant UI), then emits the cap
 	// request. The sim's authoritative reply (S.INV_BULK_UPDATE / S.INV_ITEM_REMOVED) reconciles.
@@ -438,6 +511,31 @@ export function useInventory() {
 		emit(C.INV_PURGE_ITEM, { itemId })
 	}
 
+	/**
+	 * FS "Empty Trash" (llinventorybridge.cpp:5054) → purge_descendents_of(trash_id)
+	 * (llinventorymodel.cpp:4407-4444 callbackEmptyFolderType/emptyFolderType). On OpenSim the
+	 * purge is the PurgeInventoryDescendents message and the viewer "Update[s] model immediately
+	 * because there is no callback mechanism" (llviewerinventory.cpp:1955-1965) — mirrored here:
+	 *   1. send PurgeInventoryDescendents (useLLUDP.purgeInventoryFolder),
+	 *   2. purgeDescendantsLocal — the store's AUTHORIZED shrink (removes all descendants, retires
+	 *      pendingMoves, marks purged folders fetched so the item-cache save may legally shrink),
+	 *   3. evict each purged FOLDER from the IDB folder cache (saveCachedFolders unions — it can
+	 *      never shrink — so without this the ghost folders resurrect via applyFolderCache),
+	 *   4. save the item snapshot NOW (not just on the 1.5s debounce) so a reload right after
+	 *      emptying the Trash cannot resurrect purged rows from the stale IDB snapshot.
+	 * The confirm dialog lives at the call site (InventoryContextMenu) — this is the committed action.
+	 */
+	function emptyTrash() {
+		const trashId = inv.findSystemFolder(FOLDER_TYPE_TRASH)
+		if (!trashId) return
+		purgeInventoryFolder(trashId)
+		const { folderIds } = inv.purgeDescendantsLocal(trashId)
+		if (session.agentId) {
+			for (const fid of folderIds) removeCachedFolder(session.agentId, fid)
+			saveCachedInventory(session.agentId, makeInvSavePairs(inv.items), id => inv.isFetched(id))
+		}
+	}
+
 	function updatePerms(itemId, folderId, masks = {}) {
 		if (!itemId) return
 		const cur = currentItem(itemId, folderId)
@@ -448,12 +546,37 @@ export function useInventory() {
 
 	function wearAttachment(itemId, attachPoint = 0) {
 		if (!itemId) return
+		// Optimistic worn-mark: FS flips the item's menu to "Detach From Yourself" as soon as the
+		// attachment registers on the avatar; we mark on send (the sim streams the attachment back
+		// as an ObjectUpdate whose NameValue AttachItemID then confirms it via isItemWorn).
+		inv.markWorn(itemId)
 		emit(C.INV_WEAR_ATTACHMENT, { itemId, attachPoint })
 	}
 
 	function detach(itemId) {
 		if (!itemId) return
+		inv.markDetached(itemId)
 		emit(C.INV_DETACH, { itemId })
+	}
+
+	/**
+	 * Is this OBJECT item currently attached to our avatar? Port of FS get_is_item_worn
+	 * (llinventoryfunctions.cpp:648-686: AT_OBJECT → gAgentAvatarp->isWearingAttachment). We have
+	 * no avatar attachment-point model yet, so the honest client-side answer combines:
+	 *   1. the session's own wear/detach calls (inventoryStore.wornAttachments), and
+	 *   2. the scene: an attachment's ObjectUpdate NameValue carries "AttachItemID … <itemId>"
+	 *      (FS llviewerobject.cpp:7683 extractAttachmentItemID); worldStore keeps the raw
+	 *      nameValue on each prim record, so a match means the item is rezzed as an attachment —
+	 *      this covers attachments worn BEFORE this session started. Item UUIDs are globally
+	 *      unique, so another avatar's attachment can never collide with our inventory itemId.
+	 */
+	function isItemWorn(itemId) {
+		if (!itemId) return false
+		if (inv.wornAttachments.has(itemId)) return true
+		for (const o of world.prims) {
+			if (o?.nameValue && parseAttachItemId(o.nameValue) === itemId) return true
+		}
+		return false
 	}
 
 	/**
@@ -633,8 +756,9 @@ export function useInventory() {
 
 	return {
 		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder,
-		openInventoryItem,
+		createFolderFromSelected, openInventoryItem,
 		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
-		purgeItem, updatePerms, wearAttachment, detach, giveInventory, giveInventoryFolder, shareToAgent, rezObject,
+		purgeItem, emptyTrash, updatePerms, wearAttachment, detach, isItemWorn,
+		giveInventory, giveInventoryFolder, shareToAgent, rezObject,
 	}
 }

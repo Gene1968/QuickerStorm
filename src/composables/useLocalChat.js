@@ -4,6 +4,7 @@ import { useRealtimeSocket } from './useRealtimeSocket'
 import { useLLUDP } from './useLLUDP'
 import { useChatStore } from '@/stores/chatStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { S } from '@shared/protocol.js'
 
 export function useLocalChat() {
@@ -23,8 +24,18 @@ export function useLocalChat() {
 		chatStore.addMessage(d)
 	}
 
-	onMounted(() => on(S.CHAT_MSG, onChatMsg))
-	onUnmounted(() => off(S.CHAT_MSG, onChatMsg))
+	// Sim Alert/AgentAlertMessage — refusals ("You cannot copy…"), parcel/grid notices. FS shows
+	// these as a notification tip AND logs them to chat history; mirror both. Keyed registration:
+	// useLocalChat is instantiated per chat surface — the key stops handler stacking.
+	function onAlert(d) {
+		if (!d?.message) return
+		const notif = useNotificationStore()
+		notif.pushToast({ kind: 'info', title: 'Grid', body: d.message })
+		chatStore.addMessage({ fromName: 'Grid', message: d.message, chatType: 1 })
+	}
+
+	onMounted(() => { on(S.CHAT_MSG, onChatMsg); on(S.ALERT_MESSAGE, onAlert, 'localchat-alert') })
+	onUnmounted(() => { off(S.CHAT_MSG, onChatMsg); off(S.ALERT_MESSAGE, onAlert) })
 
 	function send(message, channel = 0) {
 		sendChat(message, 1 /* normal */, channel)

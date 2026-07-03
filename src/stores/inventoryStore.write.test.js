@@ -199,6 +199,134 @@ describe('inventoryStore optimistic mutations', () => {
 	})
 })
 
+// ── Shared _enrichItem choke point: EVERY insert path derives canX/nextCanX from the row's masks ──
+// (PERM_COPY 0x8000 / PERM_MODIFY 0x4000 / PERM_TRANSFER 0x2000 — FS llpermissionsflags.h:40-47).
+// The recurring bug: a path that skipped derivation left canX undefined (falsy) → false NM/NC/NT
+// badges until a reload pushed the row back through the cap fetch.
+describe('perm-flag enrichment on every item insert path', () => {
+	beforeEach(() => { setActivePinia(createPinia()) })
+
+	// A raw row as a legacy path (old IDB cache, pre-enrichment session) would have written it:
+	// masks present, NO derived canX flags.
+	const raw = (itemId, parentId, ownerMask = 0xE000, nextOwnerMask = 0x8000) =>
+		({ itemId, parentId, name: 'Raw', assetType: 6, ownerMask, nextOwnerMask })
+
+	const expectFull = (it) => {
+		expect(it.canCopy).toBe(true)
+		expect(it.canModify).toBe(true)
+		expect(it.canTransfer).toBe(true)
+		expect(it.nextCanCopy).toBe(true)
+		expect(it.nextCanModify).toBe(false)
+		expect(it.nextCanTransfer).toBe(false)
+	}
+
+	it('setItems (cap fetch) derives flags', () => {
+		const inv = seed()
+		inv.setItems('objs', [raw('f1', 'objs')])
+		expectFull(inv.folderItems('objs').find(i => i.itemId === 'f1'))
+	})
+
+	// NB: applyCachedItems only fills folders NOT fetched this session — use 'root' (never fetched
+	// by seed()) so the cached list actually lands.
+	it('applyCachedItems (IDB cache load) derives flags on legacy rows without canX', () => {
+		const inv = seed()
+		inv.applyCachedItems([['root', [raw('c1', 'root')]]])
+		expectFull(inv.folderItems('root').find(i => i.itemId === 'c1'))
+	})
+
+	it('applyCachedItems preserves the pendingMove stamp while enriching', () => {
+		const inv = seed()
+		const stamped = { ...raw('c2', 'root'), pendingMove: { fromFolderId: 'objs', toFolderId: 'root', destFetched: false, destPresent: false, srcFetched: false, srcPresent: false } }
+		inv.applyCachedItems([['root', [stamped]]])
+		const it = inv.folderItems('root').find(i => i.itemId === 'c2')
+		expectFull(it)
+		expect(it.pendingMove).toBeTruthy()
+	})
+
+	it('moveItemLocal re-derives flags on the re-placed row (legacy un-enriched source row)', () => {
+		const inv = seed()
+		// Simulate a legacy row that entered the store without derived flags (pre-enrichment cache).
+		inv.items.set('objs', [raw('m1', 'objs', 0x8000, 0x0000)])
+		inv.moveItemLocal('m1', 'trash')
+		const it = inv.folderItems('trash').find(i => i.itemId === 'm1')
+		expect(it.canCopy).toBe(true)
+		expect(it.canModify).toBe(false)
+		expect(it.canTransfer).toBe(false)
+		expect(it.nextCanCopy).toBe(false)
+	})
+
+	it('addCreatedItems (receive path) derives flags', () => {
+		const inv = seed()
+		inv.addCreatedItems([raw('n1', 'objs')])
+		expectFull(inv.folderItems('objs').find(i => i.itemId === 'n1'))
+	})
+
+	it('applyBulkUpdate INSERT derives flags from the ack masks', () => {
+		const inv = seed()
+		inv.applyBulkUpdate({ items: [raw('b1', 'trash')] })
+		expectFull(inv.folderItems('trash').find(i => i.itemId === 'b1'))
+	})
+
+	it('applyBulkUpdate in-place merge re-derives from the MERGED masks (ack omits nextOwnerMask)', () => {
+		const inv = seed()
+		inv.setItems('objs', [raw('b2', 'objs', 0xE000, 0x8000)])
+		// Ack carries a tightened ownerMask but no nextOwnerMask — nextCan* must stay derived from the
+		// row's preserved nextOwnerMask, not collapse to false.
+		inv.applyBulkUpdate({ items: [{ itemId: 'b2', parentId: 'objs', name: 'Raw', ownerMask: 0x8000 }] })
+		const it = inv.folderItems('objs').find(i => i.itemId === 'b2')
+		expect(it.canCopy).toBe(true)
+		expect(it.canModify).toBe(false)
+		expect(it.canTransfer).toBe(false)
+		expect(it.nextOwnerMask).toBe(0x8000)
+		expect(it.nextCanCopy).toBe(true)
+	})
+
+	it('applyBulkUpdate MIGRATE (move ack) preserves the previous row masks and re-derives flags', () => {
+		const inv = seed()
+		inv.setItems('objs', [raw('b3', 'objs', 0x8000, 0x8000)])
+		// Move ack carries NO masks — the re-placed row must keep the source row's masks + flags
+		// (this was the recurring "false NM/NC/NT after move until reload" hole).
+		inv.applyBulkUpdate({ items: [{ itemId: 'b3', parentId: 'trash', name: 'Raw' }] })
+		expect(inv.folderItems('objs').some(i => i.itemId === 'b3')).toBe(false)
+		const it = inv.folderItems('trash').find(i => i.itemId === 'b3')
+		expect(it.ownerMask).toBe(0x8000)
+		expect(it.canCopy).toBe(true)
+		expect(it.canModify).toBe(false)
+		expect(it.canTransfer).toBe(false)
+		expect(it.nextCanCopy).toBe(true)
+	})
+
+	it('addToFavorites derives flags on the inserted copy', () => {
+		const inv = useInventoryStore()
+		inv.loadFromLogin({
+			inventoryRoot: 'root',
+			inventorySkeleton: [
+				{ folderId: 'root', parentId: '',     name: 'My Inventory', typeDefault: 8,  version: 1 },
+				{ folderId: 'fav',  parentId: 'root', name: 'Favorites',    typeDefault: 23, version: 1 },
+			],
+		})
+		inv.addToFavorites(raw('fv1', 'elsewhere'))
+		expectFull(inv.folderItems('fav').find(i => i.itemId === 'fv1'))
+	})
+
+	it('renameItemLocal re-derives flags on the renamed row (legacy un-enriched row)', () => {
+		const inv = seed()
+		inv.items.set('objs', [raw('r1', 'objs', 0xE000, 0x8000)])
+		inv.renameItemLocal('r1', 'Renamed')
+		const it = inv.folderItems('objs').find(i => i.itemId === 'r1')
+		expect(it.name).toBe('Renamed')
+		expectFull(it)
+	})
+
+	it('rows without an ownerMask are passed through untouched (no fabricated all-false flags)', () => {
+		const inv = seed()
+		inv.setItems('objs', [{ itemId: 'nm1', parentId: 'objs', name: 'NoMask', assetType: 6 }])
+		const it = inv.folderItems('objs').find(i => i.itemId === 'nm1')
+		expect(it.canCopy).toBeUndefined()
+		expect(it.canModify).toBeUndefined()
+	})
+})
+
 describe('sort mode + system-folders-to-top', () => {
 	beforeEach(() => { setActivePinia(createPinia()) })
 

@@ -1,3 +1,44 @@
+<script>
+// ── Search-visibility scope helpers (pure — exported for unit tests) ─────────────────────────────
+// FS's eye menu (menu_inventory_search_visibility.xml) excludes whole SUBTREES from search results
+// while a filter string is active: llinventoryfilter.cpp:739-774 checkAgainstSearchVisibility()
+// rejects rows in Trash (:763 isItemInTrash), the Library (:769 !isAgentInventory) and outfit
+// folders (:757 isItemInOutfits = COF or under My Outfits, llinventorybridge.cpp:1445-1453).
+
+// System-folder preferred types (message_template / FolderType): Trash=14, My Outfits=48.
+export const FOLDER_TRASH = 14
+export const FOLDER_MY_OUTFITS = 48
+
+// Root folder ids to EXCLUDE from search for the given scope state ({ outfits, trash, library }).
+export function scopeExcludedRoots(scopes, { trashId, libRootId, cofId, myOutfitsId }) {
+	const roots = []
+	if (scopes.trash === false && trashId) roots.push(trashId)
+	if (scopes.library === false && libRootId) roots.push(libRootId)
+	if (scopes.outfits === false) {
+		// FS isItemInOutfits() = in the Current Outfit folder OR My Outfits-or-descendant
+		// (llinventorybridge.cpp:1445-1453).
+		if (cofId) roots.push(cofId)
+		if (myOutfitsId) roots.push(myOutfitsId)
+	}
+	return roots
+}
+
+// True when `id` (folder or item) IS one of / lives UNDER any excluded root. Cycle-safe parent
+// walk (same guard as inventoryStore.isInTrash). `folders` is the store Map, `findItem` resolves
+// an item id → { folderId } (or null).
+export function idInScopeExclusion(id, excludedRoots, folders, findItem) {
+	if (!id || excludedRoots.length === 0) return false
+	let cur = folders.has(id) ? id : (findItem(id)?.folderId || '')
+	const seen = new Set()
+	while (cur && !seen.has(cur)) {
+		if (excludedRoots.includes(cur)) return true
+		seen.add(cur)
+		cur = folders.get(cur)?.parentId || ''
+	}
+	return false
+}
+</script>
+
 <script setup>
 import { ref, computed, watch, provide, onMounted, onUnmounted, nextTick } from 'vue'
 import { useUiStore, MAX_INVENTORY, INVENTORY_DEFAULT_POS } from '@/stores/uiStore'
@@ -9,7 +50,9 @@ import FloaterWindow   from '@/components/FloaterWindow.vue'
 import InventoryTreeNode from '@/components/InventoryTreeNode.vue'
 import InventoryFlatRow from '@/components/InventoryFlatRow.vue'
 import InventoryFiltersPanel from '@/components/InventoryFiltersPanel.vue'
-import { ChevronDownIcon, EyeIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
+import InventorySearchVisibilityMenu from '@/components/InventorySearchVisibilityMenu.vue'
+import InventoryFolderListView from '@/components/InventoryFolderListView.vue'
+import { ChevronDownIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
 
 const props = defineProps({
 	index: { type: Number, default: 0 },
@@ -76,6 +119,34 @@ const typeIds        = ref(new Set())
 const showEmptyFolders = ref(true)
 let   filterTimer    = null
 
+// ── Search-visibility scopes (the eye menu — FS menu_inventory_search_visibility.xml) ───────────
+// true = scope INCLUDED in search results. FS defaults ALL scopes on (llinventoryfilter.h:173
+// Params default search_visibility = 0xFFFFFFFF). Persisted per the app's qs_* localStorage
+// convention (cf. qs_inv_viewmode below). "Include links" is omitted — see the menu component.
+const SEARCH_VIZ_KEY = 'qs_inv_search_viz'
+const searchScopes = ref((() => {
+	const def = { outfits: true, trash: true, library: true }
+	try { return { ...def, ...JSON.parse(localStorage.getItem(SEARCH_VIZ_KEY) || '{}') } } catch { return def }
+})())
+function toggleSearchScope(key) {
+	searchScopes.value = { ...searchScopes.value, [key]: searchScopes.value[key] === false }
+	try { localStorage.setItem(SEARCH_VIZ_KEY, JSON.stringify(searchScopes.value)) } catch { /* private mode etc. */ }
+}
+// Subtree roots currently excluded from search (recomputed when the skeleton or scopes change).
+const excludedScopeRoots = computed(() => scopeExcludedRoots(searchScopes.value, {
+	trashId:     inv.findSystemFolder(FOLDER_TRASH),
+	libRootId:   inv.libRootId,
+	cofId:       cofFolderId.value,
+	myOutfitsId: inv.findSystemFolder(FOLDER_MY_OUTFITS),
+}))
+// WHY only while text-searching: FS applies scope exclusion ONLY when a filter string is active
+// (llinventoryfilter.cpp:741 `if (!listener || !hasFilterString()) return true`) — type-only
+// filtering and normal browsing are untouched.
+function searchScopeAllows(id) {
+	if (!filtering.value) return true
+	return !idInScopeExclusion(id, excludedScopeRoots.value, inv.folders, inv.findItem)
+}
+
 // Spinner true while debounce is pending
 const searching = computed(() => rawFilter.value !== localFilter.value)
 
@@ -112,7 +183,8 @@ function itemSearchText(it) {
 	return s
 }
 function itemVisible(it) {
-	return nameMatches(itemSearchText(it)) && itemMatchesTypeSet(it, typeIds.value)
+	// Search-visibility scope first (no-op unless a filter string is active — FS semantics).
+	return searchScopeAllows(it.itemId) && nameMatches(itemSearchText(it)) && itemMatchesTypeSet(it, typeIds.value)
 }
 // WHY: "Show empty folders" off → a folder is only shown if it (or a descendant) holds a visible ITEM.
 function folderHasItem(folderId) {
@@ -122,6 +194,11 @@ function folderHasItem(folderId) {
 }
 function folderHasMatch(folderId) {
 	if (!filtersActive.value) return true
+	// Search-visibility scope: while text-searching, an excluded subtree (Trash / Library / outfit
+	// folders with their scope off) never matches — killing the whole branch here mirrors FS's
+	// per-row checkAgainstSearchVisibility (llinventoryfilter.cpp:180) since descendants recurse
+	// through this same gate.
+	if (!searchScopeAllows(folderId)) return false
 	// Empty-folder hiding is orthogonal to name/type match: hide a folder with no visible items.
 	if (!showEmptyFolders.value && !folderHasItem(folderId)) return false
 	if (!filtering.value && typeIds.value.size === 0) return true   // only empty-folder filter active
@@ -309,9 +386,16 @@ function resetFilters() {
 	showEmptyFolders.value = true
 }
 // Collapse All: FS also drops the active text search when you collapse the tree.
+// WHY suppressReveal: clearing the search normally re-reveals the selected row (see the
+// filtersActive watch) — but an explicit Collapse All must actually collapse, so skip it once.
+let suppressReveal = false
 function collapseAll() {
+	suppressReveal = true
 	inv.collapseAll(floaterId.value)
 	clearSearch()
+	// The filtersActive watch (flush 'pre') runs before nextTick callbacks — reset afterwards so
+	// the flag can't linger when a type filter keeps filtersActive true past the search clear.
+	nextTick(() => { suppressReveal = false })
 }
 function expandAllFolders() { inv.expandAll(floaterId.value) }
 
@@ -352,6 +436,44 @@ function toggleTypeId(id) {
 // ── Filters side panel (Show Filters button) ─────────────────────────────────────
 const showFilters = ref(false)
 
+// ── Search-bar "viz" eye dropdown (FS options_visibility_btn — llpanelmaininventory.cpp:426,
+// :2171-2172 menu_inventory_search_visibility.xml). It toggles the SEARCH SCOPES above — where
+// the search looks — not item types (the Filters side panel owns type filtering). ──
+const showVizMenu = ref(false)
+
+// ── View mode: tree ⇄ single-folder flat list (FS view_mode_btn → single-folder "list view",
+// llpanelmaininventory.cpp:434 + :2143 + :2267-2321 onViewModeClick/toggleViewMode). Persisted in
+// localStorage (the app-wide qs_* pref convention, e.g. useTheme/useAudio). ──
+const VIEW_MODE_KEY = 'qs_inv_viewmode'
+const viewMode = ref((() => {
+	try { return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'tree' } catch { return 'tree' }
+})())
+const listRootId    = ref('')   // current single-folder root ('' → agent root)
+const listBackStack = ref([])   // back history for the list view's Back button
+function toggleViewMode() {
+	if (viewMode.value === 'tree') {
+		// FS onViewModeClick: the single-folder view roots at the selected folder; a selected
+		// ITEM roots at its parent folder (llpanelmaininventory.cpp:2277-2299). No selection → root.
+		let root = ''
+		const id = anchorId.value
+		if (id && inv.folders.has(id)) root = id
+		else if (id) root = inv.findItem(id)?.folderId || ''
+		listRootId.value = root || inv.rootId
+		listBackStack.value = []
+		viewMode.value = 'list'
+	} else {
+		// FS: leaving single-folder mode selects the folder you were in, revealed in the tree
+		// (llpanelmaininventory.cpp:2313-2320 setSelection on the previous root).
+		const cur = listRootId.value
+		viewMode.value = 'tree'
+		if (cur && inv.folders.has(cur)) {
+			selectionSelect(cur, {})
+			revealInTree(cur)
+		}
+	}
+	try { localStorage.setItem(VIEW_MODE_KEY, viewMode.value) } catch { /* private mode etc. */ }
+}
+
 // ── Horizontal tab strip: wheel-scroll + edge arrows only when overflowing ───────
 const tabScrollEl = ref(null)
 const tabOverflow = ref(false)
@@ -383,15 +505,44 @@ function scrollTabs(kind) {
 	setTimeout(updateTabOverflow, 250)
 }
 
-function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false; showSortSub.value = false; showAddMenu.value = false; showFilters.value = false }
+function closeMenus() { showTypeMenu.value = false; showCogMenu.value = false; showSortSub.value = false; showAddMenu.value = false; showFilters.value = false; showVizMenu.value = false }
+
+// ── Reveal + scroll a row into view in the tree ─────────────────────────────────
+// Expands every ANCESTOR folder of `id` in this window's expand set (the row itself may be a
+// collapsed folder and stays collapsed), then scrolls its row into view. Mirrors FS, which keeps
+// the selection across a filter edit and pins/scrolls it on screen (llfolderview.cpp:1902-1930
+// "during filtering process, try to pin selected item's location on screen"; llfolderview.cpp:846
+// scrollToShowSelection). Cycle-safe parent walk, same guard as inventoryStore.isInTrash.
+const treeScrollEl = ref(null)
+function revealInTree(id) {
+	if (!id) return
+	let cur = inv.folders.has(id) ? (inv.folders.get(id)?.parentId || '') : (inv.findItem(id)?.folderId || '')
+	const seen = new Set()
+	while (cur && !seen.has(cur)) {
+		seen.add(cur)
+		if (!inv.isExpanded(floaterId.value, cur)) inv.toggle(floaterId.value, cur)
+		cur = inv.folders.get(cur)?.parentId || ''
+	}
+	nextTick(() => {
+		const el = treeScrollEl.value?.querySelector(`[data-inv-id="${CSS.escape(id)}"]`)
+		el?.scrollIntoView?.({ block: 'nearest' })
+	})
+}
 
 // WHY: seed this window's per-instance expand set (root auto-expanded). immediate handles the
 // common case (rootId already loaded at mount); the watch covers a window that opens before login.
 watch(() => inv.rootId, (rid) => { if (rid) inv.ensureExpand(floaterId.value) }, { immediate: true })
 
 // WHY: when the filter clears, drop this window's filter-collapse overlay so the next filter
-// session starts fully revealed (and the normal expand state resumes cleanly).
-watch(filtersActive, (active) => { if (!active) inv.clearFilterCollapse(floaterId.value) })
+// session starts fully revealed (and the normal expand state resumes cleanly). The selection is
+// PRESERVED across the clear (FS pins the selected row on screen through filter edits —
+// llfolderview.cpp:1902-1930): expand the anchor's ancestors so its row doesn't unmount inside a
+// collapsed branch, and scroll it back into view.
+watch(filtersActive, (active) => {
+	if (active) return
+	inv.clearFilterCollapse(floaterId.value)
+	if (!suppressReveal && anchorId.value) revealInTree(anchorId.value)
+})
 
 onMounted(() => {
 	inv.ensureExpand(floaterId.value)
@@ -428,8 +579,11 @@ onUnmounted(() => {
 			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-fg">
 			<div class="flex flex-row items-center justify-start w-full text-2xs">
-				<button class="ui-btn me-2 py-0" title="Collapse all folders (clears the search filter)" @click="collapseAll">Collapse</button>
-				<button class="ui-btn me-2 py-0" title="Expand all folders" @click="expandAllFolders">Expand</button>
+				<!-- FS hides Collapse/Expand in single-folder mode (llpanelmaininventory.cpp:2248). -->
+				<template v-if="!(viewMode === 'list' && activeTab === 'inventory')">
+					<button class="ui-btn me-2 py-0" title="Collapse all folders (clears the search filter)" @click="collapseAll">Collapse</button>
+					<button class="ui-btn me-2 py-0" title="Expand all folders" @click="expandAllFolders">Expand</button>
+				</template>
 				<span class="me-1">Filter:</span>
 				<!-- Type-filter dropdown (FS "Filter: All Types ▾") -->
 				<div class="relative grow me-1">
@@ -453,7 +607,12 @@ onUnmounted(() => {
 					</div>
 				</div>
 			</div>
-			<button class="ui-btn py-0" title="Show search visibility options"><EyeIcon /><ChevronDownIcon class="w-3" /></button>
+			<InventorySearchVisibilityMenu
+				:open="showVizMenu"
+				:scopes="searchScopes"
+				@toggle-open="showVizMenu = !showVizMenu"
+				@toggle-scope="toggleSearchScope"
+			/>
 		</div>
 		<!-- Tab strip: edge arrows appear only when overflowing; wheel scrolls horizontally. -->
 		<div class="flex flex-row items-start w-full text-2xs text-fg">
@@ -477,7 +636,15 @@ onUnmounted(() => {
 		</div>
 
 		<template v-if="activeTab === 'inventory'">
-			<div v-if="inv.rootId" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
+			<!-- Single-folder flat list (FS single-folder "list view") — tree stays the default. -->
+			<InventoryFolderListView
+				v-if="inv.rootId && viewMode === 'list'"
+				:root-id="listRootId || inv.rootId"
+				:back-stack="listBackStack"
+				@update:root-id="listRootId = $event"
+				@update:back-stack="listBackStack = $event"
+			/>
+			<div v-else-if="inv.rootId" ref="treeScrollEl" class="flex-1 min-h-0 overflow-y-auto px-1 py-1">
 				<InventoryTreeNode :folder-id="inv.rootId" />
 				<InventoryTreeNode v-if="inv.libRootId" :folder-id="inv.libRootId" />
 			</div>
@@ -591,8 +758,13 @@ onUnmounted(() => {
 					@close="showFilters = false"
 				/>
 			</div>
-			<button v-if="true" class="ui-btn" title="Switch between views (TO-DO)"><ListIcon class="w-3.5 h-3.5" /></button>
-			<button v-else class="ui-btn" title="Switch between views"><TableOfContentsIcon class="w-3.5 h-3.5" /></button>
+			<!-- View-mode toggle (FS view_mode_btn, llpanelmaininventory.cpp:434/2143): tree ⇄ single-folder list. -->
+			<button
+				class="ui-btn"
+				:class="viewMode === 'list' ? 'text-accent border-accent' : ''"
+				:title="viewMode === 'list' ? 'Switch to folder tree view' : 'Switch to single-folder list view'"
+				@click="toggleViewMode"
+			><TableOfContentsIcon v-if="viewMode === 'list'" class="w-3.5 h-3.5" /><ListIcon v-else class="w-3.5 h-3.5" /></button>
 			<div
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`

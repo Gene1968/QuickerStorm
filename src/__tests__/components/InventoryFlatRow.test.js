@@ -143,7 +143,9 @@ describe('InventoryFlatRow — drag', () => {
 		const dt = { effectAllowed: '', setData: vi.fn() }
 		await w.find('div').trigger('dragstart', { dataTransfer: dt })
 		expect(setDrag).toHaveBeenCalledWith(['item-1'], 'item')
-		expect(dt.effectAllowed).toBe('move')
+		// WHY 'copyMove': rez (world) + give (profile/IM) drop zones request dropEffect='copy';
+		// effectAllowed='move' spec-rejects those drops (see the component's dragstart WHY comment).
+		expect(dt.effectAllowed).toBe('copyMove')
 	})
 
 	it('dragging a mixed item+folder selection carries all ids with kind "mixed" (anchor first)', async () => {

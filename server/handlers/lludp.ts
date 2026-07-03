@@ -6,7 +6,7 @@ import type { CircuitState } from '../state/sessions'
 // Generic template-driven codec: messageName() routes new inbound messages by name; decode()
 // (same module) walks any message's fields by name — pass { alreadyExpanded: true } since the
 // dispatcher pre-expands the body. Import decode where a new-message case actually uses it.
-import { messageName } from '../lib/protocol/codec.ts'
+import { messageName, decode } from '../lib/protocol/codec.ts'
 import {
 	parseHeader, parseMsgType,
 	decodeChatFromSimulator, decodeObjectUpdate, decodeImprovedTerseObjectUpdate,
@@ -19,6 +19,7 @@ import {
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
 	encodeObjectName, encodeObjectDescription, encodeObjectDelete, encodeDeRezObject,
+	DEREZ_TAKE, DEREZ_TAKE_COPY,
 	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
 	encodeSetAlwaysRun,
 	encodeMapBlockRequest, encodeMapNameRequest, decodeMapBlockReply,
@@ -33,6 +34,7 @@ import {
 	encodeAvatarPickerRequest, decodeAvatarPickerReply, decodeChangeUserRights,
 	encodeUpdateInventoryItem, encodeMoveInventoryItem, encodeMoveInventoryFolder, encodeCopyInventoryItem,
 	encodeUpdateInventoryFolder, encodeRemoveInventoryItem, encodeRemoveInventoryFolder,
+	encodePurgeInventoryDescendents,
 	encodeRezSingleAttachmentFromInv, encodeDetachAttachmentIntoInv, decodeBulkUpdateInventory,
 	encodeRezObject,
 	buildGiveFolderBucket,
@@ -1165,6 +1167,25 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	// AlertMessage (Low 134) / AgentAlertMessage (Low 135) — the sim's refusal/notice channel:
+	// e.g. DeRezObject take-copy denied ("You cannot copy…"), parcel restrictions, grid notices.
+	// FS surfaces these as notification tips + chat; without this the refusal is silently dropped
+	// and the user sees "no response" (live-observed on take-copy of non-everyone-copy objects).
+	if (name === 'AlertMessage' || name === 'AgentAlertMessage') {
+		try {
+			const m = decode(buf, { alreadyExpanded: true })
+			const alert = (m.blocks?.AlertData?.[0] ?? {}) as { Message?: Buffer; Modal?: number }
+			const message = Buffer.isBuffer(alert.Message)
+				? alert.Message.toString('utf8').replace(/\0+$/, '')
+				: String(alert.Message ?? '')
+			if (message) {
+				slog.info(session.ws, `← ${name}: ${message}`)
+				session.ws.send(JSON.stringify({ t: S.ALERT_MESSAGE, d: { message, modal: !!alert.Modal } }))
+			}
+		} catch (e) { slog.warn(session.ws, `${name} decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	// WHY: Log each unknown packet type once so we can detect unhandled messages.
 	if (!session.loggedTypes.has(type)) {
 		session.loggedTypes.add(type)
@@ -1515,6 +1536,20 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.INV_PURGE_FOLDER) {
+		// Empty Trash: PurgeInventoryDescendents (Low 285) permanently deletes the folder's CONTENTS;
+		// the folder itself survives. OpenSim: LLClientView HandlePurgeInventoryDescendents →
+		// Scene.PacketHandlers.cs:705 HandlePurgeInventoryDescendents.
+		const d = msg.d as { folderId: string }
+		if (!d.folderId) { slog.warn(session.ws, 'InvPurgeFolder: missing folderId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodePurgeInventoryDescendents({ agentId: session.agentId, sessionId: session.sessionId, seq, folderId: d.folderId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ PurgeInventoryDescendents (empty) ${d.folderId.slice(0, 8)}…`)
+		return
+	}
+
 	if (msg.t === C.INV_WEAR_ATTACHMENT) {
 		const d = msg.d as {
 			itemId: string; attachPoint?: number; ownerId?: string
@@ -1706,6 +1741,49 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ DeRezObject (delete→trash) localId=${d.localId}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_TAKE) {
+		// FS "Take": DeRezObject with Destination=DeRezAction.Take(4) + the destination category UUID
+		// (llviewermenu.cpp confirm_take:6882 → derez_objects(DRD_TAKE_INTO_AGENT_INVENTORY, folder_id)).
+		// OpenSim re-resolves the folder itself (FromFolderID, else Objects — InventoryAccessModule.cs:840),
+		// so a missing destinationFolderId still lands somewhere sane; pass it when the client knows it.
+		const d = msg.d as { localIds: number[]; destinationFolderId?: string }
+		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectTake: missing localIds'); return }
+		// WHY chunk: ObjectData's Variable count is one byte on the wire (codec writes length & 0xFF) —
+		// >255 objects in a single DeRezObject would silently truncate the count and corrupt the packet.
+		// FS likewise splits derez across multiple packets (llviewermenu.cpp derez_objects).
+		for (let i = 0; i < d.localIds.length; i += 255) {
+			const seq = nextSeq(session)
+			const pkt = encodeDeRezObject({
+				agentId: session.agentId, sessionId: session.sessionId, seq,
+				localIds: d.localIds.slice(i, i + 255), destination: DEREZ_TAKE, destinationId: d.destinationFolderId,
+			})
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ DeRezObject (take) localIds=[${d.localIds.join(',')}] → ${d.destinationFolderId ? d.destinationFolderId.slice(0, 8) + '…' : 'sim-default'}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_TAKE_COPY) {
+		// FS "Take Copy": Destination=DeRezAction.TakeCopy(1). FS sends the Objects-folder UUID
+		// (llviewermenu.cpp handle_take_copy:6593-6594) but OpenSim forces the Objects folder regardless
+		// (InventoryAccessModule.cs:838-839), so a zero DestinationID is correct here. Object stays in world.
+		const d = msg.d as { localIds: number[] }
+		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectTakeCopy: missing localIds'); return }
+		// WHY chunk: same one-byte Variable-count limit as OBJECT_TAKE above.
+		for (let i = 0; i < d.localIds.length; i += 255) {
+			const seq = nextSeq(session)
+			const pkt = encodeDeRezObject({
+				agentId: session.agentId, sessionId: session.sessionId, seq,
+				localIds: d.localIds.slice(i, i + 255), destination: DEREZ_TAKE_COPY,
+			})
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ DeRezObject (take-copy) localIds=[${d.localIds.join(',')}]`)
 		return
 	}
 

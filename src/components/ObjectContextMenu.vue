@@ -8,13 +8,17 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useUiStore }    from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
+import { useInventoryStore } from '@/stores/inventoryStore'
 import { useLLUDP }      from '@/composables/useLLUDP'
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
 import ContextMenuItem   from '@/components/ContextMenuItem.vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
-const { sendTouch, sendSit, sendDelete } = useLLUDP()
+const inv   = useInventoryStore()
+const { sendTouch, sendSit, sendDelete, takeObject, takeObjectCopy } = useLLUDP()
+
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
 const menu = computed(() => ui.objectMenu)
 const showInspect = ref(false)
@@ -31,6 +35,30 @@ function del() {
 	if (!menu.value) return
 	if (!confirmDelete.value) { confirmDelete.value = true; return }
 	sendDelete(menu.value.localId)
+	close()
+}
+
+// FS "Take": DeRezObject Destination=Take(4) into the user's Objects system folder (type 6).
+// FS prefers the folder the object was last derezzed from when unambiguous (llviewermenu.cpp
+// handle_take:6743-6803) — we don't track node mFolderID, so we always use the FT_OBJECT default
+// (llviewermenu.cpp:6799-6802). Zero UUID when inventory isn't loaded yet: OpenSim then routes an
+// owner-take to FromFolderID when set, else Lost & Found (InventoryAccessModule.cs:830-834) — the
+// item still reaches inventory, just not necessarily the Objects folder. Like
+// Delete above, FS's perm gate (enable_take, llviewermenu.cpp:6900-6940: owner, or transfer+modify)
+// is enforced by the sim — an untakeable object is a no-op. The sim's KillObject removes the mesh
+// and BulkUpdateInventory adds the item row; no local mutations here.
+function take() {
+	if (!menu.value) return
+	takeObject(menu.value.localId, inv.findSystemFolder(6) || ZERO_UUID)
+	close()
+}
+
+// FS "Take copy": DeRezObject Destination=TakeCopy(1) — the copy lands in the Objects folder
+// (OpenSim forces it regardless of DestinationID, InventoryAccessModule.cs:838-839) and the
+// original STAYS in world (llviewermenu.cpp handle_take_copy:6593-6594).
+function takeCopy() {
+	if (!menu.value) return
+	takeObjectCopy(menu.value.localId)
 	close()
 }
 
@@ -136,8 +164,9 @@ const items = computed(() => [
 	{ sep: true },
 	{ label: 'Texture refresh',							action: refreshTextures },
 	{ label: 'Return',				disabled: true },
-	{ label: 'Take',				disabled: true },
-	{ label: 'Take copy',			disabled: true },
+	// FS pie order: Take / Take copy between Return and Pay (menu_object.xml:387-408).
+	{ label: 'Take',									action: take },
+	{ label: 'Take copy',								action: takeCopy },
 	{ label: 'Pay',					disabled: true },
 	{ label: 'Buy',					disabled: true },
 ])

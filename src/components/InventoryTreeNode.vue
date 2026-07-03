@@ -162,24 +162,84 @@ function onRenameKey(e) {
 // ── Delete key handler (attached to tree rows via keydown on the folder/item divs) ──
 // WHY: guard system folders (typeDefault >= 0) — match FS; items never need a confirm.
 // Folder with children gets a confirm; everything else trashes directly (FS behavior).
+
+// Rendered row order of a folder's contents (child folder rows first, then item rows) — mirrors
+// the template so "next sibling" means the next row the user actually sees. Applies the same
+// filter rules as `children`/`items` above but for an ARBITRARY parent (a deleted folder's
+// siblings live in ITS parent, which this node doesn't otherwise render).
+function _rowOrderOf(parentId) {
+	let subs = inv.childFolders(parentId)
+	if (f.filtersActive.value) subs = subs.filter(c => f.folderHasMatch(c.folderId))
+	let its = inv.folderItems(parentId)
+	if (f.filtersActive.value && !(f.filtering.value && f.typeFilter.value === 'all' && f.folderNameMatches(parentId))) {
+		its = its.filter(it => f.itemVisible(it))
+	}
+	return [...subs.map(c => c.folderId), ...inv.sortItems(its).map(i => i.itemId)]
+}
+
+// WHY: FS selects the next row after a keyboard delete — LLFolderView::removeSelectedItems
+// (llfolderview.cpp:775-846) picks getNextUnselectedItem(): the next visible row, else the
+// previous one (llfolderview.cpp:2227-2244). We scope it to the same folder per the row order
+// above, falling back to the parent folder row when the folder had no other row left.
+function nextRowAfterDelete(deletedId, parentId) {
+	const rows = _rowOrderOf(parentId)
+	const idx = rows.indexOf(deletedId)
+	if (idx === -1) return parentId || null
+	return rows[idx + 1] ?? rows[idx - 1] ?? parentId ?? null
+}
+
+// WHY focus hand-off: after the delete the focused row unmounts and focus falls to <body>, so a
+// second Del press would go dead. FS re-anchors keyboard focus on the new selection
+// (llfolderview.cpp:818 setSelection(..., hasFocus) + :846 scrollToShowSelection); mirror that by
+// focusing the new row's div. Scope the lookup to this floater's scroll container (data-inv-id
+// repeats across inventory windows). closest() runs synchronously — the deleted row's DOM node is
+// still mounted here; the query waits for the post-mutation render.
+function focusRowAfterDelete(e, id) {
+	const scope = e.target?.closest?.('.overflow-y-auto') || document
+	nextTick(() => {
+		// globalThis.CSS: absent in the unit-test DOM; inventory ids are UUIDs so raw is safe there.
+		const sel = globalThis.CSS?.escape?.(id) ?? id
+		const el = scope.querySelector(`[data-inv-id="${sel}"]`)
+		el?.focus?.({ preventScroll: true })
+		el?.scrollIntoView?.({ block: 'nearest' })
+	})
+}
+
 function onDeleteFolder(e) {
 	if (renaming.value.id) return   // don't trash while editing
 	if (e.key !== 'Delete' && e.key !== 'Backspace') return
 	const f2 = folder.value
 	if (!f2) return
 	if (Number(f2.typeDefault) >= 0) return   // system folder — can't trash
+	// Already in Trash → no-op, like trashFolder's own guard (commit 0283c6a): FS greys out
+	// Delete there, so neither the move NOR a selection change may happen.
+	if (inv.isInTrash(props.folderId)) return
 	const { items: ci, folders: cf } = counts.value
 	if (ci + cf > 0) {
 		// Confirm only for non-empty folders.
 		if (!window.confirm(`Move "${f2.name}" and its ${ci + cf} contents to Trash?`)) return
 	}
+	// Compute BEFORE the trash mutates the store (the row leaves its parent's lists immediately).
+	const nextId = nextRowAfterDelete(props.folderId, f2.parentId)
 	trashFolder(props.folderId)
+	if (nextId) {
+		invSel.selectionSelect(nextId, {})
+		focusRowAfterDelete(e, nextId)
+	}
 }
 
 function onDeleteItem(e, it) {
 	if (renaming.value.id) return
 	if (e.key !== 'Delete' && e.key !== 'Backspace') return
+	// Already in Trash → no-op (mirrors trashItem's guard, commit 0283c6a) — selection stays put.
+	if (inv.isInTrash(it.itemId)) return
+	// Compute BEFORE the trash mutates the store (optimistic move drops the row instantly).
+	const nextId = nextRowAfterDelete(it.itemId, props.folderId)
 	trashItem(it.itemId)
+	if (nextId) {
+		invSel.selectionSelect(nextId, {})
+		focusRowAfterDelete(e, nextId)
+	}
 }
 
 // ── F2 rename (keyboard shortcut for selected row) ──
@@ -400,6 +460,7 @@ function onItemMouseLeave() { hidePreview() }
 				dropTarget === folderId ? 'ring-1 ring-inset ring-accent/70 bg-accent/15' : '',
 			]"
 			:style="{ paddingLeft: padLeft }"
+			:data-inv-id="folderId"
 			tabindex="0"
 			draggable="true"
 			@click="onSelect(folderId, $event)"
@@ -449,6 +510,7 @@ function onItemMouseLeave() { hidePreview() }
 					dropTarget === folderId ? 'bg-accent/15' : '',
 				]"
 				:style="{ paddingLeft: itemPad }"
+				:data-inv-id="it.itemId"
 				:title="it.desc || it.name"
 				tabindex="0"
 				draggable="true"

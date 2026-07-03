@@ -17,19 +17,25 @@ import { useRouter } from 'vue-router'
 import { useUiStore }			from '@/stores/uiStore'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { useGridStore }		from '@/stores/gridStore'
+import { useInventoryStore }	from '@/stores/inventoryStore'
 import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
 import { useAudio }			from '@/composables/useAudio.js'
 import { useTeleport }		from '@/composables/useTeleport.js'
+import { useLLUDP }			from '@/composables/useLLUDP'
 import { C }					from '@shared/protocol.js'
 import MenuDropdownItem		from '@/components/MenuDropdownItem.vue'
 
 const ui			= useUiStore()
 const session	= useSessionStore()
 const grid		= useGridStore()
+const inv		= useInventoryStore()
 const router	= useRouter()
 const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
 const { requestHomeTeleport, setHomeHere } = useTeleport()
+const { takeObject, takeObjectCopy } = useLLUDP()
+
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
 // ── Active menu ───────────────────────────────────────────────────────────
 const openMenu = ref(null)	 // id of open top-level menu, or null
@@ -153,6 +159,29 @@ function deleteSelectedObject() {
 	if (!hasSelectedObject()) return
 	emit(C.OBJECT_DELETE, { localId: ui.editObjectId })
 	ui.showObjectEdit = false
+}
+
+// Take the selected object into inventory: DeRezObject Destination=Take(4) → Objects system
+// folder (type 6). Mirrors FS Build > Object > Take (menu_viewer.xml:2267-2276 → Tools.BuyOrTake
+// → handle_take, llviewermenu.cpp:6710-6803; we always use the FT_OBJECT default folder,
+// llviewermenu.cpp:6799-6802). Zero UUID when inventory isn't loaded — OpenSim then routes to
+// FromFolderID, else Lost & Found (InventoryAccessModule.cs:830-834); the item still reaches
+// inventory. Perm gating (FS enable_take) is the sim's job.
+// The sim's KillObject removes the mesh, so close the Edit floater like Delete does; the
+// inventory row arrives via BulkUpdateInventory on the existing EQ path.
+function takeSelectedObject() {
+	if (!hasSelectedObject()) return
+	takeObject(ui.editObjectId, inv.findSystemFolder(6) || ZERO_UUID)
+	ui.showObjectEdit = false
+}
+
+// Take Copy: DeRezObject Destination=TakeCopy(1) — FS Build > Object > Take Copy
+// (menu_viewer.xml:2277-2284 → Tools.TakeCopy). The copy lands in the Objects folder (OpenSim
+// forces it, InventoryAccessModule.cs:838-839); the original STAYS in world, so keep the Edit
+// floater open.
+function takeCopySelectedObject() {
+	if (!hasSelectedObject()) return
+	takeObjectCopy(ui.editObjectId)
 }
 
 function resyncWorld() {
@@ -325,8 +354,10 @@ const MENUS = [
 				label: 'Selected objects',
 				submenu: [
 					{ label: 'Buy',							disabled: true },
-					{ label: 'Take',						disabled: true },
-					{ label: 'Take copy',					disabled: true },
+					// Take / Take copy on the SELECTED object (same selection concept as Delete below);
+					// FS Selected Objects menu order Buy/Take/Take Copy/Delete (menu_viewer.xml:836-854).
+					{ label: 'Take',	disabled: () => !hasSelectedObject(),	action: () => act(takeSelectedObject) },
+					{ label: 'Take copy',	disabled: () => !hasSelectedObject(),	action: () => act(takeCopySelectedObject) },
 					// Delete the SELECTED object (the one open in the Edit floater = our selection concept).
 					// Enabled only while an object is selected; sends DeRezObject→Trash (server maps it).
 					{ label: 'Delete',	disabled: () => !hasSelectedObject(),	action: () => act(deleteSelectedObject) },
@@ -494,8 +525,10 @@ const MENUS = [
 				label: 'Object',
 				submenu: [
 					{ label: 'Buy',							disabled: true },
-					{ label: 'Take',						disabled: true },
-					{ label: 'Take copy',					disabled: true },
+					// FS Build > Object > Take / Take Copy (menu_viewer.xml:2267-2284); acts on the
+					// selected object (Edit floater target), same gating as Selected objects > Delete.
+					{ label: 'Take',	disabled: () => !hasSelectedObject(),	action: () => act(takeSelectedObject) },
+					{ label: 'Take copy',	disabled: () => !hasSelectedObject(),	action: () => act(takeCopySelectedObject) },
 					{ label: 'Duplicate',					disabled: true },
 					{ sep: true },
 					{ label: 'Edit particles',				disabled: true },

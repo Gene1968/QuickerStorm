@@ -53,27 +53,55 @@ Full FS-parity pass (5 waves + a dedicated data-loss fix).
   FS filter subsets (permission/date/links filters, Empty Trash) · bad/missing-asset resilience (100+ blob 404s;
   mark dead assets, retry/log noise) · "Inspect textures" floater.
 
-### Inventory — remaining polish (2026-07-02, from Gene) ⚡ mostly batch-ready
-Inventory is close to done. Small, mostly-independent gaps:
-- **Take** / **Take copy** (object → inventory; DeRezObject Destination=Take(4)/TakeCopy(1) — mirror the delete
-  path, now that DeRezObject is wired server-side). Both context-menu (object + inventory) + MenuBar surfaces.
-- **Clearing search keeps the selected item selected** (currently deselects on filter-clear).
-- **Del key deletes → then selects the next item** in the folder (keyboard-delete UX).
-- **Single-folder (flat) non-tree view** — a list mode showing one folder's contents (FS list/gallery vs tree).
-- **Search "viz" EyeIcon dropdown** — filter-visibility dropdown (which columns/types show) next to search.
-- **Create folder from selected** (context-menu item exists disabled — wrap selection into a new folder).
-- **Trash folder gets its own context menu** — right-clicking the Trash system folder should show a small
-  FS-style menu (not the generic folder menu) with at least **Empty Trash** (PurgeInventoryDescendents on
-  Trash → confirm "Empty the Trash?"; purge all contents locally + emit). FS's Trash menu is a short set —
-  Empty Trash, Expand/Collapse, Properties — no Delete/Cut/Rename (system folder). Pairs with the
-  already-shipped `isInTrash` no-op-delete guard (2026-07-02).
-- **Worn item → menu says "Detach", not "Wear/attach"** (reflect worn state on attachments).
-- **Double-click a clothing/bodypart/object → WEAR it**, not the "object preview isn't supported yet" toast
-  (openInventoryItem default branch should wear wearables/attach objects). ⚠️ depends on wear pipeline below.
-- 🧠 **Postponed — need the WEAR/appearance pipeline (brainstorm-first Appearance):** wear · folder-wear ·
-  folder "replace current outfit" · **Worn** tab · attachment points · LINK inventory type · Find-all-links ·
-  Replace-links · **wearing an item doesn't update the Appearance floater**. (All gated on AgentSetAppearance
-  bake — see 🧠 Appearance / baked textures below.)
+### ✅ Inventory — remaining polish SHIPPED 2026-07-02 (uncommitted; NOT live-verified)
+Full cluster swept via ultracode workflow (5 impl agents + per-diff FS-parity reviewers; all citations
+re-verified against the local FS/OpenSim checkouts, all suites green, staging build green).
+- **Take / Take copy** — DeRezObject Take(4)/TakeCopy(1) (values verified vs OpenSim `DeRezAction` +
+  FS `EDeRezDestination`); wire contract `OBJECT_TAKE`/`OBJECT_TAKE_COPY` + `takeObject`/`takeObjectCopy`;
+  surfaces: ObjectContextMenu (FS pie position) + MenuBar quickerSTORM ▸ Selected objects + Build ▸ Object.
+  Take → Objects folder (type 6, zero-UUID fallback → sim routes FromFolderID/Lost&Found); server chunks
+  >255-object selections. Multi-select-take-ready server-side.
+- **Trash context menu** — FS short menu (Empty Trash / Expand-Collapse / Properties); Empty Trash =
+  confirm → `PurgeInventoryDescendents` (Low 285) + authorized local cache shrink (pendingMoves retired,
+  purged folders marked FETCHED, IDB folder-cache eviction + immediate snapshot save → no resurrection,
+  test-proven); disabled when empty or a worn attachment sits in Trash.
+- **Create folder from selected** — live on item+folder menus; FS `new_folder_from_selected` semantics
+  (single-common-parent rule, all-items/all-folders gating); routes through existing createFolder + move
+  machinery (state machine intact); inline-rename instead of FS's name modal (deliberate).
+- **Worn attachment → "Detach from yourself"** — two-source worn tracking (session wear/detach calls +
+  AttachItemID NameValue scan of scene ObjectUpdates).
+- **Search-clear keeps selection** (re-expands ancestors + scrolls into view; Collapse-All still collapses) ·
+  **Del → select next row** (FS getNextUnselectedItem order + keyboard-focus hand-off so repeat-Del works;
+  isInTrash no-op guard intact) · **EyeIcon viz dropdown** (shares state with Filters panel) ·
+  **single-folder flat list mode** (breadcrumb/back, reuses InventoryFlatRow, persisted `qs_inv_viewmode`).
+- **Perms false NM/NC/NT (inbox 🐛)** — shared `_enrichItem()` choke point on EVERY item-row write incl.
+  cache load + move-reconciliation re-place; also fixed applyBulkUpdate MIGRATE dropping masks on move acks.
+  Needs live verify on receive/move/unbox.
+- **Deferred followups (logged, small):** multi-select Del only deletes the focused row (FS deletes the whole
+  selection) · list-view rows lack keyboard handlers + drag-source/drop-target · eye menu shows type-visibility
+  (FS's is search *scopes*: outfit/trash/library/links) · optimistic worn flag has no rollback on sim reject ·
+  worn-in-Trash guard + Empty-Trash enable only see folders fetched this session (no auto-fetch trigger).
+- 🧠 **Postponed — need the WEAR/appearance pipeline (brainstorm-first Appearance):** double-click-to-wear ·
+  wear · folder-wear · folder "replace current outfit" · **Worn** tab · attachment points · LINK inventory
+  type · Find-all-links · Replace-links · **wearing an item doesn't update the Appearance floater**. (All
+  gated on AgentSetAppearance bake — see 🧠 Appearance / baked textures below.)
+
+### Drag-drop robustness (NEW 2026-07-02, from the drag-rez/share diagnosis) ⚡ batch-ready
+The 2026-07-01 "drag-to-rez/share dead" report predates the 2026-07-02 `copyMove` fix (which was
+live-verified working) — the code chain is coherent end-to-end. Real remaining gaps that make drops
+LOOK dead, all small:
+- **Rez drop raycasts terrain only** (`screenToGround` → terrainMesh, non-recursive) — dropping on a prim
+  floor/platform rezzes at ground far below or silently no-ops. Raycast prims too (or FS-style sim raycast:
+  rayStart=camera, BypassRaycast=0 + RayTargetID — lltooldraganddrop.cpp:1963-2008); toast on rejected drop.
+- **WorldCanvas rez gate rejects silently** — multi-select containing a folder → kind 'mixed' → no
+  preventDefault → no-drop cursor with zero feedback. Accept any payload whose anchor resolves to an
+  object item; hint when rejected.
+- **Give with zero feedback** — giveInventory skips unfound/no-transfer items silently when nothing sends;
+  ProfileFloater onGiveDrop returns silently on missing targetId. Toast the nothing-sent case.
+- **Add `@dragenter.prevent`** to the three drop zones (WorldCanvas / Profile / Conversations) — Chrome
+  tolerates dragover-only; stricter engines may not.
+- If drag "deadness" recurs in Chrome: check DevTools device emulation first (known Chromium DnD
+  hit-test bug, already bitten twice) and stale Bun/Vite processes.
 
 ### Object Build & Edit Floater — FEATURE-GAPS L170–186
 - edit name & description · numeric size/pos/rot input fields (fields editable → modify selected) · Select-Face radio
@@ -214,6 +242,11 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## Recently shipped (don't re-pick)
+- **2026-07-02 pm (uncommitted, NOT live-verified):** Inventory remaining-polish ultracode sweep — Take/Take
+  copy (all surfaces + wire contract) · Trash menu + Empty Trash (purge + authorized cache shrink) · create
+  folder from selected · worn→Detach · search-clear keeps selection · Del→select-next (with focus hand-off) ·
+  eye viz dropdown · single-folder list mode · shared `_enrichItem()` perms fix · drag-rez/share diagnosis
+  (stale report; robustness cluster filed). ~30 new tests; per-diff FS-parity reviews.
 - **2026-07-02 (committed):** Inventory-share + object-delete + ghost-reconcile session — (1) **perms NM/NC/NT**
   fixed: OpenSim EQ BulkUpdate sends masks as base64 `<binary>`, decoded to 0 → received/moved items showed
   no-perms; now base64-decoded (`fix(inv): decode base64 perm masks in EQ ack`). (2) **drag rez + give** worked:
@@ -252,14 +285,12 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ## ⬇️ Raw inbox (Gene dumps here; Claude triages up into the clusters above)
 
 **2026-07-01 dump (from Gene — file for when we reach each feature/fix):**
-- **🐛 Perms STILL false NM/NC/NT on SOME items** received / moved / **unboxed** — 2026-07-01 fix enriched the
-  create/receive path (addCreatedItems) + itemServerFields all-masks, but Gene still sees it on some. Suspect the
-  MOVE path (move-reconciliation may not re-derive canX flags on the re-placed row) and the UNBOX/object-contents
-  path (Xfer — not built). Re-investigate which insert path skips `_permFlags`; add a shared `enrichItem()` used by
-  EVERY insert (setItems/applyBulkUpdate/addCreatedItems/moveItemLocal). → Inventory reliability.
-- **🐛 Can't drag-to-REZZ and can't drag-to-SHARE** (both shipped 2026-07-01 but not working live) — verify the
-  WorldCanvas drop→rez raycast and the Profile/IM drop→give handlers actually fire; likely a dragover/drop wiring
-  or dragPayload-kind mismatch. → Inventory (give) + Rez.
+- ✅ **Perms false NM/NC/NT** — ADDRESSED 2026-07-02 sweep: shared `_enrichItem()` on every insert path
+  (incl. move-reconciliation re-place + cache load + BulkUpdate MIGRATE mask-drop fix). Live-verify on
+  receive/move; the UNBOX path (Xfer object-contents) is still unbuilt — re-check when Open-box ships.
+- ✅ **Drag-to-REZZ / drag-to-SHARE "dead"** — DIAGNOSED 2026-07-02: the report predates the same-day
+  `copyMove` fix (live-verified working after). Chain is coherent; real silent-failure gaps promoted to the
+  **Drag-drop robustness** cluster above. If it recurs: DevTools emulation / stale Bun/Vite first.
 - **🐛 GHOST objects persist after delete** — as a FS user rezzes/deletes his own objects, ghosts stay in our
   object cache even after a HARD reload. Selectable but show NO name/desc/etc → that's the tell for "not real."
   FS confirms deletion / polls for realness somehow (KillObject we may be missing, or a RequestObjectProperties

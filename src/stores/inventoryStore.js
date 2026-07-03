@@ -73,6 +73,22 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const systemFoldersToTop = ref(true)
 	const contextMenu = ref(null)     // { x, y, kind:'item'|'folder', obj } | null
 	const propsTargets = ref([])      // [{ key, kind, obj }] — one open Properties floater per item/folder
+	// ── Worn-attachment tracking (session-local half of FS get_is_item_worn) ──
+	// itemIds of OBJECT items this session attached via the wear path (RezSingleAttachmentFromInv)
+	// and not yet detached. FS answers "is worn?" from gAgentAvatarp->isWearingAttachment
+	// (llinventoryfunctions.cpp get_is_item_worn); we have no avatar attachment-point model yet, so
+	// this Set is the honest session-side record. Attachments worn BEFORE this session are detected
+	// from the scene instead: their ObjectUpdate NameValue carries "AttachItemID" (FS
+	// llviewerobject.cpp extractAttachmentItemID) — see useInventory.isItemWorn, which checks both.
+	const wornAttachments = ref(new Set())
+	function markWorn(itemId) {
+		if (!itemId || wornAttachments.value.has(itemId)) return
+		const s = new Set(wornAttachments.value); s.add(itemId); wornAttachments.value = s
+	}
+	function markDetached(itemId) {
+		if (!itemId || !wornAttachments.value.has(itemId)) return
+		const s = new Set(wornAttachments.value); s.delete(itemId); wornAttachments.value = s
+	}
 	// Active inventory drag, shared across ALL tree nodes + floaters. WHY shared state instead of
 	// relying on dataTransfer: getData() is unreadable during dragover and custom-type/types quirks
 	// vary by browser — a singleton ref is always readable and makes cross-floater drags reliable.
@@ -105,6 +121,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		systemFoldersToTop.value = true
 		contextMenu.value = null
 		propsTargets.value = []
+		wornAttachments.value = new Set()
 	}
 
 	// Direct child folders of a folder, sorted to match Firestorm's default inventory order
@@ -139,7 +156,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// This gives instant display of last-known inventory while the real sync happens.
 	function applyCachedItems(pairs) {
 		for (const [folderId, list] of (pairs || [])) {
-			if (!fetched.value.has(folderId)) items.value.set(folderId, list || [])
+			// WHY _enrichItem: rows cached by an older session (before flag derivation existed, or via a
+			// path that skipped it) carry raw masks without canX — re-derive on load so a cache-hydrated
+			// row never renders false NM/NC/NT until the live re-fetch lands.
+			if (!fetched.value.has(folderId)) items.value.set(folderId, (list || []).map(_enrichItem))
 		}
 		// WHY: rebuild the move-reconciliation state machine from any cached rows that carried a
 		// `pendingMove` stamp — an unconfirmed move/create from last session must keep suppressing a
@@ -363,7 +383,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (!favId) return
 		const list = items.value.get(favId) || []
 		if (list.some(i => i.itemId === item.itemId)) return
-		items.value.set(favId, [...list, { ...item, parentId: favId }])
+		items.value.set(favId, [...list, _enrichItem({ ...item, parentId: favId })])
 		fetched.value.add(favId)
 		_schedTrigger()
 	}
@@ -391,11 +411,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	function setItems(folderId, list) {
 		// WHY: the cap fetch surfaces raw masks (ownerMask + nextOwnerMask) but only the server's
 		// current-owner canCopy/canModify/canTransfer flags. Re-derive both the owner and next-owner
-		// convenience flags here so every ingested row carries nextCan* for the Properties floater,
-		// regardless of which path (fetch vs BulkUpdate) delivered it.
-		const enriched = (list || []).map(it =>
-			(it && it.ownerMask != null) ? { ...it, ..._permFlags(it.ownerMask, it.nextOwnerMask) } : it,
-		)
+		// convenience flags here (via the shared _enrichItem choke point) so every ingested row carries
+		// nextCan* for the Properties floater, regardless of which path delivered it.
+		// _reconcilePending's liveList is therefore ALWAYS pre-enriched.
+		const enriched = (list || []).map(_enrichItem)
 		const merged = _reconcilePending(folderId, enriched)
 		items.value.set(folderId, merged)
 		fetched.value.add(folderId)
@@ -463,7 +482,9 @@ export const useInventoryStore = defineStore('inventory', () => {
 					const toList = items.value.get(rec.toFolderId)
 					if (toList) {
 						const i = toList.findIndex(x => x.itemId === rec.itemId)
-						if (i >= 0 && toList[i].pendingMove) items.value.set(rec.toFolderId, toList.map(_clearStamp))
+						// _enrichItem: the re-placed row may have arrived via an optimistic path that never
+						// derived canX — re-derive as it becomes authoritative.
+						if (i >= 0 && toList[i].pendingMove) items.value.set(rec.toFolderId, toList.map(x => _enrichItem(_clearStamp(x))))
 					}
 				}
 			}
@@ -489,11 +510,13 @@ export const useInventoryStore = defineStore('inventory', () => {
 			out.push(_clearStamp(it))
 		}
 		// Re-add / re-stamp any pending item pinned to `folderId` (to) that liveList omitted (write-back lag).
+		// _enrichItem: the pinned row came from an optimistic move/create — re-derive canX on re-place so a
+		// re-placed row never keeps stale/missing perm flags (the "false NM/NC/NT until reload" bug).
 		const existing = items.value.get(folderId) || []
 		for (const it of existing) {
 			if (seen.has(it.itemId)) continue
 			const rec = pendingMoves.get(it.itemId)
-			if (rec && rec.toFolderId === folderId) out.push({ ...it, pendingMove: _pendingRowStamp(rec) })
+			if (rec && rec.toFolderId === folderId) out.push(_enrichItem({ ...it, pendingMove: _pendingRowStamp(rec) }))
 		}
 		return out
 	}
@@ -526,7 +549,8 @@ export const useInventoryStore = defineStore('inventory', () => {
 		const list = items.value.get(folderId)
 		if (!list) return
 		if (list.some(i => i.itemId === itemId)) {
-			items.value.set(folderId, list.filter(i => i.itemId !== itemId).map(_clearStamp))
+			// Survivor rewrite — enrich so rows kept through the rewrite always carry derived canX.
+			items.value.set(folderId, list.filter(i => i.itemId !== itemId).map(x => _enrichItem(_clearStamp(x))))
 		}
 	}
 
@@ -540,7 +564,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		let row = null
 		items.value.forEach(l => { if (!row) { const f = l.find(i => i.itemId === itemId); if (f) row = f } })
 		if (!row) return
-		items.value.set(folderId, [...list, _clearStamp({ ...row, parentId: folderId })])
+		items.value.set(folderId, [...list, _enrichItem(_clearStamp({ ...row, parentId: folderId }))])
 	}
 
 	const folderCount = computed(() => folders.value.size)
@@ -587,8 +611,8 @@ export const useInventoryStore = defineStore('inventory', () => {
 			// nextOwnerMask) but NOT the canCopy/canModify/canTransfer convenience flags the perm badges +
 			// Properties floater read. Without deriving them the freshly-RECEIVED item shows NM/NC/NT
 			// (undefined → falsy) until a reload runs it through setItems/the cap fetch, which does enrich.
-			// Mirror setItems + applyBulkUpdate so the RECEIVE path yields correct owner perms with no reload.
-			const enriched = (it.ownerMask != null) ? { ...it, ..._permFlags(it.ownerMask, it.nextOwnerMask) } : it
+			// Shared _enrichItem choke point — same derivation as setItems + applyBulkUpdate.
+			const enriched = _enrichItem(it)
 			// WHY a pending-move record with fromFolderId=null — a locally-created item the grid hasn't
 			// confirmed. A lagging re-fetch of this folder (or a reload skeleton) may not list it yet during
 			// write-back lag; the record makes _reconcilePending re-add it so it doesn't vanish, and pins it
@@ -669,7 +693,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		const folderId = _findItemFolder(itemId)
 		if (!folderId) return
 		const list = items.value.get(folderId) || []
-		items.value.set(folderId, list.map(i => (i.itemId === itemId ? { ...i, name } : i)))
+		items.value.set(folderId, list.map(i => (i.itemId === itemId ? _enrichItem({ ...i, name }) : i)))
 		_schedTrigger()
 	}
 
@@ -705,10 +729,13 @@ export const useInventoryStore = defineStore('inventory', () => {
 		const origFrom = prior ? prior.fromFolderId : fromFolderId
 		const rec = _newPending(itemId, origFrom, toFolderId)
 		pendingMoves.set(itemId, rec)
+		// WHY _enrichItem on the re-placed row: the moving row may have entered the store via a path
+		// that predates flag derivation (old IDB cache, optimistic insert) and carry raw masks with no
+		// canX — without re-deriving here the MOVED item shows false NM/NC/NT until a full reload.
 		if (!toList.some(i => i.itemId === itemId)) {
-			items.value.set(toFolderId, [...toList, { ...moving, parentId: toFolderId, pendingMove: _pendingRowStamp(rec) }])
+			items.value.set(toFolderId, [...toList, _enrichItem({ ...moving, parentId: toFolderId, pendingMove: _pendingRowStamp(rec) })])
 		} else {
-			items.value.set(toFolderId, toList.map(i => (i.itemId === itemId ? { ...i, parentId: toFolderId, pendingMove: _pendingRowStamp(rec) } : i)))
+			items.value.set(toFolderId, toList.map(i => (i.itemId === itemId ? _enrichItem({ ...i, parentId: toFolderId, pendingMove: _pendingRowStamp(rec) }) : i)))
 		}
 		_schedTrigger()
 	}
@@ -747,6 +774,70 @@ export const useInventoryStore = defineStore('inventory', () => {
 		if (items.value.has(folderId)) { items.value.delete(folderId); _schedTrigger() }
 	}
 
+	// ── AUTHORIZED SHRINK: purge ALL descendants of a folder (Empty Trash) ──────────────────────
+	// Mirrors FS purge_descendents_of (llviewerinventory.cpp:1898): on OpenSim (no AIS cap) the
+	// viewer sends PurgeInventoryDescendents and "Update[s] model immediately because there is no
+	// callback mechanism" (llviewerinventory.cpp:1955-1965, gInventory.onDescendentsPurgedFromServer).
+	// This is that immediate model update: remove every descendant folder + item locally, retire
+	// their pendingMoves records, and mark the purged folders FETCHED. The fetched flag is what turns
+	// the non-shrinking cache save into an AUTHORIZED shrink — mergeItemPairs (inventoryCache.js)
+	// treats a fetched folder's now-empty list as authoritative, so the next save DROPS the purged
+	// rows instead of resurrecting them from the previous snapshot. Returns the purged ids so the
+	// caller can also evict the purged FOLDERS from the IDB folder cache (saveCachedFolders UNIONS
+	// prev+next — it can never shrink on its own — so a targeted removeCachedFolder is required).
+	function purgeDescendantsLocal(folderId) {
+		const out = { itemIds: [], folderIds: [] }
+		if (!folderId || !folders.value.has(folderId)) return out
+		// Collect descendant folders breadth-first (cycle-safe via `seen`).
+		const seen = new Set([folderId])
+		const queue = [folderId]
+		while (queue.length) {
+			const cur = queue.shift()
+			folders.value.forEach(f => {
+				if (f.parentId === cur && !seen.has(f.folderId)) {
+					seen.add(f.folderId)
+					out.folderIds.push(f.folderId)
+					queue.push(f.folderId)
+				}
+			})
+		}
+		// Items in the purged root + every descendant folder. A purge is authoritative — retire any
+		// pending-move record so a stale src/dst fetch can never resurrect a purged row through the
+		// move-reconciliation state machine (same rule as removeItemLocal).
+		for (const fid of [folderId, ...out.folderIds]) {
+			for (const it of (items.value.get(fid) || [])) {
+				if (!it?.itemId) continue
+				out.itemIds.push(it.itemId)
+				pendingMoves.delete(it.itemId)
+			}
+		}
+		// Also retire records whose DESTINATION is inside the purged subtree (an item optimistically
+		// moved into Trash whose row hasn't landed in the stored list yet) — otherwise a later fetch
+		// of its src folder would pin the purged item back into existence.
+		for (const rec of [...pendingMoves.values()]) {
+			if (seen.has(rec.toFolderId)) pendingMoves.delete(rec.itemId)
+		}
+		// Drop descendant folders from the tree + their item lists. Mark them FETCHED too: their
+		// lists are now authoritatively empty this session, so mergeItemPairs drops their previously-
+		// cached rows on the next save instead of keeping them (the shrink is authorized).
+		if (out.folderIds.length) {
+			const m = new Map(folders.value)
+			for (const fid of out.folderIds) {
+				m.delete(fid)
+				items.value.delete(fid)
+				fetched.value.add(fid)
+				fetching.value.delete(fid)
+			}
+			folders.value = m
+		}
+		// The purged folder itself survives (Empty Trash keeps Trash), EMPTY — and authoritatively so.
+		items.value.set(folderId, [])
+		fetched.value.add(folderId)
+		fetching.value.delete(folderId)
+		_schedTrigger()
+		return out
+	}
+
 	// Recompute the cached convenience perm flags from the mask bits (PERM_COPY 0x8000,
 	// PERM_MODIFY 0x4000, PERM_TRANSFER 0x2000 — see phoenix-firestorm llpermissionsflags.h).
 	// canCopy/canModify/canTransfer = current-owner perms (the "You can" badges);
@@ -764,6 +855,27 @@ export const useInventoryStore = defineStore('inventory', () => {
 		}
 	}
 
+	// THE single enrichment choke point: derive the canX/nextCanX convenience flags from the row's
+	// own masks. EVERY path that writes an item row into `items` must funnel through this (setItems,
+	// applyCachedItems, addCreatedItems, addToFavorites, moveItemLocal, renameItemLocal,
+	// updateItemPermsLocal, applyBulkUpdate, and the move-reconciliation re-place/ensure/survivor
+	// rewrites). WHY: any path that skipped derivation left canX undefined (→ falsy) and the row
+	// rendered false NM/NC/NT until a reload pushed it back through the cap fetch. Rows without an
+	// ownerMask are passed through untouched — never fabricate all-false flags from a missing mask.
+	function _enrichItem(it) {
+		if (!it || it.ownerMask == null) return it
+		const out = { ...it, ..._permFlags(it.ownerMask, it.nextOwnerMask) }
+		// Symmetric no-fabrication: a row carrying ownerMask but NO nextOwnerMask (e.g. a mask-less
+		// ack merged over a legacy row) keeps whatever nextCan* it already had rather than getting
+		// all-false derived from the missing mask.
+		if (it.nextOwnerMask == null) {
+			out.nextCanCopy = it.nextCanCopy
+			out.nextCanModify = it.nextCanModify
+			out.nextCanTransfer = it.nextCanTransfer
+		}
+		return out
+	}
+
 	// Apply a permission change to an item in place, recomputing the convenience flags from ownerMask.
 	function updateItemPermsLocal(itemId, masks = {}) {
 		if (!itemId) return
@@ -777,8 +889,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 			if (masks.everyoneMask  != null) next.everyoneMask  = masks.everyoneMask
 			if (masks.groupMask     != null) next.groupMask     = masks.groupMask
 			if (masks.nextOwnerMask != null) next.nextOwnerMask = masks.nextOwnerMask
-			Object.assign(next, _permFlags(next.ownerMask, next.nextOwnerMask))
-			return next
+			return _enrichItem(next)
 		}))
 		_schedTrigger()
 	}
@@ -807,27 +918,33 @@ export const useInventoryStore = defineStore('inventory', () => {
 				// pending-move record so a later lagging src/dst fetch can't re-run the state machine, and
 				// so the persisted cache stops carrying the stamp.
 				pendingMoves.delete(it.itemId)
-				// Remove any stale copy from its previous folder (move/rename reconciliation).
+				// Remove any stale copy from its previous folder (move/rename reconciliation), but KEEP the
+				// row: a migrate ack that omits fields (masks, desc, createdAt) must not erase them — the
+				// insert below merges prevRow under the ack, mirroring the update-in-place branch. Without
+				// this a BulkUpdate move ack carrying no masks left the re-placed row with no ownerMask and
+				// therefore no derivable canX → false NM/NC/NT until reload (the recurring move-path bug).
 				const oldFolder = _findItemFolder(it.itemId)
-				if (oldFolder && oldFolder !== it.parentId) {
+				let prevRow = null
+				if (oldFolder) {
 					const ol = items.value.get(oldFolder) || []
-					items.value.set(oldFolder, ol.filter(x => x.itemId !== it.itemId))
+					prevRow = ol.find(x => x.itemId === it.itemId) || null
+					if (oldFolder !== it.parentId) {
+						items.value.set(oldFolder, ol.filter(x => x.itemId !== it.itemId))
+					}
 				}
 				const list = items.value.get(it.parentId) || []
 				const idx = list.findIndex(x => x.itemId === it.itemId)
-				// WHY: recompute the canCopy/canModify/canTransfer flags whenever the ack carries an
-				// ownerMask — otherwise a perms change reconciled here (now live via the EventQueue path)
-				// updates the raw mask but leaves the cached flags (and rendered perm tags) stale.
+				// WHY _enrichItem: recompute canCopy/canModify/canTransfer from the MERGED row's masks —
+				// otherwise a perms change reconciled here (live via the EventQueue path) updates the raw
+				// mask but leaves the cached flags (and rendered perm tags) stale. Deriving from the merged
+				// row (not just the ack's fields) also keeps nextCan* correct when the ack carries an
+				// ownerMask but omits nextOwnerMask (the previous row's mask stays authoritative).
 				if (idx >= 0) {
-					const merged = { ...list[idx], ...it }
-					if (it.ownerMask != null) Object.assign(merged, _permFlags(it.ownerMask, it.nextOwnerMask))
-					// WHY: the grid confirmed this item — strip the transient pending stamp so it's
-					// authoritative and never re-injected by a stale fetch.
-					list[idx] = _clearStamp(merged)
+					// WHY _clearStamp: the grid confirmed this item — strip the transient pending stamp so
+					// it's authoritative and never re-injected by a stale fetch.
+					list[idx] = _clearStamp(_enrichItem({ ...list[idx], ...it }))
 				} else {
-					const ins = { ...it }
-					if (it.ownerMask != null) Object.assign(ins, _permFlags(it.ownerMask, it.nextOwnerMask))
-					items.value.set(it.parentId, [...list, _clearStamp(ins)])
+					items.value.set(it.parentId, [...list, _clearStamp(_enrichItem({ ...prevRow, ...it }))])
 				}
 			}
 			_schedTrigger()
@@ -883,7 +1000,8 @@ export const useInventoryStore = defineStore('inventory', () => {
 		agentFolderIds, agentFolderCount, agentItemCount, agentFetchedCount, allAgentFetched,
 		pendingAgentFolders, addCreatedItems, addFolderOptimistic, confirmFolder, landmarkTargetFolders,
 		renameItemLocal, renameFolderLocal, moveItemLocal, moveFolderLocal,
-		removeItemLocal, removeFolderLocal, updateItemPermsLocal, applyBulkUpdate,
+		removeItemLocal, removeFolderLocal, purgeDescendantsLocal, updateItemPermsLocal, applyBulkUpdate,
+		wornAttachments, markWorn, markDetached,
 		noteGiveRecipient, giveRecipientName,
 	}
 })
