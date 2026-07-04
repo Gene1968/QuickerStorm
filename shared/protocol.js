@@ -22,6 +22,7 @@ export const C = {
 	OBJECT_DESELECT:'object_deselect', // { localIds: number[] } — outbound ObjectDeselect
 	OBJECT_RENAME:  'object_rename',  // { localId, name } — outbound ObjectName (Low 107)
 	OBJECT_SET_DESC:'object_set_desc',// { localId, description } — outbound ObjectDescription (Low 108)
+	OBJECT_PERMS:   'object_perms',   // { localId, field, set, mask } — outbound ObjectPermissions (Low 105): field=PF_* U8 (which mask), set=bool (bits on/off), mask=PERM_* U32 bits. Sim replies nothing — client re-selects to refetch ObjectProperties
 	OBJECT_DELETE:  'object_delete',  // { localId } — outbound ObjectDelete (Low 89), Force=false
 	OBJECT_TAKE:    'object_take',    // { localIds: number[], destinationFolderId } — outbound DeRezObject Destination=Take(4); FS passes the destination category UUID (llviewermenu.cpp confirm_take)
 	OBJECT_TAKE_COPY:'object_take_copy',// { localIds: number[] } — outbound DeRezObject Destination=TakeCopy(1); OpenSim resolves the Objects folder itself so no DestinationID needed

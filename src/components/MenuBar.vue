@@ -18,6 +18,8 @@ import { useUiStore }			from '@/stores/uiStore'
 import { useSessionStore }	from '@/stores/sessionStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useInventoryStore }	from '@/stores/inventoryStore'
+import { useWorldStore }		from '@/stores/worldStore'
+import { takeGate, takeCopyGate } from '@/utils/takeGating'
 import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
 import { useAudio }			from '@/composables/useAudio.js'
 import { useTeleport }		from '@/composables/useTeleport.js'
@@ -29,6 +31,7 @@ const ui			= useUiStore()
 const session	= useSessionStore()
 const grid		= useGridStore()
 const inv		= useInventoryStore()
+const world		= useWorldStore()
 const router	= useRouter()
 const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
@@ -153,6 +156,14 @@ function rebake() {
 
 // "Selected object" = the object open in the Edit floater (our in-world selection concept).
 function hasSelectedObject() { return ui.showObjectEdit && ui.editObjectId != null }
+// Take / Take-copy perm gating on the selected object — client prediction of OpenSim
+// CanTakeObject/CanTakeCopyObject (PermissionsModule.cs:1963/2004) via takeGating.js (FS
+// enable_take llviewermenu.cpp:6900 / enable_object_take_copy llviewermenu.cpp:10871).
+// Unknown perms (props not yet arrived) → enabled; the sim stays authoritative and
+// useTakeWatch toasts silent refusals. Delete keeps its selection-only gate. Reads the
+// reactive world.objects map, so MenuDropdownItem's function-`disabled` re-evaluates live.
+function canTakeSelected()     { return !takeGate(world.objects, ui.editObjectId, session.agentId).disabled }
+function canTakeCopySelected() { return !takeCopyGate(world.objects, ui.editObjectId, session.agentId).disabled }
 // Delete it: server maps C.OBJECT_DELETE → DeRezObject(Delete→Trash); the sim's KillObject removes
 // the mesh. Close the Edit floater since its target is gone. Mirrors the object context-menu Delete.
 function deleteSelectedObject() {
@@ -358,8 +369,9 @@ const MENUS = [
 					{ label: 'Buy',							disabled: true },
 					// Take / Take copy on the SELECTED object (same selection concept as Delete below);
 					// FS Selected Objects menu order Buy/Take/Take Copy/Delete (menu_viewer.xml:836-854).
-					{ label: 'Take',	disabled: () => !hasSelectedObject(),	action: () => act(takeSelectedObject) },
-					{ label: 'Take copy',	disabled: () => !hasSelectedObject(),	action: () => act(takeCopySelectedObject) },
+					// Perm-gated via canTake(Copy)Selected — see the helpers above hasSelectedObject.
+					{ label: 'Take',	disabled: () => !hasSelectedObject() || !canTakeSelected(),	action: () => act(takeSelectedObject) },
+					{ label: 'Take copy',	disabled: () => !hasSelectedObject() || !canTakeCopySelected(),	action: () => act(takeCopySelectedObject) },
 					// Delete the SELECTED object (the one open in the Edit floater = our selection concept).
 					// Enabled only while an object is selected; sends DeRezObject→Trash (server maps it).
 					{ label: 'Delete',	disabled: () => !hasSelectedObject(),	action: () => act(deleteSelectedObject) },
@@ -528,9 +540,9 @@ const MENUS = [
 				submenu: [
 					{ label: 'Buy',							disabled: true },
 					// FS Build > Object > Take / Take Copy (menu_viewer.xml:2267-2284); acts on the
-					// selected object (Edit floater target), same gating as Selected objects > Delete.
-					{ label: 'Take',	disabled: () => !hasSelectedObject(),	action: () => act(takeSelectedObject) },
-					{ label: 'Take copy',	disabled: () => !hasSelectedObject(),	action: () => act(takeCopySelectedObject) },
+					// selected object (Edit floater target), perm-gated like Selected objects > Take.
+					{ label: 'Take',	disabled: () => !hasSelectedObject() || !canTakeSelected(),	action: () => act(takeSelectedObject) },
+					{ label: 'Take copy',	disabled: () => !hasSelectedObject() || !canTakeCopySelected(),	action: () => act(takeCopySelectedObject) },
 					{ label: 'Duplicate',					disabled: true },
 					{ sep: true },
 					{ label: 'Edit particles',				disabled: true },

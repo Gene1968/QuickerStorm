@@ -135,6 +135,8 @@ const imDropActive = ref(false)
 // WHY: accept ANY inventory drag (items, folders, or mixed) — shareToAgent routes each id to the right
 // give path. dataTransfer.getData is unreadable during dragover, so read inventoryStore.dragPayload.
 function imDragGivable() { const p = invStore.dragPayload; return !!p && p.ids?.length > 0 }
+// WHY also wired to @dragenter: preventDefault on ENTRY stops the browser's not-allowed cursor
+// flicker before the first dragover tick, and lights the drop highlight immediately.
 function onImGiveDragOver(e) {
 	if (!activeConv.value || !imDragGivable()) return
 	e.preventDefault()
@@ -476,6 +478,7 @@ async function submitChat() {
 						class="flex-1 overflow-y-auto px-2.5 py-1.5 flex flex-col-reverse gap-0.5 min-h-0 cursor-text transition-colors"
 						:class="{ 'bg-accent/10 ring-1 ring-inset ring-accent/60': imDropActive }"
 						@click="imInputEl?.focus()"
+						@dragenter="onImGiveDragOver"
 						@dragover="onImGiveDragOver"
 						@dragleave="onImGiveDragLeave"
 						@drop="onImGiveDrop"

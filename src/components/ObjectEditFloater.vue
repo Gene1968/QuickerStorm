@@ -2,17 +2,26 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
+import { useSessionStore } from '@/stores/sessionStore'
+import { useGridSocialStore } from '@/stores/gridSocialStore'
+import { useSocial } from '@/composables/useSocial'
 import { getTextureUrl } from '@/composables/useTextureFetch.js'
 import { setObjectAlphaMode } from '@/composables/useWorldEngine.js'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
 import { useLLUDP } from '@/composables/useLLUDP'
+import { aggregateBit, PERM_TRANSFER, PERM_MODIFY, PERM_COPY, PERM_EXPORT, PERM_MOVE, PF_EVERYONE, PF_NEXT_OWNER } from '@/utils/objectPermissions.js'
+import { nextOwnerCopyTentative, nextOwnerTransferTentative, everyoneCopyTentative, everyoneMoveEditable, everyoneCopyEditable, everyoneExportEditable, lockedFromOwnerMask } from '@/components/permCheckboxState.js'
 import { C } from '@shared/protocol.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
+import PermCheckbox from '@/components/PermCheckbox.vue'
 import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
 // import { ChevronDownIcon } from '@lucide/vue'
 
 const ui    = useUiStore()
 const world = useWorldStore()
+const session = useSessionStore()
+const social  = useGridSocialStore()
+const { requestNames } = useSocial()
 const { emit } = useRealtimeSocket()
 
 const activeTab = ref('general')
@@ -47,7 +56,7 @@ const gizmoOps = [
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
 // ── Editable Name / Description (General tab) → ObjectName (107) / ObjectDescription (108) ──
-const { sendRename, sendDescription } = useLLUDP()
+const { sendRename, sendDescription, sendObjectPerms, sendSelect } = useLLUDP()
 const editName = ref('')
 const editDesc = ref('')
 // Reseed editable fields whenever the selected object — or its sim-provided name/desc — changes,
@@ -56,9 +65,28 @@ watch(() => [ui.editObjectId, obj.value?.name, obj.value?.description], () => {
 	editName.value = obj.value?.name ?? ''
 	editDesc.value = obj.value?.description ?? ''
 }, { immediate: true })
-// Owner Modify bit (1<<13). If perms aren't known yet, allow — the sim is the authority and rejects
-// edits we're not permitted to make.
-const canModify = computed(() => obj.value?.ownerMask == null || !!(obj.value.ownerMask & (1 << 13)))
+// Owner Modify bit — PERM_MODIFY = 1<<14 (FS llpermissionsflags.h:44; the old inline 1<<13 here
+// was actually PERM_TRANSFER). If perms aren't known yet, allow — the sim is the authority and
+// rejects edits we're not permitted to make.
+const canModify = computed(() => obj.value?.ownerMask == null || !!(obj.value.ownerMask & PERM_MODIFY))
+// FS Cat0 modify-info line (llpanelpermissions.cpp:404-426; strings floater_tools.xml:1004-1014).
+// Single-object selection today → "text modify info 1"/"text modify info 3".
+const modifyInfo = computed(() => canModify.value ? 'You can modify this object' : "You can't modify this object")
+
+// ── Creator / Owner / Last Owner display names (UUIDNameRequest → gridSocialStore.names) ──
+// requestNames dedupes already-resolved ids; nameFor is reactive ('' until the reply lands).
+// Zero-UUID ("no last owner yet") must never be requested.
+function isRealAgentId(id) { return !!id && id !== '00000000-0000-0000-0000-000000000000' }
+watch(
+	() => [obj.value?.creatorId, obj.value?.ownerId, obj.value?.lastOwnerId],
+	(ids) => requestNames(ids.filter(isRealAgentId)),
+	{ immediate: true },
+)
+// Name-in-input, raw UUID in the title tooltip — keeps the single-row layout.
+function agentDisplay(id) {
+	if (!isRealAgentId(id)) return '—'
+	return social.nameFor(id) || id
+}
 function commitName() {
 	const o = obj.value
 	if (!o) return
@@ -221,17 +249,57 @@ const SALE_TYPE_OPTIONS = [
 	{ value: 1, label: 'Original' },
 ]
 
-// WHY: SL permission bits — bit 13=Modify, bit 14=Copy, bit 15=Transfer, bit 19=Export.
-// Display as concatenated letters like "VMCTX" (Copy/Modify/Transfer) per SL/Firestorm convention.
+// WHY: SL permission bits (FS llpermissionsflags.h:40-64) — V=Move 1<<19, M=Modify 1<<14,
+// C=Copy 1<<15, T=Transfer 1<<13, X=Export 1<<16. Letter order VMCT(X) matches FS mask_to_string
+// (llpermissions.cpp:1023-1060). The old inline shifts had M/C/T each off by one bit.
 function permLetters(mask) {
 	if (mask == null) return '—'
 	let s = ''
-	// to-do: what is the bit for V?
-	if (mask & (1 << 13)) s += 'M'
-	if (mask & (1 << 14)) s += 'C'
-	if (mask & (1 << 15)) s += 'T'
-	if (mask & (1 << 19)) s += 'X'
+	if (mask & PERM_MOVE)     s += 'V'
+	if (mask & PERM_MODIFY)   s += 'M'
+	if (mask & PERM_COPY)     s += 'C'
+	if (mask & PERM_TRANSFER) s += 'T'
+	if (mask & PERM_EXPORT)   s += 'X'
 	return s || '–'
+}
+
+// ── FS tri-state perm checkboxes (llpanelpermissions.cpp:986-1122) ────────────────────────
+// State per checkbox aggregates over the selection records ([obj] today — aggregateBit is
+// array-ready for future multi-select). Editing is gated to self-owned (FS self_owned) plus the
+// FS per-checkbox mask gates: Anyone row (llpanelpermissions.cpp:919-920: Move needs owner MOVE,
+// Copy needs owner COPY && TRANSFER; Export :931-947: creator==owner + can_set_export) and the
+// Next-owner row (:969-972: Modify needs base MODIFY, Copy needs base COPY, Transfer needs
+// next-owner COPY).
+const selectionRecords = computed(() => (obj.value ? [obj.value] : []))
+const selfOwned = computed(() => {
+	const o = obj.value
+	return !!o?.ownerId && !!session.agentId && o.ownerId.toLowerCase() === session.agentId.toLowerCase()
+})
+const permRows = computed(() => {
+	const recs = selectionRecords.value
+	const ownerMask = obj.value?.ownerMask
+	const base = obj.value?.baseMask ?? 0
+	const next = obj.value?.nextOwnerMask ?? 0
+	const own = selfOwned.value
+	return {
+		everyoneMove:   { state: aggregateBit(recs, 'everyoneMask', PERM_MOVE),      tentative: false,                              canEdit: own && everyoneMoveEditable(ownerMask), field: PF_EVERYONE, mask: PERM_MOVE },
+		everyoneCopy:   { state: aggregateBit(recs, 'everyoneMask', PERM_COPY),      tentative: everyoneCopyTentative(ownerMask),   canEdit: own && everyoneCopyEditable(ownerMask), field: PF_EVERYONE, mask: PERM_COPY },
+		everyoneExport: { state: aggregateBit(recs, 'everyoneMask', PERM_EXPORT),    tentative: false,                              canEdit: own && everyoneExportEditable(obj.value), field: PF_EVERYONE, mask: PERM_EXPORT },
+		nextModify:     { state: aggregateBit(recs, 'nextOwnerMask', PERM_MODIFY),   tentative: false,                              canEdit: own && !!(base & PERM_MODIFY), field: PF_NEXT_OWNER, mask: PERM_MODIFY },
+		// FS quirk (llpanelpermissions.cpp:1093-1096): Next-owner Copy renders tentative when the
+		// agent lacks copy rights even if the bit is uniformly on; Transfer likewise (:1110-1113).
+		nextCopy:       { state: aggregateBit(recs, 'nextOwnerMask', PERM_COPY),     tentative: nextOwnerCopyTentative(ownerMask),  canEdit: own && !!(base & PERM_COPY), field: PF_NEXT_OWNER, mask: PERM_COPY },
+		nextTransfer:   { state: aggregateBit(recs, 'nextOwnerMask', PERM_TRANSFER), tentative: nextOwnerTransferTentative(ownerMask), canEdit: own && !!(next & PERM_COPY), field: PF_NEXT_OWNER, mask: PERM_TRANSFER },
+	}
+})
+// FS path: onCommitPerm (llpanelpermissions.cpp:1319) → selectionSetObjectPermissions →
+// ObjectPermissions (Low 105). OpenSim doesn't push fresh ObjectProperties unprompted, so
+// re-issue the select to refetch the authoritative masks after the edit.
+function onPermToggle(row, set) {
+	const o = obj.value
+	if (!o) return
+	sendObjectPerms(o.localId, row.field, set, row.mask)
+	sendSelect([ui.editObjectId])
 }
 
 function fmtCreationDate(unixSecStr) {
@@ -243,60 +311,32 @@ function fmtCreationDate(unixSecStr) {
 	return d.toISOString().slice(0, 16).replace('T', ' ')
 }
 
-// linkCount = self + children with parentId == self.localId
-const linkCount = computed(() => {
-	if (!obj.value) return 0
-	let count = 1
-	for (const o of world.objects.values()) {
-		if (o.parentId === obj.value.localId) count++
-	}
-	return count
-})
-
-// WHY: walk parentId → root so link controls operate on the whole linkset regardless of which
-// part is currently selected. Cycle-guarded; stops at the highest known ancestor.
-function rootOf(localId) {
-	let id = localId
-	const seen = new Set()
-	while (id != null && !seen.has(id)) {
-		seen.add(id)
-		const pid = world.objects.get(id)?.parentId ?? 0
-		if (!pid || !world.objects.has(pid)) break
-		id = pid
-	}
-	return id
-}
-
-// Ordered linkset members: root first (link #1), then direct children by localId — best-effort
-// since the sim's true link order isn't tracked. Drives prev/next cycling + link number.
-const linksetMembers = computed(() => {
+// Linkset members in ObjectUpdate ARRIVAL order (FS mChildList semantics) — worldStore owns the
+// tracking now. (The old inline rootOf/sort-by-localId walk lacked the PCODE_AVATAR guard and
+// sorted children by localId, which is wrong vs FS link order — llfloatertools.cpp:623-647.)
+const linksetIds = computed(() => {
 	if (!obj.value) return []
-	const root = rootOf(obj.value.localId)
-	const kids = []
-	for (const o of world.objects.values()) {
-		if (o.parentId === root && o.localId !== root) kids.push(o.localId)
-	}
-	kids.sort((a, b) => a - b)
-	return [root, ...kids]
+	void world.objects.size   // link tracking is non-reactive; re-derive when the object map changes
+	return world.linksetMembers(obj.value.localId)
 })
-
-const canCycle      = computed(() => linksetMembers.value.length > 1)
-// LSL/FS convention: an UNLINKED object is link 0; in a linkset the root is 1, children 2+.
-const linkNumber    = computed(() => {
-	const m = linksetMembers.value
-	if (m.length <= 1) return obj.value ? 0 : '—'
-	const i = m.indexOf(ui.editObjectId)
-	return i >= 0 ? i + 1 : '—'
+const linkCount = computed(() => linksetIds.value.length || (obj.value ? 1 : 0))
+const canCycle  = computed(() => linksetIds.value.length > 1)
+// FS link-number convention (llfloatertools.cpp:623-647): unlinked = 0, root = 1, children 2+.
+const linkNumber = computed(() => {
+	if (!obj.value) return '—'
+	void world.objects.size   // link tracking is non-reactive; re-derive when linkset members arrive/leave
+	return world.linkNumberOf(ui.editObjectId)
 })
 // WHY: no real resource-cost (land impact) or parcel-capacity feed yet (Phase 3 caps). Use the
 // prim count as the legacy land-impact proxy; capacity stays a placeholder until parcel data lands.
 const objectsSelected   = computed(() => (obj.value ? 1 : 0))
-const landImpact        = computed(() => linksetMembers.value.length || '—')
+const landImpact        = computed(() => linksetIds.value.length || '—')
 const remainingCapacity = computed(() => '—')
 
-// Select previous/next linked part. Implies part-level editing, so force "Edit linked" on.
+// Select previous/next linked part in store (arrival) order. Implies part-level editing, so
+// force "Edit linked" on.
 function selectLink(delta) {
-	const m = linksetMembers.value
+	const m = linksetIds.value
 	if (m.length < 2) return
 	ui.setEditLinked(true)
 	const i = m.indexOf(ui.editObjectId)
@@ -489,8 +529,8 @@ function close() {
 		id="object-edit"
 		title="Build Tools"
 		build-tool
-		:wrap-style="{ width: '19rem', height: '41.35rem', resize: 'none' }"
-		:default-pos="{ right: '0.0625rem', top: 'calc(100vh - 2.3125rem - 42rem' }"
+		:wrap-style="{ width: '18.5rem', height: '47.35rem', resize: 'both' }"
+		:default-pos="{ right: '0.0625rem', top: 'calc(100vh - 2.3125rem - 47.35rem' }"
 		@close="close"
 	>
 		<div class="relative flex flex-col h-full text-xs">
@@ -558,7 +598,7 @@ function close() {
 								class="flex items-center gap-1.5 text-2xs text-fg cursor-pointer select-none"
 								title="Off: clicking selects the whole linked object. On: selects the individual prim under the cursor."
 							>
-								<input type="checkbox" v-model="ui.editLinked" class="accent-accent" />
+								<input type="checkbox" class="accent-accent" v-model="ui.editLinked" />
 								Edit linked
 							</label>
 						</div>
@@ -724,29 +764,29 @@ function close() {
 				<div v-if="!obj" class="flex-1 flex items-center justify-center text-fg/30 italic px-4 text-center">
 					Right-click a prim → Edit to inspect properties.
 				</div>
-				<div v-else class="flex-1 overflow-y-auto pt-2 px-2 pb-0.5 space-y-3">
+				<div v-else class="flex-1 overflow-y-auto pt-1 px-1 pb-0.5 space-y-3">
 					<!-- General ─────────────────────────────────────────────── -->
 					<template v-if="activeTab === 'general'">
-						<div class="grid grid-cols-[3.5rem_1fr] gap-x-1.5 mb-1 text-xs">
+						<div class="grid grid-cols-[3.5rem_1fr] gap-x-1.5 items-center mb-1 text-xs">
 							<div class="text-fg/50 text-2xs text-end" title="63 chars, ASCII-7 + pipe.">Name:</div>
 							<input v-model="editName" :readonly="!canModify" maxlength="63" :title="canModify ? 'Enter or Tab to apply (ObjectName)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitName, $event)" @blur="onBlur(commitName)" class="bg-fg/20 border border-edge rounded-sm mb-1 px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
 							<div class="text-fg/50 text-2xs text-end" title="127 chars. May get used in hover tips or scripting">Description:</div>
 							<input v-model="editDesc" :readonly="!canModify" maxlength="127" placeholder="—" :title="canModify ? 'Enter or Tab to apply (ObjectDescription)' : 'No modify permission'" @focus="selectAll" @keyup.enter="onEnter(commitDesc, $event)" @blur="onBlur(commitDesc)" class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg read-only:opacity-60 read-only:cursor-not-allowed" />
 							<div class="text-fg/50 text-2xs text-end">UUID:</div>
-							<input :value="obj.fullId" readonly class="px-1.5 py-0.5 text-fg font-mono text-2xs" />
+							<input :value="obj.fullId" readonly class="text-fg font-mono text-2xs" />
 							<div class="text-fg/50 text-2xs text-end">Type:</div>
-							<input :value="typeInfo.label" readonly class="px-1.5 py-0.5 text-fg" />
+							<input :value="typeInfo.label" readonly class="text-fg" />
 							<div class="text-fg/50 text-2xs text-end">Hover Text:</div>
 							<div class="text-fg whitespace-pre-wrap">{{ obj.text || '—' }}</div>
 						</div>
 						<div v-if="obj.creatorId" class="border-t border-edge mb-1 pt-1">
 							<div class="grid grid-cols-[3.5rem_1fr] text-xs">
 								<div class="text-fg/50 text-2xs text-end">Creator:</div>
-								<input :value="obj.creatorId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<input :value="agentDisplay(obj.creatorId)" :title="obj.creatorId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
 								<div class="text-fg/50 text-2xs text-end">Owner:</div>
-								<input :value="obj.ownerId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<input :value="agentDisplay(obj.ownerId)" :title="obj.ownerId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
 								<div class="text-fg/50 text-2xs text-end whitespace-nowrap">Last Owner:</div>
-								<input :value="obj.lastOwnerId || '—'" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
+								<input :value="agentDisplay(obj.lastOwnerId)" :title="obj.lastOwnerId || ''" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
 								<div class="text-fg/50 text-2xs text-end">Group:</div>
 								<input :value="obj.groupId" readonly class="ms-1 px-1.5 py-0 text-fg font-mono text-2xs" />
 								<div class="text-fg/50 text-2xs text-end">Created:</div>
@@ -764,7 +804,7 @@ function close() {
 									<div class="mb-1 px-1.5 py-0.5 text-fg">{{ obj.sitName }}</div>
 								</template>
 								<div class="grid grid-cols-[4rem_1fr] gap-x-0 text-xs">
-									<label class="flex items-center justify-end gap-1 bg-fg/10 h-full px-1 text-fg/50 text-2xs text-end whitespace-nowrap"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
+									<label class="flex items-center justify-end gap-1 bg-fg/10 h-full px-1 text-fg/50 text-2xs text-end whitespace-nowrap"><input type="checkbox" class="accent-accent" :checked="(obj.saleType ?? 0) > 0" disabled /> For Sale</label>
 									<div class="flex items-center gap-1 bg-fg/10 p-1">
 										<select title="Whether purchaser receives original, copy, or contents." class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" :disabled="!(obj.saleType ?? 0)">
 											<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
@@ -784,18 +824,18 @@ function close() {
 							<div class="flex gap-2">
 								<div>
 									<h6 v-if="false" class="mb-1 text-2xs text-accent">You must select entire object to set permissions</h6>
-									<h6 v-else class="mb-1 text-2xs text-accent">You {can/can't} modify this object</h6>
+									<h6 v-else class="mb-1 text-2xs text-accent">{{ modifyInfo }}</h6>
 									<h6 class="mb-0 text-3xs text-fg-muted leading-1.5">Anyone:</h6>
 									<div class="flex align-center gap-3 mb-2">
-										<label class="w-15 whitespace-nowrap" title="Anyone can move the object.">⬜ Move</label>
-										<label class="w-13 whitespace-nowrap" title="Anyone can take a copy of the object. Object and all of its contents must be copy and transfer permissive.">[✓] Copy</label>
-										<label class="w-15 whitespace-nowrap" title="Anyone can export this Object.">⬜ Export</label>
+										<PermCheckbox class="w-15 whitespace-nowrap" label="Move" title="Anyone can move the object." :row="permRows.everyoneMove" @toggle="set => onPermToggle(permRows.everyoneMove, set)" />
+										<PermCheckbox class="w-13 whitespace-nowrap" label="Copy" title="Anyone can take a copy of the object. Object and all of its contents must be copy and transfer permissive." :row="permRows.everyoneCopy" @toggle="set => onPermToggle(permRows.everyoneCopy, set)" />
+										<PermCheckbox class="w-15 whitespace-nowrap" label="Export" title="Anyone can export this Object." :row="permRows.everyoneExport" @toggle="set => onPermToggle(permRows.everyoneExport, set)" />
 									</div>
 									<h6 class="mb-0 text-3xs text-fg-muted leading-1.5">Next owner:</h6>
 									<div class="flex gap-3 mb-0.5">
-										<label class="w-15 whitespace-nowrap" title="Next owner can edit properties like item name or scale of this object.">[✓] Modify</label>
-										<label class="w-13 whitespace-nowrap" title="Next owner can make unlimited copies of this object. Copies maintain creator information, and can never be more permissive than the item being copied.">[✓] Copy</label>
-										<label class="w-15 whitespace-nowrap" title="Next owner can give away or resell this object.">[✓] Transfer</label>
+										<PermCheckbox class="w-15 whitespace-nowrap" label="Modify" title="Next owner can edit properties like item name or scale of this object." :row="permRows.nextModify" @toggle="set => onPermToggle(permRows.nextModify, set)" />
+										<PermCheckbox class="w-13 whitespace-nowrap" label="Copy" title="Next owner can make unlimited copies of this object. Copies maintain creator information, and can never be more permissive than the item being copied." :row="permRows.nextCopy" @toggle="set => onPermToggle(permRows.nextCopy, set)" />
+										<PermCheckbox class="w-15 whitespace-nowrap" label="Transfer" title="Next owner can give away or resell this object." :row="permRows.nextTransfer" @toggle="set => onPermToggle(permRows.nextTransfer, set)" />
 									</div>
 									<h6 class="mb-0 text-3xs text-fg-muted">Pathfinding attributes: <span class="text-xs text-fg">none</span></h6>
 								</div>
@@ -837,12 +877,12 @@ function close() {
 						prim-shape params + the building-block / mesh / sculpt type. The type row is how
 						you tell a mesh from a sculpt from a plain prim. -->
 					<template v-else-if="activeTab === 'object'">
-						<div class="flex gap-2">
+						<div class="flex gap-2 px-0.5">
 							<div class="w-2/5">
-								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Modify permission — object is locked against edits"><input type="checkbox" :checked="!(obj.ownerMask & 0x4000)" disabled class="accent-accent" /> Locked</label>
-								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" :checked="!!obj.physical" disabled class="accent-accent" /> Physical</label>
-								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" :checked="!!obj.temporary" disabled class="accent-accent" /> Temporary</label>
-								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" :checked="!!obj.phantom" disabled class="accent-accent" /> Phantom</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Move permission — object is locked in place"><input type="checkbox" class="accent-accent" :checked="lockedFromOwnerMask(obj.ownerMask) === true" disabled /> Locked</label><!-- FS keys Locked off PERM_MOVE on the owner mask (llpanelobject.cpp:646-663), NOT Modify -->
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" class="accent-accent" :checked="!!obj.physical" disabled /> Physical</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" class="accent-accent" :checked="!!obj.temporary" disabled /> Temporary</label>
+								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" class="accent-accent" :checked="!!obj.phantom" disabled /> Phantom</label>
 								<!-- Transform -->
 								<div class="my-2">
 									<div class="text-fg/50 text-2xs uppercase tracking-wide">Position (meters)</div>
@@ -906,7 +946,7 @@ function close() {
 								<!-- Parametric prim shape (FS: lives on the Object tab) -->
 								<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
 									<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
-									<div class="grid grid-cols-[7rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+									<div class="grid grid-cols-[5.25rem_1fr] gap-x-2 gap-y-1.5 text-xs">
 										<div class="text-fg/50">Profile</div>
 										<div class="text-fg">{{ profileCurveLabel }}</div>
 										<div class="text-fg/50">Path Cut (B/E)</div>
@@ -944,7 +984,7 @@ function close() {
 						are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the Phase 3
 						ObjectPhysicsProperties work, so it still shows "not decoded". -->
 					<template v-else-if="activeTab === 'features'">
-						<div class="grid grid-cols-[8rem,1fr] gap-x-2 gap-y-1.5 text-xs">
+						<div class="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-1.5 text-xs px-0.5">
 							<div class="text-fg/50">Flexible Path</div>
 							<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
 							<div v-else class="text-fg/40 italic">Off</div>
@@ -973,91 +1013,199 @@ function close() {
 						texture chip opens a larger preview ("texture picker"). Read-only (Phase 3 edit). -->
 					<template v-else-if="activeTab === 'texture'">
 						<!-- Sub-tab strip -->
-						<nav class="tabs -mt-1 whitespace-nowrap">
+						<nav class="tabs -mt-1 mb-1 whitespace-nowrap">
 							<button :class="texSubTab === 'pbr' ? 'active' : ''" @click="texSubTab = 'pbr'">PBR</button>
 							<button :class="texSubTab === 'bp' ? 'active' : ''" @click="texSubTab = 'bp'">Blinn-Phong</button>
 							<button :class="texSubTab === 'mdia' ? 'active' : ''" @click="texSubTab = 'mdia'">Media</button>
 						</nav>
-						<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
-						<template v-if="texSubTab === 'bp'">
-							<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-2 text-xs">
-								<div class="text-fg/50 self-center">Texture</div>
-								<div class="flex items-center gap-1 min-w-0">
-									<div class="flex flex-col items-center gap-1">
-										<button
-											class="w-16 h-16 shrink-0 bg-fg/20 border border-edge rounded-sm flex items-center justify-center text-fg/30 text-2xs overflow-hidden hover:border-accent"
-											:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
-											@click="openPreview(obj.defaultTexture)"
-										>
-											<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
-											<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
-										</button>
-										Diffuse
-									</div>
+						<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
+						<template v-if="texSubTab === 'pbr'">
+							<div v-if="!hasPbr" class="text-fg/40 italic px-1 py-3 text-center">
+								No PBR material on this object — it uses Blinn-Phong (legacy) textures.
+							</div>
+							<template v-else>
+								<div class="grid grid-cols-[6rem_1fr] gap-x-2 gap-y-2 text-xs">
+									<div class="text-fg/50 self-center">Material</div>
 									<div class="flex-1 min-w-0">
-										<div v-if="isMultiTexture" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctTextures.length }})</div>
-										<input
-											:value="obj.defaultTexture || '(none)'"
-											readonly
-											class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
-										/>
+										<div v-if="isMultiPbr" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctPbr.length }})</div>
+										<div class="flex items-center gap-1.5">
+											<input
+												:value="obj.defaultPbrMaterial || distinctPbr[0] || '(none)'"
+												readonly
+												class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
+											/>
+											<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
+										</div>
 									</div>
 								</div>
-								<div class="text-fg/50 self-center">Tint</div>
-								<div class="flex items-center gap-2">
-									<div
-										class="w-6 h-6 rounded-sm border border-edge"
-										:style="obj.defaultColor
-											? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
-											: { background: 'rgba(255,255,255,0.05)' }"
-									></div>
-									<span v-if="isMultiColor" class="text-accent font-semibold">Multiple</span>
-									<input
-										v-else
-										:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
-										readonly
-										class="flex-1 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
-									/>
+								<div v-if="pbrFaceChips.length" class="border-t border-edge pt-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face PBR materials</div>
+									<div class="space-y-1">
+										<div v-for="c in pbrFaceChips" :key="c.face" class="flex items-center gap-1.5 text-2xs">
+											<span class="w-6 shrink-0 text-fg/50">F{{ c.face }}</span>
+											<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
+										</div>
+									</div>
 								</div>
-								<div class="text-fg/50 self-center">Full bright</div>
-								<div class="text-fg">{{ obj.defaultFullbright ? 'Yes' : 'No' }}</div>
-								<div class="text-fg/50 self-center">Glow</div>
-								<input :value="(obj.defaultGlow ?? 0).toFixed(2)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-								<div class="text-fg/50 self-center">Trans %</div>
-								<input
-									:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
-									readonly
-									class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono"
-								/>
-								<div class="text-fg/50 self-center">Alpha mode</div>
-								<div class="text-fg">
-									<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
-										texture has alpha. Emissive mask renders as None (unlit materials). -->
-									<select
-										v-model="alphaMode"
-										class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg"
-									>
-										<option value="">Auto (blend if alpha)</option>
-										<option value="none">None</option>
-										<option value="blend">Alpha blending</option>
-										<option value="mask">Alpha masking</option>
-										<option value="emissive">Emissive mask</option>
-									</select>
+								<div class="text-2xs text-fg/30 italic pt-1">
+									GLTF material assets (base color / metallic-roughness / emissive / normal maps) render via the materials cap. Per-channel editing arrives in Phase 3.
 								</div>
-								<div class="text-fg/50 self-center">Mask cutoff</div>
-								<div class="text-fg">to-do</div>
-								<div class="text-fg/50 self-center">Bumpiness</div>
-								<div class="text-fg">{{ bumpLabel }}</div>
-								<div class="text-fg/50 self-center">Shininess</div>
-								<div class="text-fg">{{ shinyLabel }}</div>
-								<div class="text-fg/50 self-center">Glossiness</div>
-								<div class="text-fg">to-do</div>
-								<div class="text-fg/50 self-center">Environment</div>
-								<div class="text-fg">to-do</div>
+							</template>
+						</template>
+						<!-- Blinn-Phong (legacy) ─────────────────────────────── -->
+						<template v-else-if="texSubTab === 'bp'">
+							<div class="grid grid-cols-[4.25rem,1fr] gap-y-2 gap-x-2 mb-0.5 text-xs">
+								<!-- <div class="text-fg/50 self-center">Texture</div> -->
+								<div class="flex items-start justify-between gap-2 w-full min-w-0">
+									<div class="flex flex-col items-center gap-0.5">
+										<div class="flex items-center gap-1">
+											<div class="flex flex-col items-center gap-0.5">
+												<button
+													class="flex items-center justify-center shrink-0 bg-fg/20 border border-edge rounded-sm p-0 w-12 h-12 text-fg/30 text-2xs overflow-hidden hover:border-accent"
+													:title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
+													@click="openPreview(obj.defaultTexture)"
+												>
+													<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
+													<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span>
+												</button>
+												<div class="text-2xs">Diffuse</div>
+											</div>
+											<div class="flex flex-col items-center gap-0.5">
+												<button
+													title="Click to open color picker"
+													class="w-6 min-h-12 rounded-sm border border-edge"
+													:style="obj.defaultColor
+														? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
+														: { background: 'rgba(255,255,255,0.05)' }"
+												></button>
+												<div class="text-2xs">Tint</div>
+											</div>
+										</div>
+										<div class="flex items-center gap-1">
+											<div class="flex flex-col items-center gap-0.5">
+												<button
+													class="flex items-center justify-center shrink-0 bg-fg/20 border border-edge rounded-sm p-0 w-12 h-12 text-fg/30 text-2xs overflow-hidden hover:border-accent"
+													>
+													<!-- :title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
+													@click="openPreview(obj.defaultTexture)"
+													<img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
+													<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span> -->
+													X
+												</button>
+												<div class="text-2xs">Normal</div>
+											</div>
+											<div class="flex flex-col items-center gap-0.5">
+												<div class="w-6">&nbsp;</div>
+											</div>
+										</div>
+										<div class="flex items-center gap-1">
+											<div class="flex flex-col items-center gap-0.5">
+												<button
+													class="flex items-center justify-center shrink-0 bg-fg/20 border border-edge rounded-sm p-0 w-12 h-12 text-fg/30 text-2xs overflow-hidden hover:border-accent"
+													>
+													<!-- :title="obj.defaultTexture ? 'Click for larger preview' : 'No texture'"
+													@click="openPreview(obj.defaultTexture)" -->
+													<!-- <img v-if="texUrls[obj.defaultTexture]" :src="texUrls[obj.defaultTexture]" class="w-full h-full object-cover" alt="texture" @error="reloadTex(obj.defaultTexture)" />
+													<span v-else>{{ obj.defaultTexture ? '…' : 'No tex' }}</span> -->
+													X
+												</button>
+												<div class="text-2xs">Specular</div>
+											</div>
+											<div class="flex flex-col items-center gap-0.5">
+												<button
+													title="Click to open color picker"
+													class="w-6 min-h-12 rounded-sm border border-edge"
+													>
+													<!-- :style="obj.defaultColor
+														? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
+														: { background: 'rgba(255,255,255,0.05)' }" -->
+														🔒
+												</button>
+												<div class="text-2xs">Color</div>
+											</div>
+										</div>
+									</div>
+									<div class="flex flex-col items-end gap-0.5">
+										<div class="flex-1 justify-start w-full min-w-0 text-2xs">
+											<div v-if="isMultiTexture" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctTextures.length }})</div>
+											<input
+												:value="obj.defaultTexture || '(none)'"
+												readonly
+												class="bg-fg/20 py-0 px-1.5 w-full text-fg font-mono text-2xs"
+											/>
+										</div>
+										<div class="flex justify-start w-full min-w-0 gap-2 text-2xs">
+											<span v-if="isMultiColor" class="text-accent font-semibold">Multiple</span>
+											<input
+												v-else
+												:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
+												readonly
+												class="bg-fg/20 py-0 px-1.5 w-full text-fg font-mono text-2xs"
+											/>
+										</div>
+										<div class="flex items-center gap-4">
+											<label for="fullbright" class="flex gap-1">
+												<input name="fullbright" type="checkbox" class="accent-accent" :checked="obj.defaultFullbright" />
+												<span class="text-fg/50 self-center whitespace-nowrap">Full bright</span>
+											</label>
+											<div class="flex gap-2">
+												<div class="text-fg/50 self-center">Glow</div>
+												<input :value="(obj.defaultGlow ?? 0).toFixed(3)" type="number" min="0.000" max="1.000" step="0.100" class="bg-fg/20 border border-edge rounded-sm py-0.5 ps-1.5 w-15 text-fg font-mono" readonly />
+											</div>
+										</div>
+										<div class="flex gap-2">
+											<div class="text-fg/50 self-center">Transparency %</div>
+											<input
+												:value="obj.defaultColor ? Math.round((1 - obj.defaultColor[3]) * 100) : 0"
+												type="number"
+												min="0" max="100" step="2"
+												class="bg-fg/20 border border-edge rounded-sm py-0.5 ps-1.5 w-13 text-fg font-mono"
+												readonly
+											/>
+										</div>
+										<div class="flex gap-1">
+											<div class="text-fg/50 self-center whitespace-nowrap">Alpha mode</div>
+											<div class="text-fg">
+												<!-- Local render override (#17b) — not sent to the sim. Auto = blend when the
+													texture has alpha. Emissive mask renders as None (unlit materials). -->
+												<select
+													v-model="alphaMode"
+													class="ui-select w-full bg-fg/20 border border-edge rounded-sm py-0 px-1.5 text-fg"
+												>
+													<option value="">Auto (blend if alpha)</option>
+													<option value="none">None</option>
+													<option value="blend">Alpha blending</option>
+													<option value="mask">Alpha masking</option>
+													<option value="emissive">Emissive mask</option>
+												</select>
+											</div>
+										</div>
+										<div class="flex gap-2">
+											<div class="text-fg/50 self-center">Mask cutoff</div>
+											<div class="text-fg">to-do</div>
+										</div>
+										<div class="flex gap-2">
+											<div class="text-fg/50 self-center">Bumpiness</div>
+											<div class="text-fg">{{ bumpLabel }}</div>
+										</div>
+										<div class="flex gap-2">
+											<div class="text-fg/50 self-center">Shininess</div>
+											<div class="text-fg">{{ shinyLabel }}</div>
+										</div>
+										<div class="flex gap-2">
+											<div class="text-fg/50 self-center">Glossiness</div>
+											<div class="text-fg">to-do</div>
+										</div>
+										<div class="flex gap-2">
+											<div class="text-fg/50 self-center">Environment</div>
+											<div class="text-fg">to-do</div>
+										</div>
+									</div>
+								</div>
 							</div>
 							<!-- Per-face diffuse chips (only faces overriding the default) -->
-							<div v-if="faceTexChips.length" class="border-t border-edge pt-2">
-								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face textures</div>
+							<div v-if="faceTexChips.length" class="border-t border-edge mb-1 pt-0.5">
+								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-0">Per-face textures</div>
 								<div class="flex flex-wrap gap-1.5">
 									<button
 										v-for="c in faceTexChips"
@@ -1090,69 +1238,53 @@ function close() {
 							</div>
 							<!-- Mapping (default face) — FS-style: Mapping mode + Scale H/V + Offset H/V + Rotation -->
 							<div class="border-t border-edge pt-2">
-								<div class="tabnav my-1 text-gray-500">|| DIFFUSE | Normal | Specular ||</div>
-								<div class="grid grid-cols-[4.25rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-									<div class="text-fg/50 self-center">Scale H / V</div>
-									<div class="grid grid-cols-2 gap-1">
-										<input :value="defaultMapping.repeats[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-										<input :value="defaultMapping.repeats[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+								<nav class="tabs -mt-1 mb-1 whitespace-nowrap">
+									<button class="active">Diffuse</button>
+									<button>Normal</button>
+									<button>Specular</button>
+								</nav>
+								<!-- to-do: 3 sets of # spinners in tabs (5 of them only?): -->
+								<div class="grid grid-cols-3 gap-x-2 px-1 justify-items-center text-2xs">
+									<div class="text-center">
+										Scale
+										<div class="flex items-center gap-1">H<input :value="defaultMapping.repeats[0].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">V<input :value="defaultMapping.repeats[1].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
 									</div>
-									<div class="text-fg/50 self-center">Offset H / V</div>
-									<div class="grid grid-cols-2 gap-1">
-										<input :value="defaultMapping.offset[0].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-										<input :value="defaultMapping.offset[1].toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
+									<div class="text-center">
+										Offset
+										<div class="flex items-center gap-1">H<input :value="defaultMapping.offset[0].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">V<input :value="defaultMapping.offset[1].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
 									</div>
-									<div class="text-fg/50 self-center">Rotation°</div>
-									<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-									<template v-if="defaultMapping.rpm != null">
-										<div class="text-fg/50 self-center" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
-										<input :value="defaultMapping.rpm.toFixed(5)" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono" />
-									</template>
-									<div class="text-fg/50 self-center">Mapping</div>
-									<div class="text-fg">{{ defaultMapping.mapping }}</div>
+									<div class="text-center">
+										Rotation
+										<div class="flex items-center gap-1">°<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" type="number" step="1.00000" min="-360" max="360" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
+									</div>
 								</div>
-								<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Synchronize materials</label>
-								<label class="inline-flex items-center gap-1 me-4 text-fg/50"><input type="checkbox" class="accent-accent" /> Align planar faces</label>
+								<div class="grid grid-cols-[2fr_1fr] gap-y-1.5 gap-x-2 border-t border-edge pt-0.5 pe-2 ps-1 text-xs">
+									<div>
+										<template v-if="defaultMapping.rpm != null">
+											<div class="flex gap-2 mb-1">
+												<div class="text-fg/50 self-center whitespace-nowrap" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
+												<input :value="defaultMapping.rpm.toFixed(5)" type="number" step="0.10000" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 w-full text-fg font-mono" />
+											</div>
+										</template>
+										<label class="inline-flex items-center gap-1 mb-1 text-fg/50"><input type="checkbox" class="accent-accent" title="Synchronize texture map parameters" disabled /> Synchronize materials</label>
+										<label class="inline-flex items-center gap-1 text-fg/50"><input type="checkbox" class="accent-accent" title="Align textures on all selected faces with the last selected face. Requires Planar texture mapping." disabled /> Align planar faces</label>
+									</div>
+									<div>
+										<label class="inline-flex items-center gap-1 text-fg/50 whitespace-nowrap"><input type="checkbox" class="accent-accent" /> Hide water</label>
+										<select class="ui-select bg-fg/20 border border-edge rounded-sm my-1 py-0 px-1.5 w-full text-fg" title="Mapping">
+											<option value="default" :selected="defaultMapping.mapping === 'Default'">Default</option>
+											<option value="planar" :selected="defaultMapping.mapping === 'Planar'">Planar</option>
+										</select>
+										<button class="bg-white/[0.02] border border-edge rounded-sm py-0.5 px-2 w-full text-2xs text-fg/40 cursor-not-allowed" disabled>Align</button>
+									</div>
+								</div>
 							</div>
 							<div v-if="obj.defaultMaterialId" class="border-t border-edge pt-2">
 								<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Legacy material (normal/specular)</div>
 								<input :value="obj.defaultMaterialId" readonly class="w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
 							</div>
-						</template>
-						<!-- PBR (GLTF metallic-roughness) ────────────────────── -->
-						<template v-else-if="texSubTab === 'pbr'">
-							<div v-if="!hasPbr" class="text-fg/40 italic px-1 py-3 text-center">
-								No PBR material on this object — it uses Blinn-Phong (legacy) textures.
-							</div>
-							<template v-else>
-								<div class="grid grid-cols-[6rem,1fr] gap-x-2 gap-y-2 text-xs">
-									<div class="text-fg/50 self-center">Material</div>
-									<div class="flex-1 min-w-0">
-										<div v-if="isMultiPbr" class="text-accent font-semibold mb-0.5">Multiple ({{ distinctPbr.length }})</div>
-										<div class="flex items-center gap-1.5">
-											<input
-												:value="obj.defaultPbrMaterial || distinctPbr[0] || '(none)'"
-												readonly
-												class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs"
-											/>
-											<button class="ui-btn p-1 rounded-sm border border-edge text-fg/60 hover:text-fg hover:bg-fg/20" title="Copy material UUID" @click="copyText(obj.defaultPbrMaterial || distinctPbr[0])"><CopyIcon class="w-3 h-3" /></button>
-										</div>
-									</div>
-								</div>
-								<div v-if="pbrFaceChips.length" class="border-t border-edge pt-2">
-									<div class="text-fg/50 text-2xs uppercase tracking-wide mb-1">Per-face PBR materials</div>
-									<div class="space-y-1">
-										<div v-for="c in pbrFaceChips" :key="c.face" class="flex items-center gap-1.5 text-2xs">
-											<span class="w-8 shrink-0 text-fg/50">F{{ c.face }}</span>
-											<input :value="c.uuid" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1 py-0.5 text-fg font-mono" />
-										</div>
-									</div>
-								</div>
-								<div class="text-2xs text-fg/30 italic pt-1">
-									GLTF material assets (base color / metallic-roughness / emissive / normal maps)
-									render via the materials cap. Per-channel editing arrives in Phase 3.
-								</div>
-							</template>
 						</template>
 						<template v-else>
 							<div class="text-fg/40 italic px-1 py-3 text-center">

@@ -51,6 +51,21 @@ describe('worldStore avatars/prims incremental index', () => {
 		expect(s.prims[0].name).toBe('Crate')          // index reflects merged props
 	})
 
+	it('applyObjectProperties merges via the _byFullId index (exact-case hit) and keeps perms', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 4, pcode: PCODE_PRIM, fullId: 'exact-case' })
+		const hit = s.applyObjectProperties({ fullId: 'exact-case', ownerMask: 0x4000, name: 'Box' })
+		expect(hit).toBe(true)
+		expect(s.objects.get(4).ownerMask).toBe(0x4000)
+	})
+
+	it('applyObjectProperties returns false for an unknown fullId', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 4, pcode: PCODE_PRIM, fullId: 'aaa' })
+		expect(s.applyObjectProperties({ fullId: 'zzz', name: 'Ghost' })).toBe(false)
+		expect(s.applyObjectProperties({ name: 'no fullId at all' })).toBe(false)
+	})
+
 	it('reconciles when an objects pcode changes kind (avatar → prim)', () => {
 		const s = useWorldStore()
 		s.upsertObject({ localId: 1, pcode: PCODE_AVATAR })
@@ -93,5 +108,98 @@ describe('fullId index', () => {
 		expect(s.localIdForFullId('aaa')).toBe(9)
 		s.removeObject(5)                                                  // remove OLD localId
 		expect(s.localIdForFullId('aaa')).toBe(9)                         // index untouched
+	})
+})
+
+// PACKAGE A: linkset link-order tracking (FS mChildList semantics — arrival order, not localId
+// order; link numbers per llfloatertools.cpp:623-647).
+describe('linkset link-order tracking', () => {
+	it('linksetMembers returns [root, ...children] in ARRIVAL order (not localId order)', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })                 // root
+		s.upsertObject({ localId: 99, parentId: 10, pcode: PCODE_PRIM })   // 1st child (high localId)
+		s.upsertObject({ localId: 11, parentId: 10, pcode: PCODE_PRIM })   // 2nd child (low localId)
+		expect(s.linksetMembers(10)).toEqual([10, 99, 11])
+	})
+
+	it('resolves any MEMBER id to the same list', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, parentId: 10, pcode: PCODE_PRIM })
+		expect(s.linksetMembers(20)).toEqual([10, 20])
+	})
+
+	it('ids with no store record pass through unexpanded', () => {
+		const s = useWorldStore()
+		expect(s.linksetMembers(777)).toEqual([777])
+	})
+
+	it('re-upsert of a child (partial update, same parent) does not duplicate it', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, parentId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, pos: [1, 2, 3] })                    // update omits parentId
+		s.upsertObject({ localId: 20, parentId: 10 })                      // update repeats parentId
+		expect(s.linksetMembers(10)).toEqual([10, 20])
+	})
+
+	it('reparent moves the child: removed from old parent, appended to new', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 30, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, parentId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 31, parentId: 30, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, parentId: 30 })                      // reparent 10 → 30
+		expect(s.linksetMembers(10)).toEqual([10])
+		expect(s.linksetMembers(30)).toEqual([30, 31, 20])                 // appended AFTER 31
+	})
+
+	it('removeObject cleans the parent list and the removed root’s own child list', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, parentId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 21, parentId: 10, pcode: PCODE_PRIM })
+		s.removeObject(20)
+		expect(s.linksetMembers(10)).toEqual([10, 21])
+		s.removeObject(10)                                                 // root gone → own list dropped
+		expect(s.linksetMembers(10)).toEqual([10])
+	})
+
+	it('clearAll drops link tracking', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+		s.upsertObject({ localId: 20, parentId: 10, pcode: PCODE_PRIM })
+		s.clearAll()
+		s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+		expect(s.linksetMembers(10)).toEqual([10])
+	})
+
+	it('linkset with an avatar parent (attachment) roots at the attached prim, not the avatar', () => {
+		const s = useWorldStore()
+		s.upsertObject({ localId: 1, pcode: PCODE_AVATAR })
+		s.upsertObject({ localId: 10, parentId: 1, pcode: PCODE_PRIM })    // attached root
+		s.upsertObject({ localId: 20, parentId: 10, pcode: PCODE_PRIM })
+		expect(s.linksetMembers(20)).toEqual([10, 20])                     // stops below the avatar
+	})
+
+	describe('linkNumberOf (llfloatertools.cpp:623-647 convention)', () => {
+		it('childless standalone prim → 0', () => {
+			const s = useWorldStore()
+			s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+			expect(s.linkNumberOf(10)).toBe(0)
+		})
+		it('root of a linkset → 1; children → 2+ in arrival order', () => {
+			const s = useWorldStore()
+			s.upsertObject({ localId: 10, pcode: PCODE_PRIM })
+			s.upsertObject({ localId: 99, parentId: 10, pcode: PCODE_PRIM })
+			s.upsertObject({ localId: 11, parentId: 10, pcode: PCODE_PRIM })
+			expect(s.linkNumberOf(10)).toBe(1)
+			expect(s.linkNumberOf(99)).toBe(2)
+			expect(s.linkNumberOf(11)).toBe(3)
+		})
+		it('unknown id → 0', () => {
+			const s = useWorldStore()
+			expect(s.linkNumberOf(777)).toBe(0)
+		})
 	})
 })

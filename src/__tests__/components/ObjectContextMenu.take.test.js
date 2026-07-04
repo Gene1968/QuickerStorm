@@ -22,9 +22,13 @@ vi.mock('@/composables/useLLUDP', () => ({
 // Silence the tick sound on click.
 vi.mock('@/composables/useAudio', () => ({ playSound: vi.fn(), useAudio: () => ({ playSound: vi.fn() }) }))
 
+import { nextTick } from 'vue'
 import ObjectContextMenu from '@/components/ObjectContextMenu.vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useWorldStore, PCODE_PRIM } from '@/stores/worldStore'
+import { useSessionStore } from '@/stores/sessionStore'
+import { PERM_TRANSFER, PERM_MODIFY, PERM_COPY } from '@/utils/objectPermissions'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -75,5 +79,73 @@ describe('ObjectContextMenu — Take copy', () => {
 		expect(takeObjectCopy).toHaveBeenCalledWith(42)
 		expect(takeObject).not.toHaveBeenCalled()
 		expect(ui.objectMenu).toBeNull()
+	})
+})
+
+// PACKAGE C — perm gating on the Take / Take copy rows (client prediction of OpenSim
+// CanTakeObject/CanTakeCopyObject, PermissionsModule.cs:1963/2004, via takeGating.js).
+// The gate truth tables live in takeGating.test.js / objectPermissions.test.js; here we
+// verify the menu WIRING: disabled attr + explanatory title on the rendered rows, and the
+// live re-gate when ObjectProperties arrives after the menu is already open.
+describe('ObjectContextMenu — Take / Take copy perm gating', () => {
+	const AGENT = 'AAAAAAAA-1111-2222-3333-444444444444'
+	const OTHER = 'BBBBBBBB-1111-2222-3333-444444444444'
+
+	const findRow = (w, text) => w.findAll('button').find(b => b.text() === text)
+
+	it('unknown perms (no ObjectProperties yet) → both rows ENABLED per convention', () => {
+		const world = useWorldStore()
+		world.upsertObject({ localId: 42, fullId: 'full-42', pcode: PCODE_PRIM })
+		const w = openMenu()
+		expect(findRow(w, 'Take').attributes('disabled')).toBeUndefined()
+		expect(findRow(w, 'Take copy').attributes('disabled')).toBeUndefined()
+	})
+
+	it("someone else's locked-down object → both rows disabled with explanatory titles", () => {
+		useSessionStore().agentId = AGENT
+		const world = useWorldStore()
+		world.upsertObject({ localId: 42, fullId: 'full-42', pcode: PCODE_PRIM })
+		world.applyObjectProperties({ fullId: 'full-42', ownerId: OTHER, ownerMask: 0, everyoneMask: 0 })
+		const w = openMenu()
+		const take = findRow(w, 'Take')
+		expect(take.attributes('disabled')).toBeDefined()
+		expect(take.attributes('title')).toBe("You don't own this object and it isn't transferable")
+		const copy = findRow(w, 'Take copy')
+		expect(copy.attributes('disabled')).toBeDefined()
+		expect(copy.attributes('title')).toBe('Object is not copyable')
+	})
+
+	it("own no-copy object → Take enabled, Take copy disabled ('Object is not copyable')", () => {
+		useSessionStore().agentId = AGENT
+		const world = useWorldStore()
+		world.upsertObject({ localId: 42, fullId: 'full-42', pcode: PCODE_PRIM })
+		world.applyObjectProperties({ fullId: 'full-42', ownerId: AGENT, ownerMask: PERM_TRANSFER | PERM_MODIFY, everyoneMask: 0 })
+		const w = openMenu()
+		expect(findRow(w, 'Take').attributes('disabled')).toBeUndefined()
+		const copy = findRow(w, 'Take copy')
+		expect(copy.attributes('disabled')).toBeDefined()
+		expect(copy.attributes('title')).toBe('Object is not copyable')
+	})
+
+	it("everyone transfer+modify+copy on another's object → both rows enabled", () => {
+		useSessionStore().agentId = AGENT
+		const world = useWorldStore()
+		world.upsertObject({ localId: 42, fullId: 'full-42', pcode: PCODE_PRIM })
+		world.applyObjectProperties({ fullId: 'full-42', ownerId: OTHER, ownerMask: 0, everyoneMask: PERM_TRANSFER | PERM_MODIFY | PERM_COPY })
+		const w = openMenu()
+		expect(findRow(w, 'Take').attributes('disabled')).toBeUndefined()
+		expect(findRow(w, 'Take copy').attributes('disabled')).toBeUndefined()
+	})
+
+	it('ObjectProperties arriving AFTER the menu opens re-gates live (enabled → disabled flip)', async () => {
+		useSessionStore().agentId = AGENT
+		const world = useWorldStore()
+		world.upsertObject({ localId: 42, fullId: 'full-42', pcode: PCODE_PRIM })
+		const w = openMenu()
+		expect(findRow(w, 'Take').attributes('disabled')).toBeUndefined()   // unknown → enabled
+		world.applyObjectProperties({ fullId: 'full-42', ownerId: OTHER, ownerMask: 0, everyoneMask: 0 })
+		await nextTick()
+		expect(findRow(w, 'Take').attributes('disabled')).toBeDefined()
+		expect(findRow(w, 'Take copy').attributes('disabled')).toBeDefined()
 	})
 })

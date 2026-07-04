@@ -1201,6 +1201,53 @@ export function useWorldEngine(canvasRef) {
 		return { x: p.x, y: -p.z, z: p.y }
 	}
 
+	// Raycast a screen point for a drag-to-rez DROP: prim meshes first, terrain as fallback —
+	// the same two-stage pattern as the right-click context-menu pick (avatar→prim→terrain below),
+	// so dropping an object onto a table rezzes ON the table instead of on the ground under it
+	// (FS lltooldraganddrop raycasts world objects the same way). Shares _raycaster/_pickNdc and
+	// screenToGround's three→SL conversion (x=SL.x, y=SL.z, z=-SL.y → invert).
+	// Returns { x, y, z, hitLocalId } in SL region coords — hitLocalId = the hit prim's localId,
+	// null = terrain hit — or null on a full miss (sky / off-world).
+	function screenToDropPoint(clientX, clientY) {
+		if (!canvasRef.value || !camera) return null
+		const rect = canvasRef.value.getBoundingClientRect()
+		_pickNdc.set(
+			((clientX - rect.left) / rect.width) * 2 - 1,
+			-((clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		_raycaster.far = 1000
+		// Prim pass — skip avatars (own + others); terrain/water/skirt aren't in meshMap.
+		const primTargets = []
+		meshMap.forEach((mesh, localId) => {
+			if (localId === ownAvatarLocalId) return
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR) return
+			primTargets.push(mesh)
+		})
+		if (_instancePool) for (const im of _instancePool.meshes()) primTargets.push(im)
+		const primHits = _raycaster.intersectObjects(primTargets, true)
+		if (primHits.length > 0) {
+			const hit = primHits[0]
+			let hitLocalId = null
+			if (hit.object?.userData?.qsInstanced) {
+				hitLocalId = _instancePool.pick(hit.object, hit.instanceId)
+			} else {
+				let hitMesh = hit.object
+				while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
+				if (hitMesh) hitLocalId = hitMesh.userData.localId
+			}
+			const p = hit.point
+			return { x: p.x, y: -p.z, z: p.y, hitLocalId: hitLocalId ?? null }
+		}
+		// Prim miss → terrain fallback (same conversion as screenToGround).
+		if (!terrainMesh) return null
+		const terrHits = _raycaster.intersectObject(terrainMesh, false)
+		if (!terrHits.length) return null
+		const tp = terrHits[0].point
+		return { x: tp.x, y: -tp.z, z: tp.y, hitLocalId: null }
+	}
+
 	// Scroll wheel: zoom in orbit mode or third-person; forward/back in explore mode
 	function onWheel(e) {
 		if (!camera) return
@@ -5253,5 +5300,5 @@ export function useWorldEngine(canvasRef) {
 
 	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
-	return { scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave, screenToGround }
+	return { scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave, screenToGround, screenToDropPoint }
 }

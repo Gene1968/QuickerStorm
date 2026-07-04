@@ -628,7 +628,8 @@ export function useInventory() {
 	 * @param toName  recipient display name (for the confirmation toast); optional
 	 */
 	function giveInventory(itemIds, toAgentId, toName) {
-		if (!toAgentId) return
+		// Every nothing-sent path toasts — a drop/give that silently does nothing reads as data loss.
+		if (!toAgentId) { notifyInfo('Nothing shared', 'No recipient — drop onto a profile or a conversation.'); return }
 		const ids = Array.isArray(itemIds) ? itemIds : [itemIds]
 		const recipient = toName || 'recipient'
 		// WHY: remember the recipient's name keyed by agentId so the dialog-5 "received" ACK (which
@@ -651,6 +652,9 @@ export function useInventory() {
 		// "[name] received your inventory offer." follows when OpenSim's dialog-5 ACK lands (useInstantMessage).
 		if (gave.length) {
 			notifyInfo('Inventory', 'Items successfully shared.')
+		} else if (!blocked) {
+			// Every id failed findItem (stale drag payload / rows purged since dragstart) — say so.
+			notifyInfo('Nothing shared', 'Item(s) not found in inventory.')
 		}
 		if (blocked) {
 			notifyInfo('Not transferable', `${blocked} item${blocked === 1 ? '' : 's'} could not be given (no-transfer)`)
@@ -683,12 +687,20 @@ export function useInventory() {
 	 * must be listed or the sim drops them — so we ensure the folder is fetched, then send its direct items.
 	 */
 	async function giveInventoryFolder(folderId, toAgentId, toName) {
-		if (!folderId || !toAgentId) return
+		// Every nothing-sent path toasts — a drop/give that silently does nothing reads as data loss.
+		if (!toAgentId) { notifyInfo('Nothing shared', 'No recipient — drop onto a profile or a conversation.'); return }
+		if (!folderId) { notifyInfo('Nothing shared', 'No folder selected to share.'); return }
 		const folder = inv.folders.get(folderId)
-		if (!folder) return
+		if (!folder) { notifyInfo('Nothing shared', 'Folder not found in inventory.'); return }
 		// Remember recipient so the dialog-5 "received" ACK (carries giver's name) resolves the right name.
 		inv.noteGiveRecipient(toAgentId, toName || 'recipient')
-		await ensureFolderFetched(folderId)
+		const fetched = await ensureFolderFetched(folderId)
+		if (!fetched) {
+			// WHY abort: the offer bucket must list the top folder's DIRECT items (OpenSim gates on
+			// them) — sending after a fetch timeout would silently drop the folder's contents.
+			notifyInfo('Share failed', `Couldn't load "${folder.name}" contents — open the folder once, then retry.`)
+			return
+		}
 		const items = inv.folderItems(folderId).map(it => ({ itemId: it.itemId, assetType: it.assetType }))
 		emit(C.GIVE_INVENTORY_FOLDER, { toAgentId, folderId, name: folder.name, items })
 		notifyInfo('Inventory', 'Items successfully shared.')
@@ -700,6 +712,8 @@ export function useInventory() {
 	 */
 	function shareToAgent(ids, toAgentId, toName) {
 		const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean)
+		// Empty selection (e.g. a stale drag payload) → toast instead of a silent no-op.
+		if (!list.length) { notifyInfo('Nothing shared', 'Nothing was selected to share.'); return }
 		const itemIds   = list.filter(id => !inv.folders.has(id))
 		const folderIds = list.filter(id =>  inv.folders.has(id))
 		if (itemIds.length) giveInventory(itemIds, toAgentId, toName)
@@ -715,12 +729,25 @@ export function useInventory() {
 	 * @param itemId    the inventory item to rez
 	 * @param position  optional {x,y,z} SL drop point (e.g. a raycast hit from drag-to-canvas);
 	 *                  omitted → ~2m in front of the avatar at avatar height (rezPositionInFront)
+	 * @param opts      optional sim-raycast placement (FS lltooldraganddrop.cpp:1963-2003 dropObject):
+	 *                    rayStart      {x,y,z} ray origin — FS uses the CAMERA position (:1963);
+	 *                                  omitted → position (rez AT point, today's behavior)
+	 *                    rayTargetId   UUID of the prim the drop ray hit — sim raycasts against it
+	 *                                  (OpenSim Scene.cs:2376 GetNewRezLocation); omitted → ZERO
+	 *                    bypassRaycast false → sim runs its own rez-location raycast instead of
+	 *                                  rezzing AT position; omitted/true → BypassRaycast=1
 	 *
 	 * Perms: rez is allowed for copyable OR the object itself. A no-copy object is consumed from
 	 * inventory when rezzed (server defaults removeItem = !copyable) — expected FS behaviour, so we
 	 * still allow it. We do NOT block on transfer/modify.
+	 *
+	 * NOTE on the perm masks below: OpenSim IGNORES every perm field in the RezObject packet — the
+	 * sim derives the rezzed object's perms solely from the inventory-SERVICE item row
+	 * (InventoryAccessModule.cs:1151-1301 DoPreRezWhenFromItem; FS calls the packet masks "CRUFT",
+	 * lltooldraganddrop.cpp:3583). They MUST still pass through VERBATIM from the item record
+	 * (never recomputed) for template correctness + non-OpenSim grids; see itemServerFields' WHY.
 	 */
-	function rezObject(itemId, position) {
+	function rezObject(itemId, position, opts = {}) {
 		if (!itemId) return
 		const found = inv.findItem(itemId)
 		const it = found?.item
@@ -746,6 +773,9 @@ export function useInventory() {
 			everyoneMask:  it.everyoneMask,
 			nextOwnerMask: it.nextOwnerMask,
 			removeItem,
+			// Optional sim-raycast placement passthrough. All default server-side to today's
+			// rez-AT-point packet (BypassRaycast=1, RayTargetID=ZERO, rayStart=rayEnd=position).
+			rayStart: opts.rayStart, rayTargetId: opts.rayTargetId, bypassRaycast: opts.bypassRaycast,
 		})
 		playSound('rezz.mp3', 0.3)   // FS-style rez cue (both context-menu + drag-to-canvas rez funnel here)
 		notifyInfo('Rezzing', `Rezzing ${it.name || 'object'}…`)

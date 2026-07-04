@@ -41,6 +41,8 @@ const dropActive = ref(false)
 // and folders to the right give path. dataTransfer.getData is unreadable during dragover, so read the
 // shared inventoryStore.dragPayload set on dragstart.
 function invDragGivable() { const p = invStore.dragPayload; return !!p && p.ids?.length > 0 }
+// WHY also wired to @dragenter: preventDefault on ENTRY stops the browser's not-allowed cursor
+// flicker before the first dragover tick, and lights the drop highlight immediately.
 function onGiveDragOver(e) {
 	if (isSelf.value || !invDragGivable()) return
 	e.preventDefault()
@@ -410,6 +412,7 @@ function saveNotes() {
 				v-else
 				class="px-2.5 py-2 text-xs text-center rounded-sm border border-dashed transition-colors truncate"
 				:class="dropActive ? 'border-accent bg-accent/10 text-accent' : 'border-edge text-fg'"
+				@dragenter="onGiveDragOver"
 				@dragover="onGiveDragOver"
 				@dragleave="onGiveDragLeave"
 				@drop="onGiveDrop"

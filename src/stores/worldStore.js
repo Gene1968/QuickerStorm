@@ -1,6 +1,7 @@
 // src/stores/worldStore.js — object map driven by ObjectUpdate LLUDP messages
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { linksetRootLocalId } from '@/utils/linksetRoot'
 
 export const PCODE_PRIM   = 9
 export const PCODE_AVATAR = 47
@@ -31,6 +32,55 @@ export const useWorldStore = defineStore('world', () => {
 		if (rec.pcode === PCODE_PRIM && rec.fullId) _byFullId.set(rec.fullId, localId)
 	}
 	function _unindex(localId) { _avatars.value.delete(localId); _prims.value.delete(localId) }
+
+	// ── Linkset link-order tracking (FS mChildList semantics) ──────────────────────────────
+	// parentLocalId → child localIds in ObjectUpdate ARRIVAL order. FS's LLViewerObject::mChildList
+	// is likewise append-on-arrival, and the Edit-floater "link number" convention derives from it
+	// (llfloatertools.cpp:623-647: childless prim = link 0, root = link 1, children = 2+ in list
+	// order). Cache-replay arrival order approximates sim order exactly as FS's mChildList does —
+	// both are "order the viewer first learned of the child", not a sim-declared index.
+	// Non-reactive (no template iterates it; consumers read via linksetMembers/linkNumberOf).
+	const _linkChildren = new Map()   // parentLocalId → number[]
+	function _linkTrack(localId, oldParent, newParent) {
+		// Equal parents = no change (first sight arrives with oldParent undefined, so a record
+		// created WITH a parentId still lands in the append branch below).
+		if (oldParent === newParent) return
+		if (oldParent) {
+			const list = _linkChildren.get(oldParent)
+			if (list) {
+				const i = list.indexOf(localId)
+				if (i !== -1) list.splice(i, 1)
+				if (list.length === 0) _linkChildren.delete(oldParent)
+			}
+		}
+		if (newParent) {
+			let list = _linkChildren.get(newParent)
+			if (!list) { list = []; _linkChildren.set(newParent, list) }
+			if (!list.includes(localId)) list.push(localId)
+		}
+	}
+
+	/**
+	 * [rootLocalId, ...childLocalIds] in ObjectUpdate arrival order (FS mChildList semantics).
+	 * Resolves ANY member id to its linkset; ids with no store record return [id] unexpanded.
+	 */
+	function linksetMembers(localId) {
+		const root = linksetRootLocalId(objects.value, localId)
+		return [root, ...(_linkChildren.get(root) ?? [])]
+	}
+
+	/**
+	 * FS link-number convention (llfloatertools.cpp:623-647): 0 = childless standalone prim,
+	 * 1 = root of a linkset, 2+ = children in arrival order. Unknown ids → 0.
+	 */
+	function linkNumberOf(localId) {
+		const root = linksetRootLocalId(objects.value, localId)
+		const children = _linkChildren.get(root)
+		if (!children?.length) return 0
+		if (localId === root) return 1
+		const i = children.indexOf(localId)
+		return i === -1 ? 0 : i + 2
+	}
 
 	// Culling telemetry for the % -loaded badge + Prefs. resident/known are non-avatar mesh counts
 	// WITHIN the current draw distance; atTarget = at the full target radius (badge says "complete"
@@ -68,6 +118,10 @@ export const useWorldStore = defineStore('world', () => {
 		rec.clickAction = obj.clickAction ?? existing.clickAction ?? 0
 		objects.value.set(obj.localId, rec)
 		_index(obj.localId, rec)
+		// Link-order upkeep: append on first sight of a parentId, move on reparent (rec.parentId
+		// inherits existing.parentId via the spread when the update omits it, so a partial update
+		// is a no-op here).
+		_linkTrack(obj.localId, existing.parentId, rec.parentId)
 	}
 
 	function updateObjectPos(localId, pos) {
@@ -84,25 +138,36 @@ export const useWorldStore = defineStore('world', () => {
 		// Only drop the fullId entry if it still points at THIS localId — a newer localId may have
 		// already reclaimed the fullId (churn), and we must not clobber that.
 		if (rec?.fullId && _byFullId.get(rec.fullId) === localId) _byFullId.delete(rec.fullId)
+		// Link-order upkeep: leave the old parent's child list; drop our own child list entirely
+		// (children that survive re-arrive with fresh parentIds and re-track).
+		_linkTrack(localId, rec?.parentId, undefined)
+		_linkChildren.delete(localId)
 		objects.value.delete(localId); _unindex(localId)
 	}
 
-	// WHY: ObjectProperties arrives keyed by fullId (UUID), not localId. Walk values to match.
-	// Merges name/description/creator/owner/perms into the object so Edit floater + Inspect
-	// menus get real metadata without re-fetching.
+	// WHY: ObjectProperties arrives keyed by fullId (UUID), not localId. O(1) via the _byFullId
+	// index; fall back to the old O(n) walk only when the index misses (case-mismatched fullId,
+	// or records the index doesn't cover). Merges name/description/creator/owner/perms into the
+	// object so Edit floater + Inspect menus get real metadata without re-fetching.
 	function applyObjectProperties(props) {
-		for (const [id, obj] of objects.value) {
-			if (obj.fullId?.toLowerCase() === props.fullId?.toLowerCase()) {
-				const rec = { ...obj, ...props, name: props.name || obj.name }
-				objects.value.set(id, rec)
-				_index(id, rec)
-				return true
+		if (!props?.fullId) return false
+		let id = _byFullId.get(props.fullId)
+		if (id === undefined) {
+			const want = props.fullId.toLowerCase()
+			for (const [lid, obj] of objects.value) {
+				if (obj.fullId?.toLowerCase() === want) { id = lid; break }
 			}
 		}
-		return false
+		if (id === undefined) return false
+		const obj = objects.value.get(id)
+		if (!obj) return false
+		const rec = { ...obj, ...props, name: props.name || obj.name }
+		objects.value.set(id, rec)
+		_index(id, rec)
+		return true
 	}
 
-	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear(); _byFullId.clear() }
+	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear(); _byFullId.clear(); _linkChildren.clear() }
 
 	/** localId currently holding this fullId, or undefined. O(1) via the _byFullId index. */
 	function localIdForFullId(fullId) { return _byFullId.get(fullId) }
@@ -223,6 +288,7 @@ export const useWorldStore = defineStore('world', () => {
 		objects, avatars, prims, cullStats, setCullStats, sceneLoading, setSceneLoading,
 		assetProgress, setAssetProgress,
 		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll, localIdForFullId,
+		linksetMembers, linkNumberOf,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,
 		terrainHeights, TERRAIN_STRIDE: terrainStride, terrainPatchCount, setTerrainPatch, clearTerrain,

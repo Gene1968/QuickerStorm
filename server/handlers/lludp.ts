@@ -18,7 +18,7 @@ import {
 	encodeImprovedInstantMessage, decodeImprovedInstantMessage,
 	encodeUseCircuitCode, encodeAgentThrottle, encodeAgentHeightWidth,
 	encodeObjectGrab, encodeObjectDeGrab, encodeAgentRequestSit, encodeAgentSit,
-	encodeObjectName, encodeObjectDescription, encodeObjectDelete, encodeDeRezObject,
+	encodeObjectName, encodeObjectDescription, encodeObjectPermissions, encodeObjectDelete, encodeDeRezObject,
 	DEREZ_TAKE, DEREZ_TAKE_COPY,
 	encodeObjectSelect, encodeObjectDeselect, decodeObjectProperties,
 	encodeSetAlwaysRun,
@@ -1401,6 +1401,7 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
 			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
 			groupOwned?: boolean; rezSelected?: boolean; removeItem?: boolean; rezGroupId?: string
+			rayStart?: { x: number; y: number; z: number }; rayTargetId?: string; bypassRaycast?: boolean
 		}
 		if (!d.itemId || !d.folderId || !d.position) { slog.warn(session.ws, 'RezObject: missing itemId/folderId/position'); return }
 		// WHY default removeItem = !copyable: a no-copy item is consumed on rez (FS remove_from_inventory).
@@ -1409,11 +1410,17 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const copyable = ((d.ownerMask ?? 0x7FFFFFFF) & PERM_COPY) !== 0
 		const removeItem = d.removeItem ?? !copyable
 		const pos: [number, number, number] = [d.position.x, d.position.y, d.position.z]
+		// Sim-raycast placement (FS lltooldraganddrop.cpp:1963-1964 dropObject: RayStart = camera pos,
+		// RayEnd = hit point; OpenSim Scene.cs:2376 GetNewRezLocation). Defaults preserve today's
+		// rez-AT-point behavior: rayStart = rayEnd = position, BypassRaycast=1, RayTargetID=ZERO.
+		const rayStart: [number, number, number] =
+			d.rayStart ? [d.rayStart.x, d.rayStart.y, d.rayStart.z] : pos
 		const seq = nextSeq(session)
 		const pkt = encodeRezObject({
 			agentId: session.agentId, sessionId: session.sessionId, seq,
 			groupId: d.rezGroupId,
-			rayStart: pos, rayEnd: pos,
+			rayStart, rayEnd: pos,
+			bypassRaycast: d.bypassRaycast, rayTargetId: d.rayTargetId,
 			rezSelected: d.rezSelected, removeItem,
 			inventoryData: {
 				itemId: d.itemId, folderId: d.folderId,
@@ -1602,27 +1609,37 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	if (msg.t === C.OBJECT_SELECT) {
 		const d = msg.d as { localIds: number[] }
 		if (!d.localIds?.length) return
-		const seq = nextSeq(session)
-		const pkt = encodeObjectSelect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
-		trackReliable(session, seq, pkt)
-		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		// Stale-id check: ids never seen in live sim traffic this session (full/compressed updates or
-		// cache probes) are almost certainly stale IDB-cache paint from a previous region run — the sim
-		// silently ignores ObjectSelect for localIds it doesn't know, which presents as the edit
-		// floater stuck on "Loading properties from sim…".
-		const stale = d.localIds.filter(id => !session.distinctLocalIds.has(id))
-		slog.info(session.ws, `→ ObjectSelect seq=${seq} ids=[${d.localIds.join(',')}] live=${d.localIds.length - stale.length}/${d.localIds.length}${stale.length ? ` STALE=[${stale.join(',')}]` : ''}`)
+		// Chunk to FS's MAX_OBJECTS_PER_PACKET=254 ids per ObjectSelect (llselectmgr.cpp:129 —
+		// ObjectData is 4 bytes/id, so 254 stays safely under MTU). Whole-linkset selection from
+		// the client can exceed one packet on big linked builds.
+		for (let i = 0; i < d.localIds.length; i += 254) {
+			const chunk = d.localIds.slice(i, i + 254)
+			const seq = nextSeq(session)
+			const pkt = encodeObjectSelect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: chunk })
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+			// Stale-id check: ids never seen in live sim traffic this session (full/compressed updates or
+			// cache probes) are almost certainly stale IDB-cache paint from a previous region run — the sim
+			// silently ignores ObjectSelect for localIds it doesn't know, which presents as the edit
+			// floater stuck on "Loading properties from sim…".
+			const stale = chunk.filter(id => !session.distinctLocalIds.has(id))
+			slog.info(session.ws, `→ ObjectSelect seq=${seq} ids=[${chunk.join(',')}] live=${chunk.length - stale.length}/${chunk.length}${stale.length ? ` STALE=[${stale.join(',')}]` : ''}`)
+		}
 		return
 	}
 
 	if (msg.t === C.OBJECT_DESELECT) {
 		const d = msg.d as { localIds: number[] }
 		if (!d.localIds?.length) return
-		const seq = nextSeq(session)
-		const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds })
-		trackReliable(session, seq, pkt)
-		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectDeselect seq=${seq} ids=[${d.localIds.join(',')}]`)
+		// Same 254-id chunking as ObjectSelect (FS MAX_OBJECTS_PER_PACKET, llselectmgr.cpp:129).
+		for (let i = 0; i < d.localIds.length; i += 254) {
+			const chunk = d.localIds.slice(i, i + 254)
+			const seq = nextSeq(session)
+			const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: chunk })
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+			slog.info(session.ws, `→ ObjectDeselect seq=${seq} ids=[${chunk.join(',')}]`)
+		}
 		return
 	}
 
@@ -1740,6 +1757,23 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ObjectDescription localId=${d.localId}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_PERMS) {
+		// ObjectPermissions (Low 105, message_template.msg:2285) — FS llpanelpermissions.cpp:1319
+		// onCommitPerm → LLSelectMgr::selectionSetObjectPermissions. The sim replies nothing; the
+		// client re-issues ObjectSelect afterwards to refetch authoritative ObjectProperties.
+		const d = msg.d as { localId: number; field: number; set: boolean; mask: number }
+		if (!d?.localId || !d.field || !d.mask) { slog.warn(session.ws, 'ObjectPerms: missing localId/field/mask'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeObjectPermissions({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			objectData: [{ localId: d.localId, field: d.field, set: !!d.set, mask: d.mask }],
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectPermissions localId=${d.localId} field=0x${d.field.toString(16)} set=${!!d.set} mask=0x${d.mask.toString(16)}`)
 		return
 	}
 

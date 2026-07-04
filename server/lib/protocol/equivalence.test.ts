@@ -5,6 +5,7 @@
 // Six hand-written encoders had latent bugs the template corrects; each is asserted explicitly.
 import { describe, it, expect } from 'bun:test'
 import { encode, decode } from './codec.ts'
+import { uuidToBytes } from './wire.ts'
 import * as hand from '../lludp-codec.ts'
 
 const A = '11111111-1111-1111-1111-111111111111'
@@ -222,5 +223,96 @@ describe('object-edit encoders', () => {
 		const m = decode(buf)
 		expect(m.blocks.AgentData[0].Force).toBe(false)
 		expect(m.blocks.ObjectData[0].ObjectLocalID).toBe(99)
+	})
+	it('ObjectPermissions → Low 105, field data matches a hand-built packet byte-for-byte', () => {
+		// Layout per message_template.msg:2285 — AgentData(AgentID+SessionID) +
+		// HeaderData{Override BOOL} + ObjectData Variable {ObjectLocalID U32, Field U8, Set U8, Mask U32}.
+		const buf = hand.encodeObjectPermissions({
+			agentId: A, sessionId: S, seq,
+			objectData: [
+				{ localId: 4242, field: 0x10, set: true, mask: 0x2000 },   // NextOwner: +Transfer
+				{ localId: 4243, field: 0x08, set: false, mask: 0x8000 },  // Everyone: -Copy
+			],
+		})
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x00, 0x69]) // 105
+		const fd = Buffer.alloc(16 + 16 + 1 + 1 + 2 * 10)
+		let o = 0
+		uuidToBytes(A).copy(fd, o); o += 16
+		uuidToBytes(S).copy(fd, o); o += 16
+		fd[o++] = 0                                  // Override = false (god-bit)
+		fd[o++] = 2                                  // ObjectData count
+		fd.writeUInt32LE(4242, o); o += 4; fd[o++] = 0x10; fd[o++] = 1; fd.writeUInt32LE(0x2000, o); o += 4
+		fd.writeUInt32LE(4243, o); o += 4; fd[o++] = 0x08; fd[o++] = 0; fd.writeUInt32LE(0x8000, o); o += 4
+		expect(fieldData(buf).equals(fd)).toBe(true)
+		// And decodes back to the same fields
+		const m = decode(buf)
+		expect(m.name).toBe('ObjectPermissions')
+		expect(m.blocks.HeaderData[0].Override).toBe(false)
+		expect(m.blocks.ObjectData[0].ObjectLocalID).toBe(4242)
+		expect(m.blocks.ObjectData[0].Field).toBe(0x10)
+		expect(m.blocks.ObjectData[0].Set).toBe(1)
+		expect(m.blocks.ObjectData[0].Mask).toBe(0x2000)
+		expect(m.blocks.ObjectData[1].Set).toBe(0)
+	})
+})
+
+// RezObject (Low 293, message_template.msg:6560-6605) — the sim-raycast placement fields added for
+// on-object drops (FS lltooldraganddrop.cpp:1963-1971 + 1999-2003 dropObject: RayStart = camera pos,
+// BypassRaycast=0 + RayTargetID=<hit prim> → OpenSim Scene.cs:2376 GetNewRezLocation), and the
+// verbatim perm-mask passthrough (OpenSim ignores them — InventoryAccessModule.cs:1151-1301 — but
+// they must round-trip unrecomputed for template correctness + non-OpenSim grids).
+describe('encodeRezObject', () => {
+	const inv = {
+		itemId: U, folderId: A,
+		name: 'Box', description: 'a box',
+		creatorId: A, ownerId: A, groupId: S,
+		// Distinctive masks incl. FOLDED low bits (0x0F) in baseMask — must survive verbatim.
+		baseMask: 0x0008E00F, ownerMask: 0x0008E000, groupMask: 0x00002000,
+		everyoneMask: 0x00008000, nextOwnerMask: 0x0008A000,
+		assetType: 6, invType: 6, flags: 0x00000100, saleType: 0, salePrice: 0, createdAt: 1700000000,
+	}
+	it('sim-raycast mode: Low 293, BypassRaycast=0 + RayTargetID + distinct RayStart round-trip', () => {
+		const buf = hand.encodeRezObject({
+			agentId: A, sessionId: S, seq,
+			rayStart: [1, 2, 3], rayEnd: [4, 5, 6],
+			bypassRaycast: false, rayTargetId: U,
+			removeItem: false, inventoryData: inv,
+		})
+		expect(idBytes(buf)).toEqual([0xFF, 0xFF, 0x01, 0x25]) // Low 293
+		const m = decode(buf)
+		expect(m.name).toBe('RezObject')
+		const rez = m.blocks.RezData[0]
+		expect(rez.BypassRaycast).toBe(0)
+		expect(rez.RayTargetID).toBe(U)
+		expect(rez.RayStart).toEqual([1, 2, 3])
+		expect(rez.RayEnd).toEqual([4, 5, 6])
+		expect(rez.RayEndIsIntersection).toBe(false)
+		expect(rez.RemoveItem).toBe(false)
+		// Perm masks pass through VERBATIM (no recompute; folded base bits intact).
+		const id = m.blocks.InventoryData[0]
+		expect(id.BaseMask).toBe(0x0008E00F)
+		expect(id.OwnerMask).toBe(0x0008E000)
+		expect(id.GroupMask).toBe(0x00002000)
+		expect(id.EveryoneMask).toBe(0x00008000)
+		expect(id.NextOwnerMask).toBe(0x0008A000)
+		expect(id.Flags).toBe(0x00000100)
+		expect(id.ItemID).toBe(U)
+	})
+	it('defaults preserved: BypassRaycast=1, RayTargetID=ZERO, RezData slam masks = item masks', () => {
+		const buf = hand.encodeRezObject({
+			agentId: A, sessionId: S, seq,
+			rayStart: [4, 5, 6], rayEnd: [4, 5, 6],
+			inventoryData: inv,
+		})
+		const m = decode(buf)
+		const rez = m.blocks.RezData[0]
+		expect(rez.BypassRaycast).toBe(1)
+		expect(rez.RayTargetID).toBe('00000000-0000-0000-0000-000000000000')
+		expect(rez.RayStart).toEqual([4, 5, 6])
+		// Legacy slam fields default to the item's own masks (FS pack_permissions_slam).
+		expect(rez.ItemFlags).toBe(0x00000100)
+		expect(rez.GroupMask).toBe(0x00002000)
+		expect(rez.EveryoneMask).toBe(0x00008000)
+		expect(rez.NextOwnerMask).toBe(0x0008A000)
 	})
 })

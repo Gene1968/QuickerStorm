@@ -50,14 +50,35 @@ export function useLLUDP() {
 		emit(C.OBJECT_SIT, { targetId })
 	}
 
-	function sendSelect(localIds) {
+	// FS parity: a normal click selects the whole OBJECT — root + every child. OpenSim's SelectPrim
+	// (Scene.PacketHandlers.cs:198-226) loops the ids we send and calls SendPropertiesToClient PER
+	// PRIM, so expanding here is what gets per-part ObjectProperties for the whole linkset. Ids with
+	// no store record pass through unexpanded (linksetMembers returns [id]). Dedupe across inputs.
+	function expandLinksets(localIds) {
 		const ids = Array.isArray(localIds) ? localIds : [localIds]
-		emit(C.OBJECT_SELECT, { localIds: ids })
+		const out = new Set()
+		for (const id of ids) for (const m of world.linksetMembers(id)) out.add(m)
+		return [...out]
+	}
+
+	function sendSelect(localIds) {
+		emit(C.OBJECT_SELECT, { localIds: expandLinksets(localIds) })
 	}
 
 	function sendDeselect(localIds) {
-		const ids = Array.isArray(localIds) ? localIds : [localIds]
-		emit(C.OBJECT_DESELECT, { localIds: ids })
+		// Membership is recomputed at deselect time: if the linkset changed between select and
+		// deselect, the difference stays sim-selected (rare, harmless — the sim clears selection
+		// state on its own timers; FS tracks selection nodes instead, which we don't need yet).
+		emit(C.OBJECT_DESELECT, { localIds: expandLinksets(localIds) })
+	}
+
+	// ObjectPermissions (Low 105, message_template.msg:2285) — flip PERM_* bits on one prim's
+	// base/owner/group/everyone/nextOwner mask. FS path: llpanelpermissions.cpp:1319 onCommitPerm →
+	// LLSelectMgr::selectionSetObjectPermissions. field = PF_* (see @/utils/objectPermissions.js),
+	// set = turn bits on/off, mask = PERM_* bits. NO root resolution — perms apply to the prim ids
+	// given (FS sends per selected object); callers pass the id(s) they mean.
+	function sendObjectPerms(localId, field, set, mask) {
+		emit(C.OBJECT_PERMS, { localId, field, set: !!set, mask })
 	}
 
 	function sendRename(localId, name) {
@@ -109,5 +130,5 @@ export function useLLUDP() {
 		emit(C.MAP_TELEPORT, { regionX, regionY, x, y, z })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
 }

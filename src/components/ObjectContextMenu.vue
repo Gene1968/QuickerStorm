@@ -9,13 +9,16 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useUiStore }    from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useSessionStore } from '@/stores/sessionStore'
 import { useLLUDP }      from '@/composables/useLLUDP'
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
+import { takeGate, takeCopyGate } from '@/utils/takeGating'
 import ContextMenuItem   from '@/components/ContextMenuItem.vue'
 
-const ui    = useUiStore()
-const world = useWorldStore()
-const inv   = useInventoryStore()
+const ui      = useUiStore()
+const world   = useWorldStore()
+const inv     = useInventoryStore()
+const session = useSessionStore()
 const { sendTouch, sendSit, sendDelete, takeObject, takeObjectCopy } = useLLUDP()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
@@ -43,9 +46,10 @@ function del() {
 // handle_take:6743-6803) — we don't track node mFolderID, so we always use the FT_OBJECT default
 // (llviewermenu.cpp:6799-6802). Zero UUID when inventory isn't loaded yet: OpenSim then routes an
 // owner-take to FromFolderID when set, else Lost & Found (InventoryAccessModule.cs:830-834) — the
-// item still reaches inventory, just not necessarily the Objects folder. Like
-// Delete above, FS's perm gate (enable_take, llviewermenu.cpp:6900-6940: owner, or transfer+modify)
-// is enforced by the sim — an untakeable object is a no-op. The sim's KillObject removes the mesh
+// item still reaches inventory, just not necessarily the Objects folder. The menu row pre-gates
+// via takeGate (client prediction of FS enable_take, llviewermenu.cpp:6900-6940: owner, or
+// transfer+modify), but the sim stays authoritative — an untakeable object that slips through
+// (unknown perms → enabled by convention) is a no-op. The sim's KillObject removes the mesh
 // and BulkUpdateInventory adds the item row; no local mutations here.
 function take() {
 	if (!menu.value) return
@@ -93,7 +97,18 @@ function edit() {
 }
 
 // FS menu_object order, lowercased; enabled = real backing, else disabled roadmap.
-const items = computed(() => [
+const items = computed(() => {
+	// Take / Take-copy perm gating — client-side prediction of OpenSim CanTakeObject /
+	// CanTakeCopyObject (PermissionsModule.cs:1963/2004) via takeGating.js (FS enable_take
+	// llviewermenu.cpp:6900 / enable_object_take_copy llviewermenu.cpp:10871). Unknown perms
+	// (ObjectProperties not yet arrived) → ENABLED per convention: the sel-sync watcher fires
+	// sendSelect when this menu opens (useWorldEngine.js:286), so props land moments later and
+	// this computed re-evaluates live (world.objects is reactive) — a brief enabled→disabled
+	// flip is acceptable. Helpers resolve linkset children to the root internally; avatar rows
+	// never reach this menu (AvatarContextMenu is separate).
+	const gTake = takeGate(world.objects, menu.value?.localId, session.agentId)
+	const gCopy = takeCopyGate(world.objects, menu.value?.localId, session.agentId)
+	return [
 	{
 		label: 'quickerSTORM',
 		submenu: [
@@ -165,11 +180,12 @@ const items = computed(() => [
 	{ label: 'Texture refresh',							action: refreshTextures },
 	{ label: 'Return',				disabled: true },
 	// FS pie order: Take / Take copy between Return and Pay (menu_object.xml:387-408).
-	{ label: 'Take',									action: take },
-	{ label: 'Take copy',								action: takeCopy },
+	{ label: 'Take',				disabled: gTake.disabled,	title: gTake.title,	action: take },
+	{ label: 'Take copy',			disabled: gCopy.disabled,	title: gCopy.title,	action: takeCopy },
 	{ label: 'Pay',					disabled: true },
 	{ label: 'Buy',					disabled: true },
-])
+	]
+})
 
 function onDocClick(e) {
 	if (!menu.value) return

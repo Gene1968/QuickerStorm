@@ -86,43 +86,43 @@ re-verified against the local FS/OpenSim checkouts, all suites green, staging bu
   type · Find-all-links · Replace-links · **wearing an item doesn't update the Appearance floater**. (All
   gated on AgentSetAppearance bake — see 🧠 Appearance / baked textures below.)
 
-### Drag-drop robustness (NEW 2026-07-02, from the drag-rez/share diagnosis) ⚡ batch-ready
-The 2026-07-01 "drag-to-rez/share dead" report predates the 2026-07-02 `copyMove` fix (which was
-live-verified working) — the code chain is coherent end-to-end. Real remaining gaps that make drops
-LOOK dead, all small:
-- **Rez drop raycasts terrain only** (`screenToGround` → terrainMesh, non-recursive) — dropping on a prim
-  floor/platform rezzes at ground far below or silently no-ops. Raycast prims too (or FS-style sim raycast:
-  rayStart=camera, BypassRaycast=0 + RayTargetID — lltooldraganddrop.cpp:1963-2008); toast on rejected drop.
-- **WorldCanvas rez gate rejects silently** — multi-select containing a folder → kind 'mixed' → no
-  preventDefault → no-drop cursor with zero feedback. Accept any payload whose anchor resolves to an
-  object item; hint when rejected.
-- **Give with zero feedback** — giveInventory skips unfound/no-transfer items silently when nothing sends;
-  ProfileFloater onGiveDrop returns silently on missing targetId. Toast the nothing-sent case.
-- **Add `@dragenter.prevent`** to the three drop zones (WorldCanvas / Profile / Conversations) — Chrome
-  tolerates dragover-only; stricter engines may not.
+### ✅ Drag-drop robustness — SHIPPED 2026-07-03 (uncommitted; NOT live-verified — DnD hard to drive via MCP)
+Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests green):
+- **Rez drop raycasts prims too** — new `screenToDropPoint()` (prim meshes incl. InstancedMesh pool first,
+  terrain fallback); toast on rejected drop. FS-style sim-raycast (rayStart=camera, BypassRaycast=0 +
+  RayTargetID) is wired as `rezObject(itemId, pos, opts)` hook (Package D) — client-side pick is the default.
+- **Multi-cargo drop = FS refuse** — reviewer caught the misread: FS REFUSES >1-cargo drops on land/objects
+  (`ACCEPT_YES_SINGLE`, lltooldraganddrop.cpp:2491/:2560/:674-681) → any multi-item/folder drag is rejected
+  with "Only one item can be dragged here at a time." toast (TooltipMustSingleDrop parity).
+- **Give feedback** — nothing-sent cases (unfound/no-transfer/missing targetId) now toast.
+- **`@dragenter.prevent`** added on all three drop zones (WorldCanvas / Profile / Conversations).
 - If drag "deadness" recurs in Chrome: check DevTools device emulation first (known Chromium DnD
   hit-test bug, already bitten twice) and stale Bun/Vite processes.
+- ⬜ live-verify by hand: drop an object on a prim floor (should rez ON it), multi-drag toast, give toasts.
 
 ### Object Build & Edit Floater — FEATURE-GAPS L170–186
 - edit name & description · numeric size/pos/rot input fields (fields editable → modify selected) · Select-Face radio
 - texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
 - Link/Unlink prims · Link-number ordering bug (L183) · **create/rez a prim in-world** (Build-tools)
-- **🐛 creator/owner names still not resolving** in the floater
-- **⚡ ObjectProperties-data BATCH (2026-07-03, from Gene — one pass, shared data plumbing):** all of
-  these are fed by getting per-object ObjectProperties/linkset data (ownerId, creatorId, perm masks,
-  link order) into worldStore on select:
-  · **Take / Take copy perm gating** — grey out when the sim would refuse (FS enable_take)
-  · **🐛 creator/owner names** (line above)
-  · **Link-number ordering bug (L183)** — match FS linkset child-prim link #s order
-  · **FS perms-checkbox TRI-STATE** — FS's Edit-floater perm checkboxes have a third look (faded /
-    different-color check, independent of enabled) = the linkset's prims/contents DISAGREE on that bit
-    ("mixed"/tentative state). Gene reads our missing tri-state as a clue that perms bits are being
-    folded/lost somewhere on our side — reproduce FS's per-bit aggregate before painting checkboxes.
-  · **🐛 rezzed copies often LOSE perms vs the inventory item** — suspect our REZ_OBJECT perm-mask
-    round-trip (client sends all five masks; verify against FS RezObject packing + what the rezzed
-    object reports) — investigate in this batch while the mask plumbing is open.
+- **✅ ObjectProperties-data BATCH — SHIPPED 2026-07-03 (uncommitted; core LIVE-VERIFIED osgrid):**
+  whole-linkset ObjectSelect (≤254-id chunks) → per-prim props into worldStore + `objectPermissions.js`
+  (selectGetPerm-port `aggregateBit` + `canTakeObject`/`canTakeCopyObject` mirroring PermissionsModule.cs).
+  · **Take / Take copy perm gating** ✅ LIVE-VERIFIED — greyed on a no-everyone-perms mailbox, enabled on a
+    takeable build; unknown-perms → enabled (sim authoritative, take-watchdog toasts refusals).
+  · **creator/owner names** ✅ LIVE-VERIFIED — reused existing NAME_REQ/UUIDNameReply plumbing; Creator
+    "Hiro Lecker" (non-friend) + Owner/LastOwner resolved. Group names still UUIDs (separate lookup, open).
+  · **Link numbers** — FS `mChildList` arrival-order convention (llfloatertools.cpp:623-647) via
+    `linksetMembers`/`linkNumberOf`; Object tab showed root + Link Count 18 live. ⬜ compare child link #s
+    vs FS on the known 154-prim linkset (old 47-vs-67 report) before closing L183.
+  · **TRI-STATE perm checkboxes** — `aggregateBit` on/off/mixed/unknown + indeterminate rendering
+    (PermCheckbox.vue); Gene's hunch partly confirmed: floater had a real **perm-bit swap** (permLetters
+    tested M=1<<13/C=1<<14/T=1<<15 — all shifted one bit; also Locked tested MODIFY not MOVE). Fixed via
+    shared constants. ⬜ live-verify mixed state on a perm-disagreeing linkset.
+  · **rezzed copies LOSE perms** — ROOT-CAUSED sim-side: OpenSim ignores ALL packet perm fields on rez
+    (InventoryAccessModule.cs:1151-1301); client packing audited CLEAN. Real risk = stale masks=0 IDB rows
+    from pre-2026-07-02 poisoning service rows on rename/perms-edit writes (see FEATURE-GAPS.md watch entry).
   NOTE: Gene reworked **ObjectEditFloater layout** (2026-07-03) toward the editable-fields end state —
-  build the "numeric size/pos/rot editable fields" task ON his layout, don't restructure it.
+  build the "numeric size/pos/rot editable fields" task ON his layout, don't restructure it. (Batch complied.)
   **✅ ACTUAL "no response" root cause FIXED 2026-07-03**: DeRezObject must reference the linkset **ROOT**
   prim — OpenSim silently `continue`s on child-prim ids BEFORE any perm check (Scene.Inventory.cs:2258-2260)
   and FS always sends the root via selection. We sent the CLICKED prim → every multi-prim build no-op'd

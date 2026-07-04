@@ -582,6 +582,24 @@ export function encodeObjectDescription(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+/** ObjectPermissions (Low 105) — flip permission bits on selected prims. Template
+ *  message_template.msg:2285: AgentData(AgentID+SessionID) + HeaderData{Override BOOL — god-bit,
+ *  always false for us} + ObjectData Variable {ObjectLocalID U32, Field U8, Set U8, Mask U32}.
+ *  Field = which mask (PERM_BASE 0x01 … PERM_NEXT_OWNER 0x10, llpermissionsflags.h:80-85);
+ *  Set = 1 turns Mask's bits on, 0 turns them off. FS path: llpanelpermissions.cpp:1319
+ *  onCommitPerm → LLSelectMgr::selectionSetObjectPermissions. Sim sends no reply — the client
+ *  re-issues ObjectSelect to refetch authoritative ObjectProperties. */
+export function encodeObjectPermissions(p: {
+  agentId: string; sessionId: string; seq: number; override?: boolean
+  objectData: { localId: number; field: number; set: boolean; mask: number }[]
+}): Buffer {
+  return encode('ObjectPermissions', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    HeaderData: { Override: !!p.override },
+    ObjectData: p.objectData.map(o => ({ ObjectLocalID: o.localId, Field: o.field, Set: o.set ? 1 : 0, Mask: o.mask })),
+  }, { seq: p.seq, reliable: true })
+}
+
 /** ObjectDelete (Low 89) — delete an object (sim routes to Trash). Force=false = normal owner delete
  *  (Force=true is the god/estate path). The sim enforces permissions regardless. */
 export function encodeObjectDelete(p: {
@@ -2498,16 +2516,26 @@ export function encodeUpdateInventoryItem(p: {
  *  Ported from ../phoenix-firestorm indra/newview/lltooldraganddrop.cpp
  *  (LLToolDragAndDrop::dropObject → RezObject; pack_permissions_slam for the RezData masks;
  *   item->packMessage(msg) for InventoryData — the same CRC'd block UpdateInventoryItem uses).
- *  WHY BypassRaycast=1 + RayEnd=position, RayEndIsIntersection=0: rez AT the given point rather
- *  than casting a ray; FS sets RayStart/RayEnd to the drop point and RayEndIsIntersection=false.
+ *  WHY BypassRaycast=1 (default) + RayEnd=position, RayEndIsIntersection=0: rez AT the given point
+ *  rather than casting a ray; FS sets RayStart/RayEnd to the drop point and RayEndIsIntersection=false.
+ *  Sim-raycast mode (FS lltooldraganddrop.cpp:1963-1971 + 1999-2003 dropObject): pass
+ *  bypassRaycast=false + rayTargetId=<hit prim> + rayStart=<camera pos> — OpenSim then derives the
+ *  final position via Scene.cs:2376 GetNewRezLocation (entry Scene.cs:2551 RezObject).
  *  WHY RemoveItem = !copyable: a no-copy item is consumed from inventory when rezzed (FS passes
- *  remove_from_inventory when the item lacks copy perm); copyable items stay in inventory.
+ *  remove_from_inventory when the item lacks copy perm); copyable items stay in inventory. NOTE the
+ *  authoritative consume is server-side regardless: InventoryAccessModule.cs:1316-1327
+ *  DoPostRezWhenFromItem deletes the item iff the SERVICE row lacks PermissionMask.Copy.
  *  NOTE: RezData's ItemFlags/GroupMask/EveryoneMask/NextOwnerMask are legacy "permission slam"
  *  fields the modern sim ignores (see FS comment), but we still pack them for template correctness.
+ *  NOTE on InventoryData CRC + assetId=ZERO_UUID: OpenSim ignores the packet CRC and every perm
+ *  field here — it re-reads the inventory-service item row (InventoryAccessModule.cs:1151-1301
+ *  DoPreRezWhenFromItem; FS calls these packet perms "CRUFT", lltooldraganddrop.cpp:3583). We pack
+ *  the full CRC'd block anyway for template correctness (message_template.msg:6560-6605, Low 293).
  */
 export function encodeRezObject(p: {
   agentId: string; sessionId: string; seq: number; groupId?: string
   rayStart: [number, number, number]; rayEnd: [number, number, number]
+  bypassRaycast?: boolean; rayTargetId?: string
   rezSelected?: boolean; removeItem?: boolean
   itemFlags?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
   inventoryData: {
@@ -2551,8 +2579,9 @@ export function encodeRezObject(p: {
   return encode('RezObject', {
     AgentData: { AgentID: p.agentId, SessionID: p.sessionId, GroupID: p.groupId ?? ZERO_UUID },
     RezData: {
-      FromTaskID: ZERO_UUID, BypassRaycast: 1,
-      RayStart: p.rayStart, RayEnd: p.rayEnd, RayTargetID: ZERO_UUID,
+      // BypassRaycast defaults ON (rez AT RayEnd); only an explicit false enables sim raycast.
+      FromTaskID: ZERO_UUID, BypassRaycast: p.bypassRaycast === false ? 0 : 1,
+      RayStart: p.rayStart, RayEnd: p.rayEnd, RayTargetID: p.rayTargetId ?? ZERO_UUID,
       RayEndIsIntersection: false, RezSelected: !!p.rezSelected, RemoveItem: !!p.removeItem,
       ItemFlags: (p.itemFlags ?? flags) >>> 0,
       GroupMask: slamGroupMask, EveryoneMask: slamEveryMask, NextOwnerMask: slamNextMask,
