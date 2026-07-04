@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useWorldEngine } from '@/composables/useWorldEngine'
 import { useInventory } from '@/composables/useInventory'
 import { useInventoryStore } from '@/stores/inventoryStore'
+import { useWorldStore } from '@/stores/worldStore'
 import { useNotifications } from '@/composables/useNotifications'
 import { resolveRezzableAnchor } from '@/utils/rezzableAnchor'
 import HoverCursorBadge from '@/components/HoverCursorBadge.vue'
@@ -10,6 +11,7 @@ const canvasRef = ref(null)
 const { hoverAction, hoverPos, altFocus, screenToDropPoint } = useWorldEngine(canvasRef)
 const { rezObject } = useInventory()
 const inv = useInventoryStore()
+const world = useWorldStore()
 const { notifyInfo } = useNotifications()
 // Alt held → force the Zoom (7) magnifier badge: Alt+click sets the camera focal point. Overrides
 // any object-hover action so the focus affordance is unambiguous.
@@ -46,7 +48,15 @@ function onDrop(e) {
 		notifyInfo('Cannot rez there', 'Drop point missed the world (sky or water) — drop onto ground or an object.')
 		return
 	}
-	rezObject(res.itemId, hit)
+	// FS-parity placement (lltooldraganddrop.cpp:1963-2003 dropObject): let the SIM raycast from
+	// the camera through the drop point (BypassRaycast=0) — it lands the object ON the first
+	// surface, offset by the object's extents, instead of embedding its center AT the client hit.
+	// RayTargetID = the prim the client ray hit (sim raycasts against that object specifically).
+	rezObject(res.itemId, hit, {
+		rayStart: hit.rayStart ?? undefined,
+		rayTargetId: hit.hitLocalId != null ? world.objects.get(hit.hitLocalId)?.fullId : undefined,
+		bypassRaycast: false,
+	})
 }
 </script>
 

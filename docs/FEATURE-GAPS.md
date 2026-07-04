@@ -209,6 +209,40 @@ Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdat
   ObjectUpdate race or a stale-cache localId whose fullId changed (ghost-adjacent). All later selects matched
   N/N. Consider: buffer unmatched props replies briefly and re-apply on next upsert, or re-request on miss.
 - [x] **Object-tab "Locked" tested the wrong bit (found + FIXED 2026-07-03)** — the checkbox tested `ownerMask & 0x4000` (= PERM_MODIFY), but FS keys Locked off **PERM_MOVE** on the owner mask (llpanelobject.cpp:646-663; onCommitLock :2585-2595 clears/sets PERM_MOVE|PERM_MODIFY together on PERM_OWNER, display test is MOVE alone) — so a no-mod-but-movable object wrongly showed Locked. The 2026-07-03 Package-B report's claim that the 0x4000 literal "was already correct" was FALSE. Fixed: `lockedFromOwnerMask()` (permCheckboxState.js, tested) tests PERM_MOVE (0x80000), null mask → unchecked. Checkbox remains display-only; wiring the FS onCommitLock toggle (ObjectPermissions PERM_OWNER, !locked, PERM_MOVE|PERM_MODIFY) is part of the "Edit permissions" gap above.
+- [x] **Live TE tint change never re-rendered (found + FIXED 2026-07-04)** — Gene's report: prim tinted #f3ce40
+  AFTER rez stayed untinted in-world (647726000) while a copy rezzed already-tinted showed it (647726011); reload
+  also fixed it. Root cause: `upsertMesh`'s existing-mesh branch (useWorldEngine.js) only updated scale/rot/pos —
+  TE `defaultColor`/`faceColors` from a live ObjectUpdate never reached the material (decode+store were correct).
+  Fix: keyed in-place material repaint (per-face + single-mat, keeps texture maps, no geometry rebuild) on TE-color
+  change, FS `LLViewerObject::setTEColor` semantics. Same-day: Edit-floater tint chip now shows FIRST face's
+  effective color even when faces disagree (FS `getSelectedTEValue` swatch semantics, llpanelface.cpp:1160) and
+  `isMultiColor` resolves null face slots to the default instead of counting the UNUSED default as a distinct
+  color (all-faces-tinted-same false-"Multiple" fix). Texture/UV/repeats live-change still not re-applied (only
+  color) — that's the "texture anim/scripts" gap.
+  **DEEPER root cause found same day (Gene: newly-rezzed copies STILL white while chip correct):** the sim can
+  encode a uniform tint as per-face `faceColors` overrides with NO `defaultColor` — and every single-material
+  color site (isNew `teColor`/alpha, texture-load callback, `reapplyDiffuse` backfill, TE-repaint single-mat
+  branch) read ONLY `defaultColor` → built white. All four now use effective tint = `defaultColor ??
+  faceColors.find(Boolean)` (first-face, FS-swatch style). Geometry cache was exonerated (groups survive the
+  qs-geom round-trip). Mixed-color prims forced single-material (no face map: hollow/cut) now show face-0's
+  color instead of white — approximation until per-face materials cover those shapes.
+  **ROUND 3 (Gene re-test, live record 647728562):** STILL white — the sim sends an explicit WHITE
+  `defaultColor [1,1,1,1]` with the tint only in `faceColors[0]`, so the round-2 `defaultColor ?? faceColors`
+  fallback never fell through. Two fixes: (1) precedence corrected to FIRST-FACE-EFFECTIVE
+  (`faceColors[0] ?? defaultColor` — the FS getSelectedTEValue rule the chip already used) at all four
+  single-material sites; (2) `hasMultiFaceMesh` now routes a MESH to per-face materials on per-face COLOR
+  variation too (was: ≥2 distinct textures only) — so face-0-gold/others-white meshes render per-face
+  correctly instead of flattening to one material. Watch: per-face arrays aren't distance-gated like the
+  single-texture path (cold-load fan-out note at the texture callback).
+- [x] **Selection "halo" — deselect needed a click meters away (found + FIXED 2026-07-04)** — the selection
+  highlight `LineSegments` (child of the selected mesh) is raycastable: Three's `Line.raycast` applies a
+  1-world-unit threshold tube around every edge, so any click within ~1-2m of the selection re-hit the object
+  via its own highlight → deselect-on-miss unreachable, nearby objects unselectable. Fix: `lines.raycast=()=>{}`
+  (also cures right-click + hover misidentification). Bonus: clicking a gizmo arrow/ring VISUAL no longer
+  deselects (ray-hit on gizmoGroup children = handled, not a miss).
+- [x] **Del key deletes selected in-world object(s) (ADDED 2026-07-04)** — world-focus only (target = body or
+  canvas; inventory rows/text inputs keep their own Delete), no modifiers → MenuBar `deleteSelectedObject()`
+  (linkset-root-resolving DeRezObject → Trash, recoverable). FS Edit ▸ Delete parity.
 - [ ] Object face raycast picking — currently picks bounding box; need per-triangle for correct face selection
 - [ ] Open / unpack box contents (RequestTaskInventory + Xfer)
 - [ ] Take, Delete, Copy to inventory (perms + Phase 3 caps)

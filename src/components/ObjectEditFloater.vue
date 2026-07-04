@@ -379,11 +379,24 @@ const distinctTextures = computed(() => {
 	return [...set]
 })
 const isMultiTexture = computed(() => distinctTextures.value.length > 1)
+// FS swatch semantics (llselectmgr.h getSelectedTEValue + llpanelface.cpp:1160-1163): the color
+// swatch shows the FIRST TE's *effective* color even when faces disagree — "Multiple" flags the
+// disagreement, but the chip is never blanked to white. Effective face color = face override ??
+// prim default; a null faceColors slot means "uses the default", so it must be RESOLVED, not
+// dropped (and the unused default must NOT count when every face overrides it — the old logic
+// read an all-faces-tinted-gold prim as gold+white = false "Multiple").
+const chipTint = computed(() => {
+	const o = obj.value
+	if (!o) return null
+	const f = o.faceColors
+	return (f && f.length ? (f[0] ?? o.defaultColor) : o.defaultColor) ?? null
+})
 const isMultiColor = computed(() => {
-	const faces = obj.value?.faceColors ?? []
+	const o = obj.value
+	if (!o) return false
+	const faces = o.faceColors ?? []
 	const key = (c) => (c ? c.map((v) => Math.round(v * 255)).join(',') : 'def')
-	const set = new Set(faces.filter(Boolean).map(key))
-	if (obj.value?.defaultColor) set.add(key(obj.value.defaultColor))
+	const set = new Set(faces.map((c) => key(c ?? o.defaultColor)))
 	return set.size > 1
 })
 // Per-face diffuse chips: only faces that explicitly override the default get a chip (FS shows
@@ -1074,8 +1087,8 @@ function close() {
 												<button
 													title="Click to open color picker"
 													class="w-6 min-h-12 rounded-sm border border-edge"
-													:style="obj.defaultColor
-														? { background: `rgba(${Math.round(obj.defaultColor[0]*255)},${Math.round(obj.defaultColor[1]*255)},${Math.round(obj.defaultColor[2]*255)},${obj.defaultColor[3].toFixed(2)})` }
+													:style="chipTint
+														? { background: `rgba(${Math.round(chipTint[0]*255)},${Math.round(chipTint[1]*255)},${Math.round(chipTint[2]*255)},${chipTint[3].toFixed(2)})` }
 														: { background: 'rgba(255,255,255,0.05)' }"
 												></button>
 												<div class="text-2xs">Tint</div>
@@ -1138,7 +1151,7 @@ function close() {
 											<span v-if="isMultiColor" class="text-accent font-semibold">Multiple</span>
 											<input
 												v-else
-												:value="obj.defaultColor ? obj.defaultColor.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
+												:value="chipTint ? chipTint.slice(0,3).map(v => Math.round(v*255)).join(', ') : '255, 255, 255'"
 												readonly
 												class="bg-fg/20 py-0 px-1.5 w-full text-fg font-mono text-2xs"
 											/>

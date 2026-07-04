@@ -91,6 +91,12 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
 - **Rez drop raycasts prims too** — new `screenToDropPoint()` (prim meshes incl. InstancedMesh pool first,
   terrain fallback); toast on rejected drop. FS-style sim-raycast (rayStart=camera, BypassRaycast=0 +
   RayTargetID) is wired as `rezObject(itemId, pos, opts)` hook (Package D) — client-side pick is the default.
+  **2026-07-04 follow-up (Gene: "rez-on-ground very imprecise"):** (a) drop ray now SKIPS invisible prims
+  (`!mesh.visible`, opacity≤0.05 transparents, hidden instanced) — alpha-0 skirt/trigger prims between camera
+  and terrain were intercepting ground drops onto unseen surfaces; (b) canvas drops now use the FS sim-raycast
+  path by default (rayStart=camera + RayTargetID=hit prim + BypassRaycast=0, lltooldraganddrop.cpp:1963-2003)
+  — the sim lands the object ON the first surface offset by its extents instead of embedding center-AT-point.
+  ⬜ re-test ground + on-object drops (on-object placement semantics changed from embed-at-hit to sit-on-surface).
 - **Multi-cargo drop = FS refuse** — reviewer caught the misread: FS REFUSES >1-cargo drops on land/objects
   (`ACCEPT_YES_SINGLE`, lltooldraganddrop.cpp:2491/:2560/:674-681) → any multi-item/folder drag is rejected
   with "Only one item can be dragged here at a time." toast (TooltipMustSingleDrop parity).
@@ -335,6 +341,7 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 - **Should be able to RIGHT-CLICK → Open a box** (open object contents / Xfer) → Right-click menus (object) +
   Object Build&Edit.
 - **Create tool NEEDED soon** (rez/create a prim in-world) → Object Build & Edit (Build-tools).
+- **Drag world to select multiple & coalesced/multiple take/copy needed soon** 
 - **Working GIZMO handles NEEDED soon** (move/rotate/scale/copy) → Object Build & Edit.
 - **Scripted motion**: some works now, some doesn't — investigate which ObjectUpdate/TerseUpdate motion paths we
   handle vs miss. **Scripted texture pos/anim** (TextureAnim: moving water, scrolling text, cell-anim) would help

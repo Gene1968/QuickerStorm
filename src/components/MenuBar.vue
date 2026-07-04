@@ -122,6 +122,17 @@ function onKey(e) {
 		e.preventDefault()
 		ui.openNextInventory()
 	}
+	// Del — delete the selected in-world object (FS: Del on a selection → DeRezObject → Trash,
+	// recoverable; menu_viewer.xml Edit ▸ Delete shortcut). Only fires with WORLD focus (body or
+	// canvas): inventory rows own their Delete keydown, and text inputs need Del for editing.
+	if (e.key === 'Delete' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+		const t = e.target
+		if (t !== document.body && t?.tagName !== 'CANVAS') return
+		if (!hasSelectedObject()) return
+		e.preventDefault()
+		deleteSelectedObject()
+		return
+	}
 }
 
 onMounted(() => {

@@ -80,11 +80,23 @@ function pickPrimTexture(obj) {
 // textured surface (wall/window/trim) to one texture. Multi-material rendering needs the per-face
 // data; gate on meshId only (prim box/cyl face→group mapping is unreliable — see design note).
 function hasMultiFaceMesh(obj) {
-	if (!obj.meshId || !Array.isArray(obj.faceTextures)) return false
-	const set = new Set()
-	if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
-	for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
-	return set.size >= 2
+	if (!obj.meshId) return false
+	if (Array.isArray(obj.faceTextures)) {
+		const set = new Set()
+		if (isRealTex(obj.defaultTexture)) set.add(obj.defaultTexture)
+		for (const f of obj.faceTextures) if (isRealTex(f)) set.add(f)
+		if (set.size >= 2) return true
+	}
+	// Per-face COLOR variation qualifies too (2026-07-04): a mesh with an explicit white default
+	// and a tint only in faceColors[0] (live: 647728562, gold face 0) flattened to a single WHITE
+	// material — the tint never rendered. Any non-null face color differing from the default →
+	// per-face materials (buildFaceMaterials already resolves color per face).
+	if (Array.isArray(obj.faceColors)) {
+		const key = (c) => (c ? c.map((v) => Math.round(v * 255)).join(',') : null)
+		const dk = key(obj.defaultColor) ?? '255,255,255,255'
+		for (const c of obj.faceColors) { const k = key(c); if (k && k !== dk) return true }
+	}
+	return false
 }
 
 // WHY: a square box / cylinder whose faces genuinely differ → render per-face (one material per
@@ -1121,6 +1133,12 @@ export function useWorldEngine(canvasRef) {
 					return
 				}
 			}
+			// Click on a gizmo handle's VISUAL (arrow/ring/cube) must not deselect — the drag
+			// handler owns those; a ray that only hit gizmo geometry is "handled", not a miss.
+			if (gizmoGroup) {
+				const gh = _raycaster.intersectObjects(gizmoGroup.children, true)
+				if (gh.length > 0) return
+			}
 			// Miss — clicked terrain/water/sky/avatar: drop selection.
 			uiStore.editObjectId = null
 			return
@@ -1218,14 +1236,20 @@ export function useWorldEngine(canvasRef) {
 		_raycaster.setFromCamera(_pickNdc, camera)
 		_raycaster.far = 1000
 		// Prim pass — skip avatars (own + others); terrain/water/skirt aren't in meshMap.
+		// Skip prims the user can't SEE (hidden by cull/awaitingGeom, or fully transparent):
+		// an alpha-0 skirt/trigger prim sitting between camera and terrain otherwise intercepts
+		// the ray and ground drops land meters off on an unseen surface (2026-07-03 report).
 		const primTargets = []
 		meshMap.forEach((mesh, localId) => {
 			if (localId === ownAvatarLocalId) return
 			const obj = worldStore.objects.get(localId)
 			if (!obj || obj.pcode === PCODE_AVATAR) return
+			if (!mesh.visible) return
+			const m0 = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+			if (m0 && m0.transparent && m0.opacity <= 0.05) return
 			primTargets.push(mesh)
 		})
-		if (_instancePool) for (const im of _instancePool.meshes()) primTargets.push(im)
+		if (_instancePool) for (const im of _instancePool.meshes()) { if (im.visible) primTargets.push(im) }
 		const primHits = _raycaster.intersectObjects(primTargets, true)
 		if (primHits.length > 0) {
 			const hit = primHits[0]
@@ -1238,14 +1262,22 @@ export function useWorldEngine(canvasRef) {
 				if (hitMesh) hitLocalId = hitMesh.userData.localId
 			}
 			const p = hit.point
-			return { x: p.x, y: -p.z, z: p.y, hitLocalId: hitLocalId ?? null }
+			return { x: p.x, y: -p.z, z: p.y, hitLocalId: hitLocalId ?? null, rayStart: _cameraSlPos() }
 		}
 		// Prim miss → terrain fallback (same conversion as screenToGround).
 		if (!terrainMesh) return null
 		const terrHits = _raycaster.intersectObject(terrainMesh, false)
 		if (!terrHits.length) return null
 		const tp = terrHits[0].point
-		return { x: tp.x, y: -tp.z, z: tp.y, hitLocalId: null }
+		return { x: tp.x, y: -tp.z, z: tp.y, hitLocalId: null, rayStart: _cameraSlPos() }
+	}
+
+	// Camera position in SL region coords — the rayStart FS uses for sim-raycast rez placement
+	// (lltooldraganddrop.cpp:1963 dropObject: ray_start = camera position).
+	function _cameraSlPos() {
+		if (!camera) return null
+		const c = camera.position
+		return { x: c.x, y: -c.z, z: c.y }
 	}
 
 	// Scroll wheel: zoom in orbit mode or third-person; forward/back in explore mode
@@ -1939,6 +1971,11 @@ export function useWorldEngine(canvasRef) {
 		const edges = new THREE.EdgesGeometry(mesh.geometry)
 		const mat   = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85 })
 		const lines = new THREE.LineSegments(edges, mat)
+		// Decorative only — MUST NOT intercept pick rays: Line.raycast applies a 1-world-unit
+		// threshold "tube" around every edge, which made every click within ~1-2m of the selected
+		// object re-hit it via this child → the deselect-on-miss branch was unreachable and
+		// nearby objects couldn't be selected (Gene 2026-07-04 "click several meters away").
+		lines.raycast = () => {}
 		lines.renderOrder = 998
 		mesh.add(lines)
 		highlightLines.push(lines)
@@ -2149,8 +2186,16 @@ export function useWorldEngine(canvasRef) {
 			// blank prims (e.g. particle emitters whose ObjectUpdateCompressed TE we don't yet decode
 			// — see FEATURE-GAPS particle compressed-path). Hot pink stays reserved for truly broken
 			// objects (bad pos/scale/NaN geom) so it keeps signaling "find and inspect me".
-			const teColor = obj.defaultColor
-				? new THREE.Color(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+			// Effective whole-prim tint = FIRST FACE's effective color (faceColors[0] ?? defaultColor),
+			// FS-swatch precedence — NOT defaultColor-first: the sim often sends an explicit WHITE
+			// default with the real tint only in face overrides (live: 647728562 gold in
+			// faceColors[0], defaultColor [1,1,1,1]) and default-first painted those white while
+			// the floater chip (already first-face) showed the right color (Gene 2026-07-04).
+			const effTint = (Array.isArray(obj.faceColors) && obj.faceColors.length
+				? (obj.faceColors[0] ?? obj.defaultColor)
+				: obj.defaultColor) ?? null
+			const teColor = effTint
+				? new THREE.Color(effTint[0], effTint[1], effTint[2])
 				: null
 			const primColor = (obj._placeholder || geoBad) ? PLACEHOLDER_COLOR : (teColor ?? 0xffffff)
 			// ── Slice 2: hybrid lit materials ───────────────────────────────────
@@ -2183,9 +2228,9 @@ export function useWorldEngine(canvasRef) {
 			// prims see-through to the white background, washing the whole scene white. With depthWrite
 			// on, a translucent prim still occludes what's behind it (tinted-glass look) — correct enough
 			// without a full back-to-front transparent sort, and no white-out.
-			if (!isAvatar && !obj._placeholder && obj.defaultColor && obj.defaultColor[3] < 0.99) {
+			if (!isAvatar && !obj._placeholder && effTint && effTint[3] < 0.99) {
 				mat.transparent = true
-				mat.opacity = obj.defaultColor[3]
+				mat.opacity = effTint[3]
 			}
 
 			// ── Mesh / sculpt / prim geometry: bake off-thread, replace the placeholder cube ──────
@@ -2331,8 +2376,12 @@ export function useWorldEngine(canvasRef) {
 					if (tex && mesh.parent && mesh.material === mat) {
 						mat.map = tex
 						// SL renders texture × color tint. Keep the TE tint if present (else white) so a
-						// tinted prim with a plain texture isn't forced white.
-						if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+						// tinted prim with a plain texture isn't forced white. First-face-effective
+						// precedence (see effTint above).
+						const cbTint = (Array.isArray(obj.faceColors) && obj.faceColors.length
+							? (obj.faceColors[0] ?? obj.defaultColor)
+							: obj.defaultColor) ?? null
+						if (cbTint) mat.color.setRGB(cbTint[0], cbTint[1], cbTint[2])
 						else mat.color.set(0xffffff)
 						applyTexAlpha(mat, tex, obj)   // #17b: blend gradient alphas, see helper
 						mat.needsUpdate = true
@@ -2551,6 +2600,41 @@ export function useWorldEngine(canvasRef) {
 					}
 				}
 				normalizeChildTransform(mesh)
+				// TE tint update (2026-07-04): a full ObjectUpdate for an existing mesh can carry a
+				// CHANGED TextureEntry color (object tinted after rez) — everything above only touches
+				// scale/rot/pos, so the new tint never reached the material and the prim stayed the
+				// color it was built with. Repaint in place (no geometry rebuild, keeps texture maps);
+				// FS re-tints via LLViewerObject::setTEColor on every TE change. Keyed so the common
+				// pos-only resync is a string-compare no-op.
+				if (!obj._placeholder && mesh.material) {
+					// First else-visit repaints too (key unset): the build may predate the tint by one
+					// update — repainting with the already-applied color is an idempotent no-op.
+					const teKey = JSON.stringify([obj.defaultColor ?? 0, obj.faceColors ?? 0])
+					if (mesh.userData._teColorKey !== teKey) {
+						const tint = (m, fc) => {
+							if (fc) {
+								m.color.setRGB(fc[0], fc[1], fc[2])
+								if (fc[3] < 0.99) { m.transparent = true; m.opacity = fc[3] }
+								else m.opacity = 1   // tint alpha cleared; transparent flag stays with the texture's alpha mode
+							} else if (m.map) {
+								m.color.set(0xffffff)   // no tint → show true texture colors (buildFaceMaterials semantics)
+							} else {
+								m.color.set(0xffffff)   // SL "Blank": untinted untextured prim IS white
+							}
+							m.needsUpdate = true
+						}
+						if (Array.isArray(mesh.material)) {
+							// Groups are SL-numbered (identity faceMap — same as every buildFaceMaterials call site).
+							mesh.material.forEach((m, i) => tint(m, obj.faceColors?.[i] ?? obj.defaultColor))
+						} else {
+							// Single material: first-face-effective tint (same precedence as build).
+							tint(mesh.material, (Array.isArray(obj.faceColors) && obj.faceColors.length
+								? (obj.faceColors[0] ?? obj.defaultColor)
+								: obj.defaultColor) ?? null)
+						}
+					}
+					mesh.userData._teColorKey = teKey
+				}
 			}
 			// WHY: NameValue data can arrive in a later ObjectUpdate after the mesh was created.
 			// Refresh label text whenever we get a real name so "Avatar" placeholder gets replaced.
@@ -4402,7 +4486,11 @@ export function useWorldEngine(canvasRef) {
 		getTexture(texId, xform, nearRefDist(obj)).then(tex => {
 			if (!tex || !mesh.parent || mesh.material !== mat || mat.map) return
 			mat.map = tex
-			if (obj.defaultColor) mat.color.setRGB(obj.defaultColor[0], obj.defaultColor[1], obj.defaultColor[2])
+			// Effective tint: first-face-effective, same precedence as the build path.
+			const bfTint = (Array.isArray(obj.faceColors) && obj.faceColors.length
+				? (obj.faceColors[0] ?? obj.defaultColor)
+				: obj.defaultColor) ?? null
+			if (bfTint) mat.color.setRGB(bfTint[0], bfTint[1], bfTint[2])
 			else mat.color.set(0xffffff)
 			applyTexAlpha(mat, tex, obj)
 			mat.needsUpdate = true
