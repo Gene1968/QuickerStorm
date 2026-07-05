@@ -34,6 +34,7 @@ const {
 	interfaceMuted,
 	ambientVolume,
 	soundsVolume,
+	soundsMuted,
 	musicVolume,
 	mediaVolume,
 	voiceVolume,
@@ -110,10 +111,9 @@ const kbpsBarStyle = computed(() => {
 	return { height: `${(0.1 + frac * 0.65).toFixed(2)}rem` }
 })
 
-// Stub channels — static display only (no routing yet)
+// Stub channels — static display only (no routing yet). Sounds is WIRED (see row above stubs).
 const stubChannels = [
 	{ label: 'Ambient', vol: ambientVolume },
-	{ label: 'Sounds', vol: soundsVolume },
 	{ label: 'Music', vol: musicVolume },
 	{ label: 'Media', vol: mediaVolume },
 	{ label: 'Voice', vol: voiceVolume },
@@ -202,7 +202,7 @@ const stubChannels = [
 		<Transition name="dd">
 			<div
 				v-if="showDropdown"
-				class="absolute right-0 top-full mt-1 w-64 bg-panel border border-edge rounded-lg shadow-2xl me-1 p-3 z-[600]"
+				class="absolute right-0 top-full mt-1 w-64 bg-panel border border-edge rounded-lg shadow-2xl me-1 p-1.5 px-2 z-[600]"
 				@mouseenter="onEnter"
 				@mouseleave="onLeave"
 			>
@@ -218,7 +218,7 @@ const stubChannels = [
 							max="100"
 							:value="toSlider(masterVolume)"
 							@input="fromSlider($event, masterVolume)"
-							class="flex-1 accent-accent h-1"
+							class="flex-1 h-1 accent-accent"
 						/>
 						<button
 							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
@@ -232,7 +232,7 @@ const stubChannels = [
 						</button>
 					</div>
 
-					<div class="border-t border-edge my-0.5" />
+					<hr class="border-t border-edge mt-[0.0625rem]" />
 
 					<!-- Interface row (wired) -->
 					<div class="flex items-center gap-2">
@@ -245,7 +245,7 @@ const stubChannels = [
 							max="100"
 							:value="toSlider(interfaceVolume)"
 							@input="fromSlider($event, interfaceVolume)"
-							class="flex-1 accent-accent h-1"
+							class="flex-1 h-1 accent-accent"
 						/>
 						<button
 							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
@@ -253,6 +253,29 @@ const stubChannels = [
 							@click="interfaceMuted = !interfaceMuted"
 						>
 							<VolumeX v-if="interfaceMuted" :size="16" />
+							<Volume2 v-else :size="16" />
+						</button>
+					</div>
+
+					<!-- Sounds row (wired — in-world object/triggered sounds bus) -->
+					<div class="flex items-center gap-2">
+						<span class="text-xs text-fg w-20 shrink-0">
+							Sounds
+						</span>
+						<input
+							type="range"
+							min="0"
+							max="100"
+							:value="toSlider(soundsVolume)"
+							@input="fromSlider($event, soundsVolume)"
+							class="flex-1 h-1 accent-accent"
+						/>
+						<button
+							class="text-xs w-5 h-5 flex items-center justify-center shrink-0 rounded-sm hover:bg-white/10 transition-colors"
+							:class="soundsMuted ? 'text-red-400' : 'text-fg-subtle'"
+							@click="soundsMuted = !soundsMuted"
+						>
+							<VolumeX v-if="soundsMuted" :size="16" />
 							<Volume2 v-else :size="16" />
 						</button>
 					</div>
@@ -272,14 +295,14 @@ const stubChannels = [
 							max="100"
 							:value="toSlider(ch.vol.value)"
 							disabled
-							class="flex-1 h-1"
+							class="flex-1 h-1 accent-accent"
 						/>
 						<div class="w-5 h-5 shrink-0" />
 					</div>
 				</div>
 
 				<!-- Gear → Preferences Sound & Media -->
-				<div class="flex justify-end mt-2 pt-2 border-t border-edge">
+				<div class="flex justify-end mt-1 pt-1 border-t border-edge">
 					<button
 						class="flex items-center gap-1 text-xs text-fg-muted hover:text-fg transition-colors"
 						@click="openSoundPrefs"

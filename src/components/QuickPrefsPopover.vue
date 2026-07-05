@@ -104,7 +104,7 @@ function openPreferences() {
 			<div class="qp-row qp-row--disabled">
 				<span class="qp-row-label">Draw Distance</span>
 				<div class="qp-slider-wrap">
-					<input type="range" min="32" max="512" step="8" value="128" disabled class="qp-slider" />
+					<input type="range" min="32" max="512" step="8" value="128" disabled class="qp-slider accent-accent" />
 					<span class="qp-slider-val">128m</span>
 				</div>
 			</div>

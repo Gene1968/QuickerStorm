@@ -5,18 +5,28 @@
  * This still has a lot of code from the older app we started from
  *
  * AudioContext is unlocked on the first user click or keydown — no consent modal needed.
- * Volume channels: Master (isAllAudioMuted / masterVolume) and Interface are wired.
- * Ambient / Sounds / Music / Media / Voice channels are stubbed (state only, no routing yet).
+ * Volume channels: Master (isAllAudioMuted / masterVolume), Interface, and Sounds (in-world —
+ * routed as a real GainNode bus, see getSoundsBus) are wired.
+ * Ambient / Music / Media / Voice channels are stubbed (state only, no routing yet).
+ *
+ * FS UI sounds (S-7): DON'T USE the 37 Firestorm OGG interface sounds in assets/audio/sl-fs/ to replace
+ * the current mp3 cues via the persisted `fsUiSounds` preference (default off). Name mapping
+ * ports FS's UISnd* settings (phoenix-firestorm settings.xml, applied via make_ui_sound
+ * llui.cpp:156) onto our existing playSound call-site filenames.
  */
 import { ref, watch } from 'vue'
 
-const _sfx = import.meta.glob('../assets/audio/*.mp3', { eager: true, query: '?url', import: 'default' })
+const _sfx   = import.meta.glob('../assets/audio/*.mp3', { eager: true, query: '?url', import: 'default' })
+const _fsSfx = import.meta.glob('../assets/audio/sl-fs/*.ogg', { eager: true, query: '?url', import: 'default' })
 
 // ── localStorage keys ─────────────────────────────────────────────────────────
 const LS_ALL_AUDIO      = 'qs_all_audio_muted'
 const LS_VOL_MASTER     = 'qs_vol_master'
 const LS_VOL_INTERFACE  = 'qs_vol_interface'
 const LS_MUTE_INTERFACE = 'qs_mute_interface'
+const LS_VOL_SOUNDS     = 'qs_vol_sounds'
+const LS_MUTE_SOUNDS    = 'qs_mute_sounds'
+const LS_FS_UI_SOUNDS   = 'qs_fs_ui_sounds'
 
 function _readBool(key, fallback = false) {
 	try { const v = localStorage.getItem(key); return v === null ? fallback : v === '1' } catch { return fallback }
@@ -67,9 +77,61 @@ watch(masterVolume,    v => _writeFloat(LS_VOL_MASTER,    v))
 watch(interfaceVolume, v => _writeFloat(LS_VOL_INTERFACE, v))
 watch(interfaceMuted,  v => _writeBool(LS_MUTE_INTERFACE, v))
 
-// ── Stub channels (state + persistence; no routing yet) ──────────────────────
+// ── Sounds channel — in-world object/triggered sounds (S-8: real GainNode routing) ────
+export const soundsVolume = ref(typeof window !== 'undefined' ? _readFloat(LS_VOL_SOUNDS, 1) : 1)
+export const soundsMuted  = ref(typeof window !== 'undefined' ? _readBool(LS_MUTE_SOUNDS, false) : false)
+watch(soundsVolume, v => { _writeFloat(LS_VOL_SOUNDS, v); _applyBusGains() })
+watch(soundsMuted,  v => { _writeBool(LS_MUTE_SOUNDS, v); _applyBusGains() })
+watch(masterVolume,    _applyBusGains)
+watch(isAllAudioMuted, _applyBusGains)
+
+// Pure: bus gain values from channel state — the single source of truth for the routing math
+// (unit-tested without Web Audio).
+export function busGainValues({ allMuted, master, soundsMuted: sMuted, sounds }) {
+	const clamp = v => Math.min(1, Math.max(0, Number(v) || 0))
+	return {
+		master: allMuted ? 0 : clamp(master),
+		sounds: sMuted ? 0 : clamp(sounds),
+	}
+}
+
+// In-world sound bus: (per-source chain) → soundsGain → masterGain → destination. Interface
+// sounds do NOT pass through this bus (they stay on the HTMLAudio path), so the Sounds
+// slider/mute affects only in-world playback — FS "Sounds" channel semantics
+// (audio_settings.xml Sounds slider → gAudiop SFX secondary gain).
+let _masterGain = null
+let _soundsGain = null
+
+function _applyBusGains() {
+	if (!_soundsGain) return
+	const g = busGainValues({
+		allMuted: isAllAudioMuted.value, master: masterVolume.value,
+		soundsMuted: soundsMuted.value, sounds: soundsVolume.value,
+	})
+	_masterGain.gain.value = g.master
+	_soundsGain.gain.value = g.sounds
+}
+
+/**
+ * The Sounds-channel bus for in-world playback (useSoundEngine). Returns { ctx, input } where
+ * `input` is the GainNode sources connect into, or null while the AudioContext is still locked
+ * (no user gesture yet). Lazily builds soundsGain → masterGain → destination on first use.
+ */
+export function getSoundsBus() {
+	const ac = getCtx()
+	if (!ac) return null
+	if (!_soundsGain) {
+		_masterGain = ac.createGain()
+		_masterGain.connect(ac.destination)
+		_soundsGain = ac.createGain()
+		_soundsGain.connect(_masterGain)
+		_applyBusGains()
+	}
+	return { ctx: ac, input: _soundsGain }
+}
+
+// ── Stub channels (state only; no routing yet) ────────────────────────────────
 export const ambientVolume = ref(1); export const ambientMuted = ref(false)
-export const soundsVolume  = ref(1); export const soundsMuted  = ref(false)
 export const musicVolume   = ref(1); export const musicMuted   = ref(false)
 export const mediaVolume   = ref(1); export const mediaMuted   = ref(false)
 export const voiceVolume   = ref(1); export const voiceMuted   = ref(false)
@@ -97,14 +159,62 @@ const INTERFACE_SOUNDS = new Set([
 	'pop.mp3', 'pop!.mp3', 'ui-open.mp3', 'ui-dismiss.mp3',
 	'woosh.mp3', 'blip.mp3', 'tick.mp3', 'beep.mp3', 'bell.mp3',
 	'notification.mp3', 'notification2.mp3', 'dm.mp3', 'sent.mp3', 'vibrate.mp3',
+	'typing.mp3', 'chime.mp3', 'complication.mp3',
 ])
+
+// ── FS UI sounds (S-7) ────────────────────────────────────────────────────────
+/** Persisted preference: play the Firestorm OGG UI sounds instead of the current mp3 cues. */
+export const fsUiSounds = ref(typeof window !== 'undefined' && _readBool(LS_FS_UI_SOUNDS, false))
+watch(fsUiSounds, v => _writeBool(LS_FS_UI_SOUNDS, v))
+
+// Existing call-site filename → FS UI sound OGG. FS name/UUID reference: settings.xml UISnd*
+// entries in phoenix-firestorm (played via make_ui_sound, llui.cpp:156). Line cites are into
+// phoenix-firestorm/indra/newview/app_settings/settings.xml.
+export const FS_UI_SOUND_MAP = {
+	'tick.mp3':          'click.ogg',                                  // UISndClick :17096 (4c8c3c77-de8d)
+	'pop.mp3':           'window open.ogg',                            // UISndWindowOpen :17672 — FloaterWindow open AND close share pop.mp3 (call sites out of scope here)
+	'pop!.mp3':          'window close.ogg',                           // UISndWindowClose :17661
+	'ui-open.mp3':       'window open.ogg',                            // UISndWindowOpen :17672
+	'ui-dismiss.mp3':    'window close.ogg',                           // UISndWindowClose :17661
+	'woosh.mp3':         'teleport.ogg',                               // UISndTeleportOut :17628 (d7a9a565-a013)
+	'typing.mp3':        'keyboard loop.ogg',                          // UISndTyping :17650 (5e191c7b-8996)
+	'chime.mp3':         'instant message notification.ogg',           // IM arrival — UISndNewIncomingIMSession family :17316
+	'dm.mp3':            'IM session, new incoming (2 bells).ogg',     // UISndNewIncomingIMSession :17316
+	'notification.mp3':  'IM start.ogg',                               // UISndStartIM :17606
+	'notification2.mp3': 'IM session, new incoming (2 bells).ogg',
+	'bell.mp3':          'bell ting.ogg',                              // UISndAlert :17052 (ed124764-705d)
+	'beep.mp3':          'null keystroke.ogg',                         // UISndBadKeystroke :17063
+	'blip.mp3':          'pie menu appear (ding).ogg',                 // FS pie-menu cue
+	'complication.mp3':  'bell ting.ogg',                              // disconnect alert → UISndAlert :17052
+	'bump.mp3':          'object collision.ogg',                       // FS object-collision cue
+	'rezz.mp3':          'object rez (shake).ogg',                     // UISndObjectRezIn :17382 (3c8fc726-1fd6)
+	'poof.mp3':          'object delete.ogg',                          // UISndObjectDelete :17360
+	'photo.mp3':         'snapshot.ogg',                               // UISndSnapshot :17595
+	'buy.mp3':           'money change, up (cash register bell).ogg',  // UISndMoneyChangeUp :17283
+	'coin.mp3':          'money change, down (coins).ogg',             // UISndMoneyChangeDown :17261
+}
+
+/** Pure filename resolution (unit-tested): FS mode maps known cues into sl-fs/, else unchanged. */
+export function resolveSoundFile(filename, fsOn = fsUiSounds.value) {
+	if (fsOn && FS_UI_SOUND_MAP[filename]) return `sl-fs/${FS_UI_SOUND_MAP[filename]}`
+	return filename
+}
+
+function _resolveUrl(filename) {
+	const rel = resolveSoundFile(filename)
+	if (rel.startsWith('sl-fs/')) {
+		// Fall back to the original mp3 if the OGG is ever missing from the bundle.
+		return _fsSfx[`../assets/audio/${rel}`] ?? _sfx[`../assets/audio/${filename}`]
+	}
+	return _sfx[`../assets/audio/${rel}`]
+}
 
 // ── File-based playback ───────────────────────────────────────────────────────
 export function playSound(filename, volume = 1) {
 	const isInterface = INTERFACE_SOUNDS.has(filename)
 	if (isInterface ? !interfaceSoundOk() : !soundOk()) return
 	try {
-		const url = _sfx[`../assets/audio/${filename}`]
+		const url = _resolveUrl(filename)
 		if (!url) return
 		const audio = new Audio(url)
 		const channelVol = isInterface ? interfaceVolume.value : 1
@@ -121,7 +231,7 @@ export function playSoundForNearbyWorld(filename, volume = 1) {
 function playSoundLooping(filename, volume = 1) {
 	if (!soundOk() || _loopAudio) return
 	try {
-		const url = _sfx[`../assets/audio/${filename}`]
+		const url = _resolveUrl(filename)
 		if (!url) return
 		_loopAudio = new Audio(url)
 		_loopAudio.loop = true
@@ -279,9 +389,12 @@ export function useAudio() {
 		masterVolume,
 		// Interface channel
 		interfaceVolume, interfaceMuted,
+		// FS UI sounds preference (S-7)
+		fsUiSounds,
+		// Sounds channel (in-world — real GainNode routing, see getSoundsBus)
+		soundsVolume,  soundsMuted,
 		// Stub channels (UI only for now)
 		ambientVolume, ambientMuted,
-		soundsVolume,  soundsMuted,
 		musicVolume,   musicMuted,
 		mediaVolume,   mediaMuted,
 		voiceVolume,   voiceMuted,

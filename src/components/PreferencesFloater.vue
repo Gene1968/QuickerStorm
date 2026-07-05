@@ -14,6 +14,7 @@ import { useUiStore } from '@/stores/uiStore.js'
 import {
 	isAllAudioMuted, toggleAllAudioMute,
 	masterVolume, interfaceVolume, interfaceMuted,
+	soundsVolume, soundsMuted, fsUiSounds,
 } from '@/composables/useAudio.js'
 import { useProximityVoice } from '@/composables/useProximityVoice.js'
 import { Search as SearchIcon } from '@lucide/vue'
@@ -61,9 +62,9 @@ const soundSubTabs = [
 	{ id: 'voice',  label: 'Voice'  },
 ]
 
+// Sounds is WIRED (real GainNode bus — see useAudio getSoundsBus); the rest stay stubs.
 const soundStubRows = [
 	{ label: 'Ambient', hint: 'Environment sounds — wind, water.' },
-	{ label: 'Sounds',  hint: 'In-world object sounds.' },
 	{ label: 'Music',   hint: 'Parcel music stream.' },
 	{ label: 'Media',   hint: 'In-world video / stream.' },
 	{ label: 'Voice',   hint: 'Voice chat output.' },
@@ -475,6 +476,26 @@ onUnmounted(() => {
 									</div>
 								</div>
 
+								<!-- Sounds (wired — in-world object/triggered sounds) -->
+								<div class="pf-row">
+									<div class="pf-row-info">
+										<span class="pf-row-label">Sounds</span>
+										<span class="pf-row-hint">In-world object sounds — triggered and looping.</span>
+									</div>
+									<div class="flex items-center gap-2">
+										<input type="range" min="0" max="100"
+											:value="toSlider(soundsVolume)"
+											@input="fromSlider($event, soundsVolume)"
+											class="w-28 accent-accent" />
+										<button
+											class="text-xs w-6 h-6 flex items-center justify-center rounded-sm hover:bg-white/10"
+											:class="soundsMuted ? 'text-red-400' : 'text-fg-subtle'"
+											@click="soundsMuted = !soundsMuted"
+											:title="soundsMuted ? 'Unmute' : 'Mute'"
+										>{{ soundsMuted ? '🔇' : '🔊' }}</button>
+									</div>
+								</div>
+
 								<!-- Stub rows -->
 								<div v-for="row in soundStubRows" :key="row.label" class="pf-row opacity-50">
 									<div class="pf-row-info">
@@ -482,9 +503,26 @@ onUnmounted(() => {
 										<span class="pf-row-hint">{{ row.hint }}</span>
 									</div>
 									<div class="flex items-center gap-2">
-										<input type="range" min="0" max="100" value="75" disabled class="w-28" />
+										<input type="range" min="0" max="100" value="75" disabled class="w-28 accent-accent" />
 										<span class="pf-chip-soon">soon</span>
 									</div>
+								</div>
+
+								<!-- FS UI sounds (S-7): swap our mp3 cues for the Firestorm OGG UI sounds -->
+								<div class="pf-row">
+									<div class="pf-row-info">
+										<span class="pf-row-label">Classic viewer UI sounds</span>
+										<span class="pf-row-hint">Use the Firestorm interface sounds — click, window open/close, teleport, IM.</span>
+									</div>
+									<button
+										class="theme-toggle"
+										:class="{ dark: fsUiSounds }"
+										:title="fsUiSounds ? 'Switch back to quickerSTORM sounds' : 'Use Firestorm UI sounds'"
+										@click="fsUiSounds = !fsUiSounds"
+									>
+										<span class="theme-knob" />
+										<span class="theme-label">{{ fsUiSounds ? 'Firestorm' : 'quickerSTORM' }}</span>
+									</button>
 								</div>
 							</div>
 
