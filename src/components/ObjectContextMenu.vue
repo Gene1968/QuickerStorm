@@ -11,6 +11,7 @@ import { useWorldStore } from '@/stores/worldStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useLLUDP }      from '@/composables/useLLUDP'
+import { useTaskInventory } from '@/composables/useTaskInventory'
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
 import { takeGate, takeCopyGate } from '@/utils/takeGating'
 import ContextMenuItem   from '@/components/ContextMenuItem.vue'
@@ -96,6 +97,17 @@ function edit() {
 	ui.focusFloater('object-edit')
 }
 
+// FS "Open" (llfloateropenobject.cpp): copy the prim's contents into a new agent-inventory folder
+// named after the object. useTaskInventory fetches contents first if needed and toasts every
+// outcome (empty / no reply / copying N items) — fire-and-forget here, the menu closes immediately.
+const { openContents } = useTaskInventory()
+function openBox() {
+	if (!menu.value) return
+	const o = world.objects.get(menu.value.localId)
+	openContents(menu.value.localId, o?.name)
+	close()
+}
+
 // FS menu_object order, lowercased; enabled = real backing, else disabled roadmap.
 const items = computed(() => {
 	// Take / Take-copy perm gating — client-side prediction of OpenSim CanTakeObject /
@@ -135,7 +147,7 @@ const items = computed(() => {
 	{ label: 'Edit…',									action: edit },
 	{ label: 'Edit PBR material',	disabled: true },
 	{ label: 'Build',				disabled: true },
-	{ label: 'Open',				disabled: true },
+	{ label: 'Open',				action: openBox },
 	{ sep: true },
 	{ label: 'Sit here',								action: sit },
 	{ sep: true },

@@ -12,6 +12,9 @@ import { useLLUDP } from '@/composables/useLLUDP'
 import { aggregateBit, PERM_TRANSFER, PERM_MODIFY, PERM_COPY, PERM_EXPORT, PERM_MOVE, PF_EVERYONE, PF_NEXT_OWNER } from '@/utils/objectPermissions.js'
 import { nextOwnerCopyTentative, nextOwnerTransferTentative, everyoneCopyTentative, everyoneMoveEditable, everyoneCopyEditable, everyoneExportEditable, lockedFromOwnerMask } from '@/components/permCheckboxState.js'
 import { C } from '@shared/protocol.js'
+import { quatToEulerDeg, eulerDegToQuat } from '@/utils/eulerQuat.js'
+import { itemIcon } from '@/utils/inventoryIcons.js'
+import { useTaskInventory } from '@/composables/useTaskInventory'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import PermCheckbox from '@/components/PermCheckbox.vue'
 import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
@@ -56,7 +59,7 @@ const gizmoOps = [
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
 // ── Editable Name / Description (General tab) → ObjectName (107) / ObjectDescription (108) ──
-const { sendRename, sendDescription, sendObjectPerms, sendSelect } = useLLUDP()
+const { sendRename, sendDescription, sendObjectPerms, sendSelect, sendPosition, sendScale, sendRotation } = useLLUDP()
 const editName = ref('')
 const editDesc = ref('')
 // Reseed editable fields whenever the selected object — or its sim-provided name/desc — changes,
@@ -204,22 +207,88 @@ const typeInfo = computed(() => {
 // get their geometry from the asset, so the path/profile knobs aren't meaningful for them.
 const showPrimShape = computed(() => !!obj.value?.shape && typeInfo.value.kind !== 'mesh')
 
-// WHY: quaternion (xyzw) → Euler degrees (XYZ) for human-readable display. Read-only (Phase 2/3
-// edit would feed back through ObjectUpdate with perms).
-function quatToEulerDeg(q) {
-	if (!q) return [0, 0, 0]
-	const [x, y, z, w] = q
-	const sinr = 2 * (w * x + y * z)
-	const cosr = 1 - 2 * (x * x + y * y)
-	const roll  = Math.atan2(sinr, cosr)
-	const sinp  = 2 * (w * y - z * x)
-	const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * Math.PI / 2 : Math.asin(sinp)
-	const siny  = 2 * (w * z + x * y)
-	const cosy  = 1 - 2 * (y * y + z * z)
-	const yaw   = Math.atan2(siny, cosy)
-	const deg   = (r) => (r * 180 / Math.PI).toFixed(1)
-	return [deg(roll), deg(pitch), deg(yaw)]
+// quatToEulerDeg / eulerDegToQuat now live in @/utils/eulerQuat.js (round-trip unit-tested).
+
+// ── Editable Position / Size / Rotation (Object tab) → MultipleObjectUpdate ──
+// FS llpanelobject.cpp commit semantics: send on Enter/blur only (:2598-2621 onCommit* →
+// sendPosition/sendScale/sendRotation), rotation and scale always packed WITH position
+// (:2187/:2236). ROOT prims only for now: a child's stored pos/rot are PARENT-relative, so
+// sending them through a linked-set edit would fling the object — "Edit linked parts" is the
+// follow-up that unlocks children.
+const xf = reactive({ pos: ['', '', ''], size: ['', '', ''], rot: ['', '', ''] })
+// While an axis input has focus, live ObjectUpdate echoes must not clobber the user's typing —
+// every OTHER axis keeps live-updating (a moving object visibly ticks its numbers, FS-style).
+const xfFocus = ref(null)
+const isRootPrim = computed(() => (obj.value?.parentId ?? 0) === 0)
+const canXform = computed(() => canModify.value && isRootPrim.value && obj.value?.pcode === 9)
+const xformTitle = computed(() =>
+	!canModify.value ? "You can't modify this object"
+	: !isRootPrim.value ? 'Select the linkset root to move/resize (child editing needs Edit-linked-parts)'
+	: 'Enter or Tab to apply · ↑/↓ or arrows to nudge')
+watch(() => [ui.editObjectId, obj.value?.pos, obj.value?.scale, obj.value?.rot], () => {
+	const o = obj.value
+	const rotDeg = o?.rot ? quatToEulerDeg(o.rot) : ['', '', '']
+	for (let i = 0; i < 3; i++) {
+		if (xfFocus.value !== `pos-${i}`)  xf.pos[i]  = o?.pos?.[i]   != null ? o.pos[i].toFixed(3)   : ''
+		if (xfFocus.value !== `size-${i}`) xf.size[i] = o?.scale?.[i] != null ? o.scale[i].toFixed(3) : ''
+		if (xfFocus.value !== `rot-${i}`)  xf.rot[i]  = String(rotDeg[i])
+	}
+}, { immediate: true })
+const _clampN = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
+// Scale clamps: FS clamps to [min, regionMaxPrimScale] (llpanelobject.cpp:2204); OpenSim's
+// NonPhysicalPrimMax default is 256. Position: sim re-clamps to its own bounds — 8192 covers
+// var-regions. The sim's echo corrects anything we let through.
+const SCALE_MIN = 0.01, SCALE_MAX = 256
+function _parseTriad(model, fallback) {
+	return model.map((s, i) => {
+		const n = parseFloat(s)
+		return Number.isFinite(n) ? n : (fallback?.[i] ?? 0)
+	})
 }
+function commitPos() {
+	const o = obj.value
+	if (!o || !canXform.value) return
+	const v = _parseTriad(xf.pos, o.pos)
+	v[0] = _clampN(v[0], 0, 8192); v[1] = _clampN(v[1], 0, 8192); v[2] = _clampN(v[2], 0, 4096)
+	for (let i = 0; i < 3; i++) xf.pos[i] = v[i].toFixed(3)
+	if (o.pos && v.every((n, i) => Math.abs(n - o.pos[i]) < 0.0005)) return
+	sendPosition(o.localId, v, { linked: true })
+}
+function commitSize() {
+	const o = obj.value
+	if (!o || !canXform.value) return
+	const v = _parseTriad(xf.size, o.scale).map((n) => _clampN(n, SCALE_MIN, SCALE_MAX))
+	for (let i = 0; i < 3; i++) xf.size[i] = v[i].toFixed(3)
+	if (o.scale && v.every((n, i) => Math.abs(n - o.scale[i]) < 0.0005)) return
+	sendScale(o.localId, v, { linked: true })
+}
+function commitRot() {
+	const o = obj.value
+	if (!o || !canXform.value) return
+	const v = _parseTriad(xf.rot, o.rot ? quatToEulerDeg(o.rot).map(parseFloat) : [0, 0, 0])
+		.map((n) => ((n % 360) + 360) % 360)   // FS normalizes spinners to 0-360
+	for (let i = 0; i < 3; i++) xf.rot[i] = v[i].toFixed(1)
+	if (o.rot && quatToEulerDeg(o.rot).every((d, i) => Math.abs(parseFloat(d) - v[i]) < 0.05)) return
+	sendRotation(o.localId, eulerDegToQuat(v[0], v[1], v[2]), { linked: true })
+}
+const XF_COMMIT = { pos: commitPos, size: commitSize, rot: commitRot }
+// M-3 nudge = the native number-input spinners (step 0.05 m / 0.5°): hold-to-repeat and ↑/↓ both
+// fire @change per step, which routes through XF_COMMIT — no custom stepper code needed.
+
+// ── Content tab: prim (task) inventory ────────────────────────────────────
+// useTaskInventory owns the wire + state (REQUEST_TASK_INV → TASK_INV/EMPTY); this tab is a thin
+// view over its per-localId entries (FS llpanelobjectinventory.cpp model). Contents belong to the
+// PRIM, not the linkset — we show the edited prim's own inventory, matching FS.
+const { taskInvFor, requestContents, openContents } = useTaskInventory()
+const contentState = computed(() => obj.value ? taskInvFor(obj.value.localId) : null)
+const contentItems = computed(() => contentState.value?.items ?? [])
+// Request on tab activation and when the edited object changes while the tab is showing. The
+// 3s guard in requestContents keeps rapid tab flips from spamming the sim.
+watch(() => [activeTab.value, ui.editObjectId], () => {
+	if (activeTab.value === 'content' && obj.value) requestContents(obj.value.localId)
+}, { immediate: true })
+function refreshContents() { if (obj.value) requestContents(obj.value.localId, { force: true }) }
+function openContentsClick() { if (obj.value) openContents(obj.value.localId, obj.value.name) }
 
 const profileCurveLabel = computed(() => {
 	const c = obj.value?.shape?.profileCurve
@@ -557,7 +626,7 @@ function close() {
 						:title="t.label"
 						class="ui-btn flex-1 flex items-center justify-center p-1 rounded-sm border transition-colors"
 						:class="t.disabled
-							? 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'
+							? 'border-edge text-fg/30 cursor-not-allowed bg-white/10'
 							: buildTool === t.id
 								? 'border-accent text-accent bg-accent/10'
 								: 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20'"
@@ -570,21 +639,21 @@ function close() {
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to move camera</p>
 					<div class="flex items-center gap-3">
 						<div class="flex flex-col whitespace-nowrap">
-							<label for="">🔘 Zoom</label>
-							<label for="">🔘 Orbit (Ctrl)</label>
-							<label for="">🔘 Pan (Ctrl+Shift)</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Zoom</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Orbit (Ctrl)</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Pan (Ctrl+Shift)</label>
 						</div>
 						<div class="w-full">
-							<div class="bg-accent w-full">slider</div>
+							<input type="range" min="0" max="100" value="75" disabled class="w-full accent-accent" />
 						</div>
 					</div>
 				</div>
 				<div v-else-if="buildTool === tools[1].id">
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Drag to move, Ctrl to lift, Ctrl+Shift to rotate</p>
 					<div class="flex flex-col whitespace-nowrap">
-						<label for="">🔘 Move</label>
-						<label for="">🔘 Lift (Ctrl)</label>
-						<label for="">🔘 Spin (Ctrl+Shift)</label>
+						<label for=""><input type="radio" class="accent-accent shrink-0"/> Move</label>
+						<label for=""><input type="radio" class="accent-accent shrink-0"/> Lift (Ctrl)</label>
+						<label for=""><input type="radio" class="accent-accent shrink-0"/> Spin (Ctrl+Shift)</label>
 					</div>
 				</div>
 				<div v-else-if="buildTool === tools[2].id">
@@ -632,30 +701,30 @@ function close() {
 							title="Select previous linked part or face"
 							:disabled="!canCycle"
 							class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-							:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
+							:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/10'"
 							@click="selectLink(-1)"
 						><ChevronLeftIcon class="w-3 h-3" /></button>
 						<button
 							title="Select next linked part or face"
 							:disabled="!canCycle"
 							class="ui-btn p-1 text-2xs rounded-sm border transition-colors"
-							:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]'"
+							:class="canCycle ? 'border-edge text-fg/70 hover:text-fg hover:bg-fg/20' : 'border-edge text-fg/30 cursor-not-allowed bg-white/10'"
 							@click="selectLink(1)"
 						><ChevronRightIcon class="w-3 h-3" /></button>
 						<button
 							title="Link selected objects (Phase 3 — perms)"
 							disabled
-							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
+							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/10"
 						>Link</button>
 						<button
 							title="Unlink selected object (Phase 3 — perms)"
 							disabled
-							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
+							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/10"
 						>Unlink</button>
 						<select
 							title="World (Phase 3)"
 							disabled
-							class="ui-btn ml-auto p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/[0.02]"
+							class="ui-btn ml-auto p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/10"
 						>
 							<option value="">World</option>
 							<option value="">Local</option>
@@ -704,23 +773,23 @@ function close() {
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to select land</p>
 					<div class="flex gap-5">
 						<div class="flex flex-col whitespace-nowrap">
-							<label for="">🔘 Select land</label>
-							<label for="">🔘 Flatten</label>
-							<label for="">🔘 Raise</label>
-							<label for="">🔘 Lower</label>
-							<label for="">🔘 Smooth</label>
-							<label for="">🔘 Roughen</label>
-							<label for="">🔘 Revert</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Select land</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Flatten</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Raise</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Lower</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Smooth</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Roughen</label>
+							<label for=""><input type="radio" class="accent-accent shrink-0"/> Revert</label>
 						</div>
 						<div class="w-full">
 							<p>Bulldozer:</p>
 							<div class="grid grid-cols-[3.5rem_1fr] gap-x-1 mb-1">
 								<p>Size</p>
-								<div class="bg-accent w-full">slider</div>
+								<input type="range" min="0" max="100" value="75" disabled class="w-full accent-accent" />
 							</div>
 							<div class="grid grid-cols-[3.5rem_1fr] gap-x-1 mb-1">
 								<p>Strength</p>
-								<div class="bg-accent w-full">slider</div>
+								<input type="range" min="0" max="100" value="75" disabled class="w-full accent-accent" />
 							</div>
 							<button title="Modify selected land" class="ui-btn py-0.5 px-5 text-xs rounded-sm border transition-colors">Apply</button>
 						</div>
@@ -730,7 +799,7 @@ function close() {
 						<div class="ps-4">
 							<p class="mb-2">Area: ##### m<sup>2</sup></p>
 							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors">About land</button>
-							<label for="" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public"><input type="checkbox" class="accent-accent" /> Show owners</label>
+							<label for="" class="flex items-center gap-1" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public"><input type="checkbox" class="accent-accent" /> Show owners</label>
 						</div>
 					</div>
 					<div class="w-36 my-8 ps-2">
@@ -896,29 +965,32 @@ function close() {
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" class="accent-accent" :checked="!!obj.physical" disabled /> Physical</label>
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Auto-deletes after a short time"><input type="checkbox" class="accent-accent" :checked="!!obj.temporary" disabled /> Temporary</label>
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Avatar passes through — no collision"><input type="checkbox" class="accent-accent" :checked="!!obj.phantom" disabled /> Phantom</label>
-								<!-- Transform -->
-								<div class="my-2">
-									<div class="text-fg/50 text-2xs uppercase tracking-wide">Position (meters)</div>
+								<!-- Transform — editable (M-2) + nudge steppers (M-3); commit on Enter/Tab/blur -->
+								<div v-for="grp in [
+										{ kind: 'pos',  label: 'Position (meters)',  colors: ['text-red-500 font-bold', 'text-green-500 font-bold', 'text-blue-500 font-bold'] },
+										{ kind: 'size', label: 'Size (meters)',      colors: ['text-fg/40', 'text-fg/40', 'text-fg/40'] },
+										{ kind: 'rot',  label: 'Rotation (degrees)', colors: ['text-fg/40', 'text-fg/40', 'text-fg/40'] },
+									]" :key="grp.kind" class="my-2">
+									<div class="text-fg/50 text-2xs uppercase tracking-wide">{{ grp.label }}</div>
 									<div class="grid gap-1 text-xs">
-										<div><span class="text-red-500 font-bold">X</span> <span class="text-fg font-mono">{{ obj.pos?.[0]?.toFixed(3) ?? '—' }}</span></div>
-										<div><span class="text-green-500 font-bold">Y</span> <span class="text-fg font-mono">{{ obj.pos?.[1]?.toFixed(3) ?? '—' }}</span></div>
-										<div><span class="text-blue-500 font-bold">Z</span> <span class="text-fg font-mono">{{ obj.pos?.[2]?.toFixed(3) ?? '—' }}</span></div>
-									</div>
-								</div>
-								<div class="mb-2">
-									<div class="text-fg/50 text-2xs uppercase tracking-wide">Size (meters)</div>
-									<div class="grid gap-1 text-xs">
-										<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ obj.scale?.[0]?.toFixed(3) ?? '—' }}</span></div>
-										<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ obj.scale?.[1]?.toFixed(3) ?? '—' }}</span></div>
-										<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ obj.scale?.[2]?.toFixed(3) ?? '—' }}</span></div>
-									</div>
-								</div>
-								<div class="mb-2">
-									<div class="text-fg/50 text-2xs uppercase tracking-wide">Rotation (degrees)</div>
-									<div class="grid gap-1 text-xs">
-										<div><span class="text-fg/40">X</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[0] }}</span></div>
-										<div><span class="text-fg/40">Y</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[1] }}</span></div>
-										<div><span class="text-fg/40">Z</span> <span class="text-fg font-mono">{{ quatToEulerDeg(obj.rot)[2] }}</span></div>
+										<!-- Native number spinners (Gene 2026-07-05): press-and-hold + ↑/↓ step by `step`
+											and fire @change per step (FS-spinner feel) — no custom arrow buttons. -->
+										<div v-for="(axis, i) in ['X', 'Y', 'Z']" :key="axis" class="flex items-center gap-1">
+											<span :class="grp.colors[i]">{{ axis }}</span>
+											<input
+												v-model="xf[grp.kind][i]"
+												type="number"
+												:step="grp.kind === 'rot' ? 0.5 : 0.05"
+												:min="grp.kind === 'size' ? 0.01 : (grp.kind === 'pos' ? 0 : undefined)"
+												:readonly="!canXform"
+												:title="xformTitle"
+												class="w-20 bg-fg/20 border border-edge rounded-sm px-1 py-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="xfFocus = `${grp.kind}-${i}`; selectAll($event)"
+												@blur="xfFocus = null; onBlur(XF_COMMIT[grp.kind])"
+												@keyup.enter="onEnter(XF_COMMIT[grp.kind], $event)"
+												@change="canXform && XF_COMMIT[grp.kind]()"
+											/>
+										</div>
 									</div>
 								</div>
 							</div>
@@ -1290,7 +1362,7 @@ function close() {
 											<option value="default" :selected="defaultMapping.mapping === 'Default'">Default</option>
 											<option value="planar" :selected="defaultMapping.mapping === 'Planar'">Planar</option>
 										</select>
-										<button class="bg-white/[0.02] border border-edge rounded-sm py-[0.0625rem] px-2 w-full text-2xs text-fg/40 cursor-not-allowed" disabled>Align</button>
+										<button class="bg-white/10 border border-edge rounded-sm py-[0.0625rem] px-2 w-full text-2xs text-fg/40 cursor-not-allowed" disabled>Align</button>
 									</div>
 								</div>
 							</div>
@@ -1306,20 +1378,34 @@ function close() {
 						</template>
 					</template>
 					<!-- Content ─────────────────────────────────────────────── -->
-					<!-- WHY: FS-parity layout. Phase 2: empty inventory placeholder + disabled
-						New Script button. Inventory list arrives with HTTP-cap fetch in Phase 3. -->
+					<!-- Prim (task) inventory via RequestTaskInventory + Xfer (useTaskInventory).
+						FS llpanelobjectinventory.cpp model; Open = llfloateropenobject.cpp copy-to-agent-folder.
+						New Script / Edit stay disabled: no script editor yet (docs/FEATURE-GAPS.md scripts). -->
 					<template v-else-if="activeTab === 'content'">
-						<div class="flex items-center gap-1 pb-1">
-							<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>New Script</button>
-							<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Open</button>
-							<button class="px-2 py-1 text-2xs border border-edge rounded-sm text-fg/40 cursor-not-allowed bg-white/[0.02]" disabled>Edit</button>
-							<div class="ml-auto text-2xs text-fg/40">0 items</div>
-						</div>
-						<div class="border border-edge rounded-sm bg-white/[0.02] min-h-[10rem] flex items-center justify-center text-fg/30 italic text-xs px-4 text-center">
-							Inventory contents will appear here (Phase 3).
-						</div>
-						<div class="text-2xs text-fg/30 italic pt-1">
-							Object inventory uses HTTP capabilities — wired with Phase 3 cap layer.
+						<div class="p-0.5">
+							<div class="flex items-stretch gap-1 pb-1.5">
+								<button class="bg-white/10 border border-edge rounded-sm py-0.5 px-1 text-2xs leading-2.5 text-fg/40 cursor-not-allowed" disabled title="Content editing isn't supported yet">New script</button>
+								<button class="bg-white/10 border border-edge rounded-sm py-0.5 px-1 text-2xs leading-2.5 text-fg/40 cursor-not-allowed" disabled title="Content editing isn't supported yet">Perms</button>
+								<button class="bg-white/10 border border-edge rounded-sm py-0.5 px-1 text-2xs leading-2.5 text-fg/40 cursor-not-allowed enabled:text-fg enabled:hover:bg-fg/10 disabled:text-fg/40 disabled:cursor-not-allowed" :disabled="!contentItems.length" title="Copy contents to a new folder in your inventory" @click="openContentsClick">Copy to inv</button>
+								<button class="bg-white/10 border border-edge rounded-sm py-0.5 px-1 text-2xs leading-2.5 text-fg/40 cursor-not-allowed" disabled title="Item editing isn't supported yet">Edit / Open</button>
+								<div class="flex flex-col gap-1">
+									<button class="bg-white/10 hover:bg-fg/10 border border-edge rounded-sm py-0.5 px-1 text-2xs leading-2.5 text-fg" title="Reload obj contents from the region" @click="refreshContents">Refresh</button>
+									<button class="bg-white/10 hover:bg-fg/10 border border-edge rounded-sm py-0.5 px-1 text-2xs leading-2.5 text-fg/40 bg-white/10 cursor-not-allowed" disabled title="Item editing isn't supported yet" @click="confirm('Are you sure you want to modify scripts in selected objects?\n\n[ ] Don\'t show again\n\n\t\tOK\tCancel')">Reset scripts</button>
+								</div>
+							</div>
+							<div class="border border-edge rounded-sm bg-white/10 p-1 min-h-[10rem] max-h-72 overflow-y-auto text-xs">
+								<div v-if="contentState?.loading" class="p-8 font-medium text-center text-fg/40 italic">Loading contents…</div>
+								<div v-else-if="contentState?.error" class="p-8 font-medium text-center text-red-400/80">{{ contentState.error }}</div>
+								<div v-else-if="!contentItems.length" class="font-medium text-fg">📁 Contents (no elements)</div>
+								<template v-else>
+									<div class="font-medium text-fg">📁 Contents ({{ contentItems.length }} element{{ contentItems.length === 1 ? '' : 's' }})</div>
+									<div v-for="it in contentItems" :key="it.itemId" class="flex items-center gap-1 pe-1 ps-2.5 hover:bg-fg/5" :title="it.desc || it.name">
+										<span class="shrink-0">{{ itemIcon(it.assetType, it.invType) }}</span>
+										<span class="truncate text-fg">{{ it.name }}</span>
+										<div class="ml-auto shrink-0 w-7 text-start text-2xs text-fg/50 font-mono" title="Owner permissions (V/M/C/T/X)">{{ permLetters(it.ownerMask) }}</div>
+									</div>
+								</template>
+							</div>
 						</div>
 					</template>
 				</div>
