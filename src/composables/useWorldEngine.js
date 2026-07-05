@@ -30,6 +30,7 @@ import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePru
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
+import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_S } from '@/lib/scriptedMotion.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
@@ -335,6 +336,175 @@ export function useWorldEngine(canvasRef) {
 		if (_instancePool) { _instancePool.dispose(); _instancePool = null }
 		_partsCache.clear()
 		_lastMoveAt.clear()
+	}
+
+	// ── 🎬 Scripted motion & TextureAnim (cluster A–G) ────────────────────────
+	// Registries keep the per-frame cost O(animated): only objects with an active TextureAnim /
+	// llTargetOmega spin / linear velocity are stepped in animate() — never a full-scene scan.
+	const _texAnims = new Map()   // localId → { anim, state, maps:Set<THREE.Texture> } (maps = per-object clones)
+	const _motion   = new Map()   // localId → { vel, angVel, accum:THREE.Quaternion, prevRot, lastUpdateAt }
+	const _sqDq = [0, 0, 0, 0]              // scratch SL-frame ΔQ from omegaDeltaQuat (no per-frame alloc)
+	const _sqQ  = new THREE.Quaternion()    // scratch Three-frame ΔQ
+
+	// Active anim = ANIM_ON set (FS llviewertextureanim.cpp:83 gates everything on ON). rate 0 is
+	// still "active": the TE-repeat bypass + one static frame must apply (the sculpt-foliage
+	// static-UV trick carries mode ON, rate 0 garbage repeats — see parseTextureAnim WHY).
+	const activeAnim = (ta) => (ta && (ta.mode & TA_ON)) ? ta : null
+	const sameAnim = (a, b) => a.mode === b.mode && a.face === b.face && a.sizeX === b.sizeX &&
+		a.sizeY === b.sizeY && a.start === b.start && a.length === b.length && a.rate === b.rate
+
+	// Create/refresh/remove the anim registry entry for an object (runs on every upsertMesh).
+	function _syncTexAnim(obj) {
+		const anim = activeAnim(obj.textureAnim)
+		const cur = _texAnims.get(obj.localId)
+		if (!anim) { if (cur) _stopTexAnim(obj.localId); return }
+		if (cur) {
+			if (!sameAnim(cur.anim, anim)) { cur.anim = anim; cur.state = createTexAnimState() }
+			return   // keep registered texture clones — the next step re-transforms them
+		}
+		_texAnims.set(obj.localId, { anim, state: createTexAnimState(), maps: new Set() })
+		// Trap 2: an animated prim must not sit in the InstancedMesh pool (poolKey snapshots
+		// static UV). describeForPool refuses registered ids; promote out if already pooled.
+		if (uiStore.instancing && _instancePool?.has(obj.localId)) promoteOut(obj.localId)
+	}
+
+	// Drop the registry entry + dispose the per-object texture clones (they share the base
+	// texture's image source, so dispose only releases the clone's GL handle, not the cache's).
+	function _dropTexAnim(localId) {
+		const e = _texAnims.get(localId)
+		if (!e) return
+		for (const t of e.maps) t.dispose()
+		_texAnims.delete(localId)
+	}
+
+	// Anim turned OFF by a later update: dispose clones and restore the static TE transform —
+	// FS re-applies the TE offset/scale/rotation when the anim stops (llvovolume.cpp:812–840).
+	function _stopTexAnim(localId) {
+		const mesh = meshMap.get(localId)
+		const hadMaps = (_texAnims.get(localId)?.maps.size ?? 0) > 0
+		_dropTexAnim(localId)
+		if (!mesh || !hadMaps) return
+		const obj = worldStore.objects.get(localId)
+		if (!obj) return
+		if (Array.isArray(mesh.material)) buildFaceMaterials(mesh, obj)   // re-resolves each face w/ TE xform
+		else if (mesh.material?.map) { mesh.material.map = null; reapplyDiffuse(mesh, obj) }
+	}
+
+	// Per-object texture clone for an animated face. Trap 1: getTexture's xformCache clones are
+	// SHARED by static (uuid|repeat|offset|rot) key — mutating one per-frame would animate every
+	// prim using that texture. Clones share .source (no re-upload); disposed via _dropTexAnim.
+	function _animClone(localId, base) {
+		const t = base.clone()
+		t.userData.hasAlpha = base.userData.hasAlpha
+		t.wrapS = t.wrapT = THREE.RepeatWrapping
+		t.center.set(0.5, 0.5)   // FS rotates/scales about the face center: tex_mat.translate(-0.5,-0.5) (llvovolume.cpp:794)
+		t.colorSpace = THREE.SRGBColorSpace
+		t.needsUpdate = true
+		const e = _texAnims.get(localId)
+		if (e) e.maps.add(t)
+		return t
+	}
+
+	// Does the anim drive this SL face? FS animates face N only, or all when mFace == -1
+	// (llvovolume.cpp:740–744 start/end = mFace when 0 ≤ mFace ≤ last).
+	const animCoversFace = (anim, slFace) => anim.face < 0 || anim.face === slFace
+
+	// Register/refresh linear + angular motion from a RAW server update (never the merged store
+	// record: vel/angVel are OMITTED from the wire when ~0, so absence in an update means the
+	// object STOPPED — FS zeroes both on every update (llviewerobject.cpp declares new_angv/vel
+	// zero and sets them unconditionally at :2144/:2414). The merged store spread would keep
+	// stale motion forever.
+	function _noteMotionUpdate(o) {
+		const vel = o.vel ?? null
+		const angVel = o.angVel ?? null
+		let m = _motion.get(o.localId)
+		if (!vel && !angVel) {
+			if (m) { m.vel = null; m.angVel = null }   // keep prevRot/accum until the entry is reaped
+			return
+		}
+		if (!m) {
+			m = { vel: null, angVel: null, accum: new THREE.Quaternion(), prevRot: null, lastUpdateAt: 0 }
+			_motion.set(o.localId, m)
+			if (uiStore.instancing && _instancePool?.has(o.localId)) promoteOut(o.localId)   // trap 2
+		}
+		m.vel = vel
+		m.angVel = angVel
+		m.lastUpdateAt = performance.now()
+	}
+
+	// Apply a server rotation on top of the accumulated llTargetOmega spin — port of FS
+	// llviewerobject.cpp:2391–2414: resetRot() ONLY when the server rot actually changed
+	// (else a 10 Hz resync repeating the same rot would snap the spin back every update),
+	// then setRotation(new_rot * mAngularVelocityRot). LL's row-order rot*accum is
+	// premultiply(accum) in Three's column convention.
+	function applyServerRot(mesh, localId, rot) {
+		mesh.quaternion.copy(slQuatToThree(rot[0], rot[1], rot[2], rot[3]))
+		const m = _motion.get(localId)
+		if (!m) return
+		const p = m.prevRot
+		if (!p || p[0] !== rot[0] || p[1] !== rot[1] || p[2] !== rot[2] || p[3] !== rot[3]) {
+			m.accum.identity()   // FS resetRot() — server rot changed, drop accumulated spin
+			m.prevRot = [rot[0], rot[1], rot[2], rot[3]]
+		} else if (m.angVel) {
+			mesh.quaternion.premultiply(m.accum)   // same rot re-sent — re-apply the spin on top
+		}
+	}
+
+	// One shared per-frame stepper (FS LLViewerTextureAnim::updateClass + LLViewerObject::idleUpdate
+	// equivalents), called from animate() before renderer.render. O(animated) — walks only the
+	// registries; scratch vectors/quats reused, no per-frame allocation.
+	function stepScriptedMotion(dt) {
+		if (!(dt > 0)) return
+		// 🎬 B/C/D: texture animations — one stepper drives every registered per-object clone.
+		for (const e of _texAnims.values()) {
+			if (!e.maps.size) continue                       // textures not resolved yet
+			const r = stepTextureAnim(e.anim, e.state, dt)
+			if (!r) continue                                 // frame unchanged — no matrix churn
+			for (const t of e.maps) {
+				// FS texture matrix = T(-0.5,-0.5)·R(rot about -z)·S·T(off+0.5) (llvovolume.cpp:793–810),
+				// which is exactly Three's setUvTransform with center (0.5,0.5) — same mapping the
+				// static TE path uses in getTexture, so anim + TE transforms stay in one convention.
+				t.offset.set(r.offS, r.offT)
+				t.repeat.set(r.scaleS, r.scaleT)
+				t.rotation = r.rot
+			}
+		}
+		// 🎬 E/F: omega spin + linear dead reckoning.
+		const editId = uiStore.editObjectId
+		const nowMs = performance.now()
+		for (const [id, m] of _motion) {
+			if (!m.vel && !m.angVel) { _motion.delete(id); continue }   // stopped — reap lazily
+			if (id === editId || id === ownAvatarLocalId) continue      // FS gates on !isSelected() (llviewerobject.cpp:2546)
+			const mesh = meshMap.get(id)
+			if (!mesh) continue
+			// Avatars own their transform elsewhere (GSAP terse tween + yaw); don't spin/DR the capsule.
+			if (worldStore.objects.get(id)?.pcode === PCODE_AVATAR) continue
+			if (m.angVel && omegaDeltaQuat(m.angVel, dt, _sqDq)) {
+				// SL-frame ΔQ → Three frame via the slQuatToThree axis permutation (x, z, -y).
+				_sqQ.set(_sqDq[0], _sqDq[2], -_sqDq[1], _sqDq[3])
+				// FS: mAngularVelocityRot *= dQ; setRotation(getRotation()*dQ) (llviewerobject.cpp:7414–7419)
+				// — LL row-order "then dQ" = premultiply in Three. Applied to the mesh's own (local)
+				// quaternion for children too, exactly as FS applies it to the object's own rotation.
+				m.accum.premultiply(_sqQ)
+				mesh.quaternion.premultiply(_sqQ)
+			}
+			// Linear DR: roots only (children ride their parent — FS interpolates root motion and
+			// skips attachments, llviewerobject.cpp:2554).
+			// Stop predicting after MAX_INTERP_S without an update (FS sMaxUpdateInterpolationTime,
+			// llviewerobject.cpp:141/:2633 — linear only; omega deliberately keeps spinning :2638).
+			if (m.vel && (mesh.userData.parentId ?? 0) === 0 && mesh.parent === scene &&
+				(nowMs - m.lastUpdateAt) * 0.001 <= MAX_INTERP_S) {
+				// SL vel (m/s) → Three delta via the slToThree axis map (x, z, -y).
+				mesh.position.x += m.vel[0] * dt
+				mesh.position.y += m.vel[2] * dt
+				mesh.position.z += -m.vel[1] * dt
+			}
+		}
+	}
+
+	function _clearScriptedMotion() {
+		for (const id of [..._texAnims.keys()]) _dropTexAnim(id)
+		_motion.clear()
 	}
 	const hoverTextMeshes = new Set()  // meshes that currently have hover text
 	const _htVec3 = new THREE.Vector3()  // reused for hover-text distance calc
@@ -2363,8 +2533,15 @@ export function useWorldEngine(canvasRef) {
 			// approach. NOT applied to per-face meshes (handled below) — backfill skips multi-material, so
 			// gating them would strand them white when shown (extending per-face backfill is a follow-up).
 			if (primTexId && camDistToObj(obj) <= renderRadius()) {
+				// 🎬 A: ANIM_ON bypasses the TE repeats — identity UV; the anim matrix drives the
+				// transform instead (FS llface.cpp:1739–1759 sets os=ot=0, ms=mt=1, rot=0 when
+				// mTextureAnimp is set; llvovolume.cpp:723 animateTextures). Single-material prim =
+				// one shared texture for every face, so a face-targeted anim (face ≥ 0) is applied
+				// to the whole prim here (per-face split prims route through buildFaceMaterials,
+				// which honors textureAnim.face exactly).
+				const smAnim = activeAnim(obj.textureAnim)
 				// UV transform from TE; absent → SL defaults (repeat 1,1 / offset 0,0 / rot 0 = identity)
-				const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
+				const xform = smAnim ? null : uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
 				texCalls++
 				getTexture(primTexId, xform, nearRefDist(obj)).then(tex => {
 					// DIAG (P2): classify apply outcome to pin the white-scene cause.
@@ -2374,7 +2551,9 @@ export function useWorldEngine(canvasRef) {
 					else texApplied++
 					// Guard: region teardown may have disposed this mesh before the texture arrives.
 					if (tex && mesh.parent && mesh.material === mat) {
-						mat.map = tex
+						// Trap 1: animated faces get an UNCACHED per-object clone (base/xform-cache
+						// textures are shared across prims — stepping their offsets would animate them all).
+						mat.map = (smAnim && _texAnims.has(obj.localId)) ? _animClone(obj.localId, tex) : tex
 						// SL renders texture × color tint. Keep the TE tint if present (else white) so a
 						// tinted prim with a plain texture isn't forced white. First-face-effective
 						// precedence (see effTint above).
@@ -2497,7 +2676,9 @@ export function useWorldEngine(canvasRef) {
 			// Skip for avatars — their orientation is driven by yaw in animate() (own) /
 			// face indicator (others) and applying server rot tilts the capsule.
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
-				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+				// 🎬 E: server rot lands via applyServerRot so accumulated llTargetOmega spin is
+				// preserved on same-rot resyncs and reset on genuine changes (FS llviewerobject.cpp:2391–2414).
+				applyServerRot(mesh, obj.localId, obj.rot)
 			}
 			// WHY: Remember the world-absolute scale/pos so normalizeChildTransform can divide a
 			// prim-parent's scale back out (see helper). Avatars are never linked children.
@@ -2570,7 +2751,9 @@ export function useWorldEngine(canvasRef) {
 				mesh.userData.primScale = obj.scale.slice()
 			}
 			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
-				mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+				// 🎬 E: server rot lands via applyServerRot so accumulated llTargetOmega spin is
+				// preserved on same-rot resyncs and reset on genuine changes (FS llviewerobject.cpp:2391–2414).
+				applyServerRot(mesh, obj.localId, obj.rot)
 			}
 			if (obj.pos) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
@@ -2644,6 +2827,18 @@ export function useWorldEngine(canvasRef) {
 			}
 		}
 		if (obj.pcode !== PCODE_AVATAR) applyHoverText(mesh, obj)
+		// 🎬 A–D: (re)register the object's TextureAnim on every upsert — covers live updates AND
+		// cache-preseed paints (which never pass through onObjectUpdate's raw-payload hook).
+		if (obj.pcode !== PCODE_AVATAR) {
+			_syncTexAnim(obj)
+			// 🎬 E from cache: llTargetOmega is steady-state, so a cached angVel is trusted at paint
+			// time (FS persists omega in its object cache too). Cached LINEAR vel is NOT — the object
+			// almost certainly stopped since the cache write; live raw updates re-arm it via
+			// _noteMotionUpdate, which stays authoritative once any live update arrives.
+			if (obj.angVel && !_motion.has(obj.localId)) {
+				_noteMotionUpdate({ localId: obj.localId, angVel: obj.angVel })
+			}
+		}
 		// Particle system: (re)register an emitter for any object carrying psys; runs on every
 		// upsert (new AND update). The emitter follows the object's WORLD position via the mesh's
 		// world matrix (so linkset CHILD emitters — e.g. fireplace smoke on a house — emit at the
@@ -2665,6 +2860,9 @@ export function useWorldEngine(canvasRef) {
 
 	function removeMesh(localId) {
 		particles?.unregister(localId)
+		// 🎬 dispose the per-object animated-texture clones + drop motion state (trap 1 cleanup).
+		_dropTexAnim(localId)
+		_motion.delete(localId)
 		// WHY: a sim KillObject (object deleted) routes through removeMesh, but the object may now be
 		// instanced (not in meshMap). Drop the instance so it doesn't linger as a pool ghost.
 		if (_instancePool && _instancePool.has(localId)) { _instancePool.remove(localId); return }
@@ -2792,6 +2990,18 @@ export function useWorldEngine(canvasRef) {
 			// does upsertObject + persist + mesh-queue-add. Avatars stay inline — own-avatar
 			// attribution + the follow camera below depend on the object existing immediately.
 			if (obj.pcode !== PCODE_AVATAR) {
+				// 🎬 E/F: motion fields are read from the RAW payload — vel/angVel are omitted from
+				// the wire when ~0, so absence in an update means the object STOPPED (FS zeroes both
+				// on every update). The merged store record would keep stale motion forever.
+				_noteMotionUpdate(obj)
+				// 🎬 anim-off: full/compressed updates always carry the TA block while an anim is on
+				// (OpenSim CreateCompressedUpdateBlock / the full-update tail; server omits the field
+				// when ANIM_ON is clear). Absence on a registered id = a script stopped it — clear the
+				// merged store field too (spread-retained otherwise) and restore the static TE UVs.
+				if (!activeAnim(obj.textureAnim) && _texAnims.has(obj.localId)) {
+					worldStore.upsertObject({ localId: obj.localId, textureAnim: null })
+					_stopTexAnim(obj.localId)
+				}
 				_ingestQueue.push({ o: obj, persist: true })
 				continue
 			}
@@ -2871,12 +3081,22 @@ export function useWorldEngine(canvasRef) {
 			debugStore.push('info', `[3D] TerseUpdate #${terseUpdateCount} — ${objs.length} objects, ownId=${ownAvatarLocalId}`)
 		}
 		for (const obj of objs) {
+			// 🎬 E/F: terse vel/angVel are authoritative for this object (absent = stopped);
+			// each terse update re-syncs the DR/spin baseline — snap here, predict in animate().
+			if (obj.localId !== ownAvatarLocalId) _noteMotionUpdate(obj)
 			const pos = obj.pos
-			// WHY: Zero-pos guard for ALL objects. A TerseUpdate with pos=[0,0,0] is a decode
+			const mesh = meshMap.get(obj.localId)
+			// 🎬 G: terse pos/rot for a linkset CHILD are PARENT-RELATIVE on the wire — FS unpacks
+			// them as new_pos_parent → setPositionParent (llviewerobject.cpp:1751/:2363) and the
+			// rotation as the child's parent-local rot (setRotation :2414 on the child's own xform);
+			// OpenSim packs part.RelativePosition / part.RotationOffset (LLClientView.cs:6791/:6795).
+			const isChildMesh = !!mesh && (mesh.userData.parentId ?? 0) !== 0
+			// WHY: Zero-pos guard for ROOT objects. A root TerseUpdate with pos=[0,0,0] is a decode
 			// error — legitimate prims/avatars at exact SL origin are essentially impossible.
 			// Without this, a large prim briefly teleports to SL(0,0,0) = Three.js(0,0,0) which
 			// can be near the camera, filling half the viewport with a grey rectangle.
-			if (!pos || (pos[0] === 0 && pos[1] === 0 && pos[2] === 0)) continue
+			// Children exempt (🎬 G): parent-relative [0,0,0] = dead center of the root — legit.
+			if (!pos || (!isChildMesh && pos[0] === 0 && pos[1] === 0 && pos[2] === 0)) continue
 			// Update world store position
 			worldStore.updateObjectPos(obj.localId, pos)
 			if (uiStore.instancing && obj.localId !== ownAvatarLocalId) {
@@ -2884,7 +3104,6 @@ export function useWorldEngine(canvasRef) {
 				if (_instancePool && _instancePool.has(obj.localId)) promoteOut(obj.localId)
 			}
 			// Move the mesh
-			const mesh = meshMap.get(obj.localId)
 			// WHY: Skip own avatar mesh entirely here. It is driven by the local dead-reckoning
 			// + gravity loop in animate() via direct position.set() every frame. A competing GSAP
 			// tween toward the 10Hz sim pos ran on GSAP's own ticker and fought those per-frame
@@ -2899,6 +3118,18 @@ export function useWorldEngine(canvasRef) {
 				const stored = worldStore.objects.get(obj.localId)
 				if (stored?.pcode === PCODE_AVATAR) {
 					gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+				} else if (isChildMesh) {
+					// 🎬 G: apply as LOCAL position under the parent (the wire value IS parent-local;
+					// the axis permutation conjugates consistently for parent and child). Re-stash
+					// basePos or the next full update's normalizeChildTransform reverts the move.
+					// Orphan child still parked at scene: its relative coords are NOT world coords —
+					// skip (mesh stays hidden until the root arrives and reparents it).
+					if (mesh.parent !== scene) {
+						mesh.position.set(t.x, t.y, t.z)
+						if (mesh.userData.basePos) mesh.userData.basePos.set(t.x, t.y, t.z)
+						else mesh.userData.basePos = mesh.position.clone()
+						normalizeChildTransform(mesh)   // re-divide parent scale (node scale is 1 — usually a no-op)
+					}
 				} else {
 					mesh.position.set(t.x, t.y, t.z)
 				}
@@ -2907,7 +3138,13 @@ export function useWorldEngine(canvasRef) {
 				// Skip own avatar — its yaw is driven locally and applying server rot would
 				// fight the input-driven mesh.rotation.y in animate().
 				if (obj.rot && obj.localId !== ownAvatarLocalId) {
-					mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+					if (stored?.pcode === PCODE_AVATAR) {
+						mesh.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+					} else {
+						// 🎬 E: preserve accumulated llTargetOmega spin across same-rot resyncs
+						// (FS setRotation(new_rot * mAngularVelocityRot), llviewerobject.cpp:2414).
+						applyServerRot(mesh, obj.localId, obj.rot)
+					}
 				}
 			}
 			// WHY: avatarSLPos drives third-person follow camera in animate().
@@ -3084,6 +3321,7 @@ export function useWorldEngine(canvasRef) {
 		})
 		meshMap.clear()
 		disposeInstancing()  // drop pooled InstancedMeshes/caches so they don't leak across regions
+		_clearScriptedMotion()  // 🎬 dispose animated-texture clones + motion state for the old region
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on region change
 		_ingestQueue.length = 0  // drop the old region's un-ingested prim backlog
@@ -3794,6 +4032,10 @@ export function useWorldEngine(canvasRef) {
 	// colour is whited out and same-geometry/same-material objects pool across tints.
 	function describeForPool(localId, mesh, obj) {
 		if (obj._placeholder) return null
+		// 🎬 trap 2: animated/moving objects must NOT be pooled — the poolKey snapshots the
+		// texture's STATIC repeat/offset/rotation and the instance matrix freezes pos/rot, so a
+		// TextureAnim / llTargetOmega / velocity object baked into an InstancedMesh stops dead.
+		if (_texAnims.has(localId) || _motion.has(localId) || activeAnim(obj.textureAnim)) return null
 		const geom = mesh.geometry
 		if (!geom) return null
 		const gk = geomKeyFor(obj)
@@ -4387,6 +4629,14 @@ export function useWorldEngine(canvasRef) {
 			obj.faceOffset?.[sf(i)] ?? obj.defaultOffset,
 			obj.faceRotation?.[sf(i)] ?? obj.defaultRotation,
 		)
+		// 🎬 A (per-face): faces covered by an active TextureAnim bypass the TE repeats — identity
+		// UV, the anim matrix drives the transform (FS llface.cpp:1739–1759). textureAnim.face
+		// honored exactly: -1 = every face, else only that SL face (llvovolume.cpp:740–744).
+		const pfAnim = activeAnim(obj.textureAnim)
+		// This material array REPLACES the previous one — drop stale per-object anim clones so
+		// they aren't stepped (and their GL handles freed); fresh clones re-register below.
+		const pfEntry = _texAnims.get(obj.localId)
+		if (pfEntry) { for (const t of pfEntry.maps) t.dispose(); pfEntry.maps.clear() }
 		const mats = []
 		// Lit-shading A/B: same class choice as the single-material path (fullbright → stays unlit).
 		const FaceMat = (uiStore.litShading && !obj.defaultFullbright) ? THREE.MeshLambertMaterial : THREE.MeshBasicMaterial
@@ -4404,9 +4654,11 @@ export function useWorldEngine(canvasRef) {
 				: (isRealTex(obj.defaultTexture) ? obj.defaultTexture : null)
 			if (!faceTex) continue
 			const m = mats[i]
-			getTexture(faceTex, faceXform(i), nearRefDist(obj)).then(tex => {
+			const animFace = pfAnim && animCoversFace(pfAnim, sf(i))
+			getTexture(faceTex, animFace ? null : faceXform(i), nearRefDist(obj)).then(tex => {
 				if (!tex || !mesh.parent || mesh.material !== mats) return   // stale (removed/re-materialed)
-				m.map = tex
+				// Trap 1: animated face → uncached per-object clone (shared textures must not be stepped).
+				m.map = (animFace && _texAnims.has(obj.localId)) ? _animClone(obj.localId, tex) : tex
 				if (!(obj.faceColors?.[sf(i)] ?? obj.defaultColor)) m.color.set(0xffffff)   // no tint → show true texture colors
 				applyTexAlpha(m, tex, obj)
 				m.needsUpdate = true
@@ -4482,10 +4734,12 @@ export function useWorldEngine(canvasRef) {
 		if (!mat || mat.map || obj._placeholder || obj.pcode === PCODE_AVATAR) return
 		const texId = pickPrimTexture(obj)
 		if (!texId) return
-		const xform = uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
+		// 🎬 A: same ANIM_ON TE-repeat bypass + per-object clone as the build path (llface.cpp:1739–1759).
+		const bfAnim = activeAnim(obj.textureAnim)
+		const xform = bfAnim ? null : uvXform(obj.defaultRepeats, obj.defaultOffset, obj.defaultRotation)
 		getTexture(texId, xform, nearRefDist(obj)).then(tex => {
 			if (!tex || !mesh.parent || mesh.material !== mat || mat.map) return
-			mat.map = tex
+			mat.map = (bfAnim && _texAnims.has(obj.localId)) ? _animClone(obj.localId, tex) : tex
 			// Effective tint: first-face-effective, same precedence as the build path.
 			const bfTint = (Array.isArray(obj.faceColors) && obj.faceColors.length
 				? (obj.faceColors[0] ?? obj.defaultColor)
@@ -4673,13 +4927,14 @@ export function useWorldEngine(canvasRef) {
 
 	function animate(time) {
 		animId = requestAnimationFrame(animate)
-		// WHY (perf): when the page is unfocused (mouse on taskbar, another window, or devtools)
-		// Chrome deprioritizes this window's GPU, so each renderer.render of the heavy scene balloons
-		// to 50-106ms and trips '[Violation] requestAnimationFrame handler took Nms' ~10×/sec while
-		// wasting GPU/battery. document.hasFocus() is false in exactly those states (verified). Skip
-		// the frame's work while unfocused — the rAF loop stays alive so we resume instantly on focus.
+		// WHY: gate on document.hidden, NOT hasFocus — Gene 2026-07-05: a visible-but-unfocused
+		// window freezing all scripted motion/anims "looks weird"; pausing is only right when the
+		// tab is actually hidden/minimized. (History: this used to be !document.hasFocus() because
+		// Chrome deprioritizes an unfocused window's GPU — renders ballooned to 50-106ms with
+		// rAF-violation floods on heavy regions. If those floods return while unfocused-but-visible,
+		// revisit with a low-rate throttle here instead of a full pause.)
 		// Advance lastTime so dt doesn't spike on the first frame back.
-		if (!document.hasFocus()) { lastTime = time; return }
+		if (document.hidden) { lastTime = time; return }
 		const _frT0 = performance.now()
 		updateFps(time)
 		// Starvation-proof drain: ~125ms long tasks (see [Main] telemetry) starve the 30ms interval to
@@ -4943,6 +5198,10 @@ export function useWorldEngine(canvasRef) {
 		_lastParticleT = _pNow
 		particles?.step(_pdt, camera.position)
 
+		// 🎬 Scripted motion & TextureAnim: one shared per-frame stepper (texture anims + omega
+		// spin + linear DR) before renderer.render — O(animated), registry-driven, no allocations.
+		timed('scripted', () => stepScriptedMotion(dt))
+
 		// WHY try/catch + quarantine: ONE mesh with a poisoned material (e.g. a uniforms/program
 		// mismatch — "Cannot set properties of undefined (setting 'value')" in three's
 		// refreshUniformsCommon) makes renderer.render THROW EVERY FRAME. Measured live 2026-06-12:
@@ -5044,13 +5303,12 @@ export function useWorldEngine(canvasRef) {
 			timed('ingest', pumpIngest)   // paced upsert/persist/queue (TP-flood backpressure, #11)
 			timed('drain', drainMeshQueue)
 			timed('pumpTex', pumpTextures)   // resume governor-paused texture fetches once heap pressure clears
-			// Drive the texture decode/upload pump here too WHEN UNFOCUSED: animate()'s !hasFocus
+			// Drive the texture decode/upload pump here too WHEN HIDDEN: animate()'s document.hidden
 			// early-return (and rAF being paused in a hidden tab) otherwise stalls pumpTextureBuilds, so
-			// decode/upload halts and buildQueue piles up until refocus (the "stuck until I click back"
-			// symptom — visible-but-unfocused, e.g. DevTools focused, hits it too). This interval runs
-			// regardless of focus; gate on !hasFocus so it's mutually exclusive with animate()'s call
-			// (no double-pump). Hidden tabs clamp this interval to ~1Hz so fill is slow but never stalls.
-			if (typeof document !== 'undefined' && !document.hasFocus()) timed('texbuild', pumpTextureBuilds)
+			// decode/upload halts and buildQueue piles up until the tab is shown again. Gate mirrors
+			// animate()'s (document.hidden) so exactly one of the two pumps runs — no double-pump.
+			// Hidden tabs clamp this interval to ~1Hz so fill is slow but never stalls.
+			if (typeof document !== 'undefined' && document.hidden) timed('texbuild', pumpTextureBuilds)
 			if ((_drainTick++ & 3) === 0) timed('reparent', reparentOrphans)
 		}, 30)
 		_cullTimer = setInterval(() => timed('cull', cullTick), 1000)
@@ -5372,6 +5630,7 @@ export function useWorldEngine(canvasRef) {
 		for (const mesh of meshMap.values()) mesh.geometry.dispose()
 		meshMap.clear()
 		disposeInstancing()  // tear down pooled InstancedMeshes/caches on unmount
+		_clearScriptedMotion()  // 🎬 dispose animated-texture clones + motion state on unmount
 		hoverTextMeshes.clear()
 		pendingMeshIds.clear()  // perf: drop queued mesh builds on unmount
 		_ingestQueue.length = 0
