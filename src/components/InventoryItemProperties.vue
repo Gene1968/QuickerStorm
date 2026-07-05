@@ -144,18 +144,18 @@ function onToggleNext(bit, on) { setMaskBit('nextOwnerMask', bit, on) }
 					<label class="flex items-center gap-1" :class="canEditNextXfer ? 'text-fg cursor-pointer' : 'text-fg-muted'"><input type="checkbox" :checked="!!obj.nextCanTransfer" :disabled="!canEditNextXfer" class="accent-accent" @change="onToggleNext(PERM_TRANSFER, $event.target.checked)" /> Transfer</label>
 				</div>
 				<hr class="border-edge my-1" />
-				<div class="grid grid-cols-[4.5rem_1fr] text-xs">
-					<label class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 ps-1 text-fg/50 whitespace-nowrap"><input type="checkbox" :checked="(obj.saleType ?? 0) > 0" disabled class="accent-accent" /> For Sale</label>
-					<div class="flex items-center gap-1 bg-fg/20 py-1">
-						<select title="Whether purchaser receives original, copy, or contents." disabled class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 text-fg">
+				<div class="grid grid-cols-[4rem_1fr] gap-x-0 text-xs">
+					<label class="flex items-center justify-end gap-1 bg-fg/10 h-full px-1 text-fg/50 text-2xs text-end whitespace-nowrap"><input type="checkbox" class="accent-accent" :checked="(obj.saleType ?? 0) > 0" disabled /> For Sale</label>
+					<div class="flex items-center gap-1 bg-fg/10 p-1">
+						<select title="Whether purchaser receives original, copy, or contents." class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0 text-fg" :disabled="!(obj.saleType ?? 0)">
 							<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
 						</select>
 					</div>
-					<div class="flex items-center justify-end gap-1 bg-fg/20 h-full pe-2 text-fg/50 text-end self-center">Price ??$</div>
-					<div class="flex items-center gap-1 bg-fg/20 pb-1">
-						<input type="number" min="0" max="999999999" step="1" :value="obj.salePrice" readonly
-						class="qs-input bg-panel border border-edge rounded-sm px-2 py-1 w-20 text-fg" />
-						<button title="Mark/Update object(s) for sale." class="ui-btn p-1 px-5 text-xs rounded-sm border transition-colors">Apply</button>
+					<div class="flex items-center justify-end gap-1 bg-fg/10 h-full pe-1 text-fg/50 text-2xs text-end self-center">Price ??$</div>
+					<div class="flex items-center gap-1 bg-fg/10 p-1 pt-0">
+						<input type="number" min="0" max="999999" step="1" :value="obj.salePrice" readonly
+						class="bg-fg/20 border border-edge rounded-sm ps-1.5 py-0.5 w-15 text-fg font-mono" />
+						<button title="Mark/Update object(s) for sale." class="ui-btn py-0.5 px-5 text-xs rounded-sm border transition-colors">Apply</button>
 					</div>
 				</div>
 

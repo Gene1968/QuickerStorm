@@ -635,11 +635,11 @@ onUnmounted(() => {
 	<FloaterWindow
 		id="map"
 		title="🗺 World Map"
-		:wrap-style="{ width: '62vw', height: '68vh', minWidth: '640px', minHeight: '400px', resize: 'both' }"
+		:wrap-style="{ width: '62vw', height: '68vh', minWidth: '40rem', minHeight: '25rem', resize: 'both' }"
 		:default-pos="{ left: '50vw', top: '53vh', transform: 'translate(-50%, -50%)' }"
 		@close="ui.toggleMap()"
 	>
-		<div class="flex flex-1 min-h-0 overflow-hidden">
+		<div class="flex flex-1 min-h-0">
 
 			<!-- ══ MAP AREA ════════════════════════════════════════════ -->
 			<div class="flex flex-col flex-1 min-w-0 relative bg-[#163a5a] border-r border-edge">
@@ -803,7 +803,7 @@ onUnmounted(() => {
 			</div>
 
 			<!-- ══ RIGHT SIDEBAR ═════════ -->
-			<div class="flex flex-col w-64 shrink-0 overflow-y-auto text-xs">
+			<div class="flex flex-col w-64 shrink-0 text-xs">
 
 				<div class="px-3 py-1.5 bg-panel-alt border-b border-edge text-2xs font-semibold text-fg/60 uppercase tracking-widest shrink-0">
 					Legend
@@ -942,17 +942,17 @@ onUnmounted(() => {
 						<input
 							v-model.number="coordX"
 							type="number" id="coordX" min="1" :max="coordMaxX" step="1"
-							class="bg-panel-alt border border-edge text-fg rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
+							class="bg-panel-alt border border-edge text-fg rounded-sm ps-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordY"
 							type="number" id="coordY" min="1" :max="coordMaxY" step="1"
-							class="bg-panel-alt border border-edge text-fg rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
+							class="bg-panel-alt border border-edge text-fg rounded-sm ps-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 						<input
 							v-model.number="coordZ"
 							type="number" id="coordZ" min="0" max="4096" step="1"
-							class="bg-panel-alt border border-edge text-fg rounded-sm px-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
+							class="bg-panel-alt border border-edge text-fg rounded-sm ps-1.5 py-1 text-xs text-center w-full focus:outline-hidden focus:ring-1 focus:ring-accent"
 						/>
 					</div>
 					<div class="flex gap-1">

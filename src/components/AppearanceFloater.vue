@@ -117,7 +117,7 @@ const outfitFolders = [
 	<FloaterWindow
 		id="appearance"
 		title="🪞 Appearance"
-		:wrap-style="{ width: '23vw', height: '60vh', minWidth: '300px', minHeight: '440px', resize: 'both' }"
+		:wrap-style="{ width: '23vw', height: '60vh', minWidth: '18rem', minHeight: '31rem', resize: 'both' }"
 		:default-pos="{ left: 'calc(80vw - 23vw)', top: 'calc(100vh - 60vh - 5rem)' }"
 		@close="ui.toggleAppearance()"
 	>

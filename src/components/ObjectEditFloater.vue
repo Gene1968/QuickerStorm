@@ -611,15 +611,15 @@ function close() {
 		id="object-edit"
 		title="Build Tools"
 		build-tool
-		:wrap-style="{ width: '18.5rem', height: '47.35rem', resize: 'both' }"
-		:default-pos="{ right: '0.0625rem', top: 'calc(100vh - 2.3125rem - 47.35rem' }"
+		:wrap-style="{ width: '18.5rem', height: '40.75rem', minWidth: '18.3rem', minHeight: '25rem', resize: 'both' }"
+		:default-pos="{ right: '0.0625rem', top: 'calc(100vh - 2.3125rem - 40.75rem' }"
 		@close="close"
 	>
-		<div class="relative flex flex-col h-full text-xs">
+		<div class="relative flex flex-col h-full text-xs overflow-auto">
 			<!-- Build-tools toolbar (FS-parity) ──────────────────────────────────── -->
-			<div class="shrink-0 border-b border-edge pt-1.5 px-2 min-h-44">
+			<div class="shrink-0 border-b border-edge p-1.5 pb-0.5 min-h-44">
 				<!-- Top row: five major tools (icon radio) -->
-				<div class="flex items-center gap-1">
+				<div class="flex items-center gap-1.5">
 					<button
 						v-for="t in tools"
 						:key="t.id"
@@ -833,7 +833,7 @@ function close() {
 					</p>
 				</div>
 				<!-- Tab strip -->
-				<nav class="tabs">
+				<nav class="tabs w-full">
 					<button
 						v-for="tab in tabs"
 						:key="tab.id"
@@ -846,7 +846,7 @@ function close() {
 				<div v-if="!obj" class="flex-1 flex items-center justify-center text-fg/30 italic px-4 text-center">
 					Right-click a prim → Edit to inspect properties.
 				</div>
-				<div v-else class="flex-1 overflow-y-auto pt-1 px-1 pb-0.5 space-y-3">
+				<div v-else class="flex-1 pt-1 px-1 pb-0">
 					<!-- General ─────────────────────────────────────────────── -->
 					<template v-if="activeTab === 'general'">
 						<div class="grid grid-cols-[3.5rem_1fr] gap-x-1.5 items-center mb-1 text-xs">
@@ -874,7 +874,7 @@ function close() {
 								<div class="text-fg/50 text-2xs text-end">Created:</div>
 								<div class="ms-1 px-1.5 py-0 text-fg font-mono">{{ fmtCreationDate(obj.creationDate) }}</div>
 								<div class="flex items-center justify-end text-fg/50 text-2xs text-end">Click to:</div>
-								<select title="A click action enables you to interact with an object with a single left click." disabled class="ui-select bg-fg/20 border border-edge rounded-sm mb-1 ms-2 px-1.5 py-0.5 text-fg">
+								<select title="A click action enables you to interact with an object with a single left click." disabled class="ui-select bg-fg/20 border border-edge rounded-sm mb-1 ms-2 px-1.5 py-0 text-fg">
 									<option v-for="o in CLICK_ACTION_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.clickAction ?? 0)">{{ o.label }}</option>
 								</select>
 								<template v-if="obj.touchName">
@@ -888,15 +888,15 @@ function close() {
 								<div class="grid grid-cols-[4rem_1fr] gap-x-0 text-xs">
 									<label class="flex items-center justify-end gap-1 bg-fg/10 h-full px-1 text-fg/50 text-2xs text-end whitespace-nowrap"><input type="checkbox" class="accent-accent" :checked="(obj.saleType ?? 0) > 0" disabled /> For Sale</label>
 									<div class="flex items-center gap-1 bg-fg/10 p-1">
-										<select title="Whether purchaser receives original, copy, or contents." class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg" :disabled="!(obj.saleType ?? 0)">
+										<select title="Whether purchaser receives original, copy, or contents." class="ui-select w-full bg-fg/20 border border-edge rounded-sm px-1.5 py-0 text-fg" :disabled="!(obj.saleType ?? 0)">
 											<option v-for="o in SALE_TYPE_OPTIONS" :key="o.value" :value="o.value" :selected="o.value === (obj.saleType ?? 0)">{{ o.label }}</option>
 										</select>
 									</div>
 									<div class="flex items-center justify-end gap-1 bg-fg/10 h-full pe-1 text-fg/50 text-2xs text-end self-center">Price ??$</div>
 									<div class="flex items-center gap-1 bg-fg/10 p-1 pt-0">
 										<input type="number" min="0" max="999999" step="1" :value="obj.salePrice" readonly
-										class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 w-15 text-fg font-mono" />
-										<button title="Mark/Update object(s) for sale." class="ui-btn p-1 px-5 text-xs rounded-sm border transition-colors">Apply</button>
+										class="bg-fg/20 border border-edge rounded-sm py-0.5 ps-1.5 w-15 text-fg font-mono" />
+										<button title="Mark/Update object(s) for sale." class="ui-btn py-0.5 px-5 text-xs rounded-sm border transition-colors">Apply</button>
 									</div>
 								</div>
 							</div>
@@ -984,7 +984,7 @@ function close() {
 												:min="grp.kind === 'size' ? 0.01 : (grp.kind === 'pos' ? 0 : undefined)"
 												:readonly="!canXform"
 												:title="xformTitle"
-												class="w-20 bg-fg/20 border border-edge rounded-sm px-1 py-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												class="w-20 bg-fg/20 border border-edge rounded-sm py-0 ps-1.5 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
 												@focus="xfFocus = `${grp.kind}-${i}`; selectAll($event)"
 												@blur="xfFocus = null; onBlur(XF_COMMIT[grp.kind])"
 												@keyup.enter="onEnter(XF_COMMIT[grp.kind], $event)"
@@ -1332,17 +1332,17 @@ function close() {
 								<div class="grid grid-cols-3 gap-x-2 px-1 justify-items-center text-2xs">
 									<div class="text-center">
 										Scale
-										<div class="flex items-center gap-1">H<input :value="defaultMapping.repeats[0].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
-										<div class="flex items-center gap-1">V<input :value="defaultMapping.repeats[1].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">H<input :value="defaultMapping.repeats[0].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 py-0.5 ps-1.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">V<input :value="defaultMapping.repeats[1].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 py-0.5 ps-1.5 w-full text-xs text-fg font-mono" /></div>
 									</div>
 									<div class="text-center">
 										Offset
-										<div class="flex items-center gap-1">H<input :value="defaultMapping.offset[0].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
-										<div class="flex items-center gap-1">V<input :value="defaultMapping.offset[1].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">H<input :value="defaultMapping.offset[0].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 py-0.5 ps-1.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">V<input :value="defaultMapping.offset[1].toFixed(5)" type="number" step="0.10000" min="-1.00000" max="1.00000" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 py-0.5 ps-1.5 w-full text-xs text-fg font-mono" /></div>
 									</div>
 									<div class="text-center">
 										Rotation
-										<div class="flex items-center gap-1">°<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" type="number" step="1.00000" min="-360" max="360" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 px-1.5 py-0.5 w-full text-xs text-fg font-mono" /></div>
+										<div class="flex items-center gap-1">°<input :value="(defaultMapping.rotation * 180 / Math.PI).toFixed(5)" type="number" step="1.00000" min="-360" max="360" readonly class="bg-fg/20 border border-edge rounded-sm mb-0.5 py-0.5 ps-1.5 w-full text-xs text-fg font-mono" /></div>
 									</div>
 								</div>
 								<div class="grid grid-cols-[2fr_1fr] gap-y-1.5 gap-x-2 border-t border-edge pt-0.5 pe-2 ps-1 text-xs">
@@ -1350,7 +1350,7 @@ function close() {
 										<template v-if="defaultMapping.rpm != null">
 											<div class="flex gap-2 mb-1">
 												<div class="text-fg/50 self-center whitespace-nowrap" title="Repeats per meter — raw scale ÷ object span (FS rptctrl)">Repeats / m</div>
-												<input :value="defaultMapping.rpm.toFixed(5)" type="number" step="0.10000" readonly class="bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 w-full text-fg font-mono" />
+												<input :value="defaultMapping.rpm.toFixed(5)" type="number" step="0.10000" readonly class="bg-fg/20 border border-edge rounded-sm py-0.5 ps-1.5 w-full text-fg font-mono" />
 											</div>
 										</template>
 										<label class="inline-flex items-center gap-1 mb-1 text-fg/50"><input type="checkbox" class="accent-accent" title="Synchronize texture map parameters" disabled /> Synchronize materials</label>

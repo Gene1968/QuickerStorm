@@ -785,9 +785,9 @@ onUnmounted(() => {
 				:title="inv.allAgentFetched
 					? `${inv.agentItemCount} items in ${inv.agentFolderCount} folders (complete)`
 					: `Loading inventory… ${inv.agentFetchedCount} of ${inv.agentFolderCount} folders fetched`"
-				class="grow border border-edge-strong p-0.5 text-2xs text-fg truncate user-select-none flex items-center gap-1"
+				class="grow border-1 border-edge p-0.5 text-2xs text-fg truncate user-select-none flex items-center gap-1"
 			><CheckIcon v-if="inv.allAgentFetched" class="shrink-0 w-3 h-3 text-green-400" /><Loader2Icon v-else class="shrink-0 w-3 h-3 animate-spin opacity-60" />{{ inv.agentItemCount.toLocaleString() }} Items<span v-if="!inv.allAgentFetched && inv.agentFetchedCount > 0" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}</span><span v-else-if="!inv.allAgentFetched && inv.cacheLoaded" class="opacity-50"> · syncing…</span><span v-else-if="!inv.allAgentFetched" class="opacity-60"> · {{ inv.agentFetchedCount }}/{{ inv.agentFolderCount }}…</span></div>
-			<button class="ui-btn" :class="anchorId ? '' : 'opacity-40 cursor-not-allowed'" :disabled="!anchorId" title="Move selected item to Trash" @click="trashSelected"><Trash2Icon class="w-3.5 h-3.5" /></button>
+			<button class="ui-btn px-1" :class="anchorId ? '' : 'opacity-40 cursor-not-allowed'" :disabled="!anchorId" title="Move selected item to Trash" @click="trashSelected"><Trash2Icon class="w-3.5 h-3.5" /></button>
 		</div>
 	</FloaterWindow>
 </template>
