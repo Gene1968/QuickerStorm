@@ -644,6 +644,129 @@ export function encodeDeRezObject(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+// ── MultipleObjectUpdate (Medium 2) — move/rotate/scale selected prims ────
+// FS packer: llselectmgr.cpp:4922 packMultipleUpdate — per ObjectData block:
+//   ObjectLocalID U32 + Type U8 + Data Variable1, where Data is packed STRICTLY in the order
+//   position(12B) → rotation(12B, quaternion packed to 3 floats) → scale(12B), only the fields
+//   flagged in Type present ("JC: You MUST pack the data in this order", llselectmgr.cpp:4936).
+// Update flags per llselectmgr.h:60-65:
+export const UPD_POSITION    = 0x01
+export const UPD_ROTATION    = 0x02
+export const UPD_SCALE       = 0x04
+export const UPD_LINKED_SETS = 0x08   // apply to whole linked set (FS sendMultipleUpdate ORs it for SEND_ONLY_ROOTS, llselectmgr.cpp:4905)
+export const UPD_UNIFORM     = 0x10   // used with UPD_SCALE (uniform stretch)
+
+// The decode-side authority for ACCEPTED Type bytes: opensim LLClientView.cs:12298
+// HandleMultipleObjUpdate switch — anything else hits `default:` and is dropped with a debug log.
+// 1=P 2=R 3=P+R 4=S 5=P+S 0x14=US 0x15=P+US 9=gP 0x0A=gR 0x0B=gP+R 0x0C=gS 0x0D=gP+S
+// 0x1C=gUS 0x1D=gP+US (g = UPD_LINKED_SETS, U = UPD_UNIFORM).
+export const MULTI_UPDATE_ACCEPTED_TYPES: ReadonlySet<number> = new Set([
+  0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x15,
+  0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D,
+])
+
+/** Pack a quaternion to 3 floats, dropping W — port of LLQuaternion::packToVector3
+ *  (llquaternion.cpp:919): normalize by full 4-component magnitude, then negate xyz when W<0
+ *  so the receiver's re-derived W (sqrt(1-x²-y²-z²)) lands on the same rotation. */
+export function packQuatToVector3(q: number[]): [number, number, number] {
+  let x = q[0] ?? 0, y = q[1] ?? 0, z = q[2] ?? 0
+  const w = q[3] ?? 1
+  const mag = Math.sqrt(x * x + y * y + z * z + w * w)
+  if (mag > 0.0000001) { x /= mag; y /= mag; z /= mag }   // FP_MAG_THRESHOLD (llmath.h)
+  return w >= 0 ? [x, y, z] : [-x, -y, -z]
+}
+
+export interface MultiUpdateEntry {
+  localId:   number
+  position?: [number, number, number]   // region-local metres
+  rotation?: [number, number, number, number]   // quaternion [x,y,z,w]
+  scale?:    [number, number, number]
+}
+
+export function encodeMultipleObjectUpdate(p: {
+  agentId: string; sessionId: string; seq: number
+  updates: MultiUpdateEntry[]
+  linked?: boolean    // UPD_LINKED_SETS — callers send linkset ROOT ids with this set
+  uniform?: boolean   // UPD_UNIFORM — only meaningful with scale
+}): Buffer {
+  const vec3 = (v: [number, number, number]): Buffer => {
+    const b = Buffer.allocUnsafe(12)
+    for (let k = 0; k < 3; k++) b.writeFloatLE(v[k] ?? 0, k * 4)
+    return b
+  }
+  const objectData = p.updates.map(u => {
+    let type = 0
+    const parts: Buffer[] = []
+    // Field ORDER is load-bearing: pos → rot → scale (llselectmgr.cpp:4936-4955).
+    if (u.position) { type |= UPD_POSITION; parts.push(vec3(u.position)) }
+    if (u.rotation) { type |= UPD_ROTATION; parts.push(vec3(packQuatToVector3(u.rotation))) }
+    if (u.scale)    { type |= UPD_SCALE;    parts.push(vec3(u.scale)) }
+    if (p.linked)  type |= UPD_LINKED_SETS
+    if (p.uniform) type |= UPD_UNIFORM
+    if (!MULTI_UPDATE_ACCEPTED_TYPES.has(type)) {
+      // e.g. rot+scale together (7) or uniform without scale — OpenSim's switch drops these
+      // silently server-side; refuse loudly here instead. FS never emits them either
+      // (rotation sends ROT|POS — llpanelobject.cpp:2187; scale sends SCALE|POS — :2236).
+      throw new Error(`encodeMultipleObjectUpdate: type 0x${type.toString(16)} not in OpenSim HandleMultipleObjUpdate table (LLClientView.cs:12298)`)
+    }
+    return { ObjectLocalID: u.localId, Type: type, Data: Buffer.concat(parts) }
+  })
+  return encode('MultipleObjectUpdate', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: objectData,
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── Task (prim) inventory — RequestTaskInventory / ReplyTaskInventory / MoveTaskInventory ──
+
+/** RequestTaskInventory (Low 289, message_template.msg:6488) — ask the sim for a prim's
+ *  inventory manifest. Sim replies ReplyTaskInventory (empty Filename = empty prim), then the
+ *  actual item list arrives via Xfer. FS: llviewerobject.cpp:3051 requestInventory →
+ *  OpenSim SceneObjectPartInventory.cs:1453 RequestInventoryFile. */
+export function encodeRequestTaskInventory(p: {
+  agentId: string; sessionId: string; seq: number; localId: number
+}): Buffer {
+  return encode('RequestTaskInventory', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    InventoryData: { LocalID: p.localId },
+  }, { seq: p.seq, reliable: true })
+}
+
+export interface ReplyTaskInventoryData {
+  taskId:   string   // the prim's full UUID
+  serial:   number   // S16 inventory serial (monotonic per mutation)
+  filename: string   // Xfer filename; '' = prim has no inventory (SceneObjectPartInventory.cs:1465)
+}
+
+/** Shape a generic-decoded ReplyTaskInventory (Low 290, message_template.msg:6501) — blocks:
+ *  InventoryData{TaskID LLUUID, Serial S16, Filename Var1}. FS consumer: llviewerobject.cpp:3344
+ *  processTaskInv (empty scrubbed filename → mock empty "Contents" inventory, :3413). */
+export function mapReplyTaskInventory(blocks: Record<string, Array<Record<string, unknown>>>): ReplyTaskInventoryData | null {
+  const b = blocks.InventoryData?.[0]
+  if (!b) return null
+  const fn = Buffer.isBuffer(b.Filename) ? b.Filename.toString('utf8').replace(/\0+$/, '') : String(b.Filename ?? '')
+  return {
+    taskId:   String(b.TaskID ?? ZERO_UUID),
+    serial:   Number(b.Serial ?? 0),
+    filename: fn,
+  }
+}
+
+/** MoveTaskInventory (Low 288, message_template.msg:6473) — copy/move ONE item out of a prim's
+ *  inventory into the agent's FolderID. Field order per FS llviewerobject.cpp:2931 moveInventory:
+ *  AgentData{AgentID, SessionID, FolderID} + InventoryData{LocalID U32, ItemID}. The sim acks by
+ *  UpdateCreateInventoryItem/BulkUpdateInventory (already decoded); no-copy items are removed from
+ *  the prim sim-side. Used by the right-click "Open" flow (llfloateropenobject.cpp:155). */
+export function encodeMoveTaskInventory(p: {
+  agentId: string; sessionId: string; seq: number
+  folderId: string; localId: number; itemId: string
+}): Buffer {
+  return encode('MoveTaskInventory', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, FolderID: p.folderId },
+    InventoryData: { LocalID: p.localId, ItemID: p.itemId },
+  }, { seq: p.seq, reliable: true })
+}
+
 // ── AgentRequestSit (Low #122) — claim a target prim as the sit target ───
 // Followed by AgentSit (Low #123) which actually sits. Sim broadcasts the result via
 // ObjectUpdate carrying the avatar's new parent + offset. Phase 2: send both immediately.
@@ -1068,6 +1191,36 @@ export interface ObjectData {
   flexi?:        FlexiData   // Flexible-path params (ExtraParam 0x10) — present only on flexi prims
   light?:        LightData   // point-light params (ExtraParam 0x20) — present only on light-emitting prims
   reflectionProbe?: ReflectionProbeData   // reflection-probe params (ExtraParam 0x90) — present only on probe prims
+  vel?:          [number, number, number]   // linear velocity m/s, SL region frame — omitted when magnitude ~0
+  angVel?:       [number, number, number]   // angular velocity rad/s (llTargetOmega omega) — omitted when magnitude ~0
+  sound?:        SoundFields   // looped attached-sound fields — omitted when Sound UUID is null AND flags+gain are zero; id:null = explicit stop marker (llStopSound)
+}
+
+/** Looped attached-sound fields carried inside ObjectUpdate / ObjectUpdateCompressed. */
+export interface SoundFields {
+  id:     string | null   // sound asset UUID; null = stop marker (Sound=Zero + STOP flag/gain — SoundModule.cs:269-276)
+  gain:   number   // 0..1
+  flags:  number   // U8 — LLAudioSource flags (0x01 loop; see FS llviewerobject.cpp set via setAttachedSound)
+  radius: number   // cutoff radius in metres (0 = unlimited)
+}
+
+// (ZERO_UUID const is declared once, further down with the inventory helpers.)
+
+// WHY: zero-suppression — motion fields are omitted from WS payloads when the vector is
+// effectively zero, so the (very common) at-rest object doesn't bloat every update.
+const nonZeroVec3 = (v: [number, number, number]): boolean =>
+  v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 1e-8
+
+/**
+ * Dequantize a wire U16 to F32 over [lower, upper].
+ * Port of FS llquantize.h:72 U16_to_F32 — linear map plus a zero-snap band (delta/65535)
+ * so values that were exactly 0 before quantization come back as exactly 0.
+ */
+export function u16ToF32(u16: number, lower: number, upper: number): number {
+  const delta = upper - lower
+  let v = (u16 / 65535) * delta + lower
+  if (Math.abs(v) < delta / 65535) v = 0
+  return v
 }
 
 /**
@@ -1143,11 +1296,19 @@ export function decodeObjectUpdateCompressed(
       let text = ''
       let textColor: [number, number, number, number] | undefined
       let psys: ParticleSys | undefined
+      let angVel: [number, number, number] | undefined
+      let sound: SoundFields | undefined
       try {
         if (off + 4 > dataEnd) throw new Error('cflags OOB')
         const cflags = buf.readUInt32LE(off); off += 4
         off += 16                                    // OwnerID — always present
-        if (cflags & 0x80) off += 12                 // AngularVelocity
+        if (cflags & 0x80) {
+          // AngularVelocity (Omega): LLVector3 = 3×F32 full precision — FS llviewerobject.cpp:1825
+          // dp->unpackVector3(new_angv, "Omega") in the OUT_FULL_COMPRESSED branch.
+          if (off + 12 > dataEnd) throw new Error('Omega OOB')
+          angVel = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
+          off += 12
+        }
         if (cflags & 0x20) { parentId = buf.readUInt32LE(off); off += 4 }  // ParentID
         // WHY bail on these: ScratchPad (0x01) / Tree (0x02) are raw blobs with no length prefix we
         // can frame → emit pos/rot/scale only (cube) rather than mis-parse this object's TE. Particle
@@ -1192,7 +1353,23 @@ export function decodeObjectUpdateCompressed(
               off += epSize
             }
           }
-          if (cflags & 0x10) off += 25                // Sound: UUID16 + gain4 + flags1 + radius4
+          if (cflags & 0x10) {
+            // Sound: UUID16 + Gain F32 + Flags U8 + Radius F32 = 25B — FS llviewerobject.cpp:1949-1952
+            // (unpackUUID SoundUUID → unpackF32 SoundGain → unpackU8 SoundFlags → unpackF32 SoundRadius).
+            if (off + 25 > dataEnd) throw new Error('Sound OOB')
+            const sid = bytesToUuid(buf, off)
+            const sGain = buf.readFloatLE(off + 16), sFlags = buf[off + 20], sRadius = buf.readFloatLE(off + 21)
+            if (sid !== ZERO_UUID) {
+              sound = { id: sid, gain: sGain, flags: sFlags, radius: sRadius }
+            } else if (sFlags !== 0 || sGain > 0) {
+              // WHY: llStopSound's ONLY wire signal is an update with Sound=Zero + SoundFlags=STOP
+              // (OpenSim SoundModule.cs:269-276); FS clears the loop because processUpdateMessage calls
+              // setAttachedSound unconditionally (llviewerobject.cpp:1966). id:null = explicit stop marker.
+              // Zero-UUID with zero flags+gain (ordinary soundless prim) stays omitted — no payload bloat.
+              sound = { id: null, gain: sGain, flags: sFlags, radius: sRadius }
+            }
+            off += 25
+          }
           if (cflags & 0x100) { while (off < dataEnd && buf[off] !== 0) off++; off++ }  // NameValue
           // Shape block — 23 bytes. NOTE: compressed order puts profileCurve at +16 (after all
           // path fields), UNLIKE the full ObjectUpdate layout (profileCurve at +1).
@@ -1256,6 +1433,8 @@ export function decodeObjectUpdateCompressed(
         rot:   [rx, ry, rz, rw],
         nameValue: '',
         parentId, crc,
+        ...(angVel && nonZeroVec3(angVel) ? { angVel } : {}),
+        ...(sound ? { sound } : {}),
         ...(psys ? { psys } : {}),
         ...(shape ? { shape } : {}),
         ...(te.defaultColor   ? { defaultColor:   te.defaultColor }   : {}),
@@ -1376,27 +1555,36 @@ export function decodeObjectUpdate(
       _diag = `od=${odLen}`
       let pos: [number, number, number] = [0, 0, 0]
       let rot: [number, number, number, number] = [0, 0, 0, 1]
-      // ObjectData layout for F32 forms (libomv ObjectManager.cs):
+      // ObjectData layout for F32 forms (libomv ObjectManager.cs; FS llviewerobject.cpp:1395-1430
+      // OBJECTDATA_FIELD_SIZE_76/60: pos | vel | acc | theta | omega, each LLVector3 of F32):
       //   odLen=76 (avatar full): CollisionPlane(16) | Pos(12) | Vel(12) | Acc(12) | Rot(12) | AngVel(12)
       //   odLen=60 (prim full):   Pos(12) | Vel(12) | Acc(12) | Rot(12) | AngVel(12)
       // Rotation is 3 F32 = xyz of quaternion; w derived (w = sqrt(max(0, 1−x²−y²−z²)), w≥0).
-      // odLen=48 is the half-precision form (U16-quantized); rotation decode TODO.
+      // odLen=48 is the half-precision form (U16-quantized); never sent by SL/OpenSim per FS.
+      let vel: [number, number, number] | undefined
+      let angVel: [number, number, number] | undefined
+      const readVec3 = (at: number): [number, number, number] =>
+        [buf.readFloatLE(at), buf.readFloatLE(at + 4), buf.readFloatLE(at + 8)]
       if (odLen === 76) {
-        pos = [buf.readFloatLE(off + 16), buf.readFloatLE(off + 20), buf.readFloatLE(off + 24)]
+        pos = readVec3(off + 16)
+        vel = readVec3(off + 28)
         const rx = buf.readFloatLE(off + 52)
         const ry = buf.readFloatLE(off + 56)
         const rz = buf.readFloatLE(off + 60)
         const rw = Math.sqrt(Math.max(0, 1 - rx * rx - ry * ry - rz * rz))
         rot = [rx, ry, rz, rw]
+        angVel = readVec3(off + 64)
       } else if (odLen === 60) {
-        pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
+        pos = readVec3(off)
+        vel = readVec3(off + 12)
         const rx = buf.readFloatLE(off + 36)
         const ry = buf.readFloatLE(off + 40)
         const rz = buf.readFloatLE(off + 44)
         const rw = Math.sqrt(Math.max(0, 1 - rx * rx - ry * ry - rz * rz))
         rot = [rx, ry, rz, rw]
+        angVel = readVec3(off + 48)
       } else if (odLen >= 12) {
-        pos = [buf.readFloatLE(off), buf.readFloatLE(off + 4), buf.readFloatLE(off + 8)]
+        pos = readVec3(off)
       }
       off += odLen
       const parentId = buf.readUInt32LE(off); off += 4
@@ -1510,6 +1698,7 @@ export function decodeObjectUpdate(
       let textColor: [number, number, number, number] | undefined
       let textureAnim: TextureAnim | undefined
       let psys: ParticleSys | undefined
+      let sound: SoundFields | undefined
       let tailOk = false
       let _silentTail = false
       try {
@@ -1594,11 +1783,24 @@ export function decodeObjectUpdate(
           }
           off += epLen
         }
-        off += 16   // Sound UUID
-        off += 16   // OwnerID UUID
-        off += 4    // SoundGain F32
-        off += 1    // Flags U8
-        off += 4    // SoundRadius F32
+        // Looped attached-sound tail — message_template.msg:3340-3344 (Sound LLUUID | OwnerID
+        // LLUUID | Gain F32 | Flags U8 | Radius F32). FS consumes the same fields in
+        // processObjectUpdate (llviewerobject.cpp mAttachedSound path); OwnerID is a mute-check
+        // aid only, not forwarded.
+        {
+          if (off + 41 > buf.length) throw new Error(`Sound tail OOB at off=${off}`)
+          const sid = bytesToUuid(buf, off); off += 16   // Sound UUID
+          off += 16   // OwnerID UUID (muting aid — unused)
+          const sgain   = buf.readFloatLE(off); off += 4    // Gain F32
+          const sflags  = buf[off]; off += 1                // Flags U8
+          const sradius = buf.readFloatLE(off); off += 4    // Radius F32
+          if (sid !== ZERO_UUID) sound = { id: sid, gain: sgain, flags: sflags, radius: sradius }
+          // WHY: llStopSound = full update with Sound=Zero + SoundFlags=STOP (SoundModule.cs:269-276);
+          // FS clears via unconditional setAttachedSound (llviewerobject.cpp:1966). Emit an explicit
+          // id:null stop marker so the client can kill loops; plain soundless prims (flags+gain zero)
+          // stay omitted.
+          else if (sflags !== 0 || sgain > 0) sound = { id: null, gain: sgain, flags: sflags, radius: sradius }
+        }
         off += 1    // JointType U8
         off += 12   // JointPivot LLVector3
         off += 12   // JointAxisOrAnchor LLVector3
@@ -1611,6 +1813,9 @@ export function decodeObjectUpdate(
         ...(psys ? { psys } : {}),
         scale: [sx, sy, sz], pos, rot, nameValue,
         parentId, crc,
+        ...(vel && nonZeroVec3(vel) ? { vel } : {}),
+        ...(angVel && nonZeroVec3(angVel) ? { angVel } : {}),
+        ...(sound ? { sound } : {}),
         shape,
         ...(defaultColor ? { defaultColor } : {}),
         ...(faceColors ? { faceColors } : {}),
@@ -1680,6 +1885,8 @@ export interface TerseObjectData {
   localId: number
   pos:     [number, number, number]
   rot?:    [number, number, number, number]   // quaternion xyzw, dequantized from U16
+  vel?:    [number, number, number]   // linear velocity m/s, SL region frame — omitted when ~0
+  angVel?: [number, number, number]   // angular velocity rad/s — omitted when ~0
 }
 
 /**
@@ -1721,7 +1928,10 @@ export function decodeImprovedTerseObjectUpdate(
   //   Acc     (3 U16) range -64..64            — 6B
   //   Rot     (4 U16) range -1..1              — 8B
   //   AngVel  (3 U16) range -64..64            — 6B
-  // Prim length 32, avatar length 48.
+  // OpenSim packs prim Data = 44B, avatar = 60B (44 + CollisionPlane 16) —
+  // LLClientView.cs:6778/:6797 CreateImprovedTerseBlock datasize.
+  // Dequant ranges per FS llviewerobject.cpp:1752-1780 (OUT_TERSE_IMPROVED dp branch):
+  //   Vel U16_to_F32(-128,128) · Acc (-64,64) · Theta (-1,1) · AngVel (-64,64).
   const dequantQ = (u16: number) => (u16 / 65535) * 2 - 1
 
   for (let i = 0; i < count && off < buf.length; i++) {
@@ -1749,7 +1959,18 @@ export function decodeImprovedTerseObjectUpdate(
       dp += 12
     }
 
-    // Skip Vel (6) + Acc (6), then read Rot (8 U16)
+    // Vel (3 U16, ±128 m/s) — dequant per FS llviewerobject.cpp:1755 U16_to_F32(val, -128, 128)
+    let vel: [number, number, number] | undefined
+    if (dStart + dp + 6 <= dStart + dataLen) {
+      const vOff = dStart + dp
+      vel = [
+        u16ToF32(buf.readUInt16LE(vOff),     -128, 128),
+        u16ToF32(buf.readUInt16LE(vOff + 2), -128, 128),
+        u16ToF32(buf.readUInt16LE(vOff + 4), -128, 128),
+      ]
+    }
+
+    // Skip Acc (6 at dp+6), then read Rot (8 U16 at dp+12)
     if (dStart + dp + 12 + 8 <= dStart + dataLen) {
       const rOff = dStart + dp + 12
       rot = [
@@ -1757,6 +1978,17 @@ export function decodeImprovedTerseObjectUpdate(
         dequantQ(buf.readUInt16LE(rOff + 2)),
         dequantQ(buf.readUInt16LE(rOff + 4)),
         dequantQ(buf.readUInt16LE(rOff + 6)),
+      ]
+    }
+
+    // AngVel (3 U16, ±64 rad/s at dp+20) — FS llviewerobject.cpp:1776 U16_to_F32(val, -64, 64)
+    let angVel: [number, number, number] | undefined
+    if (dStart + dp + 20 + 6 <= dStart + dataLen) {
+      const aOff = dStart + dp + 20
+      angVel = [
+        u16ToF32(buf.readUInt16LE(aOff),     -64, 64),
+        u16ToF32(buf.readUInt16LE(aOff + 2), -64, 64),
+        u16ToF32(buf.readUInt16LE(aOff + 4), -64, 64),
       ]
     }
 
@@ -1771,10 +2003,94 @@ export function decodeImprovedTerseObjectUpdate(
       || Math.abs(pos[0]) > 1e30 || Math.abs(pos[1]) > 1e30 || Math.abs(pos[2]) > 1e30
     onRaw?.(localId, dataLen, pos, isSentinel)
     if (isSentinel) continue
-    results.push({ localId, pos, rot })
+    results.push({
+      localId, pos, rot,
+      ...(vel && nonZeroVec3(vel) ? { vel } : {}),
+      ...(angVel && nonZeroVec3(angVel) ? { angVel } : {}),
+    })
   }
 
   return results
+}
+
+// ── Sound messages (SoundTrigger High 29 · AttachedSound Medium 13 ·
+//    AttachedSoundGainChange Medium 14) ─────────────────────────────────────
+// Wire layouts are template-driven — the generic protocol codec (protocol/codec.ts decode())
+// walks message_template.msg:7357/:7372/:7385 by field name; these mappers only shape the
+// decoded block records into WS payloads. Field sets mirror the FS consumers
+// (llviewermessage.cpp:4871 process_sound_trigger, :5049 process_attached_sound,
+// :5106 process_attached_sound_gain_change) and the OpenSim senders
+// (LLClientView.cs:3157 SendTriggeredSound, :3136 SendPlayAttachedSound,
+// :3171 SendAttachedSoundGainChange).
+
+type DecodedBlocks = Record<string, Array<Record<string, unknown>>>
+
+// WHY: FS clamps every wire gain with llclampf (llviewermessage.cpp INT-141) — sims have been
+// observed sending gain slightly out of [0,1].
+const clampGain = (g: unknown): number => Math.min(1, Math.max(0, Number(g) || 0))
+
+export interface SoundTriggerData {
+  soundId:  string
+  ownerId:  string
+  objectId: string
+  parentId: string   // null-UUID when the object is its own parent (message_template.msg:7365)
+  handle:   string   // region handle U64 as decimal string (bigint is not JSON-safe)
+  pos:      [number, number, number]   // region-local metres
+  gain:     number   // 0..1
+}
+
+/** Map a generic-decoded SoundTrigger (High 29) into the WS payload; null if malformed/silent. */
+export function mapSoundTrigger(blocks: DecodedBlocks): SoundTriggerData | null {
+  const b = blocks.SoundData?.[0]
+  if (!b) return null
+  const soundId = String(b.SoundID ?? ZERO_UUID)
+  if (soundId === ZERO_UUID) return null   // null sound id triggers nothing (FS passes it to gAudiop which no-ops)
+  const p = (Array.isArray(b.Position) ? b.Position : [0, 0, 0]) as number[]
+  return {
+    soundId,
+    ownerId:  String(b.OwnerID ?? ZERO_UUID),
+    objectId: String(b.ObjectID ?? ZERO_UUID),
+    parentId: String(b.ParentID ?? ZERO_UUID),
+    handle:   String(b.Handle ?? 0),
+    pos:      [p[0] ?? 0, p[1] ?? 0, p[2] ?? 0],
+    gain:     clampGain(b.Gain),
+  }
+}
+
+export interface AttachedSoundData {
+  soundId:  string   // null-UUID = stop/cancel the object's pending sound (FS postponed_sounds erase path)
+  objectId: string
+  ownerId:  string
+  gain:     number   // 0..1
+  flags:    number   // U8 — 0x01 loop
+}
+
+/** Map a generic-decoded AttachedSound (Medium 13) into the WS payload; null if malformed. */
+export function mapAttachedSound(blocks: DecodedBlocks): AttachedSoundData | null {
+  const b = blocks.DataBlock?.[0]
+  if (!b) return null
+  return {
+    soundId:  String(b.SoundID ?? ZERO_UUID),
+    objectId: String(b.ObjectID ?? ZERO_UUID),
+    ownerId:  String(b.OwnerID ?? ZERO_UUID),
+    gain:     clampGain(b.Gain),
+    flags:    Number(b.Flags) || 0,
+  }
+}
+
+export interface AttachedSoundGainData {
+  objectId: string
+  gain:     number   // 0..1
+}
+
+/** Map a generic-decoded AttachedSoundGainChange (Medium 14) into the WS payload; null if malformed. */
+export function mapAttachedSoundGainChange(blocks: DecodedBlocks): AttachedSoundGainData | null {
+  const b = blocks.DataBlock?.[0]
+  if (!b) return null
+  return {
+    objectId: String(b.ObjectID ?? ZERO_UUID),
+    gain:     clampGain(b.Gain),
+  }
 }
 
 // ── RegionHandshake (Low #148) ────────────────────────────────────────────

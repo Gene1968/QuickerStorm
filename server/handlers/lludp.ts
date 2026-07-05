@@ -39,7 +39,15 @@ import {
 	encodeRezObject,
 	buildGiveFolderBucket,
 	uuidToBytes,
+	mapSoundTrigger, mapAttachedSound, mapAttachedSoundGainChange,
+	encodeMultipleObjectUpdate, type MultiUpdateEntry,
+	encodeRequestTaskInventory, mapReplyTaskInventory, encodeMoveTaskInventory,
 } from '../lib/lludp-codec'
+import {
+	nextXferId, startXfer, ingestXferChunk, abortXfer, clearXferScope,
+	mapSendXferPacket, encodeRequestXfer, encodeConfirmXferPacket, encodeAbortXfer,
+} from '../lib/xfer'
+import { parseTaskInventory } from '../lib/taskInventory'
 import { queueAck, nextSeq, trackReliable, ackReceived, retransmitOverdue, sendPendingAcks } from '../lib/circuit'
 import { slog } from '../lib/serverLog'
 import { S, C } from '../../shared/protocol.js'
@@ -112,6 +120,15 @@ const SIM_IDLE_TIMEOUT_MS = 65_000
 
 // Log every N packets to avoid flooding the debug panel
 const LOG_EVERY_N_PACKETS = 500
+
+// ── Task-inventory Xfer correlation (📦 Object Contents) ──
+// ReplyTaskInventory identifies the prim by its FULL UUID (TaskID); the client speaks localIds.
+// Track each in-flight fetch by xferId (for SendXferPacket/AbortXfer routing back to a prim) and
+// by taskId (so a newer ReplyTaskInventory supersedes the old download — FS aborts the stale
+// xfer when a fresh one starts, llviewerobject.cpp:3440-3452).
+interface TaskInvPending { localId: number; taskId: string; serial: number }
+const taskInvByXfer      = new Map<string, TaskInvPending>()   // `${sessionId} ${xferId}`
+const taskInvActiveByTask = new Map<string, bigint>()          // `${sessionId} ${taskId}` → xferId
 
 /**
  * Cross-region teleport — swap session's UDP socket onto the new sim and replay the
@@ -605,6 +622,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		// Sim terminated the circuit (timeout, teleport out, admin kick, etc.)
 		slog.warn(session.ws, '⚠ DisableSimulator received — sim terminated circuit')
 		session.ws.send(JSON.stringify({ t: S.DISCONNECTED, d: { reason: 'Simulator terminated the circuit' } }))
+		clearXferScope(sessionId)   // drop in-flight task-inv xfers (their timers) with the circuit
 		deleteSession(sessionId)
 		return
 	}
@@ -1183,6 +1201,152 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.ws.send(JSON.stringify({ t: S.ALERT_MESSAGE, d: { message, modal: !!alert.Modal } }))
 			}
 		} catch (e) { slog.warn(session.ws, `${name} decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// ── Sound packets (S-1/S-2) — template-decoded via the generic codec ──
+	// SoundTrigger (High 29): one-shot llTriggerSound at a region-local position.
+	// AttachedSound (Medium 13): looped/attached sound bound to an object.
+	// AttachedSoundGainChange (Medium 14): volume change for a playing attached sound.
+	// FS consumers: llviewermessage.cpp:4871/:5049/:5106; OpenSim senders:
+	// LLClientView.cs:3157 SendTriggeredSound / :3136 SendPlayAttachedSound / :3171 SendAttachedSoundGainChange.
+	if (name === 'SoundTrigger') {
+		try {
+			const d = mapSoundTrigger(decode(buf, { alreadyExpanded: true }).blocks)
+			if (d) {
+				if (!session.loggedTypes.has('soundtrigger')) {
+					session.loggedTypes.add('soundtrigger')
+					slog.info(session.ws, `[Sound] first SoundTrigger: ${d.soundId} gain=${d.gain.toFixed(2)} pos=[${d.pos.map(v => v.toFixed(1)).join(',')}]`)
+				}
+				session.ws.send(JSON.stringify({ t: S.SOUND_TRIGGER, d }))
+			}
+		} catch (e) { slog.warn(session.ws, `SoundTrigger decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (name === 'AttachedSound') {
+		try {
+			const d = mapAttachedSound(decode(buf, { alreadyExpanded: true }).blocks)
+			if (d) {
+				if (!session.loggedTypes.has('attachedsound')) {
+					session.loggedTypes.add('attachedsound')
+					slog.info(session.ws, `[Sound] first AttachedSound: ${d.soundId} obj=${d.objectId.slice(0, 8)}… gain=${d.gain.toFixed(2)} flags=0x${d.flags.toString(16)}`)
+				}
+				session.ws.send(JSON.stringify({ t: S.ATTACHED_SOUND, d }))
+			}
+		} catch (e) { slog.warn(session.ws, `AttachedSound decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	if (name === 'AttachedSoundGainChange') {
+		try {
+			const d = mapAttachedSoundGainChange(decode(buf, { alreadyExpanded: true }).blocks)
+			if (d) session.ws.send(JSON.stringify({ t: S.ATTACHED_SOUND_GAIN, d }))
+		} catch (e) { slog.warn(session.ws, `AttachedSoundGainChange decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// ── Task (prim) inventory — 📦 Object Contents steps 1-3 ──
+	// ReplyTaskInventory (Low 290) answers our RequestTaskInventory: empty Filename = empty prim
+	// (SceneObjectPartInventory.cs:1465); otherwise the named file must be fetched via Xfer.
+	// FS model: llviewerobject.cpp:3344 processTaskInv → :3432 gXferManager->requestFile.
+	if (name === 'ReplyTaskInventory') {
+		try {
+			const r = mapReplyTaskInventory(decode(buf, { alreadyExpanded: true }).blocks)
+			if (!r) return
+			// TaskID = the prim's full UUID; map back to the localId the client asked about.
+			let localId = -1
+			for (const [lid, o] of session.objCache) {
+				if ((o as { fullId?: string }).fullId === r.taskId) { localId = lid; break }
+			}
+			if (!r.filename) {
+				slog.info(session.ws, `← ReplyTaskInventory ${r.taskId.slice(0, 8)}… serial=${r.serial} (empty prim)`)
+				session.ws.send(JSON.stringify({ t: S.TASK_INV_EMPTY, d: { localId, taskId: r.taskId, serial: r.serial } }))
+				return
+			}
+			// Supersede an in-flight fetch for the same prim (script saved while open, etc.).
+			const taskKey = `${sessionId} ${r.taskId}`
+			const prior = taskInvActiveByTask.get(taskKey)
+			if (prior !== undefined) {
+				abortXfer(sessionId, prior)
+				taskInvByXfer.delete(`${sessionId} ${prior}`)
+				const seqA = nextSeq(session)
+				session.udpSocket.send(encodeAbortXfer({ seq: seqA, xferId: prior }), session.simPort, session.simIp)
+			}
+			const xferId = nextXferId()
+			taskInvActiveByTask.set(taskKey, xferId)
+			taskInvByXfer.set(`${sessionId} ${xferId}`, { localId, taskId: r.taskId, serial: r.serial })
+			startXfer(sessionId, xferId, {
+				onComplete: (data) => {
+					taskInvActiveByTask.delete(taskKey)
+					taskInvByXfer.delete(`${sessionId} ${xferId}`)
+					const s = getSession(sessionId)
+					if (!s) return
+					try {
+						const items = parseTaskInventory(data.toString('utf8'))
+						slog.info(s.ws, `← task inventory ${r.taskId.slice(0, 8)}… ${items.length} item(s), ${data.length}b xfer`)
+						s.ws.send(JSON.stringify({ t: S.TASK_INV, d: { localId, taskId: r.taskId, serial: r.serial, items } }))
+					} catch (e) {
+						s.ws.send(JSON.stringify({ t: S.TASK_INV, d: { localId, taskId: r.taskId, serial: r.serial, items: [], error: `parse: ${(e as Error).message}` } }))
+					}
+				},
+				onTimeout: () => {
+					taskInvActiveByTask.delete(taskKey)
+					taskInvByXfer.delete(`${sessionId} ${xferId}`)
+					const s = getSession(sessionId)
+					if (!s) return
+					slog.warn(s.ws, `task-inv xfer timed out: ${r.filename}`)
+					// Tell the sim to drop its sender state (FS abortRequestById(…, -1), llviewerobject.cpp:3444).
+					s.udpSocket.send(encodeAbortXfer({ seq: nextSeq(s), xferId }), s.simPort, s.simIp)
+					s.ws.send(JSON.stringify({ t: S.TASK_INV, d: { localId, taskId: r.taskId, serial: r.serial, items: [], error: 'xfer timeout' } }))
+				},
+			})
+			const seq = nextSeq(session)
+			const pkt = encodeRequestXfer({ seq, xferId, filename: r.filename })
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+			slog.info(session.ws, `← ReplyTaskInventory ${r.taskId.slice(0, 8)}… serial=${r.serial} "${r.filename}" → RequestXfer id=${xferId}`)
+		} catch (e) { slog.warn(session.ws, `ReplyTaskInventory error: ${(e as Error).message}`) }
+		return
+	}
+
+	// SendXferPacket (High 18) — one chunk of an in-flight Xfer. The sender is ack-clocked
+	// (XferModule.cs:434 AckPacket → SendPacket(lastSentPacket+1)), so EVERY accepted chunk —
+	// and any resend of the previous one — gets a ConfirmXferPacket (FS llxfermanager.cpp:571/:609).
+	if (name === 'SendXferPacket') {
+		try {
+			const chunk = mapSendXferPacket(decode(buf, { alreadyExpanded: true }).blocks)
+			if (!chunk) return
+			const res = ingestXferChunk(sessionId, chunk)
+			if (res.status === 'unknown') {
+				if (!session.loggedTypes.has('xfer-unknown')) {
+					session.loggedTypes.add('xfer-unknown')
+					slog.warn(session.ws, `SendXferPacket for unregistered xfer id=${chunk.xferId}`)
+				}
+				return
+			}
+			if (res.status === 'ignored') return
+			session.udpSocket.send(
+				encodeConfirmXferPacket({ seq: nextSeq(session), xferId: chunk.xferId, packet: res.confirmPacket }),
+				session.simPort, session.simIp)
+		} catch (e) { slog.warn(session.ws, `SendXferPacket error: ${(e as Error).message}`) }
+		return
+	}
+
+	// AbortXfer (Low 157) from the sim — the transfer died sender-side; fail the pending fetch.
+	if (name === 'AbortXfer') {
+		try {
+			const id = decode(buf, { alreadyExpanded: true }).blocks.XferID?.[0]?.ID
+			if (typeof id !== 'bigint') return
+			abortXfer(sessionId, id)
+			const pend = taskInvByXfer.get(`${sessionId} ${id}`)
+			if (pend) {
+				taskInvByXfer.delete(`${sessionId} ${id}`)
+				taskInvActiveByTask.delete(`${sessionId} ${pend.taskId}`)
+				slog.warn(session.ws, `← AbortXfer id=${id} — task-inv fetch for ${pend.taskId.slice(0, 8)}… dropped by sim`)
+				session.ws.send(JSON.stringify({ t: S.TASK_INV, d: { localId: pend.localId, taskId: pend.taskId, serial: pend.serial, items: [], error: 'sim aborted xfer' } }))
+			}
+		} catch (e) { slog.warn(session.ws, `AbortXfer decode error: ${(e as Error).message}`) }
 		return
 	}
 
@@ -1831,6 +1995,65 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
 		slog.info(session.ws, `→ DeRezObject (take-copy) localIds=[${d.localIds.join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_MULTI_UPDATE) {
+		// MultipleObjectUpdate (Medium 2) — move/rotate/scale prims. Data layout + UPD_* flags per
+		// FS llselectmgr.cpp:4922 packMultipleUpdate / llselectmgr.h:60; the type byte must land on
+		// OpenSim's HandleMultipleObjUpdate table (LLClientView.cs:12298) — the encoder enforces it.
+		const d = msg.d as { updates?: MultiUpdateEntry[]; linked?: boolean; uniform?: boolean }
+		const updates = (d.updates ?? []).filter(u =>
+			u && typeof u.localId === 'number' && (u.position || u.rotation || u.scale))
+		if (!updates.length) { slog.warn(session.ws, 'ObjectMultiUpdate: no valid updates'); return }
+		// WHY chunk 25: each ObjectData block is ≤42B (4+1+1+36); 25 keeps a packet ≲1.1KB, safely
+		// under the ~1200B LLUDP MTU (FS's message builder does the same per-packet fitting).
+		for (let i = 0; i < updates.length; i += 25) {
+			const seq = nextSeq(session)
+			let pkt: Buffer
+			try {
+				pkt = encodeMultipleObjectUpdate({
+					agentId: session.agentId, sessionId: session.sessionId, seq,
+					updates: updates.slice(i, i + 25), linked: !!d.linked, uniform: !!d.uniform,
+				})
+			} catch (e) { slog.warn(session.ws, `ObjectMultiUpdate refused: ${(e as Error).message}`); return }
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		const fields = [updates[0].position && 'pos', updates[0].rotation && 'rot', updates[0].scale && 'scale'].filter(Boolean).join('+')
+		slog.info(session.ws, `→ MultipleObjectUpdate ${fields}${d.linked ? ' linked' : ''}${d.uniform ? ' uniform' : ''} localIds=[${updates.map(u => u.localId).join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.REQUEST_TASK_INV) {
+		// RequestTaskInventory (Low 289) — the reply chain (ReplyTaskInventory → Xfer → parse)
+		// answers with S.TASK_INV / S.TASK_INV_EMPTY; see the inbound branches above.
+		const d = msg.d as { localId: number }
+		if (typeof d?.localId !== 'number') { slog.warn(session.ws, 'RequestTaskInv: missing localId'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeRequestTaskInventory({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ RequestTaskInventory localId=${d.localId}`)
+		return
+	}
+
+	if (msg.t === C.TASK_INV_MOVE) {
+		// MoveTaskInventory (Low 288) — copy/move ONE prim-inventory item into the agent folder
+		// ("Open" flow). Sim acks via UpdateCreateInventoryItem/BulkUpdateInventory (already decoded);
+		// no-copy items are deleted from the prim sim-side (FS llviewerobject.cpp:2941-2950).
+		const d = msg.d as { localId: number; itemId: string; folderId: string }
+		if (typeof d?.localId !== 'number' || !d.itemId || !d.folderId) {
+			slog.warn(session.ws, 'TaskInvMove: missing localId/itemId/folderId'); return
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeMoveTaskInventory({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, localId: d.localId, itemId: d.itemId,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoveTaskInventory localId=${d.localId} item=${d.itemId.slice(0, 8)}… → folder ${d.folderId.slice(0, 8)}…`)
 		return
 	}
 

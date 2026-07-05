@@ -143,7 +143,14 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**
   ('You don't have enough…' + placeholders for real purchase/currency) — full money system is brainstorm-first.
 
-### 🛠️ Object edit — manipulation (numeric fields → gizmo drag) — SCOUTED 2026-07-04
+### 🛠️ Object edit — manipulation — ✅ M-1/M-2/M-3 SHIPPED 2026-07-05 (uncommitted; LIVE-VERIFIED)
+**M-1** encodeMultipleObjectUpdate + handler + useLLUDP sendPosition/sendScale/sendRotation (golden-byte
+tests vs the OpenSim type table; ⚠ impl unreviewed — spend limit). **M-2/M-3** (done by hand after the
+sweep): editable Pos/Size/Rot inputs on Gene's floater layout + ±0.05 m/±0.5° steppers + ↑/↓ keys,
+focused-field echo guard, Euler↔quat in src/utils/eulerQuat.js (round-trip vitest). **LIVE-VERIFIED
+osgrid:** stepper +0.05 and typed-value commits both round-tripped with exact sim echo (obj 647648750).
+ROOT prims only (child pos/rot are parent-relative → gated w/ tooltip until "Edit linked parts").
+**Still needs-design:** gizmo drag · drag-select marquee · shift-copy (see original scout notes below).
 Audit findings: the gizmo is **visual-only** (arrows/rings/handles render + mode-switch + click-through guard,
 useWorldEngine.js:1855–2038, but zero drag interaction; no TransformControls import); Pos/Size/Rot in the
 Object tab are read-only `<span>`s (ObjectEditFloater.vue:901–923; `quatToEulerDeg` exists :209, no inverse);
@@ -164,7 +171,14 @@ Object tab are read-only `<span>`s (ObjectEditFloater.vue:901–923; `quatToEule
   SL↔Three Y/Z swap care) · **drag-select marquee** (needs multi-object selection state — today only single
   `ui.editObjectId`; FS lltoolselectrect.cpp:72) · **shift-copy** (ObjectDuplicate Low 92, needs gizmo drag first).
 
-### 🎬 Scripted motion & TextureAnim — SCOUTED 2026-07-04, sweep-ready
+### 🎬 Scripted motion & TextureAnim — ✅ SHIPPED 2026-07-05 (uncommitted; NOT live-verified)
+Full A–G swept 2026-07-05 ultracode. Server wire (E/F decode + forward) REVIEWED-PASS (all cites verified,
+251 server tests green). Client (all A–G in useWorldEngine + src/lib/scriptedMotion.js pure-math port)
+⚠ UNREVIEWED — the org spend limit killed its reviewer mid-workflow; code self-audited only. KEY UPGRADE
+found during impl: terse child pos/rot are PARENT-RELATIVE on the wire (OpenSim LLClientView.cs:6791
+part.RelativePosition — verified), so G applies them as parent-local, not worldToLocal. ⬜ live-verify:
+waves scroll (child 647644744, slow −0.02), falls (0.15), a spinning llTargetOmega prim, vehicle glide,
+moving-linkset children, sculpt-foliage striping gone. Original scouted spec below for reference:
 Server already decodes + forwards `textureAnim` (lludp-codec.ts:916 parseTextureAnim, fwd :1285/:1638);
 worldStore holds it; **nothing in the render path consumes it**. Live probe (osgrid 2026-07-04): 18 objects
 in-region carry active anims — ALL mode 0x13 = ON|LOOP|SMOOTH (water rate −0.02, falls/streams 0.15),
@@ -191,7 +205,24 @@ excluded from / auto-promoted out of the InstancedMesh pool (poolKey snapshots s
   frame = floor(elapsed·rate), x=f%sizeX, y=floor(f/sizeX), offsets centered −0.5+0.5/size; LOOP/PING_PONG/REVERSE.
 - **D. ROTATE / SCALE modes** (0x20/0x40): `map.rotation = frame_counter` (center 0.5,0.5) / repeat=counter.
 
-### 📦 Object Contents — Edit-floater Content tab + right-click "Open" — SCOUTED 2026-07-04
+### 📦 Object Contents — ✅ ALL 6 STEPS SHIPPED 2026-07-05 (uncommitted; list LIVE-VERIFIED)
+Steps 1–3 (server: Xfer subsystem + RequestTaskInventory/Reply + legacy parser + TASK_INV wire +
+MoveTaskInventory encode; ⚠ impl unreviewed — spend limit; unit tests green). Steps 4–6 done by hand:
+`useTaskInventory` composable (module-singleton state, KILL_OBJECT invalidate, 35s no-reply timeout) +
+real Content tab (request-on-activate, type icons + perm letters, loading/error/empty states, Refresh) +
+**Open** on ObjectContextMenu and the Content tab (FS llfloateropenobject copy-to-named-folder via
+MoveTaskInventory per item; toasts every outcome). **LIVE-VERIFIED osgrid:** Content tab listed a real
+prim's 4 items (3 animations + a script) through the full Xfer pipeline. ⬜ live-verify the Open click
+itself (creates folder + copies items — left for Gene). New Script / Edit buttons stay disabled
+(no script editor yet — FEATURE-GAPS scripts).
+**Follow-ups (Gene 2026-07-05, after his layout/button pass on the tab):**
+- FS treats contents as a single FOLDER of an inventory tree w/ drag & drop (llpanelobjectinventory =
+  a filtered inv panel) — either reuse our inventory tree component scoped to the task folder, or faux it here.
+- Per-item context menu (FS: Open / Properties / Rename / Delete) — where FS "Open" = preview-by-type /
+  edit-script; our copy-to-inventory action is deliberately labeled differently to keep the two apart.
+- "xfer timeout" robustness FIXED 2026-07-05: deep-duplicate re-confirm (highest-accepted) + watchdog
+  re-arms on ANY transfer traffic (OpenSim bursts ≤33 chunks, stall-resends ≤4×10s — XferModule.cs:396/:458;
+  we could time out mid-recovery on lossy/busy links). If timeouts persist → add ONE auto re-request retry.
 **SEQUENTIAL mini-program** (steps feed each other — one session/pipelined workflow, not a blind-parallel sweep).
 All 9 UDP messages already in message_template.msg (Xfer :3541–3586, task-inv :6421–6508); **zero Xfer machinery
 exists** in our server. OpenSim has NO RequestTaskInventory HTTP cap → must build the UDP+Xfer path
@@ -214,9 +245,15 @@ exists** in our server. OpenSim has NO RequestTaskInventory HTTP cap → must bu
    FS: llfloateropenobject.cpp:155 moveToInventory, llinventorybridge.cpp:3624. → items land in Objects folder.
    (Unblocks the FEATURE-GAPS "UNBOX perms re-check" watch item.)
 
-### 🔊 Sound — SCOUTED 2026-07-04, sweep-ready (S-1…S-8 largely independent)
+### 🔊 Sound — ✅ SHIPPED 2026-07-05 (uncommitted; NOT live-verified)
+S-1…S-8 all swept 2026-07-05 ultracode (server wire REVIEWED-PASS; client useSoundEngine.js REVIEWED with
+ONE blocker — llStopSound could never stop loops because the codec omitted zero-UUID sound fields — FIXED
+by hand same day: codec now emits an id:null STOP marker when Sound=Zero + flags/gain set
+(SoundModule.cs:269-276 stop path), regression-tested. 35 sound tests green.) ⬜ live-verify: llTriggerSound
+plays + attenuates with distance, looping fountain starts/stops, llStopSound kills a loop, FS-UI-sounds
+toggle, Sounds slider. Original scouted spec below:
 Surprising head start: **server OGG asset fetch already works end-to-end** (assets.ts:83 `'sound'` spec →
-ViewerAsset cap → base64 to client) and **37 FS UI sounds (OGG) already sit unwired in src/assets/audio/sl-fs/**
+ViewerAsset cap → base64 to client) and **37 FS UI sounds (OGG) already sit unwired in src/assets/audio/sl-fs/ NO ONE TOLD YOU TO CONNECT THESE WHEN WE HAVE OTHERS**
 (glob only picks up *.mp3). Gap = packet handlers (all four sound packets currently logged-once-and-dropped)
 + a client player. Web-audio engine + channel state refs exist (useAudio.js; ambient/sounds/music/media/voice
 are "state only, no routing yet").
@@ -439,6 +476,15 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## ⬇️ Raw inbox (Gene dumps here; Claude triages up into the clusters above)
+
+**2026-07-05 (from live-verifying the motion sweep):**
+- 🐛 **All scripted motion pauses when the window loses focus** — pre-existing: `animate()` early-returns on
+  `!document.hasFocus()` (useWorldEngine.js:4936, GPU/battery saver), which now freezes omega/DR/texture anims
+  too. Gene: pausing makes sense for hidden/minimized, looks weird on mere focus-out. Candidate fix: gate on
+  `document.hidden` instead (or step motion at low rate while unfocused-but-visible). Discuss before changing.
+- 🐛 **Scripted pos-motion objects needed a touch to first start** (already moving in FS) — motion only arms
+  from live raw updates (`_noteMotionUpdate`; cached linear vel deliberately untrusted). Investigate whether
+  initial scene paint comes from cache preseed with no live terse until interest/select. Live-verify item.
 
 **2026-07-01 dump (from Gene — file for when we reach each feature/fix):**
 - ✅ **Perms false NM/NC/NT** — ADDRESSED 2026-07-02 sweep: shared `_enrichItem()` on every insert path

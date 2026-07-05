@@ -26,6 +26,9 @@ export const C = {
 	OBJECT_DELETE:  'object_delete',  // { localId } — outbound ObjectDelete (Low 89), Force=false
 	OBJECT_TAKE:    'object_take',    // { localIds: number[], destinationFolderId } — outbound DeRezObject Destination=Take(4); FS passes the destination category UUID (llviewermenu.cpp confirm_take)
 	OBJECT_TAKE_COPY:'object_take_copy',// { localIds: number[] } — outbound DeRezObject Destination=TakeCopy(1); OpenSim resolves the Objects folder itself so no DestinationID needed
+	OBJECT_MULTI_UPDATE:'object_multi_update', // { updates:[{ localId, position?:[x,y,z], rotation?:[x,y,z,w], scale?:[x,y,z] }], linked?, uniform? } — outbound MultipleObjectUpdate (Medium 2): move/rotate/scale prims. Field presence per update sets the UPD_* type bits server-side (llselectmgr.h:60); linked = whole-linkset (send ROOT ids), uniform = uniform scale
+	REQUEST_TASK_INV: 'request_task_inv', // { localId } — outbound RequestTaskInventory (Low 289); server runs ReplyTaskInventory → Xfer → parse and answers TASK_INV / TASK_INV_EMPTY
+	TASK_INV_MOVE:    'task_inv_move',    // { localId, itemId, folderId } — outbound MoveTaskInventory (Low 288): copy/move ONE prim-inventory item into agent folderId ("Open" flow); sim acks via UpdateCreateInventoryItem/BulkUpdateInventory
 	SET_ALWAYS_RUN: 'set_always_run', // { alwaysRun: boolean } — outbound SetAlwaysRun (Low 88)
 	CLIENT_DIAG:    'client_diag',    // { received, stored, prims, av, meshes, upsertFails } — periodic mesh-side stats forwarded to server-log
 	CLIENT_LOG:     'client_log',     // { level, msg, stack } — dev: forward matched console errors/warns (e.g. NaN) to server-log
@@ -79,8 +82,8 @@ export const C = {
 export const S = {
 	LOGIN_OK:     'login_ok',   // { agentId, sessionId, simIp, simPort, seedCap, regionName, inventoryRoot, inventorySkeleton:[{folderId,parentId,name,typeDefault,version}], inventoryLibRoot, inventorySkeletonLib }
 	LOGIN_FAIL:   'login_fail', // { message }
-	OBJECT_UPDATE:'obj_upd',    // { objects: [{ localId, fullId, pcode, pos, rot, scale, nameValue, parentId, shape, defaultColor?, faceColors?, psys? }] }  psys = { pattern, burstRate, burstRadius, burstPartCount, burstSpeedMin/Max, maxAge, startAge, inner/outerAngle, angularVelocity, partAccel, texture, target, partFlags, partMaxAge, start/endColor[rgba], start/endScale[xy], start/endGlow, blendFuncSource/Dest }
-	TERSE_UPDATE: 'terse_upd', // { objects: [{ localId, pos:[x,y,z] }] } — position-only sim updates
+	OBJECT_UPDATE:'obj_upd',    // { objects: [{ localId, fullId, pcode, pos, rot, scale, nameValue, parentId, shape, defaultColor?, faceColors?, psys?, vel?, angVel?, sound? }] }  vel/angVel = [x,y,z] SL region frame (m/s, rad/s), omitted when ~0; sound = { id, gain, flags, radius } looped attached sound (flags U8 0x01 loop, 0x20 stop); id:null = explicit STOP marker (llStopSound sends Sound=Zero + STOP flag — SoundModule.cs:269-276); omitted when null-UUID AND flags+gain zero. psys = { pattern, burstRate, burstRadius, burstPartCount, burstSpeedMin/Max, maxAge, startAge, inner/outerAngle, angularVelocity, partAccel, texture, target, partFlags, partMaxAge, start/endColor[rgba], start/endScale[xy], start/endGlow, blendFuncSource/Dest }
+	TERSE_UPDATE: 'terse_upd', // { objects: [{ localId, pos:[x,y,z], rot?:[x,y,z,w], vel?:[x,y,z], angVel?:[x,y,z] }] } — ~10Hz motion updates; vel m/s + angVel rad/s (SL region frame) omitted when ~0
 	CHAT_MSG:     'chat_msg',   // { fromName, sourceId, type, channel, message, pos }
 	REGION_INFO:  'region',     // { name, handle, waterHeight }
 	TELEPORT_OK:       'tp_ok',       // { regionName, seedCap }
@@ -126,6 +129,13 @@ export const S = {
 	OBJ_CACHE_PROBE:      'obj_cache_probe',      // { probes:[{localId,crc}] } — sim's ObjectUpdateCached; client decides hit/miss vs its IDB cache
 	CAP_RESULT:     'cap_result',   // { id, cap, ok, result?, error?, status? } — generic cap reply, correlated by id
 	EQ_EVENT:       'eq_event',     // { name, body } — EventQueue event with no dedicated server handler, forwarded raw
+	// ── Task (prim) inventory ──
+	TASK_INV:       'task_inv',       // { localId, taskId, serial, items:[{ itemId, parentId, assetId, assetType, invType, flags, name, desc, creationDate, baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask, creatorId, ownerId, lastOwnerId, groupId, groupOwned, saleType, salePrice }], error? } — parsed prim contents (ReplyTaskInventory + Xfer + legacy-file parse); error set (items empty) on xfer timeout/abort
+	TASK_INV_EMPTY: 'task_inv_empty', // { localId, taskId, serial } — ReplyTaskInventory carried an empty Filename = prim has no inventory (SceneObjectPartInventory.cs:1465)
+	// ── Sound (S-1/S-2) ──
+	SOUND_TRIGGER:       'sound_trigger',       // { soundId, ownerId, objectId, parentId, handle, pos:[x,y,z], gain } — SoundTrigger (High 29): one-shot llTriggerSound/llPlaySound at a region-local position; handle = region handle U64 as string; parentId null-UUID = object is its own parent
+	ATTACHED_SOUND:      'attached_sound',      // { soundId, objectId, ownerId, gain, flags } — AttachedSound (Medium 13): sound bound to an object (position tracks it); flags U8 0x01 loop; soundId null-UUID = cancel the object's pending sound
+	ATTACHED_SOUND_GAIN: 'attached_sound_gain', // { objectId, gain } — AttachedSoundGainChange (Medium 14): volume change for an object's playing attached sound
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

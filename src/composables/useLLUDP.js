@@ -114,6 +114,60 @@ export function useLLUDP() {
 		emit(C.INV_PURGE_FOLDER, { folderId })
 	}
 
+	// ── MultipleObjectUpdate (move/rotate/scale) ────────────────────────────
+	// FS semantics (llselectmgr.cpp:4894 sendMultipleUpdate): whole-object edits go to linkset
+	// ROOTS with UPD_LINKED_SETS; "Edit linked parts" sends the exact prim ids un-flagged.
+	const toIds = (localIds) => Array.isArray(localIds) ? localIds : [localIds]
+	const idsFor = (localIds, linked) =>
+		linked ? [...new Set(toIds(localIds).map(rootOf))] : [...new Set(toIds(localIds))]
+	// FS packs each object's CURRENT position alongside rotation/scale edits — fall back to the
+	// store's last-known pos when the caller doesn't supply one.
+	const posFor = (localId, position) => position ?? world.objects?.get(localId)?.pos ?? null
+
+	/** Move prim(s): UPD_POSITION. position = [x,y,z] region-local metres.
+	 *  linked=true targets whole linksets (ids resolved to roots, UPD_LINKED_SETS set). */
+	function sendPosition(localIds, position, { linked = false } = {}) {
+		const updates = idsFor(localIds, linked).map((localId) => ({ localId, position }))
+		emit(C.OBJECT_MULTI_UPDATE, { updates, linked })
+	}
+
+	/** Resize prim(s): UPD_SCALE|UPD_POSITION — FS always sends scale WITH position
+	 *  (llpanelobject.cpp:2236 sendScale) so the sim anchors the stretch. scale = [x,y,z] m.
+	 *  uniform=true = uniform stretch (UPD_UNIFORM). position optional (store pos fallback). */
+	function sendScale(localIds, scale, { position, linked = false, uniform = false } = {}) {
+		const updates = idsFor(localIds, linked).map((localId) => {
+			const pos = posFor(localId, position)
+			return { localId, scale, ...(pos ? { position: pos } : {}) }
+		})
+		emit(C.OBJECT_MULTI_UPDATE, { updates, linked, uniform })
+	}
+
+	/** Rotate prim(s): UPD_ROTATION|UPD_POSITION — FS always sends rotation WITH position
+	 *  (llpanelobject.cpp:2187 sendRotation). rotation = quaternion [x,y,z,w] (server packs to
+	 *  3 floats, W dropped — llquaternion.cpp:919). position optional (store pos fallback). */
+	function sendRotation(localIds, rotation, { position, linked = false } = {}) {
+		const updates = idsFor(localIds, linked).map((localId) => {
+			const pos = posFor(localId, position)
+			return { localId, rotation, ...(pos ? { position: pos } : {}) }
+		})
+		emit(C.OBJECT_MULTI_UPDATE, { updates, linked })
+	}
+
+	// ── Task (prim) inventory ───────────────────────────────────────────────
+	// Contents live per PRIM (not per linkset) — send the clicked prim's id unresolved; the
+	// Edit floater's Content tab shows the selected prim's inventory, matching FS.
+	/** Fetch a prim's contents; server answers TASK_INV { localId, taskId, serial, items } or
+	 *  TASK_INV_EMPTY. Re-request after edits — the sim bumps `serial` per mutation. */
+	function requestTaskInventory(localId) {
+		emit(C.REQUEST_TASK_INV, { localId })
+	}
+
+	/** "Open" flow: copy/move ONE task-inventory item into agent folderId (MoveTaskInventory,
+	 *  Low 288). Ack arrives as the usual inventory create/bulk-update messages. */
+	function moveTaskInventory(localId, itemId, folderId) {
+		emit(C.TASK_INV_MOVE, { localId, itemId, folderId })
+	}
+
 	function sendSetAlwaysRun(alwaysRun) {
 		emit(C.SET_ALWAYS_RUN, { alwaysRun: !!alwaysRun })
 	}
@@ -130,5 +184,5 @@ export function useLLUDP() {
 		emit(C.MAP_TELEPORT, { regionX, regionY, x, y, z })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
 }

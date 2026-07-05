@@ -178,7 +178,7 @@ html.light {
 		align-items: center;
 		justify-content: center;
 		background-color: var(--surface);
-		padding: 0.35rem;
+		padding: 0.25rem;
 		color: var(--fg-subtle);
 		transition: color 0.15s, border-color 0.15s, background 0.15s;
 	}

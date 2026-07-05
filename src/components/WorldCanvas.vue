@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useWorldEngine } from '@/composables/useWorldEngine'
+import { initSoundEngine } from '@/composables/useSoundEngine'
 import { useInventory } from '@/composables/useInventory'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useWorldStore } from '@/stores/worldStore'
@@ -9,6 +10,7 @@ import { resolveRezzableAnchor } from '@/utils/rezzableAnchor'
 import HoverCursorBadge from '@/components/HoverCursorBadge.vue'
 const canvasRef = ref(null)
 const { hoverAction, hoverPos, altFocus, screenToDropPoint } = useWorldEngine(canvasRef)
+initSoundEngine()   // in-world sound engine (S-4..S-6) — idempotent, wires WS handlers + tick
 const { rezObject } = useInventory()
 const inv = useInventoryStore()
 const world = useWorldStore()
