@@ -107,7 +107,8 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
 - ⬜ live-verify by hand: drop an object on a prim floor (should rez ON it), multi-drag toast, give toasts.
 
 ### Object Build & Edit Floater — FEATURE-GAPS L170–186
-- edit name & description · numeric size/pos/rot input fields (fields editable → modify selected) · Select-Face radio
+- ✅ edit name & description (audited 2026-07-04: full round-trip live) · numeric size/pos/rot input fields
+  → **Object edit — manipulation** cluster below · Select-Face radio
 - texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
 - Link/Unlink prims · Link-number ordering bug (L183) · **create/rez a prim in-world** (Build-tools)
 - **✅ ObjectProperties-data BATCH — SHIPPED 2026-07-03 (uncommitted; core LIVE-VERIFIED osgrid):**
@@ -137,10 +138,116 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
   DO happen, are still silent upstream (PermissionsModule.cs:2019 alert commented out; take-copy of
   others' objects needs everyone Copy+Transfer folded over every prim + contents, :1045/:2017/:2023) —
   covered by the 10s **take-watchdog** toast (useTakeWatch.js).
-- **drag-select multiple objects** while the Edit floater is open · **edit gizmo handles** (move/rotate/scale/copy)
-- **texture anim/scripts** (moving water, scrolling text, "cell animation," etc.)
+- drag-select multiple objects + gizmo handles → **Object edit — manipulation** cluster below
+- texture anim/scripts → **Scripted motion & TextureAnim** cluster below
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**
   ('You don't have enough…' + placeholders for real purchase/currency) — full money system is brainstorm-first.
+
+### 🛠️ Object edit — manipulation (numeric fields → gizmo drag) — SCOUTED 2026-07-04
+Audit findings: the gizmo is **visual-only** (arrows/rings/handles render + mode-switch + click-through guard,
+useWorldEngine.js:1855–2038, but zero drag interaction; no TransformControls import); Pos/Size/Rot in the
+Object tab are read-only `<span>`s (ObjectEditFloater.vue:901–923; `quatToEulerDeg` exists :209, no inverse);
+**no MultipleObjectUpdate encoder exists anywhere** — that's the shared prerequisite.
+**Batch-ready (one small sweep):**
+- **M-1 MultipleObjectUpdate encoder + wire** — encode per FS llselectmgr.cpp:4922 packMultipleUpdate:
+  per-block LocalID U32 + Type U8 + Data (order strictly pos12 → rot12(quat packed to 3 floats) → scale12,
+  only flagged fields; UPD_POSITION 0x01 / ROTATION 0x02 / SCALE 0x04 / LINKED_SETS 0x08 / UNIFORM 0x10 —
+  llselectmgr.h:60). OpenSim decode table: LLClientView.cs:12298 HandleMultipleObjUpdate (types 1–5, 9–0x0D,
+  0x14/0x15). New protocol consts OBJECT_MOVE/SCALE/ROTATE + handler + `sendPosition/Scale/Rotation` in useLLUDP.
+- **M-2 Numeric Pos/Size/Rot inputs** — replace spans with inputs (blur/Enter commit, FS-style rot-sends-with-pos:
+  llpanelobject.cpp:2187 UPD_ROTATION|UPD_POSITION, scale clamps 0.01→region max :2204) + Euler→quat inverse.
+  **Build on Gene's 2026-07-03 floater layout — don't restructure.** → type X → prim moves on sim, echo updates fields.
+- **M-3 Nudge steppers** — ±0.05 m / ±0.5° buttons on each axis, same send path.
+**Needs-design (own pass each, after M-1 lands):**
+- **gizmo drag** (pointer capture on handles, axis-plane projection math per llmaniptranslate.cpp:1079 /
+  llmaniprotate.cpp:488 / llmanipscale.cpp:414 — all send on mouse-up; live local preview during drag;
+  SL↔Three Y/Z swap care) · **drag-select marquee** (needs multi-object selection state — today only single
+  `ui.editObjectId`; FS lltoolselectrect.cpp:72) · **shift-copy** (ObjectDuplicate Low 92, needs gizmo drag first).
+
+### 🎬 Scripted motion & TextureAnim — SCOUTED 2026-07-04, sweep-ready
+Server already decodes + forwards `textureAnim` (lludp-codec.ts:916 parseTextureAnim, fwd :1285/:1638);
+worldStore holds it; **nothing in the render path consumes it**. Live probe (osgrid 2026-07-04): 18 objects
+in-region carry active anims — ALL mode 0x13 = ON|LOOP|SMOOTH (water rate −0.02, falls/streams 0.15),
+incl. wave-surface child 647644744. Hook site = `animate()` (useWorldEngine.js:4674) before `renderer.render`.
+⚠ Two render-side traps: (1) `xformCache` clones textures with STATIC repeat/offset keys
+(useTextureFetch.js:64/:431) — animated objects need an uncached per-object clone; (2) animated prims must be
+excluded from / auto-promoted out of the InstancedMesh pool (poolKey snapshots static UV — useWorldEngine.js:3819–3829).
+**Wave 1 — fully independent, ONE sweep (A+E+F+G):**
+- **A. TE-repeat bypass when ANIM_ON** — apply identity UV (not TE repeats) on faces with `mode & 0x01`;
+  fixes striping visible TODAY on static-UV-trick prims (garbage repeats like V=−256 on sculpt foliage).
+  Hook `uvXform` call sites (useWorldEngine.js:2367 + faceXform :4385). FS: llface.cpp:1739–1759 (bypass),
+  llvovolume.cpp:723 animateTextures. → sculpt foliage stops striping; normal prims unregressed.
+- **E. Omega spin (llTargetOmega)** — decode AngVel (compressed ObjectUpdate 12B discarded at codec:1150;
+  terse 6B skipped at :1753), forward, integrate per frame `quat *= ΔQ(axis, |ω|·dt)`. Port of FS
+  llviewerobject.cpp:7397 applyAngularVelocity (called idleUpdate :2552). → fans/wheels spin at sim rate.
+- **F. Velocity dead-reckoning for prims** — decode terse Vel (skipped at codec:1753), advance pos by `vel·dt`
+  between ~10 Hz terse updates (own-avatar DR already exists as the model). → vehicles/trains glide, no teleport-stutter.
+- **G. Child-prim terse coordinate-frame fix 🐛** — onTerseUpdate (useWorldEngine.js:2903) sets ABSOLUTE
+  world coords as LOCAL position on meshes parented under a root → children of moving linksets jump/drift.
+  Convert via `parent.worldToLocal()`. Likely THE "some scripted motion works, some doesn't" root cause.
+**Wave 2 — after A lands (B+C+D share one frame-loop + timer):**
+- **B. SMOOTH scroll** (sizeX=sizeY=0): `off += rate·dt`, fmod-wrap — moving water/scrolling text. THE waves item.
+- **C. Cell animation** (sizeX/Y>0): FS formula llviewertextureanim.cpp:78–233 — `repeat=1/size`,
+  frame = floor(elapsed·rate), x=f%sizeX, y=floor(f/sizeX), offsets centered −0.5+0.5/size; LOOP/PING_PONG/REVERSE.
+- **D. ROTATE / SCALE modes** (0x20/0x40): `map.rotation = frame_counter` (center 0.5,0.5) / repeat=counter.
+
+### 📦 Object Contents — Edit-floater Content tab + right-click "Open" — SCOUTED 2026-07-04
+**SEQUENTIAL mini-program** (steps feed each other — one session/pipelined workflow, not a blind-parallel sweep).
+All 9 UDP messages already in message_template.msg (Xfer :3541–3586, task-inv :6421–6508); **zero Xfer machinery
+exists** in our server. OpenSim has NO RequestTaskInventory HTTP cap → must build the UDP+Xfer path
+(FS falls back the same way, llviewerobject.cpp:3051). Content tab stub already in ObjectEditFloater.vue:1308–1324.
+1. **Xfer subsystem** (`server/lib/xfer.ts`): encodeRequestXfer (Low 156) · SendXferPacket decode (High 18,
+   U64 XferID + U32 packet#, high bit = EOF, packet 0 prepends U32 total-len) · ConfirmXferPacket (High 19) ·
+   AbortXfer · keyed reassembly + timeout. OpenSim: XferModule.cs:161 AddNewFile / :425 1KB chunks.
+   → unit test: 3-chunk mock reassembles.
+2. **RequestTaskInventory (Low 289) + ReplyTaskInventory decode (Low 290)** — TaskID/Serial/Filename;
+   empty filename = empty prim → `TASK_INV_EMPTY`. FS: llviewerobject.cpp:3344 processTaskInv → :3432 requestFile.
+   OpenSim: SceneObjectPartInventory.cs:1453 RequestInventoryFile.
+3. **Legacy task-inv file parser** — tab-indented `inv_object`/`inv_item` text blocks (perms sub-block hex masks,
+   names end `|`, asset_id zeroed when perms deny). Format: InventoryStringBuilder (SceneObjectPartInventory.cs:1637);
+   FS parser loadTaskInvFile (llviewerobject.cpp:3524). → parse script+notecard+texture fixture correctly.
+4. **Client store** — `taskInventory: Map<localId, items[]>` + TASK_INV/TASK_INV_EMPTY handlers + KillObject invalidate.
+5. **Content tab UI** — request on tab-activate, list w/ type icons + perm letters (reuse inventory constants),
+   loading spinner; enable New Script/Open/Edit buttons appropriately. FS: llpanelobjectinventory.cpp:1870/:1742.
+6. **"Open" flow** — ObjectContextMenu Open + Content-tab button: create agent folder named after object →
+   MoveTaskInventory (Low 288) per item → confirm via UpdateCreateInventoryItem (already decoded).
+   FS: llfloateropenobject.cpp:155 moveToInventory, llinventorybridge.cpp:3624. → items land in Objects folder.
+   (Unblocks the FEATURE-GAPS "UNBOX perms re-check" watch item.)
+
+### 🔊 Sound — SCOUTED 2026-07-04, sweep-ready (S-1…S-8 largely independent)
+Surprising head start: **server OGG asset fetch already works end-to-end** (assets.ts:83 `'sound'` spec →
+ViewerAsset cap → base64 to client) and **37 FS UI sounds (OGG) already sit unwired in src/assets/audio/sl-fs/**
+(glob only picks up *.mp3). Gap = packet handlers (all four sound packets currently logged-once-and-dropped)
++ a client player. Web-audio engine + channel state refs exist (useAudio.js; ambient/sounds/music/media/voice
+are "state only, no routing yet").
+- **S-1 SoundTrigger decode+forward** (High 29: SoundID/Owner/Object/Parent/Handle/Position/Gain) → `SOUND_TRIGGER`.
+  FS: llviewermessage.cpp:4871 process_sound_trigger. OpenSim: SoundModule.cs:166 TriggerSound.
+- **S-2 AttachedSound + GainChange decode+forward** (Medium 13/14). FS: llviewermessage.cpp:5049/:5106
+  (note FS's postponed_sounds map for objects not yet arrived).
+- **S-3 Extract sound fields from ObjectUpdate** — currently SKIPPED (codec:1195 `off += 25` compressed;
+  :1597–1601 full tail): soundId/gain/flags/radius → object payload + store.
+- **S-4 Client OGG player** — on SOUND_TRIGGER: ASSET_FETCH sound → decodeAudioData → BufferSource once;
+  master volume. → llTriggerSound audibly plays in browser.
+- **S-5 Positional attenuation** — PannerNode (distanceModel 'inverse', refDistance 1, rolloff 1 = FS OpenAL
+  defaults, llaudioengine_openal.cpp:272); listener = camera. → 20 m clearly quieter than 1 m.
+- **S-6 Looping attached sounds** — from S-3 fields: loop when `flags & 0x01`, Map by objectId, stop on
+  KillObject, gain updates from S-2. → fountain loops, fades with distance, dies cleanly.
+- **S-7 Wire the 37 FS OGG UI sounds** — extend glob to sl-fs/*.ogg, map FS names (click, window open/close,
+  snapshot, teleport…) onto existing trigger points; user toggle FS-vs-current sounds. FS: llui.cpp:156
+  make_ui_sound + settings.xml UISnd* UUIDs.
+- **S-8 Route the "Sounds" channel for real** — in-world playback through a sounds GainNode (separate from
+  interface + master). → slider/mute audibly works.
+
+### 🧍 Avatar first slices — batch-able forerunners of the 🧠 avatar program (SCOUTED 2026-07-04)
+- **AV-1 SKIN-block decode → attachments positioned right (MEDIUM risk)** — mesh LLSD SKIN block
+  (mJointNames/mInvBindMatrix/mAlternateBindMatrix/mBindShapeMatrix/mPelvisOffset — FS llmodel.h:46–77) is
+  currently not parsed AT ALL; rigged clothing lands at bind-pose origin. Slice = decode server-side + apply
+  static root-joint/bind offset client-side when parent is an avatar (no skeleton, no GPU skinning yet).
+  Matches the FEATURE-GAPS "bind-pose placement first, then hide arm tubes on torso-coverage" plan.
+- **AV-2 Appearance-state enum + jellydoll colored-capsule (LOW risk)** — AOA_NORMAL/JELLYDOLL/INVISIBLE
+  equivalent (FS llvoavatar.cpp:12964 getOverallAppearance) + distinct per-UUID jellydoll color; the honest
+  "can't render this yet" state and the scaffold Stage-3 skeleton work hangs off. Billboard-impostor render
+  itself stays 🧠.
 
 ### Right-click menus (object + avatar) — FEATURE-GAPS L190–207
 - avatar: zoom-to · inspect (appearance) · invite to group · save outfit · self menu (Sit/Stand/Fly)
@@ -235,9 +342,16 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
   is the big heavy-region lever; sub-items interdependent. (Also the render-pipeline visuals: shaders + small
   cache, transparent water, AO, SSR, mirrors, sun/moon + projectors, realtime vs static reflections.)
 - **Environment system** — overhead light/sun/shadows · environment default + custom settings · day/night cycle.
-- **Avatars (mesh/anim)** — proper mesh body/clothing/attachment positioning · bones + animation (asset &
-  default sequences) + gesture-asset sequences · facial expressions / lip movement · **Jellydoll impostors**
-  first (then auto for too-complex / no-render avatars; fixes "red cloud") · Animesh + scripted animations.
+- **Avatars (mesh/anim)** — STAGED 2026-07-04 (scout report; stages 1–2 promoted to ⚡ "Avatar first slices"):
+  **Stage 1** SKIN-block decode → attachment/clothing positioning (⚡ AV-1) · **Stage 2** appearance-state enum +
+  jellydoll colored-capsule (⚡ AV-2; billboard impostor render stays here — render-to-texture + update-period
+  design, FS llvoavatar.cpp:5206) · **Stage 3** skeleton + default locomotion anims — THREE.SkinnedMesh w/ SL
+  joint names (avatar_skeleton.xml), decode+forward AvatarAnimation (server drops it today; FS
+  llviewermessage.cpp:5231 process_avatar_animation → mSignaledAnimations reconcile), SL-BVH parser +
+  AnimationMixer w/ priority system — HIGH risk, brainstorm-first · **Stage 4** bake pipeline (below) ·
+  then facial/lip, Animesh, gestures. Today's state: capsule+tubes placeholder, avatar TE/baked-UUIDs arrive
+  but are never fetched (texture paths explicitly skip avatars — useWorldEngine.js:2358/:4482), server rot
+  ignored for avatars, no skeleton/anim/skin code at all.
 - **Appearance / baked textures** — full AgentSetAppearance bake pipeline (L118–123, L285–293) — risky, can
   blank avatars. (Unblocks clothing-layer wearables in Inventory.)
 - **Voice (WebRTC)** — current `useAudio` is from the older app and needs a rewrite: controls, perms, positional
@@ -338,15 +452,17 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
   FS confirms deletion / polls for realness somehow (KillObject we may be missing, or a RequestObjectProperties
   "~check" — no reply = stale → cull). Add a context-menu re-check / cull-unconfirmed. → 🧠 Stale-scene genuine
   deletes (brainstorm-first) — this is the confirmation-gated piece.
-- **Should be able to RIGHT-CLICK → Open a box** (open object contents / Xfer) → Right-click menus (object) +
-  Object Build&Edit.
+- ✅ **Should be able to RIGHT-CLICK → Open a box** — PROMOTED 2026-07-04 → ⚡ **📦 Object Contents** cluster
+  (full 6-step Xfer→parser→tab→Open pipeline scoped w/ FS+OpenSim cites).
 - **Create tool NEEDED soon** (rez/create a prim in-world) → Object Build & Edit (Build-tools).
-- **Drag world to select multiple & coalesced/multiple take/copy needed soon** 
-- **Working GIZMO handles NEEDED soon** (move/rotate/scale/copy) → Object Build & Edit.
-- **Scripted motion**: some works now, some doesn't — investigate which ObjectUpdate/TerseUpdate motion paths we
-  handle vs miss. **Scripted texture pos/anim** (TextureAnim: moving water, scrolling text, cell-anim) would help
-  tie it together → Object Build & Edit (texture anim/scripts).
+- ✅ **Drag world to select multiple & coalesced/multiple take/copy** — PROMOTED 2026-07-04 → 🛠️ Object edit —
+  manipulation (needs-design: marquee + multi-selection state; multi-take already server-chunk-ready).
+- ✅ **Working GIZMO handles NEEDED soon** — PROMOTED 2026-07-04 → 🛠️ Object edit — manipulation
+  (M-1 encoder + M-2/M-3 fields batch-ready now; gizmo drag needs-design after M-1).
+- ✅ **Scripted motion / scripted texture anim** — INVESTIGATED + PROMOTED 2026-07-04 → 🎬 Scripted motion &
+  TextureAnim cluster. Root-cause candidates for "some works, some doesn't": omega ignored (E), no velocity DR (F),
+  child-prim terse coords applied as local (G — the likely big one), TextureAnim unconsumed (A–D).
 - **Neighboring regions** should be prioritized, THEN crossings → 🧠 Cross-region / neighbor sims (bump priority).
-- **More SOUND** — UI sounds + media (parcel/object audio) → Media/audio streaming + UI sounds.
+- ✅ **More SOUND** — PROMOTED 2026-07-04 → 🔊 Sound cluster (S-1…S-8; parcel/object *streaming* media stays 🧠).
 
 *(Triaged pointers above; promote into clusters when a sweep targets them.)*

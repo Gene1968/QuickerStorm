@@ -616,12 +616,12 @@ function close() {
 							</label>
 						</div>
 						<div class="flex flex-col text-2xs text-fg whitespace-nowrap">
-							<label for="">⬜ Stretch both sides</label>
-							<label for="">✅ Stretch textures</label>
-							<label for="">⬜ Snap</label>
-							<label for="">⬜ Edit axis at root</label>
-							<label for="">✅ Show highlight</label>
-							<label for="">⬜ Select reflection probes</label>
+							<label for=""><input type="checkbox" class="accent-accent" /> Stretch both sides</label>
+							<label for=""><input type="checkbox" class="accent-accent" checked="checked" /> Stretch textures</label>
+							<label for=""><input type="checkbox" class="accent-accent" /> Snap</label>
+							<label for=""><input type="checkbox" class="accent-accent" /> Edit axis at root</label>
+							<label for=""><input type="checkbox" class="accent-accent" checked="checked" /> Show highlight</label>
+							<label for=""><input type="checkbox" class="accent-accent" /> Select reflection probes</label>
 						</div>
 						<div class="text-lg" title="See more grid options (to-do)">➡️</div>
 					</div>
@@ -684,10 +684,10 @@ function close() {
 							<label for="" class="text-xl" title="Grass">🧊</label>
 						</div>
 						<div class="flex flex-col whitespace-nowrap">
-							<label for="">⬜ Keep tool selected</label>
-							<label for="">⬜ Copy selection</label>
-							<label for="" class="ms-4">✅ Center copy</label>
-							<label for="" class="ms-4">⬜ Rotate copy</label>
+							<label for=""><input type="checkbox" class="accent-accent" /> Keep tool selected</label>
+							<label for=""><input type="checkbox" class="accent-accent" /> Copy selection</label>
+							<label for="" class="ms-4"><input type="checkbox" class="accent-accent" checked="checked" /> Center copy</label>
+							<label for="" class="ms-4"><input type="checkbox" class="accent-accent" /> Rotate copy</label>
 							<select class="ui-select bg-fg/20 border border-edge rounded-sm mb-1 ms-2 mt-1 py-0 px-1.5 w-full text-fg">
 								<option value="">Random</option>
 								<option value="">Grass 0</option>
@@ -730,7 +730,7 @@ function close() {
 						<div class="ps-4">
 							<p class="mb-2">Area: ##### m<sup>2</sup></p>
 							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors">About land</button>
-							<label for="" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public">⬜ Show owners</label>
+							<label for="" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public"><input type="checkbox" class="accent-accent" /> Show owners</label>
 						</div>
 					</div>
 					<div class="w-36 my-8 ps-2">
@@ -1286,11 +1286,11 @@ function close() {
 									</div>
 									<div>
 										<label class="inline-flex items-center gap-1 text-fg/50 whitespace-nowrap"><input type="checkbox" class="accent-accent" /> Hide water</label>
-										<select class="ui-select bg-fg/20 border border-edge rounded-sm my-1 py-0 px-1.5 w-full text-fg" title="Mapping">
+										<select class="ui-select bg-fg/20 border border-edge rounded-sm my-1 py-0 px-1.5 w-full text-2xs text-fg" title="Mapping">
 											<option value="default" :selected="defaultMapping.mapping === 'Default'">Default</option>
 											<option value="planar" :selected="defaultMapping.mapping === 'Planar'">Planar</option>
 										</select>
-										<button class="bg-white/[0.02] border border-edge rounded-sm py-0.5 px-2 w-full text-2xs text-fg/40 cursor-not-allowed" disabled>Align</button>
+										<button class="bg-white/[0.02] border border-edge rounded-sm py-[0.0625rem] px-2 w-full text-2xs text-fg/40 cursor-not-allowed" disabled>Align</button>
 									</div>
 								</div>
 							</div>

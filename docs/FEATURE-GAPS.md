@@ -186,11 +186,11 @@ All shape params already decoded server-side. The following are geometry-generat
 
 ### Object Build & Edit Floater
 
-Working: Object Properties, in-scene TransformControls drag, MultipleObjectUpdate, per-face texture mapping display with Repeats-per-meter. General tab: name, description, UUID, type, hover text, creator/owner/lastOwner/group UUIDs, creation date, click action (read-only), touchName/sitName, for-sale + sale type + price (read-only), permissions (CMTX letters). Object tab: locked/physical/temporary/phantom flags (read-only, from PrimFlags + ownerMask), localId, parentId, link count, position/size/rotation, prim shape params.
+Working: Object Properties, per-face texture mapping display with Repeats-per-meter. (2026-07-04 audit: the gizmo is a VISUAL-ONLY scaffold — move arrows/rotate rings/scale handles render + mode-switch, useWorldEngine.js:1855–2038, but have NO drag interaction; no TransformControls import and NO MultipleObjectUpdate encoder exists anywhere — the earlier "TransformControls drag, MultipleObjectUpdate" claim here was wrong.) General tab: name, description, UUID, type, hover text, creator/owner/lastOwner/group UUIDs, creation date, click action (read-only), touchName/sitName, for-sale + sale type + price (read-only), permissions (CMTX letters). Object tab: locked/physical/temporary/phantom flags (read-only, from PrimFlags + ownerMask), localId, parentId, link count, position/size/rotation, prim shape params.
 
-- [ ] Edit name and description
-- [ ] Edit permissions
-- [ ] Numeric size / pos / rot input fields (in-scene drag works; text input TODO)
+- [x] Edit name and description — DONE (ObjectEditFloater.vue:785 inputs → sendRename/sendDescription → ObjectName Low 107 / ObjectDescription Low 108, full round-trip; verified in 2026-07-04 audit)
+- [ ] Edit permissions — partial (tri-state checkboxes + sendObjectPerms + re-select wired 2026-07-03)
+- [ ] Numeric size / pos / rot input fields — fields are read-only `<span>`s today (ObjectEditFloater.vue:901–923); needs the MultipleObjectUpdate encoder (doesn't exist). → QUEUE "Object edit — manipulation" batch
 - [ ] Texture drag and drop onto faces
 - [ ] Select Face radio (target individual face for texture/material edits)
 - [ ] Normal / Specular channels (RenderMaterials cap exists; not consuming yet)
