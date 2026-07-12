@@ -734,23 +734,23 @@ function close() {
 				</div>
 				<div v-else-if="buildTool === tools[3].id">
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click inworld to build</p>
-					<div class="flex items-center gap-2 pe-2">
-						<div class="flex flex-wrap gap-0.5">
-							<label for="" class="text-xl" title="Cube">🧊</label>
-							<label for="" class="text-xl" title="Prism">🧊</label>
-							<label for="" class="text-xl" title="Pyramid">🧊</label>
-							<label for="" class="text-xl" title="Tetrahedron">🧊</label>
-							<label for="" class="text-xl" title="Cylinder">🧊</label>
-							<label for="" class="text-xl" title="Hemicylinder">🧊</label>
-							<label for="" class="text-xl" title="Cone">🧊</label>
-							<label for="" class="text-xl" title="Hemicone">🧊</label>
-							<label for="" class="text-xl" title="Sphere">🟠</label>
-							<label for="" class="text-xl" title="Hemisphere">🧊</label>
-							<label for="" class="text-xl" title="Torus">🧊</label>
-							<label for="" class="text-xl" title="Tube">🧊</label>
-							<label for="" class="text-xl" title="Ring">⭕</label>
-							<label for="" class="text-xl" title="Tree">🌳</label>
-							<label for="" class="text-xl" title="Grass">🧊</label>
+					<div class="flex items-center gap-2.5 pe-2">
+						<div class="primcreate flex flex-wrap gap-0.5">
+							<label for="" class="grow border border-panel w-6.5 active" title="Cube"><img src="@/assets/img/build/cube.svg" alt="cube" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Prism"><img src="@/assets/img/build/prism.svg" alt="prism" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Pyramid"><img src="@/assets/img/build/pyramid.svg" alt="pyramid" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Tetrahedron"><img src="@/assets/img/build/tetrahedron.svg" alt="tetrahedron" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Cylinder"><img src="@/assets/img/build/cylinder.svg" alt="cylinder" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Hemicylinder"><img src="@/assets/img/build/hemicylinder.svg" alt="hemicylinder" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Cone"><img src="@/assets/img/build/cone.svg" alt="cone" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Hemicone"><img src="@/assets/img/build/hemicone.svg" alt="hemicone" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Sphere"><img src="@/assets/img/build/sphere.svg" alt="sphere" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Hemisphere"><img src="@/assets/img/build/hemisphere.svg" alt="hemisphere" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Torus"><img src="@/assets/img/build/torus.svg" alt="torus" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Tube"><img src="@/assets/img/build/tube.svg" alt="tube" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Ring"><img src="@/assets/img/build/ring.svg" alt="ring" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Tree"><img src="@/assets/img/build/tree.svg" alt="tree" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" title="Grass"><img src="@/assets/img/build/grass.svg" alt="grass" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
 						</div>
 						<div class="flex flex-col whitespace-nowrap">
 							<label for=""><input type="checkbox" class="accent-accent" /> Keep tool selected</label>
@@ -1440,3 +1440,12 @@ function close() {
 		</div>
 	</FloaterWindow>
 </template>
+
+<style scoped lang="scss">
+.primcreate label.active {
+	border-color: var(--accent);
+}
+.primcreate label.active img {
+	background-color: var(--accent-dark);
+}
+</style>
