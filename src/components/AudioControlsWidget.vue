@@ -60,12 +60,16 @@ function openSoundPrefs() {
 	ui.openPreferencesOnTab('sound')
 }
 
-// Slider helpers — volume refs are 0-1; slider shows 0-100
+// Slider helpers — volume refs are 0-1; slider shows 0-100.
+// WHY the name-keyed map: template expressions auto-unwrap top-level refs, so passing
+// `masterVolume` from the template hands this function a plain number (the 2026-07-13
+// "Cannot create property 'value' on number" bug) — look the ref up here instead.
+const volRefs = { master: masterVolume, interface: interfaceVolume, sounds: soundsVolume }
 function toSlider(vol) {
 	return Math.round(vol * 100)
 }
-function fromSlider(e, volRef) {
-	volRef.value = e.target.valueAsNumber / 100
+function fromSlider(e, name) {
+	volRefs[name].value = e.target.valueAsNumber / 100
 }
 
 // ── Grid time (Pacific — SL/OpenSim canonical timezone) ────────────────────
@@ -217,7 +221,7 @@ const stubChannels = [
 							min="0"
 							max="100"
 							:value="toSlider(masterVolume)"
-							@input="fromSlider($event, masterVolume)"
+							@input="fromSlider($event, 'master')"
 							class="flex-1 h-1 accent-accent"
 						/>
 						<button
@@ -244,7 +248,7 @@ const stubChannels = [
 							min="0"
 							max="100"
 							:value="toSlider(interfaceVolume)"
-							@input="fromSlider($event, interfaceVolume)"
+							@input="fromSlider($event, 'interface')"
 							class="flex-1 h-1 accent-accent"
 						/>
 						<button
@@ -267,7 +271,7 @@ const stubChannels = [
 							min="0"
 							max="100"
 							:value="toSlider(soundsVolume)"
-							@input="fromSlider($event, soundsVolume)"
+							@input="fromSlider($event, 'sounds')"
 							class="flex-1 h-1 accent-accent"
 						/>
 						<button
