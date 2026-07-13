@@ -91,6 +91,11 @@ export const useUiStore = defineStore('ui', () => {
 	function requestTextureRefresh(localId) {
 		textureRefreshReq.value = { localId, seq: (textureRefreshReq.value?.seq ?? 0) + 1 }
 	}
+	// Advanced ▸ Refresh all textures — scene-wide version of the per-object refresh above (the
+	// bulk remedy for the "textures turned black" apply-layer failures, Gene 2026-07-13; per-object
+	// refresh fixes one at a time, this sweeps every built mesh in one click).
+	const textureRefreshAllTick = ref(0)
+	function requestAllTexturesRefresh() { textureRefreshAllTick.value++ }
 	// WHY: FS-parity lit shading (MeshLambert + scene lights) so untextured/blank-white surfaces show
 	// form through shading instead of rendering as flat cutouts. Default ON; worldEngine watches and
 	// swaps materials live, and auto-disables it (once per session, with a notification) if FPS stays
@@ -430,6 +435,40 @@ export const useUiStore = defineStore('ui', () => {
 	function openInspectAvatar(avatarId) { inspectAvatarId.value = avatarId; focusFloater('inspect-avatar') }
 	function closeInspectAvatar() { inspectAvatarId.value = null; floaterStack.value = floaterStack.value.filter(f => f !== 'inspect-avatar') }
 
+	// WHY: Build-tools shared state (2026-07-13 sweep) — defined HERE once so the engine (pick/drag
+	// handlers), ObjectEditFloater (Create tab) and menus all read the same refs without collisions.
+	// selectedObjectIds = ADDITIONAL multi-selected roots (shift-click; FS llselectmgr selection list).
+	// editObjectId stays the primary/most-recent selection — FS packs the newest first in ObjectLink,
+	// so link order = [editObjectId, ...selectedObjectIds] (newest = new root: LLObjectSelection::addNode
+	// pushes to front, llselectmgr.cpp:8290-8302; LLSelectMgr::sendLink() sends SEND_ONLY_ROOTS, :5442-5455).
+	const selectedObjectIds = ref([])   // [localId] — extra selections, NOT including editObjectId
+	function clearMultiSelect() { selectedObjectIds.value = [] }
+	// WHY: Create-tool placement mode — armed by the Create tab (shape picked); the engine's
+	// mousedown guard skips selection while armed and WorldCanvas performs the placement click.
+	const buildPlacementArmed = ref(false)  // false | true
+	const buildShape = ref('cube')          // key into src/lib/primShapes.js table
+	const buildKeepTool = ref(false)        // "Keep tool selected" — stay armed after placing
+	function armBuildPlacement(shape) { buildShape.value = shape ?? buildShape.value; buildPlacementArmed.value = true }
+	function disarmBuildPlacement() { buildPlacementArmed.value = false }
+	// WHY: FS auto-selects a prim WE just created/rezzed when its CreateSelected ObjectUpdate
+	// arrives (mCreateSelected). The expectation window keeps someone ELSE's simultaneous
+	// create-selected rez from hijacking our selection: armed by our own createPrim placement
+	// click / inventory rez (floater open), consumed one-shot by useWorldEngine's update ingest.
+	const expectCreateSelectedUntil = ref(0)
+	function expectCreatedSelection(ms = 30_000) { expectCreateSelectedUntil.value = Date.now() + ms }
+	// WHY: FS hides the Build floater while a gizmo drag is in progress (extra positioning real
+	// estate) and shows it again on release. Set by useWorldEngine start/end/abortGizmoDrag;
+	// ObjectEditFloater v-shows on it.
+	const gizmoDragging = ref(false)
+	function setGizmoDragging(v) { gizmoDragging.value = !!v }
+
+	// WHY: FS lltoolselectrect.cpp drag-select marquee (2026-07-13 sweep) — screen-space rect (client
+	// px, matches hoverPos/avatarMenu's coordinate convention) tracked by useWorldEngine while a
+	// Build-Tools left-drag over empty space is in progress; null = no marquee active. WorldCanvas.vue
+	// renders it as an absolutely-positioned overlay div.
+	const marqueeRect = ref(null)   // null | { x0, y0, x1, y1 }
+	function setMarqueeRect(r) { marqueeRect.value = r }
+
 	return {
 		mode, showAvatarList, showMinimap, showChat, chatActiveTab, openChatOnTab,
 		showInventory, showMap, showNotifications, showSettings, showDebug,
@@ -450,6 +489,7 @@ export const useUiStore = defineStore('ui', () => {
 		isSitting, setSitting,
 		sceneRebuildTick, requestSceneRebuild,
 		textureRefreshReq, requestTextureRefresh,
+		textureRefreshAllTick, requestAllTexturesRefresh,
 		litShading, instancing, showFps, cacheWorker, dayNightCycle, timeOfDay, fps, setFps, netKbps, setNetKbps,
 		drawDistance, setDrawDistance, effectiveDrawDistance, setEffectiveDrawDistance,
 		geomCacheRamMb, setGeomCacheRamMb,
@@ -472,5 +512,10 @@ export const useUiStore = defineStore('ui', () => {
 		payTarget, showPayFloater, openPayFloater, closePayFloater,
 		buyDialogTarget, showBuyDialog, openBuyDialog, closeBuyDialog,
 		inspectAvatarId, showInspectAvatar, openInspectAvatar, closeInspectAvatar,
+		selectedObjectIds, clearMultiSelect,
+		buildPlacementArmed, buildShape, buildKeepTool, armBuildPlacement, disarmBuildPlacement,
+		expectCreateSelectedUntil, expectCreatedSelection,
+		gizmoDragging, setGizmoDragging,
+		marqueeRect, setMarqueeRect,
 	}
 })

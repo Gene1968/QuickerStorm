@@ -33,6 +33,7 @@ import { correctionBlend } from '@/lib/movementCorrection.js'
 import { resolveAvatarReparent, gateBuyHoverAction } from '@/lib/seatEngine.js'
 import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_S } from '@/lib/scriptedMotion.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
+import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
 import { resolveTerrainSlot } from '@/lib/terrainTextures.js'
@@ -178,6 +179,10 @@ function uninstallConsoleForwarder() {
 // components (x,y,z) carry the rotation axis × sin(θ/2), so they transform like
 // a vector; w is invariant. Returns a new THREE.Quaternion.
 function slQuatToThree(x, y, z, w) { return new THREE.Quaternion(x, z, -y, w) }
+// Inverse of slQuatToThree's axis permutation (x, z, -y, w) — used to convert a live-dragged Three
+// quaternion back to SL space for the mouse-up sendRotation commit. Solve three_y=sl_z, three_z=
+// -sl_y for sl_y/sl_z: sl_x=three_x, sl_y=-three_z, sl_z=three_y, sl_w=three_w.
+function threeQuatToSl(q) { return [q.x, -q.z, q.y, q.w] }
 
 const CAM_SPEED      = 8    // m/s walk (camera-free explore mode only)
 const CAM_RUN_SPEED  = 16   // m/s run (camera-free explore mode only)
@@ -229,7 +234,7 @@ export function useWorldEngine(canvasRef) {
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
-	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendTouch, sendSit, requestObjectPropsFamily } = useLLUDP()
+	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendTouch, sendSit, requestObjectPropsFamily, sendPosition, sendRotation, sendScale } = useLLUDP()
 
 	// Hover-driven RequestObjectPropertiesFamily dedup — one request per localId per session
 	// (localIds churn per region entry; cleared with the rest of the scene state).
@@ -244,6 +249,7 @@ export function useWorldEngine(canvasRef) {
 	const stopSceneRebuildWatch = watch(() => uiStore.sceneRebuildTick, () => rebuildScene('user'))
 	// ObjectContextMenu "Texture refresh" → clear one object's texture failure/cache state + re-apply.
 	const stopTexRefreshWatch = watch(() => uiStore.textureRefreshReq, (req) => { if (req) refreshObjectTextures(req.localId) })
+	const stopTexRefreshAllWatch = watch(() => uiStore.textureRefreshAllTick, () => refreshAllTextures())
 	// WHY: RegionHandshake (water level + terrain textures) usually lands after the scene is
 	// built — water plane starts at the default 20m and terrain is coloured against it. When the
 	// real sea level arrives, reposition the water plane and recolour terrain to match.
@@ -268,6 +274,9 @@ export function useWorldEngine(canvasRef) {
 		() => rebuildTerrainGeometry(),
 	)
 	const stopGizmoSelWatch  = watch(() => uiStore.editObjectId,    () => { refreshGizmo(); refreshHighlight() })
+	// Shift/ctrl-click multi-select (PKG-2): extra selected roots get the same halo, but the gizmo
+	// stays on editObjectId only — refreshHighlight() only, no refreshGizmo().
+	const stopMultiSelWatch  = watch(() => uiStore.selectedObjectIds, () => refreshHighlight(), { deep: true })
 	// WHY: LandContextMenu "Walk To" — snap own avatar + camera to chosen terrain point.
 	// Same snap logic as onAgentSpawnPos but triggered client-side via uiStore.requestWarp().
 	const stopWarpWatch = watch(() => uiStore.pendingWarpPos, (pos) => {
@@ -303,17 +312,27 @@ export function useWorldEngine(canvasRef) {
 	// the edit floater is open, otherwise the right-click context-menu target. This watcher diffs
 	// that desired id against the last id we told the sim and emits only the select/deselect delta,
 	// so every code path that opens/closes a menu or edit floater is covered automatically.
-	let simSelectedId = null
+	let simSelectedIds = new Set()
+	// WHY the multi-select ids are included: FS ObjectSelects EVERY member of the selection, which
+	// is what makes ObjectProperties (owner/perms) arrive for each — without it the Link gating and
+	// perm checkboxes stay perm-blind ('unknown') for shift-clicked extras forever (Gene 2026-07-13:
+	// "Link btn mostly not enabled"). Diffed as sets so each id gets exactly one select/deselect.
 	const stopSelSyncWatch = watch(
-		[() => uiStore.showObjectEdit, () => uiStore.editObjectId, () => uiStore.objectMenu],
+		[() => uiStore.showObjectEdit, () => uiStore.editObjectId, () => uiStore.objectMenu, () => uiStore.selectedObjectIds],
 		() => {
-			const desired = uiStore.showObjectEdit
-				? uiStore.editObjectId
-				: (uiStore.objectMenu?.localId ?? null)
-			if (desired === simSelectedId) return
-			if (simSelectedId != null) sendDeselect([simSelectedId])
-			if (desired != null) sendSelect([desired])
-			simSelectedId = desired
+			const desired = new Set()
+			if (uiStore.showObjectEdit) {
+				if (uiStore.editObjectId != null) desired.add(uiStore.editObjectId)
+				for (const id of uiStore.selectedObjectIds) desired.add(id)
+			} else if (uiStore.objectMenu?.localId != null) {
+				desired.add(uiStore.objectMenu.localId)
+			}
+			const current = simSelectedIds
+			const toDeselect = [...current].filter((id) => !desired.has(id))
+			const toSelect   = [...desired].filter((id) => !current.has(id))
+			if (toDeselect.length) sendDeselect(toDeselect)
+			if (toSelect.length)   sendSelect(toSelect)
+			simSelectedIds = desired
 		},
 	)
 	let stopGeomCacheRamWatch = null
@@ -948,6 +967,36 @@ export function useWorldEngine(canvasRef) {
 	let gizmoGroup    = null  // THREE.Group | null
 	let gizmoMeshId   = null  // localId the gizmo is currently tracking, for repositioning
 	let highlightLines = []   // LineSegments[] — one per highlighted prim, cleared on selection change
+	// WHY: active gizmo drag state, or null when idle. Set on mousedown-over-a-handle, mutated live
+	// on mousemove (preview only — no network), consumed + cleared on mouseup (single commit send).
+	// Multi-select drag: gizmoDrag.roots holds a snapshot per dragged root (primary + every
+	// uiStore.selectedObjectIds root), gizmoDrag.ids is the Set of their localIds for O(1) lookup.
+	// upsertMesh()/onTerseUpdate() check `gizmoDrag?.ids.has(obj.localId)` to suppress inbound
+	// pos/rot/scale echoes for every object being dragged (see PKG-2 contract: short suppression window).
+	let gizmoDrag = null
+	// WHY: currently-hovered gizmo part (2026-07-13 hover affordance) — the group/mesh returned by
+	// _findGizmoPart, or null. Restored to its base color/scale on hover-out (_setGizmoPartHover).
+	let _hoveredGizmoPart = null
+	// WHY: full-length axis guide line (item 4, "axis guide rays") — lives at scene ROOT at real
+	// world scale (NOT parented under gizmoGroup, which positionGizmo() shrinks to a small on-screen
+	// fraction — a 256m line as its child would be scaled down to nothing). Built on drag start,
+	// disposed on drag end/abort.
+	let axisGuideLine = null
+	// WHY: scratch reused by updateGizmoDrag's per-root rotate-orbit math (rotate applies the same
+	// dq to every dragged root's saved position about the shared pivot) — avoids a Vector3 alloc per
+	// dragged root per mousemove.
+	const _gizmoOrbitVec = new THREE.Vector3()
+	// WHY: pending/active drag-select marquee (item 6) — set on a mousedown miss while Build Tools is
+	// open; promoted to `active` once the drag exceeds MARQUEE_SLOP (FS SLOP_RADIUS, lltoolselectrect.
+	// cpp:49). null = no marquee gesture in progress. `candidates` (built once on activation, see
+	// _buildMarqueeCandidates) is reused by both the live preview highlight and the mouseup commit.
+	let _marqueeState = null   // null | { startX, startY, active, shiftKey, candidates? }
+	// WHY: ~10/s throttle for the live marquee highlight preview (Task B) — the rect itself (drawn by
+	// WorldCanvas) updates every mousemove (cheap: one object mutation), but re-testing candidates +
+	// rebuilding EdgesGeometry highlight lines every pixel of mouse movement is not — throttled
+	// separately from MARQUEE_SLOP's one-time activation gate.
+	const MARQUEE_HIGHLIGHT_INTERVAL_MS = 100
+	let _marqueeLastHighlightAt = 0
 
 	// ── Physics state ─────────────────────────────────────────────────────────
 	// WHY: simple per-session vertical velocity for gravity. SL standard g ≈ 9.8 m/s².
@@ -1055,6 +1104,9 @@ export function useWorldEngine(canvasRef) {
 	let lastMouseX   = 0
 	let lastMouseY   = 0
 	const MOUSE_SENSITIVITY = 0.003  // rad per pixel
+	// FS lltoolselectrect.cpp:49 SLOP_RADIUS — a mousedown-miss that never drags past this many
+	// pixels is still a plain click (deselect-on-miss), not a drag-select marquee gesture.
+	const MARQUEE_SLOP = 5
 
 	const MOVE_KEYS = [
 		'KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','KeyC','KeyF',
@@ -1085,6 +1137,17 @@ export function useWorldEngine(canvasRef) {
 		if (e.code === 'KeyF' || e.code === 'Home') {
 			isFlying = !isFlying
 			uiStore.setFlying(isFlying)
+			e.preventDefault()
+			return
+		}
+		// Task B: Esc cancels an in-progress marquee drag — no selection change, restores the halo to
+		// whatever was actually selected before the drag started (discarding the live preview).
+		// Checked BEFORE the camera-glide Escape branch below so Esc-during-marquee doesn't also
+		// glide the camera.
+		if (e.code === 'Escape' && _marqueeState) {
+			_marqueeState = null
+			uiStore.marqueeRect = null
+			refreshHighlight()
 			e.preventDefault()
 			return
 		}
@@ -1141,6 +1204,12 @@ export function useWorldEngine(canvasRef) {
 		isDragging = false
 		eHoldTime  = 0
 		setAltFocus(false)   // Alt keyup is not delivered after alt-tab → clear focus affordance
+		abortGizmoDrag()     // mouseup is not delivered after alt-tab either — see abortGizmoDrag
+		if (_marqueeState) {   // same lost-mouseup reasoning
+			_marqueeState = null
+			uiStore.marqueeRect = null
+			refreshHighlight()   // discard the live preview halo, restore the actual selection's
+		}
 	}
 
 	// WHY: Enter alt-orbit by deriving radius/yaw/pitch from current camera position
@@ -1273,6 +1342,9 @@ export function useWorldEngine(canvasRef) {
 
 	function onMouseDown(e) {
 		if (e.button !== 0) return
+		// PKG-3 owns the placement-click flow (rez-on-click after "Build" arms a shape) — WorldCanvas
+		// listens for this separately; the engine's own select/drag path must stay out of its way.
+		if (uiStore.buildPlacementArmed) return
 		// WHY: Build Tools open → left-click picks prim for selection. Avoid hijacking
 		// alt+click (camera focus) — alt path falls through below. Ctrl/Shift modifiers
 		// pass through too so the user can pre-set the gizmo mode while clicking.
@@ -1284,6 +1356,19 @@ export function useWorldEngine(canvasRef) {
 			)
 			_raycaster.setFromCamera(_pickNdc, camera)
 			_raycaster.far = 1000
+			// Gizmo handles take priority over re-selection: they render with depthTest:false (on
+			// top of everything), so a click that visually lands on a handle should grab it even
+			// when a prim mesh sits behind it. A hit with no gizmoAxis userData (shouldn't happen —
+			// every part sets it in _buildArrow/_buildRing/_buildHandle) is still treated as
+			// "handled, not a miss", preserving the old "gizmo click never deselects" behavior.
+			if (gizmoGroup) {
+				const gh = _raycaster.intersectObjects(gizmoGroup.children, true)
+				if (gh.length > 0) {
+					const part = _findGizmoPart(gh[0].object)
+					if (part) startGizmoDrag(part)
+					return
+				}
+			}
 			const primTargets = []
 			meshMap.forEach((m, lid) => {
 				if (lid === ownAvatarLocalId) return
@@ -1308,18 +1393,46 @@ export function useWorldEngine(canvasRef) {
 					// (walk up to the root prim). positionGizmo() bboxes the root mesh, which contains
 					// all linked children, so the gizmo centers on the entire object. stopSelSyncWatch
 					// reacts to editObjectId and emits the ObjectSelect.
-					uiStore.editObjectId = uiStore.editLinked ? clicked : resolveRootLocalId(clicked)
+					const rootId = uiStore.editLinked ? clicked : resolveRootLocalId(clicked)
+					if (e.shiftKey || e.ctrlKey || e.metaKey) {
+						// PKG-2 multi-select: shift/ctrl-click toggles rootId into the extra-selection
+						// list. Link order = [editObjectId, ...selectedObjectIds] (uiStore contract) —
+						// newest click becomes the primary; the previous primary demotes into the list.
+						if (rootId === uiStore.editObjectId) {
+							// Re-clicking the current primary with a modifier held: promote the first
+							// extra selection (if any) so editObjectId never dangles with an empty
+							// visual selection. No extras → no-op (can't shift-deselect the only pick).
+							if (uiStore.selectedObjectIds.length) {
+								const [next, ...rest] = uiStore.selectedObjectIds
+								uiStore.editObjectId = next
+								uiStore.selectedObjectIds = rest
+							}
+							return
+						}
+						const already = uiStore.selectedObjectIds.includes(rootId)
+						if (already) {
+							uiStore.selectedObjectIds = uiStore.selectedObjectIds.filter((id) => id !== rootId)
+						} else if (uiStore.editObjectId != null) {
+							uiStore.selectedObjectIds = [uiStore.editObjectId, ...uiStore.selectedObjectIds]
+							uiStore.editObjectId = rootId
+						} else {
+							uiStore.editObjectId = rootId
+						}
+						return
+					}
+					// Plain click: replace the whole selection.
+					uiStore.clearMultiSelect()
+					uiStore.editObjectId = rootId
 					return
 				}
 			}
-			// Click on a gizmo handle's VISUAL (arrow/ring/cube) must not deselect — the drag
-			// handler owns those; a ray that only hit gizmo geometry is "handled", not a miss.
-			if (gizmoGroup) {
-				const gh = _raycaster.intersectObjects(gizmoGroup.children, true)
-				if (gh.length > 0) return
-			}
-			// Miss — clicked terrain/water/sky/avatar: drop selection.
-			uiStore.editObjectId = null
+			// Miss — clicked terrain/water/sky/avatar (no gizmo part, no prim). FS defers the
+			// click-vs-drag decision to mouseup/outsideSlop (lltoolselectrect.cpp handleMouseUp
+			// :98-156 + SLOP_RADIUS :49) rather than committing at mousedown — start tracking a
+			// pending marquee here; onMouseMove promotes it to an active rect once the drag
+			// exceeds slop, onMouseUp either commits the rect-selection or (no drag happened)
+			// falls back to the original deselect-on-miss behavior below.
+			_marqueeState = { startX: e.clientX, startY: e.clientY, active: false, shiftKey: e.shiftKey }
 			return
 		}
 		// Left-click on a hovered interactive object: dispatch by ClickAction — FS lltoolpie.cpp
@@ -1397,6 +1510,24 @@ export function useWorldEngine(canvasRef) {
 		if (!isAltOrbit) enterOrbit()
 	}
 	function onMouseMove(e) {
+		// A gizmo drag in progress owns the mouse fully — never falls through to camera-orbit
+		// (mutually exclusive anyway: gizmo drags only start on a non-Alt click, camera-orbit drag
+		// only starts on Alt+click) but an explicit early return keeps that invariant obvious.
+		// WHY the buttons check: a mouseup outside the document (released over browser chrome /
+		// after alt-tab) never reaches our window listener — without it the "drag" follows the
+		// hovering cursor forever. Abort (revert, no send): the user never finished the gesture.
+		if (gizmoDrag) {
+			if ((e.buttons & 1) === 0) { abortGizmoDrag(); return }
+			updateGizmoDrag(e); return
+		}
+		// Drag-select marquee (item 6) — same lost-mouseup guard as the gizmo-drag branch above:
+		// a mouseup outside the document never reaches onMouseUp, so without the buttons check the
+		// marquee would keep tracking the hovering cursor forever.
+		if (_marqueeState) {
+			if ((e.buttons & 1) === 0) { _marqueeState = null; uiStore.marqueeRect = null; return }
+			_updateMarquee(e)
+			return
+		}
 		if (!isDragging || !isAltOrbit) return
 		// WHY: Manual orbit-drag takes over from any in-progress focus glide.
 		endFocusGlide()
@@ -1411,7 +1542,440 @@ export function useWorldEngine(canvasRef) {
 	}
 	// WHY: Mouse-up freezes orbit position — camera stays where user left it.
 	// isAltOrbit stays true; cleared by Esc, reset button, or avatar movement.
-	function onMouseUp() { isDragging = false }
+	function onMouseUp(e) {
+		if (gizmoDrag) { endGizmoDrag(); return }
+		if (_marqueeState) { _endMarquee(e); return }
+		isDragging = false
+	}
+
+	// ── Drag-select marquee (item 6, FS lltoolselectrect.cpp) ───────────────────────
+	// WHY: while Build Tools is open and the user left-drags over empty space (no gizmo part, no
+	// prim hit at mousedown), a screen-space rectangle selects every visible prim ROOT whose
+	// projected center falls inside it — mirrors FS's LLToolSelectRect, which re-perspectives the
+	// camera to a narrow selection frustum matching the drag rect and tests each candidate object's
+	// bounding-sphere center against that frustum (llglsandbox.cpp:79 handleRectangleSelection,
+	// grow_selection branch: `camera.sphereInFrustum(drawable->getPositionAgent(), radius)` — case 2
+	// "fully inside" selects immediately, case 1 "partial" refines via per-vertex visibility). We
+	// have no spatial-partition cull step or per-vertex refine here, so we approximate with the
+	// equivalent 2D form: project each candidate's world bbox CENTER to screen space and test it
+	// against the same rect the frustum was built from (no partial/vertex refinement — documented
+	// cut, see docs/FEATURE-GAPS.md 2026-07-13).
+	function _updateMarquee(e) {
+		const st = _marqueeState
+		if (!st.active) {
+			const dx = e.clientX - st.startX
+			const dy = e.clientY - st.startY
+			if (Math.abs(dx) <= MARQUEE_SLOP && Math.abs(dy) <= MARQUEE_SLOP) return
+			st.active = true
+			// Task B perf: snapshot the candidate list (visible prim roots + world-space bbox
+			// centers) ONCE here, at activation — NOT rebuilt on every subsequent mousemove. The live
+			// preview below and the mouseup commit both reuse this same array, so a many-thousand-
+			// object region only pays one meshMap.forEach + one Box3 per candidate for the WHOLE drag.
+			st.candidates = _buildMarqueeCandidates()
+			_marqueeLastHighlightAt = 0   // force the first preview highlight to run immediately
+		}
+		uiStore.marqueeRect = {
+			x0: Math.min(st.startX, e.clientX), y0: Math.min(st.startY, e.clientY),
+			x1: Math.max(st.startX, e.clientX), y1: Math.max(st.startY, e.clientY),
+		}
+		// Task B: live highlight preview, throttled to ~10/s (MARQUEE_HIGHLIGHT_INTERVAL_MS) — FS
+		// re-tests candidates and calls highlightObjectOnly on every hover tick while the rect-select
+		// tool has mouse capture (lltoolselectrect.cpp:126-141 handleHover → handleRectangleSelection,
+		// llglsandbox.cpp:79-291 — grow/shrink test per candidate, highlightObjectOnly/
+		// unhighlightObjectOnly per hit/miss, called continuously during the drag, not just on
+		// release). We throttle rather than running the full test every mousemove (no per-frame
+		// meshMap walk — see _buildMarqueeCandidates above — but re-testing + rebuilding the
+		// EdgesGeometry highlight lines every pixel of movement is still needless work).
+		const now = performance.now()
+		if (now - _marqueeLastHighlightAt < MARQUEE_HIGHLIGHT_INTERVAL_MS) return
+		_marqueeLastHighlightAt = now
+		_refreshMarqueePreviewHighlight(st)
+	}
+
+	function _endMarquee(e) {
+		const st = _marqueeState
+		_marqueeState = null
+		if (!st.active) {
+			// Never exceeded slop — this was a plain click on empty space, not a drag. Fall back to
+			// the original deselect-on-miss behavior (was inline in onMouseDown before this sweep).
+			uiStore.clearMultiSelect()
+			uiStore.editObjectId = null
+			uiStore.marqueeRect = null
+			return
+		}
+		_commitMarqueeSelection(e?.shiftKey ?? st.shiftKey, st.candidates)
+		uiStore.marqueeRect = null
+	}
+
+	// WHY scratch reused across the hot loops below (avoids a Vector3 alloc per candidate per call —
+	// mirrors positionGizmo's existing per-call allocation style). _marqueeCtr is only touched at
+	// candidate-BUILD time (once per drag); _marqueeNdc is reused by the hot per-move/commit test.
+	const _marqueeCtr = new THREE.Vector3()
+	const _marqueeNdc = new THREE.Vector3()
+
+	// Built ONCE when a marquee drag goes active (see _updateMarquee) — every visible prim ROOT mesh
+	// plus its world-space bbox center, snapshotted so neither the live preview nor the commit needs
+	// to re-walk meshMap or rebuild a Box3 per candidate per test.
+	function _buildMarqueeCandidates() {
+		const list = []
+		meshMap.forEach((mesh, localId) => {
+			if (localId === ownAvatarLocalId) return
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR) return
+			if ((obj.parentId ?? 0) !== 0) return   // roots only — click-select also resolves to root
+			if (!mesh.visible) return
+			mesh.updateWorldMatrix?.(true, false)
+			const bbox = new THREE.Box3().setFromObject(mesh)
+			const center = new THREE.Vector3()
+			bbox.getCenter(center)
+			list.push({ localId, mesh, center })
+		})
+		return list
+	}
+
+	// Shared rect-hit test (Task B refactor — was inlined in _commitMarqueeSelection, now also used
+	// by the live preview highlight): projects each pre-built candidate's world center to screen space
+	// and tests it against `rect`. Returns [{localId, dist}] nearest-first — the sort order the
+	// FS-parity link convention ([editObjectId, ...selectedObjectIds], closest = primary) relies on.
+	// Hot-loop allocation budget: zero beyond the returned array (reuses _marqueeNdc; no Box3, no
+	// meshMap walk — see _buildMarqueeCandidates).
+	function _marqueeHitTest(candidates, rect) {
+		const picked = []
+		if (!camera || !canvasRef.value || !rect) return picked
+		const rc = canvasRef.value.getBoundingClientRect()
+		for (const c of candidates) {
+			_marqueeNdc.copy(c.center).project(camera)
+			if (_marqueeNdc.z < -1 || _marqueeNdc.z > 1) continue   // behind camera / outside near-far
+			const sx = (_marqueeNdc.x * 0.5 + 0.5) * rc.width + rc.left
+			const sy = (-_marqueeNdc.y * 0.5 + 0.5) * rc.height + rc.top
+			if (sx < rect.x0 || sx > rect.x1 || sy < rect.y0 || sy > rect.y1) continue
+			picked.push({ localId: c.localId, dist: camera.position.distanceTo(c.center) })
+		}
+		picked.sort((a, b) => a.dist - b.dist)
+		return picked
+	}
+
+	// Task B: draw the same halo treatment (_addHighlight) on whatever the rect currently covers, as
+	// a PREVIEW — refreshed at MARQUEE_HIGHLIGHT_INTERVAL_MS while dragging (see _updateMarquee).
+	// Shift-add previews the union with the already-committed selection, matching what _endMarquee's
+	// commit will actually produce. Superseded the instant refreshHighlight() runs once the real
+	// commit lands on mouseup (uiStore.editObjectId/selectedObjectIds watchers).
+	function _refreshMarqueePreviewHighlight(st) {
+		if (!uiStore.renderUiVisible) { clearHighlight(); return }
+		const picked = _marqueeHitTest(st.candidates, uiStore.marqueeRect)
+		const ids = new Set(picked.map((p) => p.localId))
+		if (st.shiftKey) {
+			if (uiStore.editObjectId != null) ids.add(uiStore.editObjectId)
+			for (const id of uiStore.selectedObjectIds) ids.add(id)
+		}
+		clearHighlight()
+		for (const id of ids) _addHighlight(id, _HL_ROOT)
+	}
+
+	function _commitMarqueeSelection(shiftAdd, candidates) {
+		const rect = uiStore.marqueeRect
+		if (!rect || !camera || !canvasRef.value) return
+		const picked = _marqueeHitTest(candidates ?? _buildMarqueeCandidates(), rect)
+		if (!picked.length) {
+			if (!shiftAdd) { uiStore.clearMultiSelect(); uiStore.editObjectId = null }
+			return
+		}
+		// FS-parity link order [editObjectId, ...selectedObjectIds] (uiStore contract, see
+		// buildPlacementArmed comment block above) — closest-to-camera becomes the primary.
+		if (shiftAdd) {
+			const merged = new Set([uiStore.editObjectId, ...uiStore.selectedObjectIds].filter((id) => id != null))
+			for (const p of picked) merged.add(p.localId)
+			if (uiStore.editObjectId == null) uiStore.editObjectId = picked[0].localId
+			merged.delete(uiStore.editObjectId)
+			uiStore.selectedObjectIds = [...merged]
+		} else {
+			uiStore.editObjectId = picked[0].localId
+			uiStore.selectedObjectIds = picked.slice(1).map((p) => p.localId)
+		}
+	}
+
+	// ── Gizmo drag interaction (move/rotate/scale) ──────────────────────────────
+	// WHY: gizmo parts live at scene root (buildGizmoForMode, not parented to the prim), so all the
+	// drag math below happens directly in world/Three space — no local↔world conversion needed.
+	// LIVE PREVIEW ONLY while dragging (mesh.position/quaternion/scale mutated directly, no network
+	// traffic); exactly ONE MultipleObjectUpdate is sent on mouseup, matching FS's commit-on-release
+	// (llmaniptranslate.cpp:1079 sendPosition, llmanipscale.cpp:414 sendScale, llmaniprotate.cpp:488
+	// sendRotation — all called only from the mouse-up handler, never mid-drag).
+	// MULTI-SELECT: the whole selection (editObjectId's root + every uiStore.selectedObjectIds root)
+	// drags together, mirroring FS's per-object loop over mObjectSelection — llmaniptranslate.cpp:
+	// 679-806 (`clamped_relative_move` applied to every selected object's saved position) and
+	// llmaniprotate.cpp:541-720 (per-object `new_rot = saved_rot * mRotation`, :595, and per-object
+	// orbit `new_position = (saved_position - center) * mRotation + center`, :685-690). The primary
+	// (`gizmoMeshId`) still drives the drag MATH (plane/ray hit-testing, ratio/angle); every root in
+	// `gizmoDrag.roots` gets the resulting delta/rotation/ratio applied to its OWN snapshot. Scale
+	// stays per-root "stretch about its own center" (not FS's anchored-opposite-face + shared-center
+	// stretch) — that cut is unchanged and documented in docs/FEATURE-GAPS.md.
+
+	// Walk from a raycast hit up to the nearest ancestor carrying gizmoAxis userData (the group/mesh
+	// _buildArrow/_buildRing/_buildHandle stamped it on) — mirrors the localId-walk pattern used for
+	// prim picks elsewhere in this file.
+	function _findGizmoPart(object) {
+		let o = object
+		while (o && o !== gizmoGroup && o.userData?.gizmoAxis === undefined) o = o.parent
+		return (o && o.userData?.gizmoAxis !== undefined) ? o : null
+	}
+
+	function _axisVector(letter) {
+		return letter === 'x' ? new THREE.Vector3(1, 0, 0)
+			: letter === 'y' ? new THREE.Vector3(0, 1, 0)
+			: new THREE.Vector3(0, 0, 1)
+	}
+
+	// THREE-axis-letter → SL scale-array index. Three x = SL x (index 0); Three y = SL z (index 2,
+	// SL Z-up mapped to Three Y-up); Three z = SL y (index 1) — same swap as slToThree/slQuatToThree
+	// used throughout this file, just applied to a gizmo axis letter instead of a coordinate triad.
+	function _slScaleIndex(letter) { return letter === 'x' ? 0 : letter === 'y' ? 2 : 1 }
+
+	// Plane through `axisVec` (containing the pivot) whose normal is as camera-facing as possible —
+	// FS's mManipNormal (llmaniptranslate.cpp comments "Compute unit vectors for arrow hit and a
+	// plane through that vector"): project the camera's view direction off the axis, leaving the
+	// component of view that's perpendicular to the axis. Degenerate (viewing straight down the
+	// axis) falls back to a cross product against a non-parallel reference vector.
+	function _movePlaneNormal(axisVec) {
+		const view = new THREE.Vector3()
+		camera.getWorldDirection(view)
+		let n = view.clone().sub(axisVec.clone().multiplyScalar(view.dot(axisVec)))
+		if (n.lengthSq() < 1e-6) {
+			const alt = Math.abs(axisVec.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)
+			n = new THREE.Vector3().crossVectors(axisVec, alt)
+		}
+		return n.normalize()
+	}
+
+	function startGizmoDrag(part) {
+		const localId = gizmoMeshId
+		const mesh = meshMap.get(localId)
+		if (!mesh || !camera) return
+		const kind = part.userData.gizmoKind
+		const axisLetter = part.userData.gizmoAxis
+		const axisVec = _axisVector(axisLetter)
+		// WHY pivot = gizmoGroup.position (not mesh.position): positionGizmo() already computes the
+		// visually-drawn handle center as the UNION bbox center of the whole selection (single-select
+		// included) — using that same point as the drag math's pivot is what makes rotate's per-root
+		// orbit (below) correct for >1 selected root; for a solo symmetric prim it coincides with
+		// mesh.position as before, so single-select behavior is unchanged.
+		const pivot = gizmoGroup ? gizmoGroup.position.clone() : mesh.position.clone()
+		const rayOrigin = _raycaster.ray.origin.clone()
+		const rayDir    = _raycaster.ray.direction.clone()
+		// Multi-select snapshot (Task A): primary root + every uiStore.selectedObjectIds root, deduped.
+		// Each entry is independently reverted (abort) / previewed (update) / committed (end).
+		const rootIds = [localId, ...uiStore.selectedObjectIds].filter((id, i, arr) => arr.indexOf(id) === i)
+		const roots = []
+		for (const id of rootIds) {
+			if (uiStore.instancing) promoteOut(id)   // ensure a real (non-instanced) mesh to drag
+			const m = meshMap.get(id)
+			if (!m) continue   // e.g. off-screen/culled secondary — can't preview or commit it
+			roots.push({
+				localId: id,
+				mesh: m,
+				startPos:  m.position.clone(),
+				startQuat: m.quaternion.clone(),
+				startScaleSL: (worldStore.objects.get(id)?.scale || [1, 1, 1]).slice(),
+			})
+		}
+		const state = {
+			kind, axisLetter, axisVec, localId, mesh, pivot, roots,
+			ids: new Set(roots.map((r) => r.localId)),
+			startPos:  mesh.position.clone(),
+			startQuat: mesh.quaternion.clone(),
+			startScaleSL: (worldStore.objects.get(localId)?.scale || [1, 1, 1]).slice(),
+		}
+		if (kind === 'move') {
+			state.planeNormal = _movePlaneNormal(axisVec)
+			state.startHit = mouseRayPlaneIntersect(rayOrigin, rayDir, pivot, state.planeNormal)
+		} else if (kind === 'rotate') {
+			state.planeNormal = axisVec.clone()
+			state.startHit = mouseRayPlaneIntersect(rayOrigin, rayDir, pivot, state.planeNormal)
+		} else {
+			// scale: closest-approach parameter along the handle's axis line (no plane needed)
+			state.startT = nearestPointOnLineParam(rayOrigin, rayDir, pivot, pivot.clone().add(axisVec))
+		}
+		gizmoDrag = state
+		// Clear any hover highlight before hiding non-dragged parts below — the hovered part may not
+		// be the one just grabbed (e.g. hover lingered from a prior frame at the click boundary).
+		if (_hoveredGizmoPart) { _setGizmoPartHover(_hoveredGizmoPart, false); _hoveredGizmoPart = null }
+		// Item 3: hide every OTHER gizmo part while this one is actively grabbed — FS mutes/hides
+		// sibling manipulators during a drag (LLManipScale::conditionalHighlight, llmanipscale.cpp:
+		// 151-176 — `gGL.color4fv(invisible)` whenever `mManipPart` is set and != the part being
+		// drawn). We hide outright rather than fade-to-invisible since these parts render at
+		// depthTest:false/renderOrder:999 (always on top) — a faded-but-visible sibling would still
+		// visually read as grabbable.
+		for (const child of gizmoGroup.children) child.visible = (child === part)
+		uiStore.setGizmoDragging(true)
+		// Item 4: axis guide ray for the duration of the drag.
+		_buildAxisGuide(state)
+	}
+
+	function updateGizmoDrag(e) {
+		const d = gizmoDrag
+		if (!d || !canvasRef.value || !camera) return
+		const rect = canvasRef.value.getBoundingClientRect()
+		_pickNdc.set(
+			((e.clientX - rect.left) / rect.width) * 2 - 1,
+			-((e.clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		const rayOrigin = _raycaster.ray.origin
+		const rayDir    = _raycaster.ray.direction
+		if (d.kind === 'move') {
+			if (!d.startHit) return
+			const cur = mouseRayPlaneIntersect(rayOrigin, rayDir, d.pivot, d.planeNormal)
+			if (!cur) return
+			const delta = { x: cur.x - d.startHit.x, y: cur.y - d.startHit.y, z: cur.z - d.startHit.z }
+			const mag = projectDeltaOntoAxis(delta, d.axisVec)
+			// Multi-select: the SAME Three-space delta applies to every dragged root's saved position
+			// (FS llmaniptranslate.cpp:747 `new_position_global = saved_position_global + clamped_relative_move`
+			// applied per selected object — our per-root loop mirrors that).
+			for (const r of d.roots) {
+				r.mesh.position.set(
+					r.startPos.x + d.axisVec.x * mag,
+					r.startPos.y + d.axisVec.y * mag,
+					r.startPos.z + d.axisVec.z * mag,
+				)
+			}
+		} else if (d.kind === 'rotate') {
+			if (!d.startHit) return
+			const cur = mouseRayPlaneIntersect(rayOrigin, rayDir, d.pivot, d.planeNormal)
+			if (!cur) return
+			const angle = ringAngle(d.pivot, d.axisVec, d.startHit, cur)
+			const dq = new THREE.Quaternion().setFromAxisAngle(d.axisVec, angle)
+			// Multi-select: every root gets quat_i = dq * startQuat_i (FS llmaniprotate.cpp:595
+			// `new_rot = selectNode->mSavedRotation * mRotation`) AND orbits the SHARED pivot
+			// (FS :685-690 `new_position = (saved_position - center) * mRotation; new_position += center`).
+			for (const r of d.roots) {
+				r.mesh.quaternion.copy(dq.clone().multiply(r.startQuat))
+				_gizmoOrbitVec.copy(r.startPos).sub(d.pivot).applyQuaternion(dq).add(d.pivot)
+				r.mesh.position.copy(_gizmoOrbitVec)
+			}
+		} else {
+			// scale: ratio of current/start closest-approach distance along the axis — a symmetric
+			// "stretch about center" resize (v1; FS's default anchored-opposite-face stretch is a
+			// deliberate cut, see docs/FEATURE-GAPS.md 2026-07-13). Multi-select: the SAME ratio is
+			// applied to every dragged root, but each root stretches about its OWN center (not FS's
+			// shared-selection-center scale) — v1 cut, unchanged, extended to cover >1 root.
+			if (d.startT == null || Math.abs(d.startT) < 1e-4) return
+			const t = nearestPointOnLineParam(rayOrigin, rayDir, d.pivot, d.pivot.clone().add(d.axisVec))
+			const ratio = t / d.startT
+			// TWO different indices: `slIdx` into the SL scale array (x/y/z swapped, see _slScaleIndex),
+			// `threeIdx` into mesh.scale (THREE's own x/y/z — the axis letter already IS that index,
+			// no swap needed since Three.js Vector3 components are addressed by their own axis letter).
+			const slIdx = _slScaleIndex(d.axisLetter)
+			const threeIdx = d.axisLetter === 'x' ? 0 : d.axisLetter === 'y' ? 1 : 2
+			for (const r of d.roots) {
+				const rawSL = r.startScaleSL[slIdx] * ratio
+				const clampedSL = Math.min(64, Math.max(0.01, rawSL))
+				const previewRatio = r.startScaleSL[slIdx] > 0 ? clampedSL / r.startScaleSL[slIdx] : 1
+				// WHY: node scale stays neutral (1,1,1) at rest — prim scale is baked into the geometry
+				// (see upsertMesh's "scale lives in the geometry" comment) — so this Object3D-level scale
+				// is a TRANSIENT preview multiplier only, reset to 1 on mouseup once the network commit
+				// is sent (the sim's echo re-bakes geometry at the real new size via upsertMesh).
+				r.mesh.scale.setComponent(threeIdx, previewRatio)
+				r.pendingScaleSL = r.startScaleSL.slice()
+				r.pendingScaleSL[slIdx] = clampedSL
+			}
+		}
+	}
+
+	// WHY: Abort ≠ end — reverts the local preview to the pre-drag transform and sends NOTHING
+	// (the sim was never told about the preview; committing here would apply a gesture the user
+	// never finished). Used on blur, lost mouse-capture, and mid-drag KillObject of the target.
+	function abortGizmoDrag() {
+		const d = gizmoDrag
+		if (!d) return
+		gizmoDrag = null
+		// Multi-select: revert EVERY snapshotted root, not just the primary.
+		for (const r of d.roots) {
+			if (d.kind === 'move') r.mesh.position.copy(r.startPos)
+			else if (d.kind === 'rotate') { r.mesh.position.copy(r.startPos); r.mesh.quaternion.copy(r.startQuat) }
+			else r.mesh.scale.set(1, 1, 1)
+		}
+		_restoreGizmoPartsVisible()
+		_clearAxisGuide()
+		uiStore.setGizmoDragging(false)
+	}
+
+	function endGizmoDrag() {
+		const d = gizmoDrag
+		if (!d) return
+		gizmoDrag = null
+		// WHY linked: FS's default (non-Edit-Linked) drag sends roots WITH UPD_LINKED_SETS
+		// (llselectmgr.cpp:4901-4919 sendMultipleUpdate → SEND_ONLY_ROOTS | UPD_LINKED_SETS) so the
+		// sim moves the WHOLE linkset. Without it OpenSim moves only the root prim and children
+		// keep their world pos — the "dragging a linked object distorts it" bug (Gene 2026-07-13).
+		// Edit-linked ON = deliberately editing one part → un-flagged, matching FS + the floater's
+		// numeric-field commits.
+		const linked = !uiStore.editLinked
+		// Multi-select: ONE MultipleObjectUpdate for the whole selection — FS packs one packed message
+		// for the whole selection too (llselectmgr.cpp:4922 packMultipleUpdate). sendPosition/
+		// sendRotation/sendScale (useLLUDP.js) apply a SINGLE value to every id in an array, which
+		// can't express per-root positions/rotations — so this emits C.OBJECT_MULTI_UPDATE directly
+		// (the exact same wsEmit + wire shape those helpers use internally) with one `updates[]` entry
+		// per dragged root, each carrying that root's own committed value.
+		const updates = []
+		for (const r of d.roots) {
+			if (d.kind === 'move') {
+				const p = r.mesh.position
+				updates.push({ localId: r.localId, position: [p.x, -p.z, p.y] })
+			} else if (d.kind === 'rotate') {
+				const p = r.mesh.position
+				updates.push({ localId: r.localId, rotation: threeQuatToSl(r.mesh.quaternion), position: [p.x, -p.z, p.y] })
+			} else if (d.kind === 'scale') {
+				r.mesh.scale.set(1, 1, 1)
+				if (r.pendingScaleSL) {
+					const p = r.mesh.position
+					updates.push({ localId: r.localId, scale: r.pendingScaleSL, position: [p.x, -p.z, p.y] })
+				}
+			}
+		}
+		if (updates.length) wsEmit(C.OBJECT_MULTI_UPDATE, { updates, linked })
+		_restoreGizmoPartsVisible()
+		_clearAxisGuide()
+		uiStore.setGizmoDragging(false)
+	}
+
+	// Item 3 restore: un-hide every gizmo part after a drag ends/aborts.
+	function _restoreGizmoPartsVisible() {
+		if (!gizmoGroup) return
+		for (const child of gizmoGroup.children) child.visible = true
+	}
+
+	// ── Axis guide ray (item 4, FS LLManip::renderGuidelines) ───────────────────────
+	// WHY: FS draws a full region-width line through the selection pivot along the constrained
+	// drag axis while translating (LLManip::renderGuidelines, llmanip.cpp:426-486 — region-width
+	// LINES at LINE_ALPHA=0.33, 1.5px, called from LLManipTranslate::render at llmaniptranslate.cpp:
+	// 1102/1598-1614). We extend a fixed 256m both directions (region-size-independent — var regions
+	// can exceed the classic 256m width) instead of querying region width, and use depthTest:true so
+	// it visually "sinks into" solid objects like FS's world-space (not always-on-top) line.
+	const AXIS_GUIDE_EXTENT = 256   // metres each direction through the pivot
+	function _buildAxisGuide(state) {
+		_clearAxisGuide()
+		if (!scene) return
+		// WHY color swap: mirrors buildGizmoForMode's SL-axis→Three-axis color mapping (Three Y↔SL Z,
+		// Three Z↔SL Y) so the guide line matches the dragged handle's own drawn color.
+		const colorHex = state.axisLetter === 'x' ? _GIZMO_X : state.axisLetter === 'y' ? _GIZMO_Z : _GIZMO_Y
+		const dir = state.axisVec.clone().normalize()
+		const p0 = state.pivot.clone().addScaledVector(dir, -AXIS_GUIDE_EXTENT)
+		const p1 = state.pivot.clone().addScaledVector(dir, AXIS_GUIDE_EXTENT)
+		const geom = new THREE.BufferGeometry().setFromPoints([p0, p1])
+		const mat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.33, depthTest: true })
+		axisGuideLine = new THREE.Line(geom, mat)
+		axisGuideLine.renderOrder = 0
+		axisGuideLine.raycast = () => {}   // decorative only — mirrors _addHighlight's pick-through guard
+		scene.add(axisGuideLine)
+	}
+
+	function _clearAxisGuide() {
+		if (!axisGuideLine) return
+		axisGuideLine.geometry.dispose()
+		axisGuideLine.material.dispose()
+		axisGuideLine.parent?.remove(axisGuideLine)
+		axisGuideLine = null
+	}
 
 	function onDblClick(e) {
 		const p = screenToGround(e.clientX, e.clientY)
@@ -1488,6 +2052,50 @@ export function useWorldEngine(canvasRef) {
 		if (!terrHits.length) return null
 		const tp = terrHits[0].point
 		return { x: tp.x, y: -tp.z, z: tp.y, hitLocalId: null, rayStart: _cameraSlPos() }
+	}
+
+	// PKG-2 face pick: raycast a screen point to { localId, teFace } for texture/media face-targeted
+	// operations (e.g. "Select Face" in the Object edit floater's Texture tab). Reuses the same
+	// visible-only prim-target filter as screenToDropPoint (:1447-1491 in this file — skip own
+	// avatar/other avatars, culled/awaiting-geom meshes, and near-fully-transparent materials) and
+	// the shared primFaceMap/slFaceForGroup table (src/lib/primFaceMap.js) rather than duplicating
+	// the box/cylinder group→SL-face numbering here.
+	function pickObjectFace(clientX, clientY) {
+		if (!canvasRef.value || !camera) return null
+		const rect = canvasRef.value.getBoundingClientRect()
+		_pickNdc.set(
+			((clientX - rect.left) / rect.width) * 2 - 1,
+			-((clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		_raycaster.far = 1000
+		const primTargets = []
+		meshMap.forEach((mesh, localId) => {
+			if (localId === ownAvatarLocalId) return
+			const obj = worldStore.objects.get(localId)
+			if (!obj || obj.pcode === PCODE_AVATAR) return
+			if (!mesh.visible) return
+			const m0 = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+			if (m0 && m0.transparent && m0.opacity <= 0.05) return
+			primTargets.push(mesh)
+		})
+		if (_instancePool) for (const im of _instancePool.meshes()) { if (im.visible) primTargets.push(im) }
+		const hits = _raycaster.intersectObjects(primTargets, true)
+		if (!hits.length) return null
+		const hit = hits[0]
+		let localId = null
+		if (hit.object?.userData?.qsInstanced) {
+			localId = _instancePool.pick(hit.object, hit.instanceId)
+		} else {
+			let m = hit.object
+			while (m && m.userData?.localId === undefined) m = m.parent
+			if (m) localId = m.userData.localId
+		}
+		if (localId == null) return null
+		const obj = worldStore.objects.get(localId)
+		const groupIdx = hit.face?.materialIndex ?? 0
+		const teFace = slFaceForGroup(primFaceMap(obj?.shape), groupIdx)
+		return { localId, teFace }
 	}
 
 	// Camera position in SL region coords — the rayStart FS uses for sim-raycast rez placement
@@ -2169,6 +2777,7 @@ export function useWorldEngine(canvasRef) {
 	// rotate the axes, and gizmo size stays consistent even when the prim has a tiny
 	// localScale (we set our own scale from the mesh's world bbox).
 	function clearGizmo() {
+		_hoveredGizmoPart = null   // meshes below are about to be disposed — drop the stale reference
 		if (!gizmoGroup) return
 		gizmoGroup.traverse(c => { if (c.isMesh) { c.geometry.dispose(); c.material.dispose() } })
 		gizmoGroup.parent?.remove(gizmoGroup)
@@ -2183,11 +2792,15 @@ export function useWorldEngine(canvasRef) {
 	const _HL_ROOT  = 0xffee00  // FS gold-yellow — selected root or solo prim
 	const _HL_CHILD = 0x7ab8ff  // FS light blue  — linked child prims
 
-	function _buildArrow(color, dir) {
+	// axis (3rd arg) = THREE-space axis letter the part drags along ('x'/'y'/'z', NOT the SL axis
+	// the color represents — see buildGizmoForMode's call sites). Read back by _findGizmoPart on
+	// mousedown to identify which handle was grabbed and start a drag.
+	function _buildArrow(color, dir, axis) {
 		// Shaft + cone head pointing along +dir (length 1, head at tip).
 		const grp = new THREE.Group()
 		const shaftLen = 0.78
 		const shaftMat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.92 })
+		shaftMat.userData.gizmoBaseColor = color   // hover-highlight restore target (_setGizmoPartHover)
 		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, shaftLen, 10), shaftMat)
 		shaft.position.y = shaftLen / 2
 		const head = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 12), shaftMat)
@@ -2196,22 +2809,41 @@ export function useWorldEngine(canvasRef) {
 		// Rotate group so +Y of grp aligns with dir. Three.js +Y is the cylinder axis.
 		grp.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
 		grp.renderOrder = 999  // draw over scene
+		grp.userData.gizmoAxis = axis
+		grp.userData.gizmoKind = 'move'
 		return grp
 	}
 
 	function _buildRing(color, axis) {
+		const grp = new THREE.Group()
+		// WHY thicker tube: FS sizes ring hit/draw width off screen pixels relative to the ring's own
+		// radius (llmaniprotate.cpp:66-68 RADIUS_PIXELS=100, WIDTH_PIXELS=8; :147 `width_meters =
+		// WIDTH_PIXELS * mRadiusMeters / RADIUS_PIXELS` → an 0.08×radius ratio). Applied to our 0.85
+		// ring radius that's ~0.068; bumped from the old 0.02 tube (a ~0.024 ratio) to 0.06.
 		const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
-		const ring = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.02, 8, 48), mat)
-		// Torus is in XY plane by default. Orient so its axis points along the requested axis.
-		if (axis === 'x') ring.rotation.y = Math.PI / 2  // XY → YZ plane (axis = X)
-		else if (axis === 'y') ring.rotation.x = Math.PI / 2 // XY → XZ plane (axis = Y)
-		// z axis: default orientation already correct
+		mat.userData.gizmoBaseColor = color
+		const ring = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.04, 8, 48), mat)
 		ring.renderOrder = 999
-		return ring
+		// WHY a separate, wider, fully-transparent hit-proxy torus instead of just growing the visual
+		// ring further: keeps the drawn ring elegant while still giving a generous grab zone — same
+		// "invisible hit-area" pattern as a sprite hotspot. THREE's raycaster ignores `visible:false`
+		// objects entirely, so this uses opacity:0 (still hit-testable) instead, per Gene's note.
+		const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, depthTest: false })
+		const hitProxy = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.16, 8, 32), hitMat)
+		hitProxy.userData.gizmoHitProxy = true   // hover/color logic skips this mesh (_setGizmoPartHover)
+		grp.add(ring); grp.add(hitProxy)
+		// Torus is in XY plane by default. Orient so its axis points along the requested axis.
+		if (axis === 'x') grp.rotation.y = Math.PI / 2  // XY → YZ plane (axis = X)
+		else if (axis === 'y') grp.rotation.x = Math.PI / 2 // XY → XZ plane (axis = Y)
+		// z axis: default orientation already correct
+		grp.userData.gizmoAxis = axis
+		grp.userData.gizmoKind = 'rotate'
+		return grp
 	}
 
-	function _buildHandle(color, dir) {
+	function _buildHandle(color, dir, axis) {
 		const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.92 })
+		mat.userData.gizmoBaseColor = color
 		const grp = new THREE.Group()
 		const shaftLen = 0.78
 		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, shaftLen, 8), mat)
@@ -2221,7 +2853,53 @@ export function useWorldEngine(canvasRef) {
 		grp.add(shaft); grp.add(cube)
 		grp.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
 		grp.renderOrder = 999
+		grp.userData.gizmoAxis = axis
+		grp.userData.gizmoKind = 'scale'
 		return grp
+	}
+
+	// ── Hover affordance (item 1, FS LLManipTranslate::highlightManipulators) ───────
+	// WHY: FS re-derives a screen-space hit per manipulator every hover and brightens the winner
+	// (mHighlightedPart) — see llmaniptranslate.cpp:818-1032 highlightManipulators (projects each
+	// manipulator's hotspot to 2D, tests mouse distance against `mHotSpotRadius`) and the resulting
+	// color/scale bump applied at render time (llmaniptranslate.cpp:1936-1945 SELECTED_ARROW_SCALE
+	// =1.3 lerp; llmanipscale.cpp:151-176 conditionalHighlight swaps to a literal highlight color).
+	// We reuse the existing 3D gizmo raycaster (no separate 2D hotspot projection) since our parts
+	// already carry generous hit zones (arrows/handles are already fairly fat; rings additionally
+	// get the wider hitProxy torus above) — cheap and allocation-free per call.
+	function _setGizmoPartHover(part, hovered) {
+		if (!part) return
+		part.traverse((c) => {
+			if (!c.isMesh || c.userData.gizmoHitProxy) return
+			const base = c.material?.userData?.gizmoBaseColor
+			if (base == null) return
+			c.material.color.setHex(hovered ? lightenColor(base, 0.5) : base)
+		})
+		part.scale.setScalar(hovered ? 1.15 : 1)
+	}
+
+	// Raycasts the gizmo parts at the given client (screen) coordinates and applies/clears the hover
+	// highlight on whichever part is under the cursor. Returns the hovered part or null. Called from
+	// onPointerMove (already throttled to ~80ms — see _hoverThrottle) so this adds no new per-frame cost.
+	function _updateGizmoHover(clientX, clientY) {
+		if (!gizmoGroup || !gizmoGroup.visible || !camera || !canvasRef.value) {
+			if (_hoveredGizmoPart) { _setGizmoPartHover(_hoveredGizmoPart, false); _hoveredGizmoPart = null }
+			return null
+		}
+		const rect = canvasRef.value.getBoundingClientRect()
+		_pickNdc.set(
+			((clientX - rect.left) / rect.width) * 2 - 1,
+			-((clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		const hits = _raycaster.intersectObjects(gizmoGroup.children, true)
+		const part = hits.length ? _findGizmoPart(hits[0].object) : null
+		if (part !== _hoveredGizmoPart) {
+			if (_hoveredGizmoPart) _setGizmoPartHover(_hoveredGizmoPart, false)
+			if (part) _setGizmoPartHover(part, true)
+			_hoveredGizmoPart = part
+		}
+		return part
 	}
 
 	function buildGizmoForMode(mode) {
@@ -2236,14 +2914,14 @@ export function useWorldEngine(canvasRef) {
 			root.add(_buildRing(_GIZMO_Z, 'y'))  // Three.js Y = SL Z → blue
 			root.add(_buildRing(_GIZMO_Y, 'z'))  // Three.js Z = SL Y → green
 		} else if (mode === 'scale') {
-			root.add(_buildHandle(_GIZMO_X, X)); root.add(_buildHandle(_GIZMO_X, X.clone().negate()))
-			root.add(_buildHandle(_GIZMO_Z, Y)); root.add(_buildHandle(_GIZMO_Z, Y.clone().negate()))
-			root.add(_buildHandle(_GIZMO_Y, Z)); root.add(_buildHandle(_GIZMO_Y, Z.clone().negate()))
+			root.add(_buildHandle(_GIZMO_X, X, 'x')); root.add(_buildHandle(_GIZMO_X, X.clone().negate(), 'x'))
+			root.add(_buildHandle(_GIZMO_Z, Y, 'y')); root.add(_buildHandle(_GIZMO_Z, Y.clone().negate(), 'y'))
+			root.add(_buildHandle(_GIZMO_Y, Z, 'z')); root.add(_buildHandle(_GIZMO_Y, Z.clone().negate(), 'z'))
 		} else {
 			// 'move' arrows — both directions per axis so prim handles read like FS.
-			root.add(_buildArrow(_GIZMO_X, X)); root.add(_buildArrow(_GIZMO_X, X.clone().negate()))
-			root.add(_buildArrow(_GIZMO_Z, Y)); root.add(_buildArrow(_GIZMO_Z, Y.clone().negate()))
-			root.add(_buildArrow(_GIZMO_Y, Z)); root.add(_buildArrow(_GIZMO_Y, Z.clone().negate()))
+			root.add(_buildArrow(_GIZMO_X, X, 'x')); root.add(_buildArrow(_GIZMO_X, X.clone().negate(), 'x'))
+			root.add(_buildArrow(_GIZMO_Z, Y, 'y')); root.add(_buildArrow(_GIZMO_Z, Y.clone().negate(), 'y'))
+			root.add(_buildArrow(_GIZMO_Y, Z, 'z')); root.add(_buildArrow(_GIZMO_Y, Z.clone().negate(), 'z'))
 		}
 		return root
 	}
@@ -2296,23 +2974,31 @@ export function useWorldEngine(canvasRef) {
 		clearHighlight()
 		// renderUiVisible (Ctrl+Alt+F1 master) hides the selection highlight too; Alt+Shift+U keeps it.
 		if (!uiStore.showObjectEdit || !uiStore.editObjectId || !uiStore.renderUiVisible) return
-		const id = uiStore.editObjectId
-		if (uiStore.editLinked) {
-			// Single prim (root or child depending on what was clicked) — yellow only.
-			_addHighlight(id, _HL_ROOT)
-		} else {
-			// Whole linkset: root=yellow, children=light blue.
-			// editObjectId is always the root when editLinked is false (enforced by click handler + openObjectEdit).
-			_addHighlight(id, _HL_ROOT)
-			for (const [cid, o] of worldStore.objects) {
-				if ((o.parentId ?? 0) === id) _addHighlight(cid, _HL_CHILD)
+		// PKG-2 multi-select: shift/ctrl-click adds extra roots to uiStore.selectedObjectIds — draw
+		// the SAME halo treatment on every one of them, not just the primary editObjectId.
+		for (const id of [uiStore.editObjectId, ...uiStore.selectedObjectIds]) {
+			if (uiStore.editLinked) {
+				// Single prim (root or child depending on what was clicked) — yellow only.
+				_addHighlight(id, _HL_ROOT)
+			} else {
+				// Whole linkset: root=yellow, children=light blue.
+				// editObjectId is always the root when editLinked is false (enforced by click handler + openObjectEdit).
+				_addHighlight(id, _HL_ROOT)
+				for (const [cid, o] of worldStore.objects) {
+					if ((o.parentId ?? 0) === id) _addHighlight(cid, _HL_CHILD)
+				}
 			}
 		}
 	}
 
 	function refreshGizmo() {
 		if (!scene) return
-		const id = uiStore.editObjectId
+		// WHY: gizmo drags ONLY the linkset ROOT — a child's stored pos/rot are parent-relative,
+		// so dragging a child's mesh directly would fling it (same reasoning as sendPosition's
+		// idsFor root resolution). When "Edit linked parts" has editObjectId on a child, the gizmo
+		// still tracks + drags that child's root (PKG-2 contract); the highlight (refreshHighlight)
+		// is what shows the actual clicked child.
+		const id = resolveRootLocalId(uiStore.editObjectId)
 		// renderUiVisible (Ctrl+Alt+F1 master) hides the gizmo too; Alt+Shift+U (uiVisible) keeps it.
 		if (!uiStore.showObjectEdit || !id || !uiStore.renderUiVisible) { clearGizmo(); return }
 		if (uiStore.instancing) promoteOut(id)   // ensure an individual mesh exists for the gizmo
@@ -2334,6 +3020,17 @@ export function useWorldEngine(canvasRef) {
 		// WHY: world-axis bbox center sits dead-center of the selection on all 3 planes
 		// regardless of prim rotation — matches FS, which centers handles on the selection.
 		const bbox = new THREE.Box3().setFromObject(mesh)
+		// Item 5: when shift/ctrl-click has grown a multi-select, center on the UNION bbox of every
+		// selected root (FS centers translate/rotate/scale handles on the whole selection's bbox —
+		// LLSelectMgr::getBBoxOfSelection, consumed by LLManip::getPivotPoint/renderGuidelines). The
+		// drag itself still only moves editObjectId/gizmoMeshId's root — documented v1 cut, see
+		// docs/FEATURE-GAPS.md 2026-07-13 "Gizmo drag v1 scope cuts".
+		for (const extraId of uiStore.selectedObjectIds) {
+			const extraMesh = meshMap.get(extraId)
+			if (!extraMesh) continue
+			extraMesh.updateWorldMatrix?.(true, false)
+			bbox.union(new THREE.Box3().setFromObject(extraMesh))
+		}
 		const ctr  = new THREE.Vector3(); bbox.getCenter(ctr)
 		gizmoGroup.position.copy(ctr)
 		// WHY: constant on-screen size like FS — gizmo spans a fixed fraction of viewport
@@ -2926,10 +3623,17 @@ export function useWorldEngine(canvasRef) {
 			}
 		} else {
 			// Existing mesh: scale update + animated position
+			// PKG-2 gizmo drag: while the user is actively dragging THIS object's gizmo handle (or it's
+			// one of the OTHER roots in a multi-select drag — gizmoDrag.ids), the live preview
+			// (mesh.position/quaternion/scale, mutated directly in updateGizmoDrag) must not be
+			// clobbered by a stale/in-flight server echo — sim confirmation of the PRE-drag state can
+			// arrive mid-drag and would otherwise snap the mesh back every network tick. Cleared the
+			// instant gizmoDrag ends (mouseup), so the next real update applies normally.
+			const gizmoSuppress = gizmoDrag != null && gizmoDrag.ids.has(obj.localId)
 			// WHY: scale lives in the geometry (node scale stays 1,1,1 so children don't inherit it).
 			// Re-bake by the ratio of new/previous baked scale — preserves the prim's shape geometry
 			// without a rebuild, and is a no-op when the scale is unchanged (the common resync case).
-			if (obj.scale && obj.pcode !== PCODE_AVATAR) {
+			if (obj.scale && obj.pcode !== PCODE_AVATAR && !gizmoSuppress) {
 				const prev = mesh.userData.primScale || [1, 1, 1]
 				// Guard: a prim can arrive with a 0 scale component (finite, so it passes classifySafety
 				// and bakes to a 0-width geometry). On the next update prev[i]=0 → new/0 = Inf, or 0/0 =
@@ -2942,7 +3646,7 @@ export function useWorldEngine(canvasRef) {
 				if (rx !== 1 || ry !== 1 || rz !== 1) mesh.geometry.scale(rx, ry, rz)
 				mesh.userData.primScale = obj.scale.slice()
 			}
-			if (obj.rot && obj.pcode !== PCODE_AVATAR) {
+			if (obj.rot && obj.pcode !== PCODE_AVATAR && !gizmoSuppress) {
 				// 🎬 E: server rot lands via applyServerRot so accumulated llTargetOmega spin is
 				// preserved on same-rot resyncs and reset on genuine changes (FS llviewerobject.cpp:2391–2414).
 				applyServerRot(mesh, obj.localId, obj.rot)
@@ -2962,7 +3666,7 @@ export function useWorldEngine(canvasRef) {
 					if (obj.localId === ownAvatarLocalId) uiStore.setSitting(action === 'attach' ? 'object' : false)
 				}
 			}
-			if (obj.pos) {
+			if (obj.pos && !gizmoSuppress) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				// WHY: ObjectUpdate is sparse (login + new objects in range). Avatar gets GSAP
 				// so a belated full-update doesn't jerk it mid-motion. Prims: direct set.
@@ -2984,11 +3688,39 @@ export function useWorldEngine(canvasRef) {
 			if (obj.pcode !== PCODE_AVATAR) {
 				mesh.userData.baseScale = mesh.scale.clone()
 				mesh.userData.basePos   = mesh.position.clone()
-				// WHY: If this was an orphan (parent arrived after child was created), try to
-				// reparent now. parent === scene means still orphaned; check if parent is in meshMap.
-				const pid = mesh.userData.parentId ?? 0
-				if (pid && mesh.parent === scene) {
-					const pm = meshMap.get(pid)
+				// PACKAGE 4 (2026-07-13): reparent on a parentId CHANGE — Link/Unlink (ObjectLink/
+				// ObjectDelink) rebroadcast full ObjectUpdates with a new ParentID for every affected
+				// prim, and OpenSim always sends pos/rot already in the frame matching the prim's
+				// POST-op parent (parent-local once linked, world-absolute once unlinked to root —
+				// the same invariant the pre-existing orphan-adoption branch below relies on), so a
+				// bare three.js .add()/.remove() (no world-transform preservation) is correct: the
+				// pos/rot set above this block are already the right numbers for whichever parent we
+				// attach under. WHY this was broken: the old check compared mesh.userData.parentId
+				// (written ONLY at mesh creation) against itself, never against the fresh obj.parentId,
+				// so a genuine Link/Unlink parentId change was silently ignored until a full scene
+				// rebuild — Link/Unlink appeared to do nothing until reload.
+				const newParentId = obj.parentId ?? 0
+				if (newParentId !== (mesh.userData.parentId ?? 0)) {
+					if (mesh.parent) mesh.parent.remove(mesh)
+					mesh.userData.parentId = newParentId
+					const pm = newParentId ? meshMap.get(newParentId) : null
+					if (newParentId && !pm) {
+						// New parent hasn't streamed in yet — park hidden; the orphan-adoption scan
+						// (the `waiting` block above, run when the parent's OWN mesh is later built)
+						// picks it up once the parent arrives.
+						mesh.visible = false
+						let set = orphansByParent.get(newParentId)
+						if (!set) { set = new Set(); orphansByParent.set(newParentId, set) }
+						set.add(obj.localId)
+					} else {
+						;(pm || scene).add(mesh)
+						mesh.visible = true
+						if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
+					}
+				} else if (newParentId && mesh.parent === scene) {
+					// WHY: If this was an orphan (parent arrived after child was created), try to
+					// reparent now. parent === scene means still orphaned; check if parent is in meshMap.
+					const pm = meshMap.get(newParentId)
 					if (pm) {
 						scene.remove(mesh)
 						pm.add(mesh)
@@ -3073,6 +3805,19 @@ export function useWorldEngine(canvasRef) {
 	}
 
 	function removeMesh(localId) {
+		// WHY: if a dragged prim is killed mid-gesture, its mesh is about to be disposed — the drag
+		// can't keep steering it. If it's the PRIMARY (gizmoDrag.localId), the whole gesture's math
+		// (plane/ray hit-testing) is anchored on it — abort the ENTIRE drag (revert every root, no
+		// send). If it's a SECONDARY root in a multi-select drag, drop just that one from the
+		// snapshot/ids and let the drag continue for the rest of the selection.
+		if (gizmoDrag?.ids?.has(localId)) {
+			if (gizmoDrag.localId === localId) {
+				abortGizmoDrag()
+			} else {
+				gizmoDrag.roots = gizmoDrag.roots.filter((r) => r.localId !== localId)
+				gizmoDrag.ids.delete(localId)
+			}
+		}
 		particles?.unregister(localId)
 		// 🎬 dispose the per-object animated-texture clones + drop motion state (trap 1 cleanup).
 		_dropTexAnim(localId)
@@ -3204,6 +3949,16 @@ export function useWorldEngine(canvasRef) {
 			// does upsertObject + persist + mesh-queue-add. Avatars stay inline — own-avatar
 			// attribution + the follow camera below depend on the object existing immediately.
 			if (obj.pcode !== PCODE_AVATAR) {
+				// FS mCreateSelected: a prim WE just created (Create tool) or rezzed-with-floater-open
+				// arrives flagged CreateSelected — select it for immediate editing. One-shot expectation
+				// window (uiStore.expectCreatedSelection, armed at the send site) so another user's
+				// simultaneous create-selected rez can't steal our selection.
+				if (obj.createSelected && uiStore.expectCreateSelectedUntil > Date.now()
+						&& !worldStore.objects.has(obj.localId)) {
+					uiStore.expectCreateSelectedUntil = 0
+					uiStore.clearMultiSelect()
+					uiStore.editObjectId = obj.localId
+				}
 				// 🎬 E/F: motion fields are read from the RAW payload — vel/angVel are omitted from
 				// the wire when ~0, so absence in an update means the object STOPPED (FS zeroes both
 				// on every update). The merged store record would keep stale motion forever.
@@ -3344,7 +4099,12 @@ export function useWorldEngine(canvasRef) {
 			// then (see uiStore.isSitting guards below), so sim-driven placement must flow through
 			// here instead — this hits the isChildMesh branch since the seat reparent (upsertMesh)
 			// already set mesh.userData.parentId != 0, applying the parent-relative offset directly.
-			if (mesh && (obj.localId !== ownAvatarLocalId || uiStore.isSitting === 'object')) {
+			// PKG-2 gizmo drag: suppress a mid-drag TerseUpdate echo for every object being dragged
+			// (multi-select: gizmoDrag.ids, not just the primary) — same reasoning as upsertMesh's
+			// gizmoSuppress guard (sim's confirmation of the PRE-drag state must not snap the live
+			// preview back mid-gesture).
+			const gizmoSuppress = gizmoDrag != null && gizmoDrag.ids.has(obj.localId)
+			if (mesh && !gizmoSuppress && (obj.localId !== ownAvatarLocalId || uiStore.isSitting === 'object')) {
 				const t = slToThree(pos[0], pos[1], pos[2])
 				// WHY: Avatars get GSAP lerp to smooth 10Hz TerseUpdate jitter into fluid motion.
 				// Prims use direct set — GSAP on many static prims restarts tweens every update
@@ -3972,10 +4732,15 @@ export function useWorldEngine(canvasRef) {
 		// the native cursor stays hidden. Skip raycast + cursor overrides; WorldCanvas forces action 7.
 		if (altFocus.value) { canvas.style.cursor = 'none'; return }
 
-		// Edit floater active → select mode, suppress hover interaction
+		// Edit floater active → select mode, suppress prim-touch hover interaction, but still run the
+		// gizmo hover-affordance raycast (item 1) so a manipulator part brightens under the cursor —
+		// this IS the mode the gizmo is visible in. Cursor: 'grabbing' mid-drag, 'grab' over a part,
+		// 'crosshair' otherwise (unchanged default).
 		if (uiStore.floaterStack?.includes('object-edit')) {
-			canvas.style.cursor = 'crosshair'
 			hoverAction.value = null
+			if (gizmoDrag) { canvas.style.cursor = 'grabbing'; return }
+			const overPart = _updateGizmoHover(e.clientX, e.clientY)
+			canvas.style.cursor = overPart ? 'grab' : 'crosshair'
 			return
 		}
 
@@ -4052,6 +4817,7 @@ export function useWorldEngine(canvasRef) {
 		if (canvasRef.value) canvasRef.value.style.cursor = 'default'
 		hoverAction.value = null
 		_hoverLocalId = null
+		if (_hoveredGizmoPart) { _setGizmoPartHover(_hoveredGizmoPart, false); _hoveredGizmoPart = null }
 	}
 
 	// WHY: Right-click avatar menu "Face Toward" action — set yaw so own avatar looks at target.
@@ -5076,6 +5842,35 @@ export function useWorldEngine(canvasRef) {
 		debugStore.push('info', `[Tex] manual refresh rootId=${rootId} (${members.length} prims, ${set.size} textures)`)
 	}
 
+	// Scene-wide texture refresh (Advanced ▸ Refresh all textures) — same mechanism as the
+	// per-object refresh above, applied to every BUILT mesh: clear the in-memory texture layer +
+	// failure marks (qs-tex IDB rows stay — they're immutable-by-UUID; the black-object failure
+	// is in the apply layer, and per-object refresh demonstrably fixes it WITHOUT a grid refetch),
+	// then rebuild every mesh's materials so each face re-resolves through getTexture (IDB hits
+	// re-apply instantly, cleared failures re-queue paced by MAX_INFLIGHT).
+	function refreshAllTextures() {
+		const set = new Set()
+		for (const [, o] of worldStore.objects) {
+			if (isRealTex(o.defaultTexture)) set.add(o.defaultTexture)
+			if (Array.isArray(o.faceTextures)) for (const f of o.faceTextures) if (isRealTex(f)) set.add(f)
+		}
+		if (set.size) refreshTextures([...set])
+		let meshes = 0
+		for (const [id, mesh] of meshMap) {
+			const o = worldStore.objects.get(id)
+			if (!o || o.pcode === PCODE_AVATAR) continue
+			if (Array.isArray(mesh.material)) {
+				buildFaceMaterials(mesh, o, null)
+			} else if (mesh.material) {
+				mesh.material.map = null
+				mesh.material.needsUpdate = true
+				reapplyDiffuse(mesh, o)
+			}
+			meshes++
+		}
+		debugStore.push('info', `[Tex] refresh-ALL (${meshes} meshes, ${set.size} textures)`)
+	}
+
 	// ── Lit-shading A/B toggle (QuickPrefs ▸ Graphics ▸ Lit Shading) ────────────────────────────
 	// Swap a single prim material between unlit MeshBasic and lit MeshLambert, preserving its
 	// already-applied texture/tint/alpha state. MeshStandard (legacy/PBR material path) is always
@@ -5864,7 +6659,9 @@ export function useWorldEngine(canvasRef) {
 		stopLitShadingWatch()
 		stopSceneRebuildWatch()
 		stopTexRefreshWatch()
+		stopTexRefreshAllWatch()
 		stopGizmoSelWatch()
+		stopMultiSelWatch()
 		stopGizmoModeWatch()
 		stopRenderUiWatch()
 		stopGizmoVisWatch()
@@ -5877,10 +6674,12 @@ export function useWorldEngine(canvasRef) {
 		stopVramBudgetWatch?.()
 		terrainShaderMaterial?.dispose()
 		terrainShaderMaterial = null
-		// WHY: drop any lingering sim-side selection so we don't leave the prim flagged after unmount.
-		if (simSelectedId != null) { sendDeselect([simSelectedId]); simSelectedId = null }
+		// WHY: drop any lingering sim-side selection so we don't leave prims flagged after unmount.
+		if (simSelectedIds.size) { sendDeselect([...simSelectedIds]); simSelectedIds = new Set() }
 		clearGizmo()
 		clearHighlight()
+		_clearAxisGuide()
+		uiStore.marqueeRect = null
 		endFocusGlide()
 		cancelAnimationFrame(animId)
 		uninstallConsoleForwarder()
@@ -5948,6 +6747,6 @@ export function useWorldEngine(canvasRef) {
 
 	return {
 		scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave, screenToGround, screenToDropPoint,
-		standUp, sitOnGround, toggleFly, zoomToObject,
+		standUp, sitOnGround, toggleFly, zoomToObject, pickObjectFace,
 	}
 }

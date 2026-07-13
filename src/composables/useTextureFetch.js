@@ -265,6 +265,9 @@ export function getTextureStats() {
 // DIAG(webp-trickle): console access to the LIVE module instance — a bare dynamic import from
 // DevTools can resolve a second, zero-counter copy after an HMR update. Dev-only.
 if (import.meta.env.DEV) globalThis.__texStats = getTextureStats
+// DIAG(black-tex 2026-07-13): grid-fresh fetch that BYPASSES qs-tex (full-preview path has its own
+// cache) — lets the console compare a suspect cached row against what the grid actually serves.
+if (import.meta.env.DEV) globalThis.__texFetchFresh = (uuid) => getFullTexturePreview(uuid)
 
 // Estimated JS-heap bytes held by resident texture bitmaps (decoded RGBA: w*h*4 per base texture).
 // UV-transform clones share the base's image source, so only base textures are counted.
