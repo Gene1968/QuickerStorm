@@ -163,6 +163,39 @@ export function useLLUDP() {
 		emit(C.OBJECT_MULTI_UPDATE, { updates, linked })
 	}
 
+	// ── Build/edit wire (rez, link, texture, duplicate) ─────────────────────
+
+	/** Rez a new prim — ObjectAdd (Medium 1). params matches C.OBJECT_ADD's d shape exactly
+	 *  (raw floats; server quantizes per FS packProfileParams/packPathParams). Caller (Build
+	 *  tool) supplies pcode/material/path+profile params/ray/scale/rotation. */
+	function createPrim(params) {
+		emit(C.OBJECT_ADD, params)
+	}
+
+	/** Build a linkset — ObjectLink (Low 115). FIRST id in localIds becomes the new root
+	 *  (OpenSim LLClientView.cs:9317) — caller orders localIds so the intended new root is first
+	 *  (uiStore convention: [editObjectId, ...selectedObjectIds] — newest selection first). */
+	function sendLink(localIds) {
+		emit(C.OBJECT_LINK, { localIds: toIds(localIds) })
+	}
+
+	/** Break a linkset apart — ObjectDelink (Low 116). */
+	function sendDelink(localIds) {
+		emit(C.OBJECT_DELINK, { localIds: toIds(localIds) })
+	}
+
+	/** Whole-TE replace on one object — ObjectImage (Low 96). faces = FULL per-face table
+	 *  (shared/protocol.js C.OBJECT_SET_TEXTURE documents the face shape) — not a sparse patch;
+	 *  the server rebuilds the entire TextureEntry blob from it. */
+	function setObjectTexture(localId, faces, mediaUrl) {
+		emit(C.OBJECT_SET_TEXTURE, { localId, faces, mediaUrl })
+	}
+
+	/** Copy object(s), offset by [x,y,z] region-local metres — ObjectDuplicate (Low 90). */
+	function duplicateObjects(localIds, offset, duplicateFlags = 0) {
+		emit(C.OBJECT_DUPLICATE, { localIds: toIds(localIds), offset, duplicateFlags })
+	}
+
 	// ── Task (prim) inventory ───────────────────────────────────────────────
 	// Contents live per PRIM (not per linkset) — send the clicked prim's id unresolved; the
 	// Edit floater's Content tab shows the selected prim's inventory, matching FS.
@@ -221,5 +254,5 @@ export function useLLUDP() {
 		emit(C.GROUP_INVITE, { groupId, inviteeIds, roleId })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport, buyObject, payMoney, requestMoneyBalance, inviteToGroup, requestObjectPropsFamily }
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, createPrim, sendLink, sendDelink, setObjectTexture, duplicateObjects, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport, buyObject, payMoney, requestMoneyBalance, inviteToGroup, requestObjectPropsFamily }
 }

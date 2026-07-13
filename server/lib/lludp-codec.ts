@@ -450,6 +450,34 @@ export function encodeObjectDeselect(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+// ── ObjectLink / ObjectDelink (Low 115 / 116) — build/break a linkset ─────
+// message_template.msg:2447-2471: both Unencoded, AgentData(AgentID+SessionID) + ObjectData
+// Variable{ObjectLocalID U32}. Order is load-bearing: OpenSim makes the FIRST id in the
+// ObjectLink list the new linkset ROOT (LLClientView.cs:9317 LinkObjects — iterates
+// ObjectLocalID blocks in wire order, m_rootPart = first). FS's LLSelectMgr::sendLink()
+// (llselectmgr.cpp:5442-5455) sends the selection via sendListToRegions("ObjectLink", ...,
+// SEND_ONLY_ROOTS); the newest-selection-first ordering comes from LLObjectSelection::addNode()
+// pushing to the FRONT of the selection list (llselectmgr.cpp:8290-8302, mList.push_front) —
+// so "click root last" becomes "root ends up first on the wire" — callers must preserve that
+// convention when building localIds.
+export function encodeObjectLink(p: {
+  agentId: string; sessionId: string; seq: number; localIds: number[]
+}): Buffer {
+  return encode('ObjectLink', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
+  }, { seq: p.seq, reliable: true })
+}
+
+export function encodeObjectDelink(p: {
+  agentId: string; sessionId: string; seq: number; localIds: number[]
+}): Buffer {
+  return encode('ObjectDelink', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
+  }, { seq: p.seq, reliable: true })
+}
+
 // ── ObjectProperties (Medium #9) — sim → viewer per-object metadata ──────
 // Per message_template.msg:3704 — ObjectData block (Variable count), each block:
 //   ObjectID(UUID) CreatorID(UUID) OwnerID(UUID) GroupID(UUID)
@@ -640,6 +668,117 @@ export function encodeDeRezObject(p: {
       PacketCount:   1,
       PacketNumber:  0,
     },
+    ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── ObjectAdd (Medium 1) — rez a new prim ─────────────────────────────────
+// message_template.msg:1824-1867. FS packer: lltoolplacer.cpp — GroupID (AgentData) is the
+// active rez group (FSCommon::getGroupForRezzing); we have no active-group concept for
+// transactions (same convention as ObjectBuy/DeRezObject above), so GroupID is always Zero.
+// PCode: every regular-prim shape sends volume_pcode = LL_PCODE_VOLUME = 9 on the wire
+// regardless of which "Add" button was pressed (llvolume.h:102; lltoolplacer.cpp:349-483 sets
+// volume_pcode = LL_PCODE_VOLUME for every case in its shape switch, then addU8Fast(PCode,
+// volume_pcode) once at line 483) — the actual shape lives entirely in the Path/Profile params.
+const LL_PCODE_VOLUME = 9   // FS indra/llmath/llvolume.h:102
+
+// Quantization constants — FS indra/llmath/llvolume.h:75-80. Note the message_template.msg
+// inline comments say "quanta = 0.01" for the cut/hollow fields; that's stale — the real
+// packer (llvolumemessage.cpp) uses CUT_QUANTA/HOLLOW_QUANTA = 0.00002 (U16 range 0..50000
+// only works out to a 0..1 span at that quantum).
+const CUT_QUANTA    = 0.00002  // llvolume.h:75 — ProfileBegin/End, PathBegin/End
+const SCALE_QUANTA  = 0.01     // llvolume.h:76 — PathScaleX/Y, PathTwist*, PathRadiusOffset, PathSkew
+const SHEAR_QUANTA  = 0.01     // llvolume.h:77 — PathShearX/Y
+const TAPER_QUANTA  = 0.01     // llvolume.h:78 — PathTaperX/Y
+const REV_QUANTA    = 0.015    // llvolume.h:79 — PathRevolutions
+const HOLLOW_QUANTA = 0.00002  // llvolume.h:80 — ProfileHollow
+
+const clampI8  = (v: number): number => Math.max(-128, Math.min(127, v))
+const clampU8b = (v: number): number => Math.max(0, Math.min(255, v))
+const clampU16 = (v: number): number => Math.max(0, Math.min(65535, v))
+
+export interface ObjectAddParams {
+  agentId: string; sessionId: string; seq: number
+  pcode?: number          // defaults to LL_PCODE_VOLUME (9) — regular prim
+  material: number
+  addFlags: number        // object_flags.h: 0x01 use-physics, 0x02 create-selected
+  pathCurve: number; profileCurve: number
+  pathBegin: number; pathEnd: number         // 0..1 — llvolumemessage.cpp:220,223 (CUT_QUANTA)
+  pathScaleX: number; pathScaleY: number     // 0..1 — :229-230 (SCALE_QUANTA, 200-offset)
+  pathShearX: number; pathShearY: number     // -.5..5 — :235-236 (SHEAR_QUANTA)
+  pathTwist: number; pathTwistBegin: number  // -1..1 — :241,244 (SCALE_QUANTA)
+  pathRadiusOffset: number                   // -1..1 — :247 (SCALE_QUANTA)
+  pathTaperX: number; pathTaperY: number     // -1..1 — :250,253 (TAPER_QUANTA)
+  pathRevolutions: number                    // 1..4  — :256 (REV_QUANTA, -1 offset)
+  pathSkew: number                           // -1..1 — :259 (SCALE_QUANTA)
+  profileBegin: number; profileEnd: number; profileHollow: number  // 0..1 — llvolumemessage.cpp:51-58
+  bypassRaycast?: boolean
+  rayStart: [number, number, number]
+  rayEnd: [number, number, number]
+  rayTargetId?: string
+  rayEndIsIntersection?: boolean
+  scale: [number, number, number]
+  rotation: [number, number, number, number]  // quaternion xyzw; wire drops W (llquaternion.cpp:919 convention)
+  state?: number
+}
+
+/** ObjectAdd (Medium 1, message_template.msg:1824) — rez a new prim. Caller passes RAW
+ *  (unquantized) float params; this function applies the exact FS packProfileParams
+ *  (llvolumemessage.cpp:39-65) / packPathParams (:208-263) formulas so the sim decodes
+ *  identical shape params to what the user configured. */
+export function encodeObjectAdd(p: ObjectAddParams): Buffer {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  const r = Math.round
+  return encode('ObjectAdd', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, GroupID: ZERO },
+    ObjectData: {
+      PCode:    p.pcode ?? LL_PCODE_VOLUME,
+      Material: p.material,
+      AddFlags: p.addFlags >>> 0,
+      PathCurve:    p.pathCurve,
+      ProfileCurve: p.profileCurve,
+      // llvolumemessage.cpp:220/223 — begin: round(v/quanta); end: 50000 - round(v/quanta)
+      PathBegin:  clampU16(r(p.pathBegin / CUT_QUANTA)),
+      PathEnd:    clampU16(50000 - r(p.pathEnd / CUT_QUANTA)),
+      // :229-230 — 200 - round(scale/quanta); wire field is U8 (unsigned), result is always 100..200
+      PathScaleX: clampU8b(200 - r(p.pathScaleX / SCALE_QUANTA)),
+      PathScaleY: clampU8b(200 - r(p.pathScaleY / SCALE_QUANTA)),
+      // :235-236 — signed value stored in a U8 wire field via two's complement (fields.ts U8 write
+      // masks with &0xFF, matching the C++ (U8)(S8) cast)
+      PathShearX: clampI8(r(p.pathShearX / SHEAR_QUANTA)) & 0xFF,
+      PathShearY: clampI8(r(p.pathShearY / SHEAR_QUANTA)) & 0xFF,
+      PathTwist:        clampI8(r(p.pathTwist / SCALE_QUANTA)),
+      PathTwistBegin:   clampI8(r(p.pathTwistBegin / SCALE_QUANTA)),
+      PathRadiusOffset: clampI8(r(p.pathRadiusOffset / SCALE_QUANTA)),
+      PathTaperX:       clampI8(r(p.pathTaperX / TAPER_QUANTA)),
+      PathTaperY:       clampI8(r(p.pathTaperY / TAPER_QUANTA)),
+      PathRevolutions:  clampU8b(r((p.pathRevolutions - 1.0) / REV_QUANTA)),
+      PathSkew:         clampI8(r(p.pathSkew / SCALE_QUANTA)),
+      ProfileBegin:  clampU16(r(p.profileBegin / CUT_QUANTA)),
+      ProfileEnd:    clampU16(50000 - r(p.profileEnd / CUT_QUANTA)),
+      ProfileHollow: clampU16(r(p.profileHollow / HOLLOW_QUANTA)),
+      BypassRaycast: p.bypassRaycast ? 1 : 0,
+      RayStart: p.rayStart,
+      RayEnd:   p.rayEnd,
+      RayTargetID: p.rayTargetId ?? ZERO,
+      RayEndIsIntersection: p.rayEndIsIntersection ? 1 : 0,
+      Scale: p.scale,
+      Rotation: packQuatToVector3(p.rotation),
+      State: p.state ?? 0,
+    },
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── ObjectDuplicate (Low 90) ──────────────────────────────────────────────
+// message_template.msg:1891-1907. GroupID Zero (same no-active-group convention as ObjectAdd).
+export function encodeObjectDuplicate(p: {
+  agentId: string; sessionId: string; seq: number
+  localIds: number[]; offset: [number, number, number]; duplicateFlags?: number
+}): Buffer {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  return encode('ObjectDuplicate', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, GroupID: ZERO },
+    SharedData: { Offset: p.offset, DuplicateFlags: (p.duplicateFlags ?? 0) >>> 0 },
     ObjectData: p.localIds.map(id => ({ ObjectLocalID: id })),
   }, { seq: p.seq, reliable: true })
 }
@@ -948,7 +1087,7 @@ function readFaceBitfield(buf: Buffer, off: number, end: number): { bits: number
 //   defaultTex(16B) → [faceBitfield + texUUID]* → defaultColor(4B) → [faceBitfield + RGBA]* → …
 // Colors are stored inverted on the wire (actual = (255-byte)/255). Best-effort: a truncated blob
 // yields whatever decoded so far.
-interface TEFields {
+export interface TEFields {
   defaultColor?:    [number, number, number, number]
   faceColors?:      Array<[number, number, number, number] | null>
   defaultTexture?:  string
@@ -960,12 +1099,19 @@ interface TEFields {
   faceOffset?:      Array<[number, number] | null>  // per-face offset_s/offset_t override; null = use default
   faceRotation?:    Array<number | null>            // per-face rotation (radians) override; null = use default
   defaultGlow?:      number            // 0..1 (TE field 10)
+  faceGlow?:         Array<number | null>  // per-face glow override; null = use default
   defaultShiny?:     number            // 0..3 (bump byte bits 7:6)
   defaultFullbright?: boolean          // bump byte bit 5
   defaultBump?:      number            // 0..31 (bump byte bits 4:0) — legacy bumpmap type
+  faceShiny?:        Array<number | null>   // per-face shiny override; null = use default
+  faceFullbright?:   Array<boolean | null>  // per-face fullbright override; null = use default
+  faceBump?:         Array<number | null>   // per-face legacy bumpmap-type override; null = use default
   defaultMaterialId?: string           // TE field 11 — legacy LLMaterial UUID (omitted if null)
+  faceMaterialId?:   Array<string | null>  // per-face legacy LLMaterial UUID override; null = use default
   defaultTexGen?:    number            // TexGen mapping mode: 0=default, 1=planar (MediaFlags bits 1:2)
   faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
+  defaultMediaFlags?: number           // MediaFlags byte bit 0 — media-present flag, default face
+  faceMediaFlags?:    Array<number | null>  // per-face media-present bit override; null = use default
 }
 
 // TexGen (texture mapping mode) is packed into the TE MediaFlags byte (field 9), bits 1-2
@@ -1033,7 +1179,7 @@ export function combineFacePairs(
   return any ? out : null
 }
 
-function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFields {
+export function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFields {
   const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
   const res: TEFields = {}
   const rUuid  = (b: Buffer, o: number) => bytesToUuid(b, o)
@@ -1056,7 +1202,8 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     const glow   = readTEField(buf, p, end, 1,  (b, o) => b[o] / 255); p = glow.next  // field 10
     // field 11 material_id (optional — older blobs end before it)
     let matId = ZERO_UUID
-    if (p < end) { const m = readTEField(buf, p, end, 16, rUuid); matId = m.def; p = m.next }
+    let matFaces: Array<string | null> | null = null
+    if (p < end) { const m = readTEField(buf, p, end, 16, rUuid); matId = m.def; matFaces = m.faces; p = m.next }
 
     if (tex.def !== ZERO_UUID) res.defaultTexture = tex.def
     if (tex.faces) res.faceTextures = tex.faces.map(t => (t && t !== ZERO_UUID ? t : null))
@@ -1072,17 +1219,193 @@ function parseTextureEntryFields(buf: Buffer, start: number, end: number): TEFie
     if (faceOffset)  res.faceOffset  = faceOffset
     if (rot.faces && rot.faces.some(v => v != null)) res.faceRotation = rot.faces
     res.defaultGlow       = glow.def
+    if (glow.faces && glow.faces.some(v => v != null)) res.faceGlow = glow.faces
     res.defaultShiny      = (bump.def >> 6) & 0x03
     res.defaultFullbright = ((bump.def >> 5) & 0x01) === 1
     res.defaultBump       = bumpFromTEByte(bump.def)
+    // Per-face bump-byte overrides — same byte, three sub-fields (bumpFromTEByte / shiny / fullbright
+    // bit-slices below), so ObjectImage's whole-TE-replace round-trip needs all three preserved.
+    if (bump.faces) {
+      const fBump = bump.faces.map(b => (b == null ? null : bumpFromTEByte(b)))
+      if (fBump.some(v => v != null)) res.faceBump = fBump
+      const fShiny = bump.faces.map(b => (b == null ? null : (b >> 6) & 0x03))
+      if (fShiny.some(v => v != null)) res.faceShiny = fShiny
+      const fFullbright = bump.faces.map(b => (b == null ? null : ((b >> 5) & 0x01) === 1))
+      if (fFullbright.some(v => v != null)) res.faceFullbright = fFullbright
+    }
     res.defaultTexGen     = texGenFromMediaByte(media.def)
+    res.defaultMediaFlags = media.def & 0x01
     if (media.faces) {
       const ft = media.faces.map(m => (m == null ? null : texGenFromMediaByte(m)))
       if (ft.some(v => v != null)) res.faceTexGen = ft
+      const fmf = media.faces.map(m => (m == null ? null : (m & 0x01)))
+      if (fmf.some(v => v != null)) res.faceMediaFlags = fmf
     }
     if (matId !== ZERO_UUID) res.defaultMaterialId = matId
+    if (matFaces) {
+      const fMat = matFaces.map(m => (m && m !== ZERO_UUID ? m : null))
+      if (fMat.some(v => v != null)) res.faceMaterialId = fMat
+    }
   } catch { /* best-effort: partial TE still yields texture/color */ }
   return res
+}
+
+// ── TextureEntry BINARY ENCODER (buildTextureEntry) ───────────────────────
+// Mirrors FS LLPrimitive::packTEField (indra/llprimitive/llprimitive.cpp:1062-1133), called once
+// per field by packTEMessage (:1215-1298). Wire shape per field: [default value][0-or-more
+// (varint faceBitfield + value)][terminator] — EXCEPT the last field (MaterialID), which has no
+// terminator byte (the TextureEntry Variable2 length prefix marks its end instead; see
+// packTEMessage:1293 — no trailing `*cur_ptr++ = 0` after material_data).
+//
+// packTEField picks DEFAULT = the LAST face's value (not the first), then walks face_index from
+// last-1 down to 0: skip a face already covered by a later (higher-index) group; otherwise emit
+// ONE group whose bitmask covers every remaining face (0..face_index) sharing that value. We
+// replicate this exactly, but compare ENCODED bytes (not source JS values) so the grouping can
+// never be wrong even if two distinct source numbers quantize to the same wire bytes (in which
+// case merging them is still correct — the decoded value is identical either way).
+//
+// Bitfield varint (packTEField:1096-1126): the bitmask is written highest-7-bit-chunk FIRST with
+// the continuation bit (0x80) set on every byte except the LAST (lowest chunk, no continuation) —
+// exactly what the decoder's readFaceBitfield (bits = bits<<7 | low7, continue while high bit set)
+// expects, reading sequential bytes MSB-chunk-first.
+function packBitfieldVarint(mask: number): Buffer {
+  let v = mask >>> 0
+  const lsbFirst: number[] = []
+  do { lsbFirst.push(v & 0x7F); v = Math.floor(v / 128) } while (v > 0)
+  const bytes: number[] = []
+  for (let i = lsbFirst.length - 1; i >= 1; i--) bytes.push(lsbFirst[i] | 0x80)
+  bytes.push(lsbFirst[0])   // lowest chunk — no continuation bit — this is what terminates the varint
+  return Buffer.from(bytes)
+}
+
+// Generic per-field packer operating on PRE-ENCODED per-face byte buffers (one Buffer of `size`
+// bytes per face — the exact bytes that will land on the wire). Faces.length must be >= 1.
+// Returns default+exceptions WITHOUT the trailing 0x00 terminator (caller appends it, except for
+// the final TE field which has none).
+function packTEFieldFromEncoded(encoded: Buffer[]): Buffer {
+  const lastIdx = encoded.length - 1
+  const out: Buffer[] = [encoded[lastIdx]]
+  for (let faceIndex = lastIdx - 1; faceIndex >= 0; faceIndex--) {
+    let alreadySent = false
+    for (let i = faceIndex + 1; i <= lastIdx; i++) {
+      if (encoded[faceIndex].equals(encoded[i])) { alreadySent = true; break }
+    }
+    if (alreadySent) continue
+    let mask = 0
+    for (let i = faceIndex; i >= 0; i--) {
+      if (encoded[faceIndex].equals(encoded[i])) mask |= (1 << i)
+    }
+    out.push(packBitfieldVarint(mask))
+    out.push(encoded[faceIndex])
+  }
+  return Buffer.concat(out)
+}
+
+// One TE face as the OBJECT_SET_TEXTURE wire contract describes it (shared/protocol.js
+// C.OBJECT_SET_TEXTURE) — a FULL per-face row, not a sparse override; buildTextureEntry chooses
+// its own default/exception grouping internally.
+export interface TextureEntryFaceInput {
+  textureId?:   string
+  color?:       [number, number, number, number]   // 0..1 RGBA
+  repeatU?:     number   // scale_s; SL default 1
+  repeatV?:     number   // scale_t; SL default 1
+  offsetU?:     number   // -1..1; SL default 0
+  offsetV?:     number   // -1..1; SL default 0
+  rotation?:    number   // radians; SL default 0
+  bump?:        number   // 0..31 legacy bumpmap type
+  shiny?:       number   // 0..3
+  fullbright?:  boolean
+  mediaFlags?:  number   // bit 0 = media-present; only bit 0 is meaningful here
+  texGen?:      number   // 0..3 (2-bit mapping mode; combined into the media byte with mediaFlags)
+  glow?:        number   // 0..1
+  materialId?:  string   // legacy LLMaterial UUID
+}
+
+const MAX_TE_FACES = 32   // matches readTEField's fixed 32-slot face arrays (parser cap above)
+
+/** Build a TextureEntry blob (ObjectImage's Variable2 payload) from a FULL per-face table.
+ *  parse(build(faces)) round-trips every field in TextureEntryFaceInput exactly (see
+ *  server/__tests__/lludp-codec.textureentry.test.ts). */
+export function buildTextureEntry(faces: TextureEntryFaceInput[]): Buffer {
+  if (!faces?.length) throw new Error('buildTextureEntry: at least one face required')
+  if (faces.length > MAX_TE_FACES) throw new Error(`buildTextureEntry: ${faces.length} faces exceeds the ${MAX_TE_FACES}-face cap`)
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  const clamp01  = (v: number): number => Math.max(0, Math.min(1, v))
+  const clampM11 = (v: number): number => Math.max(-1, Math.min(1, v))
+  const clampByte = (v: number): number => Math.max(0, Math.min(255, Math.round(v)))
+  const clampI16  = (v: number): number => Math.max(-32768, Math.min(32767, Math.round(v)))
+  const TWO_PI = Math.PI * 2
+
+  const norm = faces.map(f => ({
+    textureId:  f.textureId && f.textureId !== ZERO ? f.textureId : ZERO,
+    color:      f.color ?? [1, 1, 1, 1] as [number, number, number, number],
+    repeatU:    f.repeatU ?? 1, repeatV: f.repeatV ?? 1,
+    offsetU:    f.offsetU ?? 0, offsetV: f.offsetV ?? 0,
+    rotation:   f.rotation ?? 0,
+    bump:       f.bump ?? 0, shiny: f.shiny ?? 0, fullbright: !!f.fullbright,
+    mediaFlags: f.mediaFlags ?? 0, texGen: f.texGen ?? 0,
+    glow:       f.glow ?? 0,
+    materialId: f.materialId && f.materialId !== ZERO ? f.materialId : ZERO,
+  }))
+
+  // WHY: FS converts float→byte FIRST (LLColor4::operator LLColor4U(), v4color.cpp:128-133,
+  // ll_round(mV[k]*255.f)), THEN subtracts in INTEGER byte space (llprimitive.cpp:1255-1258,
+  // colors[k] = 255 - coloru.mV[k]) — its own comment there warns the subtraction "must be done
+  // in unsigned byte space, not in float space, otherwise off-by-one errors occur." Doing the
+  // subtraction before rounding (255 - c*255) diverges by 1 at exact half-integers (e.g. c=0.5).
+  const wColor = (c: [number, number, number, number]): Buffer => {
+    const b = Buffer.alloc(4)
+    for (let k = 0; k < 4; k++) b.writeUInt8(255 - clampByte(clamp01(c[k]) * 255), k)
+    return b
+  }
+  const wOff = (v: number): Buffer => { const b = Buffer.alloc(2); b.writeInt16LE(clampI16(clampM11(v) * 0x7fff), 0); return b }
+  // llvolumemessage rotation pack: round(fmod(rotation, 2π) / 2π * 0x8000) — llprimitive.cpp:1264.
+  const wRot = (v: number): Buffer => { const b = Buffer.alloc(2); b.writeInt16LE(clampI16((v % TWO_PI) / TWO_PI * 0x8000), 0); return b }
+  const bumpByte  = (f: typeof norm[number]): number => (f.bump & 0x1f) | ((f.fullbright ? 1 : 0) << 5) | ((f.shiny & 0x03) << 6)
+  const mediaByte = (f: typeof norm[number]): number => (f.mediaFlags & 0x01) | ((f.texGen & 0x03) << 1)
+
+  const texBytes    = norm.map(f => uuidToBytes(f.textureId))
+  const colorBytes  = norm.map(f => wColor(f.color))
+  const scaleSBytes = norm.map(f => { const b = Buffer.alloc(4); b.writeFloatLE(f.repeatU, 0); return b })
+  const scaleTBytes = norm.map(f => { const b = Buffer.alloc(4); b.writeFloatLE(f.repeatV, 0); return b })
+  const offSBytes   = norm.map(f => wOff(f.offsetU))
+  const offTBytes   = norm.map(f => wOff(f.offsetV))
+  const rotBytes    = norm.map(f => wRot(f.rotation))
+  const bumpBytes   = norm.map(f => Buffer.from([bumpByte(f)]))
+  const mediaBytes  = norm.map(f => Buffer.from([mediaByte(f)]))
+  const glowBytes   = norm.map(f => Buffer.from([clampByte(clamp01(f.glow) * 255)]))
+  const matBytes    = norm.map(f => uuidToBytes(f.materialId))
+
+  const term = Buffer.from([0])
+  return Buffer.concat([
+    packTEFieldFromEncoded(texBytes),    term,
+    packTEFieldFromEncoded(colorBytes),  term,
+    packTEFieldFromEncoded(scaleSBytes), term,
+    packTEFieldFromEncoded(scaleTBytes), term,
+    packTEFieldFromEncoded(offSBytes),   term,
+    packTEFieldFromEncoded(offTBytes),   term,
+    packTEFieldFromEncoded(rotBytes),    term,
+    packTEFieldFromEncoded(bumpBytes),   term,
+    packTEFieldFromEncoded(mediaBytes),  term,
+    packTEFieldFromEncoded(glowBytes),   term,
+    packTEFieldFromEncoded(matBytes),    // field 11 — no terminator (buffer end == TE blob end)
+  ])
+}
+
+/** ObjectImage (Low 96, message_template.msg:2095-2107) — whole-TE replace on one object.
+ *  MediaURL follows this codebase's Variable1-string convention (null-terminated, empty OK). */
+export function encodeObjectImage(p: {
+  agentId: string; sessionId: string; seq: number
+  localId: number; mediaUrl?: string; faces: TextureEntryFaceInput[]
+}): Buffer {
+  return encode('ObjectImage', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: [{
+      ObjectLocalID: p.localId,
+      MediaURL: Buffer.from((p.mediaUrl ?? '') + '\0', 'utf8'),
+      TextureEntry: buildTextureEntry(p.faces),
+    }],
+  }, { seq: p.seq, reliable: true })
 }
 
 // ExtraParam type 0x80 (MaterialsEP): [count U8] then [te_index U8][asset_UUID 16B]×count → per-face
@@ -1252,12 +1575,19 @@ export interface ObjectData {
   faceOffset?:      Array<[number, number] | null>  // per-face offset_s/offset_t override; null = use default
   faceRotation?:    Array<number | null>            // per-face TE rotation (radians) override; null = use default
   defaultGlow?:      number             // TE glow 0..1
+  faceGlow?:         Array<number | null>  // per-face glow override; null = use default
   defaultShiny?:     number             // TE shiny 0..3
   defaultFullbright?: boolean           // TE fullbright
   defaultBump?:      number             // TE legacy bumpmap type 0..17 (omitted when 0=None)
+  faceShiny?:        Array<number | null>   // per-face shiny override; null = use default
+  faceFullbright?:   Array<boolean | null>  // per-face fullbright override; null = use default
+  faceBump?:         Array<number | null>   // per-face legacy bumpmap-type override; null = use default
   defaultTexGen?:    number             // TE TexGen mapping mode: 0=default, 1=planar
   faceTexGen?:       Array<number | null>  // per-face TexGen override; null = use default
+  defaultMediaFlags?: number            // TE MediaFlags byte bit 0 (media-present), default face
+  faceMediaFlags?:    Array<number | null>  // per-face media-present bit override; null = use default
   defaultMaterialId?: string            // TE legacy LLMaterial UUID (RenderMaterials cap)
+  faceMaterialId?:   Array<string | null>  // per-face legacy LLMaterial UUID override; null = use default
   defaultPbrMaterial?: string           // GLTF PBR material asset UUID (ExtraParam 0x80, default face)
   pbrMaterials?:     Array<string | null>  // per-face GLTF PBR material asset UUIDs
   meshId?:          string              // mesh asset UUID (Sculpt ExtraParam 0x30, sculptType&7==5)
@@ -1532,12 +1862,19 @@ export function decodeObjectUpdateCompressed(
         ...(te.faceOffset   ? { faceOffset:   te.faceOffset }   : {}),
         ...(te.faceRotation ? { faceRotation: te.faceRotation } : {}),
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
+        ...(te.faceGlow ? { faceGlow: te.faceGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
         ...(te.defaultBump ? { defaultBump: te.defaultBump } : {}),
+        ...(te.faceShiny ? { faceShiny: te.faceShiny } : {}),
+        ...(te.faceFullbright ? { faceFullbright: te.faceFullbright } : {}),
+        ...(te.faceBump ? { faceBump: te.faceBump } : {}),
         ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
         ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
+        ...(te.defaultMediaFlags ? { defaultMediaFlags: te.defaultMediaFlags } : {}),
+        ...(te.faceMediaFlags ? { faceMediaFlags: te.faceMediaFlags } : {}),
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
+        ...(te.faceMaterialId ? { faceMaterialId: te.faceMaterialId } : {}),
         ...(defaultPbr ? { defaultPbrMaterial: defaultPbr } : {}),
         ...(pbrKeys.length ? { pbrMaterials: Object.assign(new Array(32).fill(null), Object.fromEntries(Object.entries(pbrFaces))) } : {}),
         ...(meshId ? { meshId } : {}),
@@ -1547,6 +1884,7 @@ export function decodeObjectUpdateCompressed(
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
         ...((cUpdateFlags & 0x01)   ? { physical: true } : {}),
+        ...((cUpdateFlags & 0x02)   ? { createSelected: true } : {}),   // see full-update decoder note
         ...((cUpdateFlags & 0x400)  ? { phantom: true } : {}),
         ...((cUpdateFlags & 0x2000) ? { temporary: true } : {}),
         ...((cUpdateFlags & 0x80)   ? { handleTouch: true } : {}),
@@ -1912,12 +2250,19 @@ export function decodeObjectUpdate(
         ...(te.faceOffset   ? { faceOffset:   te.faceOffset }   : {}),
         ...(te.faceRotation ? { faceRotation: te.faceRotation } : {}),
         ...(te.defaultGlow != null ? { defaultGlow: te.defaultGlow } : {}),
+        ...(te.faceGlow ? { faceGlow: te.faceGlow } : {}),
         ...(te.defaultShiny ? { defaultShiny: te.defaultShiny } : {}),
         ...(te.defaultFullbright ? { defaultFullbright: te.defaultFullbright } : {}),
         ...(te.defaultBump ? { defaultBump: te.defaultBump } : {}),
+        ...(te.faceShiny ? { faceShiny: te.faceShiny } : {}),
+        ...(te.faceFullbright ? { faceFullbright: te.faceFullbright } : {}),
+        ...(te.faceBump ? { faceBump: te.faceBump } : {}),
         ...(te.defaultTexGen ? { defaultTexGen: te.defaultTexGen } : {}),
         ...(te.faceTexGen ? { faceTexGen: te.faceTexGen } : {}),
+        ...(te.defaultMediaFlags ? { defaultMediaFlags: te.defaultMediaFlags } : {}),
+        ...(te.faceMediaFlags ? { faceMediaFlags: te.faceMediaFlags } : {}),
         ...(te.defaultMaterialId ? { defaultMaterialId: te.defaultMaterialId } : {}),
+        ...(te.faceMaterialId ? { faceMaterialId: te.faceMaterialId } : {}),
         ...(Object.keys(pbrFaces).length ? { defaultPbrMaterial: pbrFaces[0] ?? pbrFaces[+Object.keys(pbrFaces)[0]], pbrMaterials: Object.assign(new Array(32).fill(null), pbrFaces) } : {}),
         ...(meshId ? { meshId } : {}),
         ...(sculptType != null ? { sculptType } : {}),
@@ -1926,6 +2271,10 @@ export function decodeObjectUpdate(
         ...(textColor ? { textColor } : {}),
         ...(textureAnim ? { textureAnim } : {}),
         ...((updateFlags & 0x01)   ? { physical: true } : {}),
+        // FLAGS_CREATE_SELECTED (object_flags.h:32) — OpenSim sets it on the full update announcing
+        // a prim rezzed with our ObjectAdd create-selected bit (Scene.cs:2586-2590); the client uses
+        // it to auto-select the newborn prim in the Build floater (FS mCreateSelected behavior).
+        ...((updateFlags & 0x02)   ? { createSelected: true } : {}),
         ...((updateFlags & 0x400)  ? { phantom: true } : {}),
         ...((updateFlags & 0x2000) ? { temporary: true } : {}),
         ...((updateFlags & 0x80)   ? { handleTouch: true } : {}),

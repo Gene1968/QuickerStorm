@@ -45,6 +45,8 @@ import {
 	encodeObjectBuy, encodeMoneyTransferRequest, encodeMoneyBalanceRequest, encodeInviteGroupRequest,
 	mapAvatarSitResponse, mapMoneyBalanceReply,
 	encodeRequestObjectPropertiesFamily, mapObjectPropertiesFamily,
+	encodeObjectAdd, encodeObjectLink, encodeObjectDelink, encodeObjectImage, encodeObjectDuplicate,
+	type TextureEntryFaceInput,
 } from '../lib/lludp-codec'
 import {
 	nextXferId, startXfer, ingestXferChunk, abortXfer, clearXferScope,
@@ -2081,6 +2083,106 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		}
 		const fields = [updates[0].position && 'pos', updates[0].rotation && 'rot', updates[0].scale && 'scale'].filter(Boolean).join('+')
 		slog.info(session.ws, `→ MultipleObjectUpdate ${fields}${d.linked ? ' linked' : ''}${d.uniform ? ' uniform' : ''} localIds=[${updates.map(u => u.localId).join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_ADD) {
+		// ObjectAdd (Medium 1) — rez a new prim. Caller sends RAW floats; encodeObjectAdd applies
+		// the FS packProfileParams/packPathParams quantization (see lludp-codec.ts for the cited
+		// quanta constants). Sim assigns the new localId and replies via ordinary ObjectUpdate.
+		const d = msg.d as Partial<Omit<Parameters<typeof encodeObjectAdd>[0], 'agentId' | 'sessionId' | 'seq'>>
+		if (typeof d.material !== 'number' || typeof d.pathCurve !== 'number' || typeof d.profileCurve !== 'number'
+			|| !d.rayStart || !d.rayEnd || !d.scale || !d.rotation) {
+			slog.warn(session.ws, 'ObjectAdd: missing required shape/ray/scale/rotation fields'); return
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeObjectAdd({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			pcode: d.pcode,
+			material: d.material, addFlags: d.addFlags ?? 0,
+			pathCurve: d.pathCurve, profileCurve: d.profileCurve,
+			pathBegin: d.pathBegin ?? 0, pathEnd: d.pathEnd ?? 1,
+			pathScaleX: d.pathScaleX ?? 1, pathScaleY: d.pathScaleY ?? 1,
+			pathShearX: d.pathShearX ?? 0, pathShearY: d.pathShearY ?? 0,
+			pathTwist: d.pathTwist ?? 0, pathTwistBegin: d.pathTwistBegin ?? 0,
+			pathRadiusOffset: d.pathRadiusOffset ?? 0,
+			pathTaperX: d.pathTaperX ?? 0, pathTaperY: d.pathTaperY ?? 0,
+			pathRevolutions: d.pathRevolutions ?? 1, pathSkew: d.pathSkew ?? 0,
+			profileBegin: d.profileBegin ?? 0, profileEnd: d.profileEnd ?? 1,
+			profileHollow: d.profileHollow ?? 0,
+			bypassRaycast: !!d.bypassRaycast, rayStart: d.rayStart, rayEnd: d.rayEnd,
+			rayTargetId: d.rayTargetId,
+			rayEndIsIntersection: !!d.rayEndIsIntersection,
+			scale: d.scale, rotation: d.rotation, state: d.state ?? 0,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectAdd pathCurve=${d.pathCurve} profileCurve=${d.profileCurve}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_LINK) {
+		// ObjectLink (Low 115) — build a linkset. Order preserved: FIRST id in localIds becomes the
+		// new root (OpenSim LLClientView.cs:9317); the client resolves push-front ordering.
+		const d = msg.d as { localIds: number[] }
+		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectLink: missing localIds'); return }
+		// WHY chunk 255: ObjectData's Variable count is one wire byte (same limit as OBJECT_TAKE).
+		for (let i = 0; i < d.localIds.length; i += 255) {
+			const seq = nextSeq(session)
+			const pkt = encodeObjectLink({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds.slice(i, i + 255) })
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ ObjectLink root=${d.localIds[0]} localIds=[${d.localIds.join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_DELINK) {
+		// ObjectDelink (Low 116) — break a linkset apart.
+		const d = msg.d as { localIds: number[] }
+		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectDelink: missing localIds'); return }
+		for (let i = 0; i < d.localIds.length; i += 255) {
+			const seq = nextSeq(session)
+			const pkt = encodeObjectDelink({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds.slice(i, i + 255) })
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ ObjectDelink localIds=[${d.localIds.join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_SET_TEXTURE) {
+		// ObjectImage (Low 96) — whole-TE replace on one object. faces is the FULL per-face table
+		// (not a sparse patch); buildTextureEntry re-derives its own default/exception grouping.
+		const d = msg.d as { localId: number; faces: TextureEntryFaceInput[]; mediaUrl?: string }
+		if (typeof d?.localId !== 'number' || !d.faces?.length) {
+			slog.warn(session.ws, 'ObjectSetTexture: missing localId/faces'); return
+		}
+		const seq = nextSeq(session)
+		let pkt: Buffer
+		try {
+			pkt = encodeObjectImage({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId, mediaUrl: d.mediaUrl, faces: d.faces })
+		} catch (e) { slog.warn(session.ws, `ObjectSetTexture refused: ${(e as Error).message}`); return }
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectImage localId=${d.localId} faces=${d.faces.length}`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_DUPLICATE) {
+		// ObjectDuplicate (Low 90) — copy a set of objects, offset by a given amount.
+		const d = msg.d as { localIds: number[]; offset: [number, number, number]; duplicateFlags?: number }
+		if (!d.localIds?.length || !d.offset) { slog.warn(session.ws, 'ObjectDuplicate: missing localIds/offset'); return }
+		for (let i = 0; i < d.localIds.length; i += 255) {
+			const seq = nextSeq(session)
+			const pkt = encodeObjectDuplicate({
+				agentId: session.agentId, sessionId: session.sessionId, seq,
+				localIds: d.localIds.slice(i, i + 255), offset: d.offset, duplicateFlags: d.duplicateFlags,
+			})
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ ObjectDuplicate localIds=[${d.localIds.join(',')}] offset=[${d.offset.join(',')}]`)
 		return
 	}
 
