@@ -75,7 +75,42 @@ function touch() {
 
 function sit() {
 	if (!menu.value) return
-	sendSit(menu.value.fullId)
+	// FS handle_object_sit_or_stand passes pick.mObjectOffset (llviewermenu.cpp:6013) — the
+	// object-local click point, captured by useWorldEngine's onContextMenu raycast.
+	sendSit(menu.value.fullId, menu.value.objectOffset)
+	close()
+}
+
+// FS pairs "Sit here"/"Stand Up" as an autohide toggle on the SAME row (menu_pie_object.xml:33-50).
+// Own-avatar seated state lives in uiStore.isSitting (set by useWorldEngine's AvatarSitResponse/
+// ParentID-reparent handling); "on THIS object" additionally checks the own avatar's live ParentID
+// against the clicked prim's localId (world.avatars carries the own-avatar record, matched by
+// fullId === session.agentId — the engine doesn't expose ownAvatarLocalId outside its closure).
+const ownAvatarRec = computed(() => {
+	const id = session.agentId
+	if (!id) return null
+	return world.avatars.find(a => a.fullId?.toLowerCase() === id.toLowerCase()) || null
+})
+const seatedOnThis = computed(() =>
+	ui.isSitting === 'object' && !!menu.value && ownAvatarRec.value?.parentId === menu.value.localId,
+)
+
+// WHY qs:stand-up / qs:zoom-to-object: useWorldEngine.js already defines standUp()/zoomToObject()
+// (returned from the composable) but WorldCanvas.vue only destructures {hoverAction, hoverPos,
+// altFocus, screenToDropPoint} from it — nothing outside the engine's own closure can call them
+// yet. Bridging via a window CustomEvent mirrors the exact pattern already wired end-to-end for
+// 'qs:face-toward' (AvatarContextMenu → useWorldEngine's onFaceToward listener,
+// useWorldEngine.js:5707). See this file's task report: useWorldEngine.js needs two more
+// `window.addEventListener('qs:stand-up', () => standUp())` / `('qs:zoom-to-object', e =>
+// zoomToObject(e.detail.localId))` lines alongside its existing qs:face-toward registration
+// before these dispatches take effect.
+function standUp() {
+	window.dispatchEvent(new CustomEvent('qs:stand-up'))
+	close()
+}
+function zoomIn() {
+	if (!menu.value) return
+	window.dispatchEvent(new CustomEvent('qs:zoom-to-object', { detail: { localId: menu.value.localId } }))
 	close()
 }
 
@@ -105,6 +140,35 @@ function openBox() {
 	if (!menu.value) return
 	const o = world.objects.get(menu.value.localId)
 	openContents(menu.value.localId, o?.name)
+	close()
+}
+
+// Live ObjectProperties record for the clicked prim (saleType/salePrice/ownerId/sitName aren't on
+// the lightweight ui.objectMenu payload — same lookup ObjectEditFloater/BuyObjectDialog use).
+const liveObj = computed(() => menu.value ? world.objects.get(menu.value.localId) : null)
+
+// FS is_selection_buy_not_take (llviewermenu.cpp:7033-7053): for-sale (SaleType != 0) AND not
+// owned by self. Unknown owner (ObjectProperties not yet arrived) → disabled (can't confirm it's
+// not ours) rather than the Take-style "enabled by convention", since Buy opens a paid dialog.
+const canBuy = computed(() => {
+	const o = liveObj.value
+	if (!o || !(o.saleType > 0)) return false
+	const owner = o.ownerId
+	if (!owner || owner === ZERO_UUID) return false
+	return owner.toLowerCase() !== (session.agentId || '').toLowerCase()
+})
+const buyLabel = computed(() => `Buy (L$${Number(liveObj.value?.salePrice) || 0})`)
+function buy() {
+	if (!menu.value) return
+	ui.openBuyDialog({ localId: menu.value.localId })
+	close()
+}
+
+// Pay is enabled on any root prim — the sim/money-module decides whether it does anything
+// (stock OpenSim's MoneyTransferAction is a silent no-op; still FS-parity to allow the attempt).
+function pay() {
+	if (!menu.value) return
+	ui.openPayFloater({ targetId: menu.value.fullId, targetName: menu.value.name, kind: 'object' })
 	close()
 }
 
@@ -149,12 +213,12 @@ const items = computed(() => {
 	{ label: 'Build',				disabled: true },
 	{ label: 'Open',				action: openBox },
 	{ sep: true },
-	{ label: 'Sit here',								action: sit },
+	{ label: seatedOnThis.value ? 'Stand Up' : (liveObj.value?.sitName || 'Sit here'),		action: seatedOnThis.value ? standUp : sit },
 	{ sep: true },
 	{
 		label: 'Object',
 		submenu: [
-			{ label: 'Zoom in',			disabled: true },
+			{ label: 'Zoom in',								action: zoomIn },
 			{ label: 'Profile',			disabled: true },
 			{ label: 'Inspect',			checked: () => showInspect.value, action: inspect },
 			{ label: 'Script info',		disabled: true },
@@ -194,8 +258,8 @@ const items = computed(() => {
 	// FS pie order: Take / Take copy between Return and Pay (menu_object.xml:387-408).
 	{ label: 'Take',				disabled: gTake.disabled,	title: gTake.title,	action: take },
 	{ label: 'Take copy',			disabled: gCopy.disabled,	title: gCopy.title,	action: takeCopy },
-	{ label: 'Pay',					disabled: true },
-	{ label: 'Buy',					disabled: true },
+	{ label: 'Pay',											action: pay },
+	{ label: buyLabel.value,		disabled: !canBuy.value,	action: buy },
 	]
 })
 

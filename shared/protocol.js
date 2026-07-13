@@ -76,6 +76,19 @@ export const C = {
 	OBJ_PROBE_RESYNC: 'obj_probe_resync', // {} — engine mounted; replay the session's buffered ObjectUpdateCached probes (initial flood predates handler registration)
 	OBJ_CLIENT_CACHED: 'obj_client_cached', // { ids:number[] } — localIds the client pre-seeded from qs-objects IDB this region; server diffs vs distinctLocalIds to find ghosts (objects deleted while offline)
 	CAP_CALL:       'cap_call',     // { id, cap, params, method? } — generic HTTP capability call by name
+	// ── Right-click-menu wire (sit/buy/pay/group-invite) ──
+	OBJECT_BUY:       'object_buy',       // { localId, saleType, salePrice, categoryId } — outbound ObjectBuy (Low 102). FS: "does not work for multiple object buy" (llselectmgr.cpp:5019 sendBuy) — single object only. categoryId may be zero-UUID (sim re-resolves, same convention as OBJECT_TAKE); GroupID is always zero-UUID (we don't track an active group for transactions). With no money module loaded, OpenSim silently drops ObjectBuy (LLClientView.cs:11137-11138); stock SampleMoneyModule only allows salePrice===0 buys and BlueBox-refuses priced ones (SampleMoneyModule.cs:820-824) — refusals surface via ALERT_MESSAGE.
+	PAY_MONEY:        'pay_money',        // { destId, amount, transactionType, description, isDestGroup? } — outbound MoneyTransferRequest (Low 311), FS give_money (llviewermessage.cpp:462-490). transactionType: see TRANS below. Stock OpenSim installs no-op this (SampleMoneyModule.cs:747-750 MoneyTransferAction is empty) — Pay is silently a no-op there.
+	MONEY_BALANCE_REQ:'money_balance_req',// {} — outbound MoneyBalanceRequest (Low 313), FS llstatusbar.cpp:889-904 sendMoneyBalanceRequest (TransactionID = zero-UUID). Stock SampleMoneyModule always answers balance=0 (GetFundsForAgentID, SampleMoneyModule.cs:596-601).
+	GROUP_INVITE:     'group_invite',     // { groupId, inviteeIds:string[], roleId? } — outbound InviteGroupRequest (Low 349); roleId defaults to zero-UUID (Everyone role). OpenSim: GroupsModule.InviteGroupRequest (XmlRpcGroups GroupsModule.cs:1393-1473) — silently dropped when no groups module is loaded (LLClientView.cs:11922-11935 checks m_GroupsModule == null before dispatch).
+	OBJECT_PROPS_FAMILY_REQ: 'object_props_family_req', // { objectId, requestFlags? } — outbound RequestObjectPropertiesFamily (Medium 5), the lightweight HOVER-driven props request (no selection side effects; template comments it as "driven by mouse hovering", message_template.msg:2716). Used to learn saleType/salePrice for the Buy hover pointer before any select.
+}
+
+// ── Money transaction type constants (viewer→sim MoneyTransferRequest.TransactionType) ──
+// FS indra/llinventory/lltransactiontypes.h:77 (TRANS_GIFT) / :84 (TRANS_PAY_OBJECT).
+export const TRANS = {
+	GIFT:       5001, // person-to-person L$ gift (Pay Resident)
+	PAY_OBJECT: 5008, // paying an object (e.g. vendor, tip jar)
 }
 
 // ── Server → Client ─────────────────────────────────────────────────────
@@ -136,6 +149,10 @@ export const S = {
 	SOUND_TRIGGER:       'sound_trigger',       // { soundId, ownerId, objectId, parentId, handle, pos:[x,y,z], gain } — SoundTrigger (High 29): one-shot llTriggerSound/llPlaySound at a region-local position; handle = region handle U64 as string; parentId null-UUID = object is its own parent
 	ATTACHED_SOUND:      'attached_sound',      // { soundId, objectId, ownerId, gain, flags } — AttachedSound (Medium 13): sound bound to an object (position tracks it); flags U8 0x01 loop; soundId null-UUID = cancel the object's pending sound
 	ATTACHED_SOUND_GAIN: 'attached_sound_gain', // { objectId, gain } — AttachedSoundGainChange (Medium 14): volume change for an object's playing attached sound
+	// ── Right-click-menu wire (sit/buy/pay/group-invite) ──
+	SIT_RESPONSE:    'sit_response',   // { sitObjectId, autoPilot, sitPosition:[x,y,z], sitRotation:[x,y,z,w], cameraEyeOffset:[x,y,z], cameraAtOffset:[x,y,z], forceMouselook } — AvatarSitResponse (High 21): sim approved AgentRequestSit; W of sitRotation is re-derived (wire sends only xyz — llquaternion.cpp:919 packToVector3 convention)
+	MONEY_BALANCE:   'money_balance',  // { balance, description, transactionId, success } — MoneyBalanceReply (Low 314), reply to MONEY_BALANCE_REQ or a completed PAY_MONEY/OBJECT_BUY
+	OBJECT_PROPS_FAMILY: 'object_props_family', // { fullId, ownerId, groupId, baseMask..nextOwnerMask, saleType, salePrice, lastOwnerId, name, description } — ObjectPropertiesFamily (Medium 10), reply to OBJECT_PROPS_FAMILY_REQ. FS consumer: processObjectPropertiesFamily (llselectmgr.cpp:6421-6481) — fills the sale info that gates the buy hover cursor.
 }
 
 // ── WebRTC voice signaling (keep for proximity voice) ───────────────────

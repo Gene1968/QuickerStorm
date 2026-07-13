@@ -255,20 +255,20 @@ Working: Object Properties, per-face texture mapping display with Repeats-per-me
 
 **Hover cursor system (done 2026-06-19):** hand cursor on hover over touchable objects (handleTouch PrimFlags bit 0x80, or clickAction 1–6); badge icon next to cursor for Sit/Buy/Pay/Open/PlayAnim/Zoom; crosshair when Edit floater open; left-click fires sendTouch when hand cursor active; Buy/Pay suppressed on child prims; Touch disabled in context menu for clickAction=7.
 
-**Avatar menu (~40% — IM, View Profile, Face Toward, Texture Refresh done):**
-- [ ] Zoom to avatar
-- [ ] Call (voice)
-- [ ] Invite to group
-- [ ] Inspect (appearance info)
-- [ ] Save outfit
-- [ ] Self: open AppearanceFloater, Sit/Stand, Fly/Land, community actions
+**Avatar menu (SWEPT 2026-07-13 — see QUEUE ✅ Right-click menus for detail; not live-verified):**
+- [x] Zoom to avatar — DONE 2026-07-13 (qs:zoom-to-object → enterOrbitAt)
+- [ ] Call (voice) — gated on 🧠 Voice program
+- [x] Invite to group — DONE 2026-07-13 (InviteGroupRequest Low 349, submenu from real group list; silent if grid groups off)
+- [x] Inspect (appearance info) — DONE 2026-07-13 (InspectAvatarFloater: born/age/About via profile plumbing)
+- [ ] Save outfit — gated on 🧠 Appearance program
+- [x] Self: Sit down (ground) / Stand up wired 2026-07-13; Fly/Stop-fly in MenuBar ▸ Movement + MoveControlsFloater HUD buttons. AppearanceFloater open + community actions still open.
 
-**Object menu (~40% — Edit, Inspect, Touch + hover-cursor + left-click-touch + Texture Refresh done; Touch disabled for clickAction=7):**
-- [ ] Sit on object (SitOnObject + RequestObjectPropertiesFamily)
-- [ ] Take, Delete (Phase 3 caps)
-- [ ] Buy / Pay (if object is for sale / L$ enabled)
-- [ ] Create copy to inventory
-- [ ] Open (object contents via Xfer)
+**Object menu (SWEPT 2026-07-13 — see QUEUE ✅ Right-click menus for detail; not live-verified):**
+- [x] Sit on object — DONE 2026-07-13 (AvatarSitResponse decode + avatar reparent fix own+remote + seated-state + movement-key-stands + Sit here ↔ Stand Up row swap w/ sitName label)
+- [x] Take, Delete — done earlier (2026-07-02/03)
+- [x] Buy / Pay — DONE 2026-07-13 (ObjectBuy + BuyObjectDialog w/ funds gate + watchdog; MoneyTransferRequest + PayFloater; hover Buy badge now saleType-gated). NOTE stock OpenSim: only L$0 buys work, viewer Pay is a sim no-op. Follow-up design call: badge hidden until first select (saleType unknown pre-props).
+- [x] Create copy to inventory — done earlier (Take copy, 2026-07-02/03)
+- [x] Open (object contents via Xfer) — done 2026-07-05
 
 ---
 

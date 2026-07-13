@@ -30,6 +30,7 @@ import { objCachePut, objCacheGetAll, objCacheCrcMap, objCacheEvict, objCachePru
 import { drainWithinBudget } from '@/lib/budgetedDrain.js'
 import { partitionProbes } from '@/lib/probePartition.js'
 import { correctionBlend } from '@/lib/movementCorrection.js'
+import { resolveAvatarReparent, gateBuyHoverAction } from '@/lib/seatEngine.js'
 import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_S } from '@/lib/scriptedMotion.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
@@ -204,6 +205,9 @@ const CTRL_YAW_NEG   = 0x0200  // turn right
 const CTRL_FAST_AT   = 0x0400  // run modifier (with AT_POS/NEG)
 const CTRL_FAST_LEFT = 0x0800  // run strafe modifier
 const CTRL_FLY       = 0x2000  // sustained fly state
+// FS indra/llcommon/indra_constants.h:338-342 — AGENT_CONTROL_STAND_UP=1<<16, SIT_ON_GROUND=1<<17.
+const CTRL_STAND_UP      = 0x10000  // one-shot: stand up out of a prim-sit
+const CTRL_SIT_ON_GROUND = 0x20000  // one-shot: sit on the ground at the current position
 // NOTE: Always-run is NOT a ControlFlags bit. It is sent via SetAlwaysRun (Low #21).
 // Bit 20 (0x00100000) is AGENT_CONTROL_NUDGE_AT_NEG and would make the sim auto-walk backward.
 
@@ -225,7 +229,11 @@ export function useWorldEngine(canvasRef) {
 	const debugStore        = useDebugStore()
 	const notificationStore = useNotificationStore()
 	const { on, off, emit: wsEmit }  = useRealtimeSocket()
-	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendTouch } = useLLUDP()
+	const { sendMove, sendSelect, sendDeselect, sendSetAlwaysRun, sendMapQuery, sendTouch, sendSit, requestObjectPropsFamily } = useLLUDP()
+
+	// Hover-driven RequestObjectPropertiesFamily dedup — one request per localId per session
+	// (localIds churn per region entry; cleared with the rest of the scene state).
+	const _propsFamilyRequested = new Set()
 	const meshBaker = useMeshBaker()
 
 	// WHY: SL/OpenSim track always-run as a sticky agent flag set via SetAlwaysRun packet
@@ -1019,6 +1027,7 @@ export function useWorldEngine(canvasRef) {
 	let camLook     = new THREE.Vector3()
 	let camLookInit = false
 	const _v3a      = new THREE.Vector3()  // scratch — reused for per-frame lookAt target
+	const _v3Seat   = new THREE.Vector3()  // scratch — seated own-avatar world position (getWorldPosition)
 	// Frame-rate-independent lerp rates (larger = snappier). POS faster than LOOK so the
 	// camera tracks position while the view angle eases. Half-life ≈ ln(2)/rate seconds.
 	const CAM_POS_RATE  = 12  // ~0.06s half-life
@@ -1313,8 +1322,47 @@ export function useWorldEngine(canvasRef) {
 			uiStore.editObjectId = null
 			return
 		}
-		// Left-click fires touch when hovering a touchable object (hand cursor active)
+		// Left-click on a hovered interactive object: dispatch by ClickAction — FS lltoolpie.cpp
+		// handleLeftClickPick switch (:350-443). FS's useClickAction() gate (:531-537) requires NO
+		// modifier keys (any modifier falls through to plain select/grab), the effective action is
+		// the object's then the PARENT's clickAction (:328-348), and Buy/Pay/Sit act on the linkset
+		// root while Touch targets the clicked prim.
 		if (!e.altKey && _hoverLocalId != null && !uiStore.showObjectEdit) {
+			if (e.ctrlKey || e.shiftKey || e.metaKey) return  // FS mask==MASK_NONE gate
+			const clicked = worldStore.objects.get(_hoverLocalId)
+			const rootId  = resolveRootLocalId(_hoverLocalId)
+			const rootObj = worldStore.objects.get(rootId)
+			const ca      = (clicked?.clickAction || rootObj?.clickAction) ?? 0
+			switch (ca) {
+				case 1: // SIT — FS lltoolpie.cpp:355-364 → handle_object_sit(pick object, pick.mObjectOffset)
+					if (!uiStore.isSitting && clicked?.fullId) {
+						sendSit(clicked.fullId, _pickObjectOffset(e, _hoverLocalId))
+						return
+					}
+					break // already sitting → FS falls through to touch
+				case 2: { // BUY — FS :383-395 selects the PARENT (props round-trip) then handle_buy
+					sendSelect([rootId])
+					uiStore.openBuyDialog({ localId: rootId })
+					return
+				}
+				case 3: { // PAY — FS :365-382 → handle_give_money_dialog on the selection
+					uiStore.openPayFloater({
+						targetId:   rootObj?.fullId ?? clicked?.fullId,
+						targetName: rootObj?.name || clicked?.name || 'Object',
+						kind:       'object',
+					})
+					return
+				}
+				case 4: // OPEN — FS shows LLFloaterOpenObject; we have no non-destructive
+				case 5: // PLAY / OPEN_MEDIA — no parcel-media system yet. Eat the click (FS never
+				case 6: // touches for these) — see FEATURE-GAPS right-click-menu follow-ups.
+					return
+				case 7: // ZOOM — FS :415-437, pure camera fly-to
+					zoomToObject(_hoverLocalId)
+					return
+				case 8: // DISABLED — FS :438-439 eats the event
+					return
+			}
 			sendTouch(_hoverLocalId)
 			return
 		}
@@ -1480,6 +1528,11 @@ export function useWorldEngine(canvasRef) {
 		const spd   = (shift ? CAM_RUN_SPEED : CAM_SPEED) * dt
 		const fly   = CAM_FLY_SPEED * dt
 
+		// 🪑 FS parity (llagent.cpp:763-914 — no isSitting branch in moveAt/moveLeft/moveUp):
+		// movement keys while seated do NOT stand the avatar up; the control flags go out and the
+		// sim ignores them (unless a script took controls). Standing is only via the Stand button /
+		// menus. Local DR/gravity are separately gated on isSitting so the mesh doesn't fight the seat.
+
 		// WHY: Alt+A/D orbits camera left/right; Alt+E/C orbits up/down (full FS-style vertical
 		// range — true straight-up/down allowed, only ε prevents gimbal singularity).
 		// Alt+W/S zooms camera in/out toward pivot with acceleration: deceleration as radius
@@ -1599,11 +1652,12 @@ export function useWorldEngine(canvasRef) {
 
 	// WHY: diagnostic counter — track how many MOVE messages are actually sent
 	let moveCount = 0
-	function maybeAgentUpdate(dt, cf) {
-		agentUpdateAccum += dt
+	// WHY: builds + sends the actual AgentUpdate packet. Split out of maybeAgentUpdate so a
+	// one-shot control-bit edge (stand up / sit on ground) can force an immediate send (FS
+	// immediate flag-change send, llviewermessage.cpp:4244) instead of waiting up to 100ms for
+	// the next throttled 10Hz tick.
+	function sendAgentUpdateNow(cf) {
 		controlFlags = cf
-		if (agentUpdateAccum < 1 / AGENT_UPDATE_HZ) return
-		agentUpdateAccum = 0
 		moveCount++
 
 		// WHY: SL body rotation quaternion for Z-up yaw.
@@ -1648,6 +1702,93 @@ export function useWorldEngine(canvasRef) {
 					arrivalElapsedMs: performance.now() - _interestArrivalAt,
 				}),
 		})
+	}
+
+	function maybeAgentUpdate(dt, cf) {
+		agentUpdateAccum += dt
+		controlFlags = cf
+		if (agentUpdateAccum < 1 / AGENT_UPDATE_HZ) return
+		agentUpdateAccum = 0
+		sendAgentUpdateNow(cf)
+	}
+
+	// 🪑 Sit/stand/fly/zoom actions — exposed to the right-click menus (AvatarContextMenu "Sit on
+	// Ground", ObjectContextMenu "Stand Up", MenuBar/AvatarContextMenu "Fly"/"Zoom In").
+	// WHY standUp forces an immediate send: FS llagent.cpp:1133-1143 stands up out of a prim-sit
+	// via a one-shot AGENT_CONTROL_STAND_UP bit on the very next AgentUpdate, not the throttled
+	// 10Hz tick — the bit only needs to be seen once by the sim (edge-triggered), so it is never
+	// persisted into `controlFlags` for subsequent frames.
+	function standUp() {
+		if (!uiStore.isSitting) return
+		sendAgentUpdateNow(controlFlags | CTRL_STAND_UP)
+		uiStore.setSitting(false)  // optimistic — corrected/reconfirmed by the sim's ParentID=0 update
+	}
+	// WHY: FS near_sit_down_point (llviewermenu.cpp:6028-6036) clears STAND_UP, sets
+	// SIT_ON_GROUND, and forces fly off before sending. Ground-sit never sets ParentID
+	// (OpenSim ScenePresence.cs:3662-3676) so this is the ONLY place that tracks it — cleared by
+	// standUp() or the movement-key intercept in updateCamera().
+	function sitOnGround() {
+		if (isFlying) { isFlying = false; uiStore.setFlying(false) }
+		sendAgentUpdateNow((controlFlags & ~CTRL_STAND_UP) | CTRL_SIT_ON_GROUND)
+		uiStore.setSitting('ground')
+	}
+	// WHY: reuses the same isFlying flip as the F-key path (onKeyDown) so menus/MenuBar can drive
+	// fly state identically. `fly` omitted → toggle; passed explicitly → set.
+	function toggleFly(fly) {
+		isFlying = fly !== undefined ? !!fly : !isFlying
+		uiStore.setFlying(isFlying)
+	}
+	// WHY: FS handle_zoom_to_object (llviewermenu.cpp:8393-8449) — works for avatars AND prims.
+	// getWorldPosition (not local mesh.position) so this is correct for linked-child prims and
+	// seated avatars alike.
+	function zoomToObject(localId) {
+		const mesh = meshMap.get(localId)
+		if (!mesh || !camera) return
+		enterOrbitAt(mesh.getWorldPosition(new THREE.Vector3()))
+	}
+
+	// 🪑 FS AgentRequestSit Offset = pick.mObjectOffset — the OBJECT-LOCAL offset of the clicked
+	// intersection point (llviewerwindow.cpp:7607 via calcFocusOffset; sent verbatim at
+	// llviewermenu.cpp:5990-5992). OpenSim uses it as the free-sit position on prims with no
+	// scripted sit target (scripted targets override it server-side — FindNextAvailableSitTarget,
+	// ScenePresence.cs:3247-3286). Fresh single-mesh raycast at the click/menu point; node scale is
+	// 1 (prim scale is baked into geometry) so worldToLocal yields meters. Three-local → SL-local
+	// axis map is the slToThree inverse: (tx, ty, tz) → (tx, -tz, ty).
+	function _pickObjectOffset(e, localId) {
+		const mesh = meshMap.get(localId)
+		const canvas = canvasRef.value
+		if (!mesh || !canvas || !camera || mesh.userData?.qsInstanced) return [0, 0, 0]
+		const rect = canvas.getBoundingClientRect()
+		_pickNdc.set(
+			((e.clientX - rect.left) / rect.width) * 2 - 1,
+			-((e.clientY - rect.top) / rect.height) * 2 + 1,
+		)
+		_raycaster.setFromCamera(_pickNdc, camera)
+		const hits = _raycaster.intersectObject(mesh, true)
+		if (!hits.length) return [0, 0, 0]
+		const local = mesh.worldToLocal(hits[0].point.clone())
+		return [local.x, -local.z, local.y]
+	}
+
+	// WHY qs:* bridge: the right-click menus (ObjectContextMenu/AvatarContextMenu/MenuBar/
+	// MoveControlsFloater) dispatch window CustomEvents for these four actions — WorldCanvas.vue
+	// only destructures the hover/drop helpers from this composable, so a window-event bridge
+	// (same pattern as qs:face-toward below) is the call path. Registered in onMounted with the
+	// other qs:* listeners.
+	const onQsSitGround    = () => sitOnGround()
+	const onQsStandUp      = () => standUp()
+	const onQsToggleFly    = (e) => toggleFly(e.detail?.fly)
+	const onQsZoomToObject = (e) => { if (e.detail?.localId != null) zoomToObject(e.detail.localId) }
+
+	// WHY: mirrors on(S.OBJECT_PROPS) wiring — sim confirms our AgentRequestSit/AgentSit (already
+	// sent by ObjectContextMenu's sendSit) via AvatarSitResponse. Tracks seated state + forces fly
+	// off (FS setFlying(false) on sit confirm, llviewermessage.cpp:5489). The actual mesh reparent
+	// happens generically off the avatar's own subsequent ObjectUpdate/terse ParentID (see
+	// upsertMesh) — OpenSim confirms the sit there, not in this message.
+	function onSitResponse(payload) {
+		if (!payload) return
+		if (isFlying) { isFlying = false; uiStore.setFlying(false) }
+		uiStore.setSitting('object')
 	}
 
 	// WHY: Camera position reporting replaced by worldStore.setAvatarPos() calls
@@ -2273,6 +2414,35 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// 🪑 Avatar reparent side effect for resolveAvatarReparent's decision (sit/stand). attach()/
+	// detach() semantics preserve the mesh's WORLD transform across the reparent — unlike
+	// mesh.add(), which keeps the local position/rotation numbers as-is. Avatars carry no
+	// baseScale/basePos (normalizeChildTransform above no-ops for them), so attach is the
+	// correct primitive here rather than the prim-child bake-a-ratio dance.
+	function reparentAvatarMesh(mesh, action, newParentId) {
+		if (action === 'attach') {
+			const parentMesh = meshMap.get(newParentId)
+			if (parentMesh) {
+				parentMesh.attach(mesh)
+				mesh.userData.parentId = newParentId
+			} else {
+				// Seat prim hasn't streamed in yet — park as a hidden orphan; the orphan
+				// reparent-on-arrival scan in upsertMesh (avatar-aware: add(), preserving the
+				// parent-local numbers the seated pos paths keep writing) picks it up once the
+				// root spawns.
+				mesh.visible = false
+				let set = orphansByParent.get(newParentId)
+				if (!set) { set = new Set(); orphansByParent.set(newParentId, set) }
+				set.add(mesh.userData.localId)
+				mesh.userData.parentId = newParentId
+			}
+		} else {
+			scene.attach(mesh)
+			mesh.userData.parentId = 0
+			mesh.visible = true
+		}
+	}
+
 	function upsertMesh(obj) {
 		if (uiStore.instancing) _lastMoveAt.set(obj.localId, performance.now())
 		// Guard: skip prims with non-finite pos/scale — they'd produce NaN geometry (Three.js
@@ -2724,9 +2894,31 @@ export function useWorldEngine(canvasRef) {
 				for (const childId of waiting) {
 					const other = meshMap.get(childId)
 					if (!other || other.parent === mesh) continue
-					other.parent?.remove(other)
-					mesh.add(other)
-					normalizeChildTransform(other)
+					// 🪑 An orphaned avatar (sit confirmed before the seat prim streamed in) was parked
+					// under `scene` and every pos write since (upsertMesh seated branch / terse GSAP)
+					// stored the seat-PARENT-LOCAL offset in mesh.position. add() keeps those local
+					// numbers — exactly what we want under the real parent. attach() would instead
+					// preserve the (meaningless) world transform and strand the avatar near region
+					// origin. Skip normalizeChildTransform: avatars carry no baseScale/basePos (no-op).
+					if (worldStore.objects.get(childId)?.pcode === PCODE_AVATAR) {
+						other.parent?.remove(other)
+						mesh.add(other)
+						// 🪑 Own avatar was seated-before-the-seat-arrived (reload-while-seated):
+						// avatarSLPos was deliberately deferred (identify-own block skips parked
+						// orphans) — derive it from the now-correct world transform so the camera
+						// and LocationBar recover the real position instead of region corner 0/0.
+						if (childId === ownAvatarLocalId) {
+							uiStore.setSitting('object')
+							other.updateWorldMatrix(true, false)
+							const wp = other.getWorldPosition(_v3Seat)
+							avatarSLPos = [wp.x, -wp.z, wp.y]
+							worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+						}
+					} else {
+						other.parent?.remove(other)
+						mesh.add(other)
+						normalizeChildTransform(other)
+					}
 					other.visible = true
 					if (other.userData.hoverLabel) other.userData.hoverLabel.visible = true
 				}
@@ -2755,12 +2947,34 @@ export function useWorldEngine(canvasRef) {
 				// preserved on same-rot resyncs and reset on genuine changes (FS llviewerobject.cpp:2391–2414).
 				applyServerRot(mesh, obj.localId, obj.rot)
 			}
+			// 🪑 Avatar reparent (sit/stand): the sim confirms a prim-sit/stand by changing the
+			// avatar's ParentID on ObjectUpdate/terse (OpenSim ScenePresence.cs:3641-3648 HandleAgentSit
+			// sets ParentID then SendAvatarDataToAllAgents). mesh.userData.parentId is otherwise only
+			// ever set once at mesh creation — without this, an avatar that sits/stands AFTER its mesh
+			// already exists never reparents (both own AND remote avatars hit this branch).
+			if (obj.pcode === PCODE_AVATAR) {
+				const { changed, action } = resolveAvatarReparent(mesh.userData.parentId, obj.parentId ?? 0)
+				if (changed) {
+					reparentAvatarMesh(mesh, action, obj.parentId ?? 0)
+					// Ground-sit never sets ParentID (ScenePresence.cs:3662-3676) so it's tracked
+					// optimistically elsewhere (sitOnGround/standUp) — a genuine ParentID transition
+					// always means an object sit/stand, so it's safe to sync unconditionally here.
+					if (obj.localId === ownAvatarLocalId) uiStore.setSitting(action === 'attach' ? 'object' : false)
+				}
+			}
 			if (obj.pos) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				// WHY: ObjectUpdate is sparse (login + new objects in range). Avatar gets GSAP
 				// so a belated full-update doesn't jerk it mid-motion. Prims: direct set.
+				// 🪑 Seated avatars (mesh.userData.parentId != 0): the wire value is the seat-PARENT-
+				// LOCAL offset, not a world position — skip the GSAP tween so a seat-position
+				// correction doesn't visibly lag behind a seat that may itself be moving (vehicles).
 				if (obj.pcode === PCODE_AVATAR) {
-					gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+					if ((mesh.userData.parentId ?? 0) !== 0) {
+						mesh.position.set(t.x, t.y, t.z)
+					} else {
+						gsap.to(mesh.position, { x: t.x, y: t.y, z: t.z, duration: 0.1, overwrite: true })
+					}
 				} else {
 					mesh.position.set(t.x, t.y, t.z)
 				}
@@ -3055,7 +3269,23 @@ export function useWorldEngine(canvasRef) {
 					}
 					const p = obj.pos
 					debugStore.push('info', `[3D] Own avatar id=${obj.localId} fullId=${objId.slice(0,8)} pos=${p?.[0]?.toFixed(1) ?? '?'},${p?.[1]?.toFixed(1) ?? '?'},${p?.[2]?.toFixed(1) ?? '?'}`)
-					if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+					// 🪑 Seated (ParentID != 0): obj.pos here is the seat-PARENT-LOCAL offset, not a
+					// world position (upsertMesh already reparented + placed ownMesh above) — deriving
+					// avatarSLPos from it as world coords would send the camera to the wrong place.
+					// Read the mesh's world transform instead — but ONLY if the mesh is genuinely
+					// parented under the seat. On reload the seat prim usually hasn't streamed in yet:
+					// the avatar is a PARKED ORPHAN (parent === scene, position holds parent-local
+					// numbers), so getWorldPosition would read ~[0.3, 1.2, …] as world coords and dump
+					// the camera at region corner 0/0 (Gene's reload bug). Defer instead — the orphan
+					// reparent-on-arrival hook below derives the real world pos once the seat lands.
+					if ((obj.parentId ?? 0) !== 0) {
+						uiStore.setSitting('object')
+						if (ownMesh && ownMesh.parent && ownMesh.parent !== scene) {
+							const wp = ownMesh.getWorldPosition(_v3Seat)
+							avatarSLPos = [wp.x, -wp.z, wp.y]
+							worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+						}
+					} else if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
 						avatarSLPos = [...p]  // WHY: own copy — dead reckoning mutates avatarSLPos in-place
 						worldStore.setAvatarPos(p[0], p[1], p[2])
 						worldStore.setSpawnPos(p[0], p[1], p[2])
@@ -3110,7 +3340,11 @@ export function useWorldEngine(canvasRef) {
 			// sets — each overwrote the other mid-flight, producing the local walking jitter.
 			// (Remote FS viewers saw smooth motion because the SENT position is clean.) Own pos
 			// is still corrected softly via the avatarSLPos blend below.
-			if (mesh && obj.localId !== ownAvatarLocalId) {
+			// 🪑 EXCEPT while seated on an object: animate()'s local DR/gravity drive is disabled
+			// then (see uiStore.isSitting guards below), so sim-driven placement must flow through
+			// here instead — this hits the isChildMesh branch since the seat reparent (upsertMesh)
+			// already set mesh.userData.parentId != 0, applying the parent-relative offset directly.
+			if (mesh && (obj.localId !== ownAvatarLocalId || uiStore.isSitting === 'object')) {
 				const t = slToThree(pos[0], pos[1], pos[2])
 				// WHY: Avatars get GSAP lerp to smooth 10Hz TerseUpdate jitter into fluid motion.
 				// Prims use direct set — GSAP on many static prims restarts tweens every update
@@ -3153,7 +3387,15 @@ export function useWorldEngine(canvasRef) {
 			// accumulated dead-reckoning drift. Large corrections (>5m = teleport or big physics
 			// correction) snap immediately so the camera doesn't lag across the region.
 			const p = obj.pos
-			if (obj.localId === ownAvatarLocalId && p &&
+			if (obj.localId === ownAvatarLocalId && uiStore.isSitting === 'object' && mesh) {
+				// 🪑 Seated: obj.pos is the seat-PARENT-LOCAL offset, not a world position — feeding it
+				// into the world-space blend below would corrupt avatarSLPos. The mesh's pos/parenting
+				// was already applied by the isChildMesh branch above; derive world-space avatarPos
+				// from the mesh's world transform instead (LocationBar + camera-follow fallback).
+				const wp = mesh.getWorldPosition(_v3Seat)
+				avatarSLPos = [wp.x, -wp.z, wp.y]
+				worldStore.setAvatarPos(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			} else if (obj.localId === ownAvatarLocalId && p &&
 				(p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
 				const firstUpdate = !avatarSLPos
 				if (!avatarSLPos) {
@@ -3327,6 +3569,7 @@ export function useWorldEngine(canvasRef) {
 		_ingestQueue.length = 0  // drop the old region's un-ingested prim backlog
 		evicted.clear()
 		orphansByParent.clear()
+		_propsFamilyRequested.clear()  // localIds churn per region — stale dedup entries would block re-requests
 		_didPrecompile = false  // C1: re-precompile shaders for the new region's materials
 		worldStore.clearAll()
 		particles?.dispose()
@@ -3343,6 +3586,7 @@ export function useWorldEngine(canvasRef) {
 		vertVel = 0
 		landingGraceTimer = 0
 		cameraSnapRequested = true
+		uiStore.setSitting(false)  // cross-region TP always stands the avatar up
 		// WHY: Handle format is (X_meters << 32) | Y_meters — upper 32 = X, lower 32 = Y.
 		// JSON serialised as string from server (bigint) — convert via BigInt for U32 splits.
 		if (d?.simIp)  sessionStore.simIp  = d.simIp
@@ -3430,6 +3674,14 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// ObjectPropertiesFamily reply (hover-driven RequestObjectPropertiesFamily) — same fullId
+	// merge as onObjectProps, single object. Lands saleType/salePrice/owner for the Buy hover
+	// pointer without a select (FS processObjectPropertiesFamily, llselectmgr.cpp:6421-6481).
+	function onObjectPropsFamily(payload) {
+		if (!payload?.fullId) return
+		worldStore.applyObjectProperties(payload)
+	}
+
 	function onKillObject(payload) {
 		// WHY: Sim sends KillObject (High #16) when prims/avatars/NPCs leave or are deleted.
 		// Remove from Three.js scene and worldStore so they don't persist as ghost objects.
@@ -3460,6 +3712,7 @@ export function useWorldEngine(canvasRef) {
 			if (ids.includes(ownAvatarLocalId)) {
 				ownAvatarLocalId = null
 				avatarSLPos = null
+				uiStore.setSitting(false)
 				debugStore.push('warn', `[3D] Own avatar killed — awaiting respawn`)
 			}
 			debugStore.push('info', `[3D] KillObject: removed ${ids.length} objects`)
@@ -3694,6 +3947,9 @@ export function useWorldEngine(canvasRef) {
 			name:    obj.name || obj.text || `Object ${pickedId}`,
 			pos:     obj.pos,
 			clickAction: obj.clickAction ?? 0,
+			// 🪑 FS "Sit Here" sends pick.mObjectOffset (object-local click point) in
+			// AgentRequestSit — captured at menu-open time from this same raycast hit.
+			objectOffset: _pickObjectOffset(e, pickedId),
 			x: e.clientX,
 			y: e.clientY,
 		})
@@ -3767,9 +4023,20 @@ export function useWorldEngine(canvasRef) {
 		const rawCa = obj?.clickAction ?? 0
 		// WHY: Buy (2) and Pay (3) are root-linkset-only actions — child prims with these set are
 		// builder sloppiness (you can only buy/pay the whole object). Suppress on children so we
-		// don't show a spurious buy badge. Sit/Touch/Open/etc. are allowed on child prims.
+		// don't show a spurious buy badge. Sit/Touch/Open/etc. are allowed on child prims. Buy is
+		// ALSO suppressed on the root when the object isn't actually configured for sale (SaleType
+		// 0/undefined) — only show the buy pointer when there's really something to buy.
 		const isChild = (obj?.parentId ?? 0) !== 0
-		const ca = (isChild && (rawCa === 2 || rawCa === 3)) ? 0 : rawCa
+		const ca = gateBuyHoverAction(rawCa, { isChild, saleType: obj?.saleType })
+		// Hovering a clickAction=Buy object whose sale info is still unknown: fire the lightweight
+		// RequestObjectPropertiesFamily (Medium 5 — the template's own "driven by mouse hovering"
+		// message) so saleType/salePrice land in the store and the badge appears only for genuinely
+		// for-sale objects. This is how FS knows sale state at hover time (node->mSaleInfo filled by
+		// processObjectPropertiesFamily). Once-per-object per session; no selection side effects.
+		if (rawCa === 2 && !isChild && obj?.saleType == null && obj?.fullId && !_propsFamilyRequested.has(pickedId)) {
+			_propsFamilyRequested.add(pickedId)
+			requestObjectPropsFamily(obj.fullId)
+		}
 		// WHY: show a cursor badge only when the object has a script that handles touch (handleTouch
 		// flag, PrimFlags bit 0x80) or has a non-default ClickAction (Sit/Buy/Pay/Open/Play/OpenMedia/
 		// Zoom). ClickAction=0 alone does not mean the object is interactive — it's the prim default.
@@ -4979,7 +5246,16 @@ export function useWorldEngine(canvasRef) {
 			endFocusGlide()
 		}
 		if (avatarSLPos && !isAltOrbit) {
-			const t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
+			// 🪑 Seated (object): ownMesh is now a CHILD of the seat prim, so its local numbers no
+			// longer reflect world position (especially on a moving/rotating vehicle) — avatarSLPos
+			// also stops tracking world space while seated (DR/gravity skip below). Read the mesh's
+			// WORLD position instead so the follow camera keeps pointing at the actual avatar.
+			let t = null
+			if (uiStore.isSitting === 'object' && ownAvatarLocalId) {
+				const ownMesh = meshMap.get(ownAvatarLocalId)
+				if (ownMesh) t = ownMesh.getWorldPosition(_v3Seat)
+			}
+			if (!t) t = slToThree(avatarSLPos[0], avatarSLPos[1], avatarSLPos[2])
 			const target = new THREE.Vector3(
 				t.x + Math.sin(yaw) * followDist,
 				t.y + FOLLOW_HEIGHT,
@@ -5035,7 +5311,11 @@ export function useWorldEngine(canvasRef) {
 			// Capsule is symmetric so visual diff is subtle, but sets up correct orientation
 			// for when we get directional avatar geometry. Three.js Y-up: rotation.y = yaw
 			// where yaw=0 faces -Z (= SL north). No TerseUpdate rotation decode needed for own avatar.
-			if (ownAvatarLocalId) {
+			// 🪑 Skipped while seated on an object — the avatar's local rotation is fixed relative
+			// to the seat (correct: you're stuck in the sit pose; a moving/rotating vehicle carries
+			// you along via its OWN transform since ownMesh is now its child), and free-look yaw
+			// must not spin the avatar independently of the seat.
+			if (ownAvatarLocalId && uiStore.isSitting !== 'object') {
 				const ownMesh = meshMap.get(ownAvatarLocalId)
 				if (ownMesh) ownMesh.rotation.y = yaw
 			}
@@ -5052,7 +5332,11 @@ export function useWorldEngine(canvasRef) {
 		// WHY: run whenever a control flag is held OR residual skid velocity remains, so the
 		// glide-to-stop keeps integrating after the key is released. Skipped fully at rest to
 		// avoid 60fps store writes while idle.
-		if (avatarSLPos && ownAvatarLocalId && (cf || drVelX !== 0 || drVelY !== 0)) {
+		// 🪑 Skipped while seated on an object — local DR would fight the sim-driven seat
+		// placement applied in onTerseUpdate/onObjectUpdate. (A movement key while seated calls
+		// standUp() in updateCamera() before cf is even computed, so this guard is mostly belt-
+		// and-suspenders for the frame the stand-up confirmation is still in flight.)
+		if (avatarSLPos && ownAvatarLocalId && uiStore.isSitting !== 'object' && (cf || drVelX !== 0 || drVelY !== 0)) {
 			const runSticky = uiStore.alwaysRun
 			// WHY: while flying, horizontal motion is at fly speed, not walk/run. The old code
 			// dead-reckoned forward/strafe fly at SL_WALK_SPEED (3.2) while the sim flies far
@@ -5122,7 +5406,10 @@ export function useWorldEngine(canvasRef) {
 		// is empty (pre-RegionHandshake or right after cross-region TP). Without the
 		// guard, gravity would pull avatar to z=1 (FOOT_CLEAR over zero) and the snap-up
 		// when terrain finally arrives would visibly teleport the avatar upward.
-		if (avatarSLPos && ownAvatarLocalId && worldStore.terrainPatchCount > 0) {
+		// 🪑 Skipped while seated on an object — you don't fall out of a chair; the seat prim
+		// (or its parent linkset root, if it's underwater/underground) carries the avatar's
+		// vertical position, not terrain clamp.
+		if (avatarSLPos && ownAvatarLocalId && worldStore.terrainPatchCount > 0 && uiStore.isSitting !== 'object') {
 			const groundZ = sampleTerrainHeight(avatarSLPos[0], avatarSLPos[1]) + FOOT_CLEAR
 			if (isFlying) {
 				vertVel = 0
@@ -5538,6 +5825,10 @@ export function useWorldEngine(canvasRef) {
 		window.addEventListener('qs:camera-preset', onCameraPreset)
 		window.addEventListener('qs:camera-track',  onCameraTrack)
 		window.addEventListener('qs:face-toward',   onFaceToward)
+		window.addEventListener('qs:sit-ground',     onQsSitGround)
+		window.addEventListener('qs:stand-up',       onQsStandUp)
+		window.addEventListener('qs:toggle-fly',     onQsToggleFly)
+		window.addEventListener('qs:zoom-to-object', onQsZoomToObject)
 		// Mouse drag on canvas for look control
 		canvasRef.value.addEventListener('mousedown', onMouseDown)
 		window.addEventListener('mousemove', onMouseMove)
@@ -5559,7 +5850,9 @@ export function useWorldEngine(canvasRef) {
 		on(S.TELEPORT_FINISH,   onTeleportFinish)
 		on(S.TELEPORT_FAILED,   onTeleportFailed)
 		on(S.OBJECT_PROPS,      onObjectProps)
+		on(S.OBJECT_PROPS_FAMILY, onObjectPropsFamily)
 		on(S.MAP_BLOCKS,        onEngineMapBlocks)
+		on(S.SIT_RESPONSE,      onSitResponse)
 	})
 
 	onUnmounted(() => {
@@ -5604,6 +5897,10 @@ export function useWorldEngine(canvasRef) {
 		window.removeEventListener('qs:camera-preset', onCameraPreset)
 		window.removeEventListener('qs:camera-track',  onCameraTrack)
 		window.removeEventListener('qs:face-toward',   onFaceToward)
+		window.removeEventListener('qs:sit-ground',     onQsSitGround)
+		window.removeEventListener('qs:stand-up',       onQsStandUp)
+		window.removeEventListener('qs:toggle-fly',     onQsToggleFly)
+		window.removeEventListener('qs:zoom-to-object', onQsZoomToObject)
 		window.removeEventListener('mousemove', onMouseMove)
 		window.removeEventListener('mouseup',   onMouseUp)
 		canvasRef.value?.removeEventListener('mousedown', onMouseDown)
@@ -5623,7 +5920,9 @@ export function useWorldEngine(canvasRef) {
 		off(S.TELEPORT_FINISH,   onTeleportFinish)
 		off(S.TELEPORT_FAILED,   onTeleportFailed)
 		off(S.OBJECT_PROPS,      onObjectProps)
+		off(S.OBJECT_PROPS_FAMILY, onObjectPropsFamily)
 		off(S.MAP_BLOCKS,        onEngineMapBlocks)
+		off(S.SIT_RESPONSE,      onSitResponse)
 		ro?.disconnect()
 		renderer?.dispose()
 		labelRenderer?.domElement.remove()
@@ -5647,5 +5946,8 @@ export function useWorldEngine(canvasRef) {
 
 	_liveEngine = { setObjectAlphaMode: setObjectAlphaModeLive }
 
-	return { scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave, screenToGround, screenToDropPoint }
+	return {
+		scene, camera, hoverAction, hoverPos, altFocus, onPointerMove, onPointerLeave, screenToGround, screenToDropPoint,
+		standUp, sitOnGround, toggleFly, zoomToObject,
+	}
 }

@@ -208,6 +208,34 @@ function takeCopySelectedObject() {
 	takeObjectCopy(ui.editObjectId)
 }
 
+// FS is_selection_buy_not_take (llviewermenu.cpp:7033-7053): for-sale (SaleType != 0) AND not
+// owned by self. Targets the SAME "selected object" concept as Take/Take copy above (the Edit
+// floater's object) — mirrors ObjectContextMenu.vue's canBuy gate.
+function canBuySelected() {
+	if (!hasSelectedObject()) return false
+	const o = world.objects.get(ui.editObjectId)
+	if (!o || !(o.saleType > 0)) return false
+	const owner = o.ownerId
+	if (!owner || owner === ZERO_UUID) return false
+	return owner.toLowerCase() !== (session.agentId || '').toLowerCase()
+}
+function buySelectedObject() {
+	if (!hasSelectedObject() || !canBuySelected()) return
+	ui.openBuyDialog({ localId: ui.editObjectId })
+}
+
+// WHY qs:sit-ground / qs:stand-up / qs:toggle-fly: useWorldEngine.js already defines
+// sitOnGround()/standUp()/toggleFly() (returned from the composable) but WorldCanvas.vue only
+// destructures {hoverAction, hoverPos, altFocus, screenToDropPoint} from it — nothing outside the
+// engine's own closure can call them yet. Bridging via window CustomEvents mirrors the exact
+// pattern already wired end-to-end for 'qs:face-toward' (AvatarContextMenu → useWorldEngine's
+// onFaceToward listener, useWorldEngine.js:5707). This file's task report notes useWorldEngine.js
+// needs matching `window.addEventListener('qs:sit-ground'|'qs:stand-up'|'qs:toggle-fly', ...)`
+// lines (same gap noted by ObjectContextMenu.vue/AvatarContextMenu.vue) before these take effect.
+function sitOnGround() { window.dispatchEvent(new CustomEvent('qs:sit-ground')) }
+function standUp()     { window.dispatchEvent(new CustomEvent('qs:stand-up')) }
+function setFly(fly)   { window.dispatchEvent(new CustomEvent('qs:toggle-fly', { detail: { fly } })) }
+
 function resyncWorld() {
 	close()
 	emit(C.RESYNC_WORLD, {})
@@ -281,13 +309,16 @@ const MENUS = [
 			{
 				label: 'Movement',
 				submenu: [
-					{ label: 'Sit down',				disabled: true },
-					{ label: 'Stand up',				disabled: true },
+					{ label: 'Sit down',	disabled: () => !!ui.isSitting,	action: () => act(sitOnGround) },
+					{ label: 'Stand up',	disabled: () => !ui.isSitting,		action: () => act(standUp) },
 					{ sep: true },
-					{ label: 'Fly',						disabled: true },
-					{ label: 'Stop flying',				disabled: true },
+					{ label: 'Fly',			checked: () => ui.flying,	disabled: () => ui.flying,	action: () => act(() => setFly(true)) },
+					{ label: 'Stop flying',	disabled: () => !ui.flying,		action: () => act(() => setFly(false)) },
 					{ label: 'Always run',	kbd: 'Ctrl+R',	checked: () => ui.alwaysRun, action: () => ui.toggleAlwaysRun() },
-					{ label: 'Force ground Sit',		disabled: true },
+					// WHY: OpenSim HandleAgentSitOnGround (ScenePresence.cs:3662-3675) doesn't stand you up
+					// from a prim seat first — sim stays object-seated while the client would flip to 'ground'
+					// and re-enable gravity/DR against the seat. Gate out while object-seated.
+					{ label: 'Force ground Sit',	disabled: () => ui.isSitting === 'object',	action: () => act(sitOnGround) },
 					{ sep: true },
 					{ label: 'Movelock',				disabled: true },
 					{ label: 'Quickjump',				disabled: true },
@@ -377,7 +408,7 @@ const MENUS = [
 			{
 				label: 'Selected objects',
 				submenu: [
-					{ label: 'Buy',							disabled: true },
+					{ label: 'Buy',	disabled: () => !canBuySelected(),	action: () => act(buySelectedObject) },
 					// Take / Take copy on the SELECTED object (same selection concept as Delete below);
 					// FS Selected Objects menu order Buy/Take/Take Copy/Delete (menu_viewer.xml:836-854).
 					// Perm-gated via canTake(Copy)Selected — see the helpers above hasSelectedObject.
@@ -549,7 +580,7 @@ const MENUS = [
 			{
 				label: 'Object',
 				submenu: [
-					{ label: 'Buy',							disabled: true },
+					{ label: 'Buy',	disabled: () => !canBuySelected(),	action: () => act(buySelectedObject) },
 					// FS Build > Object > Take / Take Copy (menu_viewer.xml:2267-2284); acts on the
 					// selected object (Edit floater target), perm-gated like Selected objects > Take.
 					{ label: 'Take',	disabled: () => !hasSelectedObject() || !canTakeSelected(),	action: () => act(takeSelectedObject) },

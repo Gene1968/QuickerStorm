@@ -46,8 +46,18 @@ export function useLLUDP() {
 		emit(C.OBJECT_TOUCH, { localId })
 	}
 
-	function sendSit(targetId) {
-		emit(C.OBJECT_SIT, { targetId })
+	// offset = object-local click point (FS pick.mObjectOffset, sent verbatim in
+	// AgentRequestSit TargetObject.Offset — llviewermenu.cpp:5990-5992). OpenSim uses it as the
+	// free-sit position when the prim has no scripted sit target.
+	function sendSit(targetId, offset) {
+		emit(C.OBJECT_SIT, { targetId, offset: offset ?? [0, 0, 0] })
+	}
+
+	// Lightweight hover-driven props request (RequestObjectPropertiesFamily, Medium 5) — no
+	// selection side effects. Feeds saleType/salePrice for the Buy hover pointer (FS fills
+	// node->mSaleInfo the same way; reply consumer llselectmgr.cpp:6421-6481).
+	function requestObjectPropsFamily(objectId) {
+		emit(C.OBJECT_PROPS_FAMILY_REQ, { objectId })
 	}
 
 	// FS parity: a normal click selects the whole OBJECT — root + every child. OpenSim's SelectPrim
@@ -184,5 +194,32 @@ export function useLLUDP() {
 		emit(C.MAP_TELEPORT, { regionX, regionY, x, y, z })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport }
+	// ── Right-click-menu wire (sit/buy/pay/group-invite) ──────────────────
+	// Thin wrappers: no client-side resolution (group/category ids, price validation, etc.) —
+	// the sim is authoritative and refusals surface via ALERT_MESSAGE / silent no-op (see
+	// shared/protocol.js C.OBJECT_BUY / C.PAY_MONEY comments for OpenSim stock-module caveats).
+
+	/** "Buy" on a for-sale object — ObjectBuy (Low 102), single object only (FS parity). */
+	function buyObject({ localId, saleType, salePrice, categoryId }) {
+		emit(C.OBJECT_BUY, { localId, saleType, salePrice, categoryId })
+	}
+
+	/** "Pay" — MoneyTransferRequest (Low 311). transactionType: see TRANS in shared/protocol.js
+	 *  (TRANS.GIFT for Pay Resident, TRANS.PAY_OBJECT for paying an object/vendor). */
+	function payMoney({ destId, amount, transactionType, description, isDestGroup }) {
+		emit(C.PAY_MONEY, { destId, amount, transactionType, description, isDestGroup })
+	}
+
+	/** MoneyBalanceRequest (Low 313) — sim answers S.MONEY_BALANCE. */
+	function requestMoneyBalance() {
+		emit(C.MONEY_BALANCE_REQ, {})
+	}
+
+	/** Invite one or more agents to a group — InviteGroupRequest (Low 349). roleId defaults
+	 *  sim-side to the Everyone role when omitted. */
+	function inviteToGroup({ groupId, inviteeIds, roleId }) {
+		emit(C.GROUP_INVITE, { groupId, inviteeIds, roleId })
+	}
+
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport, buyObject, payMoney, requestMoneyBalance, inviteToGroup, requestObjectPropsFamily }
 }

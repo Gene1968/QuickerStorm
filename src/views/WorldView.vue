@@ -6,6 +6,7 @@ import { useProximityVoice }from '@/composables/useProximityVoice.js'
 import { useInventory }		from '@/composables/useInventory'
 import { useCaps }			from '@/composables/useCaps'
 import { useSocial }			from '@/composables/useSocial'
+import { useMoney }			from '@/composables/useMoney.js'
 import { useUiStore }		from '@/stores/uiStore'
 import { useGridStore }		from '@/stores/gridStore'
 import { useSessionStore }	from '@/stores/sessionStore'
@@ -31,6 +32,10 @@ import InventoryFloater		from '@/components/InventoryFloater.vue'
 import InventoryContextMenu	from '@/components/InventoryContextMenu.vue'
 import InventoryItemProperties	from '@/components/InventoryItemProperties.vue'
 import TexturePreviewFloater	from '@/components/TexturePreviewFloater.vue'
+import PayFloater			from '@/components/PayFloater.vue'
+import StandStopFlying		from '@/components/StandStopFlying.vue'
+import BuyObjectDialog		from '@/components/BuyObjectDialog.vue'
+import InspectAvatarFloater	from '@/components/InspectAvatarFloater.vue'
 import AppearanceFloater	from '@/components/AppearanceFloater.vue'
 import MoveControlsFloater	from '@/components/MoveControlsFloater.vue'
 import CameraControlsFloater	from '@/components/CameraControlsFloater.vue'
@@ -67,6 +72,10 @@ if (import.meta.env.DEV) window.__cap = capCall
 // whole session so live updates (OnlineNotification, AgentGroupDataUpdate) land regardless of
 // which floater is open.
 useSocial()
+// WHY: register the L$ balance handler (S.MONEY_BALANCE) for the whole session, same reasoning as
+// useSocial() above — Pay/Buy floaters read useMoney()'s balance ref, but it must already be
+// populated (or in flight) before either one ever opens.
+useMoney()
 
 // WHY: Mark this tab as "in world" so LandingView gate 1 passes on page reload.
 // sessionStorage persists across reloads within the same tab session but clears
@@ -187,6 +196,10 @@ watch(
 							:key="inst.id"
 							:instance="inst"
 						/>
+					<PayFloater				v-if="ui.showPayFloater" />
+					<BuyObjectDialog		v-if="ui.showBuyDialog" />
+					<InspectAvatarFloater	v-if="ui.showInspectAvatar" />
+					<StandStopFlying />
 				<CreateLandmarkFloater	v-if="ui.showCreateLandmark" />
 					<AvatarContextMenu />
 					<ObjectContextMenu />

@@ -82,6 +82,10 @@ function selectMode(m) {
 	if (ui.flying) tap('KeyF', 'f')
 	ui.setAlwaysRun(m.id === 'run')
 }
+
+// Stand Up / Stop Flying moved to the standalone bottom-center StandStopFlying.vue panel
+// (FS LLPanelStandStopFlying is independent of the Movement floater — llmoveview.cpp:157-182
+// only *reparents* the singleton in while the floater is open; ours just stays standalone).
 </script>
 
 <template>

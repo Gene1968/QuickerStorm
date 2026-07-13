@@ -42,6 +42,9 @@ import {
 	mapSoundTrigger, mapAttachedSound, mapAttachedSoundGainChange,
 	encodeMultipleObjectUpdate, type MultiUpdateEntry,
 	encodeRequestTaskInventory, mapReplyTaskInventory, encodeMoveTaskInventory,
+	encodeObjectBuy, encodeMoneyTransferRequest, encodeMoneyBalanceRequest, encodeInviteGroupRequest,
+	mapAvatarSitResponse, mapMoneyBalanceReply,
+	encodeRequestObjectPropertiesFamily, mapObjectPropertiesFamily,
 } from '../lib/lludp-codec'
 import {
 	nextXferId, startXfer, ingestXferChunk, abortXfer, clearXferScope,
@@ -1246,6 +1249,45 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
+	// AvatarSitResponse (High 21) — sim approved AgentRequestSit. FS consumer:
+	// llviewermessage.cpp:5464-5508 process_avatar_sit_response.
+	if (name === 'AvatarSitResponse') {
+		try {
+			const d = mapAvatarSitResponse(decode(buf, { alreadyExpanded: true }).blocks)
+			if (d) {
+				slog.info(session.ws, `← AvatarSitResponse obj=${d.sitObjectId.slice(0, 8)}… autoPilot=${d.autoPilot}`)
+				session.ws.send(JSON.stringify({ t: S.SIT_RESPONSE, d }))
+			}
+		} catch (e) { slog.warn(session.ws, `AvatarSitResponse decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// MoneyBalanceReply (Low 314) — reply to MONEY_BALANCE_REQ or a completed PAY_MONEY/OBJECT_BUY.
+	// FS consumer: llviewermessage.cpp:5755-5767 process_money_balance_reply.
+	if (name === 'MoneyBalanceReply') {
+		try {
+			const d = mapMoneyBalanceReply(decode(buf, { alreadyExpanded: true }).blocks)
+			if (d) {
+				slog.info(session.ws, `← MoneyBalanceReply balance=${d.balance} success=${d.success}`)
+				session.ws.send(JSON.stringify({ t: S.MONEY_BALANCE, d: {
+					balance: d.balance, description: d.description, transactionId: d.transactionId, success: d.success,
+				} }))
+			}
+		} catch (e) { slog.warn(session.ws, `MoneyBalanceReply decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// ObjectPropertiesFamily (Medium 10) — reply to the HOVER-driven RequestObjectPropertiesFamily.
+	// FS consumer: processObjectPropertiesFamily (llselectmgr.cpp:6421-6481) — sale info for the
+	// buy hover cursor without any selection side effects.
+	if (name === 'ObjectPropertiesFamily') {
+		try {
+			const d = mapObjectPropertiesFamily(decode(buf, { alreadyExpanded: true }).blocks)
+			if (d) session.ws.send(JSON.stringify({ t: S.OBJECT_PROPS_FAMILY, d }))
+		} catch (e) { slog.warn(session.ws, `ObjectPropertiesFamily decode error: ${(e as Error).message}`) }
+		return
+	}
+
 	// ── Task (prim) inventory — 📦 Object Contents steps 1-3 ──
 	// ReplyTaskInventory (Low 290) answers our RequestTaskInventory: empty Filename = empty prim
 	// (SceneObjectPartInventory.cs:1465); otherwise the named file must be fetched via Xfer.
@@ -1891,9 +1933,12 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	}
 
 	if (msg.t === C.OBJECT_SIT) {
-		const d = msg.d as { targetId: string }
+		const d = msg.d as { targetId: string; offset?: [number, number, number] }
 		const seqA = nextSeq(session)
-		const req = encodeAgentRequestSit({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, targetId: d.targetId })
+		// Offset = FS pick.mObjectOffset (object-local click point, llviewermenu.cpp:5990-5992);
+		// OpenSim uses it as the free-sit position when no scripted sit target exists
+		// (ScenePresence.cs:3308-3322 — scripted targets override it server-side).
+		const req = encodeAgentRequestSit({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, targetId: d.targetId, offset: d.offset })
 		trackReliable(session, seqA, req)
 		session.udpSocket.send(req, session.simPort, session.simIp)
 		const seqB = nextSeq(session)
@@ -1901,6 +1946,20 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seqB, sit)
 		session.udpSocket.send(sit, session.simPort, session.simIp)
 		slog.info(session.ws, `→ AgentRequestSit+AgentSit target=${d.targetId.slice(0,8)}…`)
+		return
+	}
+
+	// Hover-driven lightweight props request (no selection side effects) — feeds saleType/salePrice
+	// for the Buy hover pointer. Reply arrives as ObjectPropertiesFamily (Medium 10) below.
+	if (msg.t === C.OBJECT_PROPS_FAMILY_REQ) {
+		const d = msg.d as { objectId: string; requestFlags?: number }
+		const seq = nextSeq(session)
+		const req = encodeRequestObjectPropertiesFamily({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			objectId: d.objectId, requestFlags: d.requestFlags,
+		})
+		trackReliable(session, seq, req)
+		session.udpSocket.send(req, session.simPort, session.simIp)
 		return
 	}
 
@@ -2054,6 +2113,76 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ MoveTaskInventory localId=${d.localId} item=${d.itemId.slice(0, 8)}… → folder ${d.folderId.slice(0, 8)}…`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_BUY) {
+		// ObjectBuy (Low 102) — FS "Buy" on a for-sale object; single object only (llselectmgr.cpp
+		// sendBuy comment: multi-object buy isn't supported by the UI either). With no money module
+		// OpenSim silently drops this (LLClientView.cs:11137-11138); stock SampleMoneyModule
+		// BlueBox-refuses anything priced (SampleMoneyModule.cs:820-824) — the refusal already
+		// surfaces via the AlertMessage → S.ALERT_MESSAGE path.
+		const d = msg.d as { localId: number; saleType: number; salePrice: number; categoryId?: string }
+		if (typeof d?.localId !== 'number' || typeof d.saleType !== 'number' || typeof d.salePrice !== 'number') {
+			slog.warn(session.ws, 'ObjectBuy: missing localId/saleType/salePrice'); return
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeObjectBuy({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			localId: d.localId, saleType: d.saleType, salePrice: d.salePrice, categoryId: d.categoryId,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ ObjectBuy localId=${d.localId} saleType=${d.saleType} price=${d.salePrice}`)
+		return
+	}
+
+	if (msg.t === C.PAY_MONEY) {
+		// MoneyTransferRequest (Low 311) — FS "Pay" (give_money, llviewermessage.cpp:462-490).
+		// Stock OpenSim SampleMoneyModule's MoneyTransferAction handler is empty
+		// (SampleMoneyModule.cs:747-750) — Pay is a silent no-op on unmodified grids.
+		const d = msg.d as { destId: string; amount: number; transactionType: number; description?: string; isDestGroup?: boolean }
+		if (!d?.destId || typeof d.amount !== 'number' || typeof d.transactionType !== 'number') {
+			slog.warn(session.ws, 'PayMoney: missing destId/amount/transactionType'); return
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeMoneyTransferRequest({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			destId: d.destId, amount: d.amount, transactionType: d.transactionType,
+			description: d.description, isDestGroup: !!d.isDestGroup,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoneyTransferRequest dest=${d.destId.slice(0, 8)}… amount=${d.amount} type=${d.transactionType}`)
+		return
+	}
+
+	if (msg.t === C.MONEY_BALANCE_REQ) {
+		// MoneyBalanceRequest (Low 313) — FS llstatusbar.cpp:889-904. Reply arrives as
+		// MoneyBalanceReply (Low 314), decoded in the generic front-door below → S.MONEY_BALANCE.
+		// Stock SampleMoneyModule always answers balance=0 (GetFundsForAgentID, :596-601).
+		const seq = nextSeq(session)
+		const pkt = encodeMoneyBalanceRequest({ agentId: session.agentId, sessionId: session.sessionId, seq })
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ MoneyBalanceRequest`)
+		return
+	}
+
+	if (msg.t === C.GROUP_INVITE) {
+		// InviteGroupRequest (Low 349, Unencoded) — FS llgroupmgr.cpp:1893-1927. OpenSim drops this
+		// silently when no groups module is loaded (LLClientView.cs:11922-11935 checks
+		// m_GroupsModule == null before dispatch) — there is no NAK to surface.
+		const d = msg.d as { groupId: string; inviteeIds: string[]; roleId?: string }
+		if (!d?.groupId || !d.inviteeIds?.length) { slog.warn(session.ws, 'GroupInvite: missing groupId/inviteeIds'); return }
+		const seq = nextSeq(session)
+		const pkt = encodeInviteGroupRequest({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			groupId: d.groupId, inviteeIds: d.inviteeIds, roleId: d.roleId,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ InviteGroupRequest group=${d.groupId.slice(0, 8)}… invitees=${d.inviteeIds.length}`)
 		return
 	}
 

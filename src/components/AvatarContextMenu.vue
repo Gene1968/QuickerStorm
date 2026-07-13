@@ -9,6 +9,8 @@ import { useUiStore } from '@/stores/uiStore'
 import { useInstantMessage } from '@/composables/useInstantMessage'
 import { useGridSocialStore } from '@/stores/gridSocialStore'
 import { useSocial } from '@/composables/useSocial'
+import { useLLUDP } from '@/composables/useLLUDP'
+import { useNotifications } from '@/composables/useNotifications'
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
 import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
@@ -16,6 +18,8 @@ const ui = useUiStore()
 const im = useInstantMessage()
 const social = useGridSocialStore()
 const { offerFriendship } = useSocial()
+const { inviteToGroup } = useLLUDP()
+const { notifyInfo } = useNotifications()
 
 const menu = computed(() => ui.avatarMenu)
 
@@ -55,11 +59,67 @@ function faceToward() {
 	close()
 }
 
+function zoomIn() {
+	if (!menu.value) return
+	window.dispatchEvent(new CustomEvent('qs:zoom-to-object', { detail: { localId: menu.value.localId } }))
+	close()
+}
+
+function pay() {
+	if (!menu.value) return
+	ui.openPayFloater({ targetId: menu.value.agentId, targetName: menu.value.name, kind: 'avatar' })
+	close()
+}
+
+function inspectAvatar() {
+	if (!menu.value) return
+	ui.openInspectAvatar(menu.value.agentId)
+	close()
+}
+
 // ── Self-avatar actions ────────────────────────────────────────────────────
 function openWearing()    { ui.openAppearanceOnTab('wearing'); close() }
 function openOutfits()    { ui.toggleAppearanceOnTab('outfits'); close() }
 function openSelfProfile(){ ui.openProfile(null); close() }   // null target = own profile
 function openFriends()    { ui.openChatOnTab('contacts'); close() }
+
+// WHY qs:sit-ground / qs:stand-up: useWorldEngine.js already defines sitOnGround()/standUp() (see
+// the composable's return object) but WorldCanvas.vue only destructures {hoverAction, hoverPos,
+// altFocus, screenToDropPoint} from it — nothing outside the engine's own closure can call them
+// yet. Bridging via a window CustomEvent mirrors the exact pattern already wired end-to-end for
+// 'qs:face-toward' just above (useWorldEngine.js:5707 onFaceToward). This file's task report notes
+// useWorldEngine.js needs `window.addEventListener('qs:sit-ground', () => sitOnGround())` /
+// `('qs:stand-up', () => standUp())` alongside its existing qs:face-toward registration (and
+// ObjectContextMenu.vue's qs:stand-up / qs:zoom-to-object dispatch, same gap) before these take effect.
+function sitDown() {
+	window.dispatchEvent(new CustomEvent('qs:sit-ground'))
+	close()
+}
+function standUp() {
+	window.dispatchEvent(new CustomEvent('qs:stand-up'))
+	close()
+}
+
+// FS menu_avatar_other has no "Invite to group" submenu of our own groups — we add one since the
+// task calls for it: lists useGridSocialStore().groups by name, invites the target avatar into
+// whichever is picked. The sim gives no confirmation either way for a disabled-groups grid
+// (InviteGroupRequest is fire-and-forget), so we toast optimistically like FS's own "invitation
+// sent" messaging (llgroupmgr.cpp sendGroupMemberInvites has no success ack either).
+function inviteToGroupAction(group) {
+	if (!menu.value || !group) return
+	inviteToGroup({ groupId: group.id, inviteeIds: [menu.value.agentId] })
+	notifyInfo('Invitation sent', `Invited ${menu.value.name} to "${group.name}".`)
+	close()
+}
+const groupInviteSub = computed(() => {
+	if (!social.groups.length) {
+		return { label: 'Invite to group', disabled: true, title: "You aren't a member of any groups" }
+	}
+	return {
+		label: 'Invite to group',
+		submenu: social.groups.map(g => ({ label: g.name, action: () => inviteToGroupAction(g) })),
+	}
+})
 
 // FS shares one export cluster across self + other avatars → our quickerSTORM submenu.
 const quickerStormSub = {
@@ -79,8 +139,8 @@ const quickerStormSub = {
 const selfItems = computed(() => [
 	quickerStormSub,
 	{ sep: true },
-	{ label: 'Sit down',			disabled: true },
-	{ label: 'Stand up',			disabled: true },
+	{ label: 'Sit down',			disabled: !!ui.isSitting,	action: sitDown },
+	{ label: 'Stand up',			disabled: !ui.isSitting,	action: standUp },
 	{ sep: true },
 	{
 		label: 'Appearance',
@@ -140,14 +200,15 @@ const selfItems = computed(() => [
 const otherItems = computed(() => [
 	quickerStormSub,
 	{ label: 'View profile',							action: viewProfile },
+	{ label: 'Inspect',								action: inspectAvatar },
 	...(!social.isFriend(menu.value?.agentId)
 	? [{ label: 'Add friend',						action: addFriend }]
 	: []),
 	{ label: 'Give calling card',	disabled: true },
 	{ label: 'Send IM…',								action: startIM },
-	{ label: 'Invite to group',		disabled: true },
+	groupInviteSub.value,
 	{ sep: true },
-	{ label: 'Zoom in',				disabled: true },
+	{ label: 'Zoom in',								action: zoomIn },
 	{ label: 'Face towards avatar',						action: faceToward },
 	{ sep: true },
 	{ label: 'Reset skeleton',		disabled: true },
@@ -165,7 +226,7 @@ const otherItems = computed(() => [
 			{ label: 'Derender + blacklist',	disabled: true },
 		],
 	},
-	{ label: 'Pay',					disabled: true },
+	{ label: 'Pay',											action: pay },
 	{ label: 'Texture refresh',							action: refreshTextures },
 ])
 

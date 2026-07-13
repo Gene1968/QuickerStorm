@@ -644,6 +644,90 @@ export function encodeDeRezObject(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+// ── ObjectBuy (Low 102) — "Buy" on a for-sale object ──────────────────────
+// message_template.msg:2233-2246. FS packer: llselectmgr.cpp:5023 sendBuy →
+// packAgentGroupAndCatID (:5815-5823, AgentData block incl. GroupID+CategoryID) +
+// packBuyObjectIDs (:5032-5045, one ObjectData block per object). FS comment
+// "*NOTE: does not work for multiple object buy, which UI does not currently support"
+// (llselectmgr.cpp:5019) — mirror that: single object only. GroupID is always
+// zero-UUID here (we don't track an active group for transactions); CategoryID may
+// be zero-UUID and the sim re-resolves the destination folder (same convention as
+// DeRezObject/OBJECT_TAKE). With no money module OpenSim silently drops ObjectBuy
+// (LLClientView.cs:11137-11138); stock SampleMoneyModule only permits salePrice===0
+// and BlueBox-refuses anything priced (SampleMoneyModule.cs:820-824) — refusals
+// surface through the already-wired AlertMessage → S.ALERT_MESSAGE path.
+export function encodeObjectBuy(p: {
+  agentId: string; sessionId: string; seq: number
+  localId: number; saleType: number; salePrice: number; categoryId?: string
+}): Buffer {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  return encode('ObjectBuy', {
+    AgentData: {
+      AgentID: p.agentId, SessionID: p.sessionId,
+      GroupID: ZERO, CategoryID: p.categoryId ?? ZERO,
+    },
+    ObjectData: [{ ObjectLocalID: p.localId, SaleType: p.saleType, SalePrice: p.salePrice }],
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── MoneyTransferRequest (Low 311) — "Pay" ────────────────────────────────
+// message_template.msg:6915-6931. FS packer: llviewermessage.cpp:462-490 give_money —
+// SourceID is always the paying agent, AggregatePermNextOwner/AggregatePermInventory
+// are always AP_EMPTY (0). Flags = pack_transaction_flags(is_source_group, is_dest_group)
+// (lltransactionflags.cpp:42-48): bit 0x01 = source-group, 0x02 = dest-group. We always
+// pay as an individual (is_source_group=false), so Flags = isDestGroup ? 0x02 : 0.
+// Stock OpenSim SampleMoneyModule's MoneyTransferAction handler is empty
+// (SampleMoneyModule.cs:747-750) — Pay is a silent no-op there.
+export function encodeMoneyTransferRequest(p: {
+  agentId: string; sessionId: string; seq: number
+  destId: string; amount: number; transactionType: number
+  description?: string; isDestGroup?: boolean
+}): Buffer {
+  return encode('MoneyTransferRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    MoneyData: {
+      SourceID: p.agentId, DestID: p.destId,
+      Flags: p.isDestGroup ? 0x02 : 0x00,
+      Amount: p.amount,
+      AggregatePermNextOwner: 0, AggregatePermInventory: 0,
+      TransactionType: p.transactionType,
+      Description: Buffer.from((p.description ?? '') + '\0', 'utf8'),
+    },
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── MoneyBalanceRequest (Low 313) ──────────────────────────────────────────
+// message_template.msg:6961-6971. FS: llstatusbar.cpp:889-904 sendMoneyBalanceRequest
+// (TransactionID = LLUUID::null — this isn't part of an in-flight purchase). Stock
+// SampleMoneyModule always answers balance=0 (GetFundsForAgentID, SampleMoneyModule.cs:596-601).
+export function encodeMoneyBalanceRequest(p: {
+  agentId: string; sessionId: string; seq: number
+}): Buffer {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  return encode('MoneyBalanceRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    MoneyData: { TransactionID: ZERO },
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── InviteGroupRequest (Low 349, Unencoded) — group Invite ─────────────────
+// message_template.msg:7712-7731. FS packer: llgroupmgr.cpp:1893-1927 (AgentData+GroupData
+// once per packet, then one InviteData block per invitee — roleId defaults to the Everyone
+// role, zero-UUID). OpenSim: GroupsModule.InviteGroupRequest (XmlRpcGroups GroupsModule.cs
+// :1393-1473) — silently dropped when no groups module is loaded (LLClientView.cs:11922-11935
+// checks m_GroupsModule == null before dispatching, so a stock install just eats the packet).
+export function encodeInviteGroupRequest(p: {
+  agentId: string; sessionId: string; seq: number
+  groupId: string; inviteeIds: string[]; roleId?: string
+}): Buffer {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  return encode('InviteGroupRequest', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    GroupData: { GroupID: p.groupId },
+    InviteData: p.inviteeIds.map(id => ({ InviteeID: id, RoleID: p.roleId ?? ZERO })),
+  }, { seq: p.seq, reliable: true })
+}
+
 // ── MultipleObjectUpdate (Medium 2) — move/rotate/scale selected prims ────
 // FS packer: llselectmgr.cpp:4922 packMultipleUpdate — per ObjectData block:
 //   ObjectLocalID U32 + Type U8 + Data Variable1, where Data is packed STRICTLY in the order
@@ -2090,6 +2174,133 @@ export function mapAttachedSoundGainChange(blocks: DecodedBlocks): AttachedSound
   return {
     objectId: String(b.ObjectID ?? ZERO_UUID),
     gain:     clampGain(b.Gain),
+  }
+}
+
+// ── AvatarSitResponse (High 21) — sim's reply to AgentRequestSit ─────────
+// message_template.msg:3650-3666. FS consumer: llviewermessage.cpp:5464-5508
+// process_avatar_sit_response — reads SitObject.ID, then SitTransform's AutoPilot/
+// SitPosition/SitRotation/CameraEyeOffset/CameraAtOffset/ForceMouselook in that order.
+// LLQuaternion fields are packed as 3 floats on the wire (W dropped, see fields.ts) —
+// re-derive W the same way the terse/compressed object-update decoders do
+// (sqrt(max(0, 1 - x² - y² - z²))).
+function deriveQuatW(x: number, y: number, z: number): number {
+  return Math.sqrt(Math.max(0, 1 - x * x - y * y - z * z))
+}
+
+export interface AvatarSitResponseData {
+  sitObjectId:      string
+  autoPilot:        boolean
+  sitPosition:      [number, number, number]
+  sitRotation:      [number, number, number, number]   // [x,y,z,w] — w re-derived
+  cameraEyeOffset:  [number, number, number]
+  cameraAtOffset:   [number, number, number]
+  forceMouselook:   boolean
+}
+
+/** Map a generic-decoded AvatarSitResponse (High 21) into the WS payload; null if malformed. */
+export function mapAvatarSitResponse(blocks: DecodedBlocks): AvatarSitResponseData | null {
+  const sitObj = blocks.SitObject?.[0]
+  const xf = blocks.SitTransform?.[0]
+  if (!sitObj || !xf) return null
+  const sitPos = (Array.isArray(xf.SitPosition) ? xf.SitPosition : [0, 0, 0]) as number[]
+  const rotXyz = (Array.isArray(xf.SitRotation) ? xf.SitRotation : [0, 0, 0]) as number[]
+  const eye = (Array.isArray(xf.CameraEyeOffset) ? xf.CameraEyeOffset : [0, 0, 0]) as number[]
+  const at  = (Array.isArray(xf.CameraAtOffset) ? xf.CameraAtOffset : [0, 0, 0]) as number[]
+  const [rx, ry, rz] = [rotXyz[0] ?? 0, rotXyz[1] ?? 0, rotXyz[2] ?? 0]
+  return {
+    sitObjectId:     String(sitObj.ID ?? ZERO_UUID),
+    autoPilot:       !!xf.AutoPilot,
+    sitPosition:     [sitPos[0] ?? 0, sitPos[1] ?? 0, sitPos[2] ?? 0],
+    sitRotation:     [rx, ry, rz, deriveQuatW(rx, ry, rz)],
+    cameraEyeOffset: [eye[0] ?? 0, eye[1] ?? 0, eye[2] ?? 0],
+    cameraAtOffset:  [at[0] ?? 0, at[1] ?? 0, at[2] ?? 0],
+    forceMouselook:  !!xf.ForceMouselook,
+  }
+}
+
+// ── MoneyBalanceReply (Low 314) ───────────────────────────────────────────
+// message_template.msg:6974-6987. FS consumer: llviewermessage.cpp:5755-5767
+// process_money_balance_reply (AgentID unused here — TransactionID/MoneyBalance/
+// SquareMetersCredit/SquareMetersCommitted/Description). Some grids append a
+// TransactionInfo block for localized purchase receipts (message_template.msg:6987+);
+// we only read MoneyData, so decode via `decode()` naturally ignores any trailing block.
+export interface MoneyBalanceReplyData {
+  agentId:            string
+  transactionId:      string
+  success:            boolean
+  balance:             number
+  squareMetersCredit:  number
+  squareMetersCommitted: number
+  description:        string
+}
+
+/** Map a generic-decoded MoneyBalanceReply (Low 314) into the WS payload; null if malformed. */
+export function mapMoneyBalanceReply(blocks: DecodedBlocks): MoneyBalanceReplyData | null {
+  const b = blocks.MoneyData?.[0]
+  if (!b) return null
+  const desc = b.Description
+  return {
+    agentId:               String(b.AgentID ?? ZERO_UUID),
+    transactionId:         String(b.TransactionID ?? ZERO_UUID),
+    success:               !!b.TransactionSuccess,
+    balance:               Number(b.MoneyBalance) || 0,
+    squareMetersCredit:    Number(b.SquareMetersCredit) || 0,
+    squareMetersCommitted: Number(b.SquareMetersCommitted) || 0,
+    description:           Buffer.isBuffer(desc) ? desc.toString('utf8').replace(/\0+$/, '') : String(desc ?? ''),
+  }
+}
+
+// ── RequestObjectPropertiesFamily (Medium 5) / ObjectPropertiesFamily (Medium 10) ─────────────
+// The lightweight hover-driven props pair — NO selection side effects, unlike ObjectSelect →
+// ObjectProperties. The template comments both messages as "driven by mouse hovering over
+// objects" (message_template.msg:2716/:3739). FS reply consumer: processObjectPropertiesFamily
+// (llselectmgr.cpp:6421-6481, fills node->mSaleInfo which gates the buy hover cursor).
+
+export function encodeRequestObjectPropertiesFamily(p: {
+  agentId: string; sessionId: string; seq: number; objectId: string; requestFlags?: number
+}): Buffer {
+  return encode('RequestObjectPropertiesFamily', {
+    AgentData:  { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: { RequestFlags: p.requestFlags ?? 0, ObjectID: p.objectId },
+  }, { seq: p.seq, reliable: true })
+}
+
+export interface ObjectPropsFamilyData {
+  fullId:        string
+  ownerId:       string
+  groupId:       string
+  baseMask:      number
+  ownerMask:     number
+  groupMask:     number
+  everyoneMask:  number
+  nextOwnerMask: number
+  saleType:      number
+  salePrice:     number
+  lastOwnerId:   string
+  name:          string
+  description:   string
+}
+
+/** Map a generic-decoded ObjectPropertiesFamily (Medium 10) into the WS payload; null if malformed. */
+export function mapObjectPropertiesFamily(blocks: DecodedBlocks): ObjectPropsFamilyData | null {
+  const b = blocks.ObjectData?.[0]
+  if (!b) return null
+  const str = (v: unknown) => Buffer.isBuffer(v) ? v.toString('utf8').replace(/\0+$/, '') : String(v ?? '')
+  return {
+    fullId:        String(b.ObjectID ?? ZERO_UUID),
+    ownerId:       String(b.OwnerID ?? ZERO_UUID),
+    groupId:       String(b.GroupID ?? ZERO_UUID),
+    baseMask:      Number(b.BaseMask) >>> 0,
+    ownerMask:     Number(b.OwnerMask) >>> 0,
+    groupMask:     Number(b.GroupMask) >>> 0,
+    everyoneMask:  Number(b.EveryoneMask) >>> 0,
+    nextOwnerMask: Number(b.NextOwnerMask) >>> 0,
+    saleType:      Number(b.SaleType) || 0,
+    salePrice:     Number(b.SalePrice) || 0,
+    lastOwnerId:   String(b.LastOwnerID ?? ZERO_UUID),
+    name:          str(b.Name),
+    description:   str(b.Description),
   }
 }
 

@@ -1069,23 +1069,51 @@ function close() {
 						are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the Phase 3
 						ObjectPhysicsProperties work, so it still shows "not decoded". -->
 					<template v-else-if="activeTab === 'features'">
-						<div class="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-1.5 text-xs px-0.5">
-							<div class="text-fg/50">Flexible Path</div>
-							<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
-							<div v-else class="text-fg/40 italic">Off</div>
-							<div class="text-fg/50">Light</div>
-							<div v-if="obj.light" class="flex items-center gap-2 text-fg text-2xs">
-								<span class="w-4 h-4 shrink-0 rounded-sm border border-edge" :style="{ background: `rgb(${lightRgb})` }"></span>
-								<span>intensity {{ obj.light.intensity.toFixed(2) }} · radius {{ obj.light.radius.toFixed(1) }}m · falloff {{ obj.light.falloff.toFixed(1) }}</span>
+						<div class="grid grid-cols-[1fr_1fr] gap-x-2 gap-y-1.5 text-xs px-0.5">
+							<div class="flex flex-col gap-1">
+								<div>Edit object features:</div>
+								<div>[ ] Animated mesh</div>
+								<div class="text-fg/50">[ ] Flexible Path</div>
+								<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
+								<div v-else class="text-fg/40 italic">Off</div>
+								<div>Softness</div>
+								<div>Gravity</div>
+								<div>Drag</div>
+								<div>Wind</div>
+								<div>Tension</div>
+								<div>Force X</div>
+								<div>Force Y</div>
+								<div>Force Z</div>
+								<div class="text-fg/50">[ ] Light</div>
+								<div v-if="obj.light" class="flex items-center gap-2 text-fg text-2xs">
+									<span class="w-4 h-4 shrink-0 rounded-sm border border-edge" :style="{ background: `rgb(${lightRgb})` }"></span>
+									<span>intensity {{ obj.light.intensity.toFixed(2) }} · radius {{ obj.light.radius.toFixed(1) }}m · falloff {{ obj.light.falloff.toFixed(1) }}</span>
+								</div>
+								<div v-else class="text-fg/40 italic">Off</div>
+								<div>Intensity</div>
+								<div>Radius</div>
+								<div>Falloff</div>
+								<div class="text-fg/50">[ ] Reflection Probe</div>
+								<div v-if="reflectionProbeLabel" class="text-fg text-2xs">{{ reflectionProbeLabel }}</div>
+								<div v-else class="text-fg/40 italic">Off</div>
+								<div>[ ] Dynamic</div>
+								<div>Ambiance</div>
 							</div>
-							<div v-else class="text-fg/40 italic">Off</div>
-							<div class="text-fg/50">Reflection Probe</div>
-							<div v-if="reflectionProbeLabel" class="text-fg text-2xs">{{ reflectionProbeLabel }}</div>
-							<div v-else class="text-fg/40 italic">Off</div>
-							<div class="text-fg/50">Physics Shape</div>
-							<div class="text-fg/40 italic">not decoded</div>
-							<div class="text-fg/50">Material (physics)</div>
-							<div class="text-fg">{{ materialLabel }}</div>
+							<div class="flex flex-col gap-1">
+								<div class="text-fg/50">Physics shape type</div>
+								<div class="text-fg/40 italic">not decoded</div>
+								<div class="text-fg/50">Material (physics)</div>
+								<div class="text-fg">{{ materialLabel }}</div>
+								<div>Gravity</div>
+								<div>Friction</div>
+								<div>Density in kg/m³</div>
+								<div>Bounciness</div>
+								<div>FOV</div>
+								<div>Focus</div>
+								<div>Ambiance</div>
+								<div>[       ]</div>
+								<div>Next clip</div>
+							</div>
 						</div>
 						<div class="text-2xs text-fg/30 italic pt-1">
 							Physics-shape type isn't carried in the object update — it arrives in a separate

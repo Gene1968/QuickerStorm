@@ -53,7 +53,7 @@ Full FS-parity pass (5 waves + a dedicated data-loss fix).
   FS filter subsets (permission/date/links filters, Empty Trash) · bad/missing-asset resilience (100+ blob 404s;
   mark dead assets, retry/log noise) · "Inspect textures" floater.
 
-### ✅ Inventory — remaining polish SHIPPED 2026-07-02 (uncommitted; NOT live-verified)
+### ✅ Inventory — remaining polish SHIPPED 2026-07-02 (committed; NOT live-verified)
 Full cluster swept via ultracode workflow (5 impl agents + per-diff FS-parity reviewers; all citations
 re-verified against the local FS/OpenSim checkouts, all suites green, staging build green).
 - **Take / Take copy** — DeRezObject Take(4)/TakeCopy(1) (values verified vs OpenSim `DeRezAction` +
@@ -86,7 +86,7 @@ re-verified against the local FS/OpenSim checkouts, all suites green, staging bu
   type · Find-all-links · Replace-links · **wearing an item doesn't update the Appearance floater**. (All
   gated on AgentSetAppearance bake — see 🧠 Appearance / baked textures below.)
 
-### ✅ Drag-drop robustness — SHIPPED 2026-07-03 (uncommitted; NOT live-verified — DnD hard to drive via MCP)
+### ✅ Drag-drop robustness — SHIPPED 2026-07-03 (committed; NOT live-verified — DnD hard to drive via MCP)
 Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests green):
 - **Rez drop raycasts prims too** — new `screenToDropPoint()` (prim meshes incl. InstancedMesh pool first,
   terrain fallback); toast on rejected drop. FS-style sim-raycast (rayStart=camera, BypassRaycast=0 +
@@ -111,7 +111,7 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
   → **Object edit — manipulation** cluster below · Select-Face radio
 - texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
 - Link/Unlink prims · Link-number ordering bug (L183) · **create/rez a prim in-world** (Build-tools)
-- **✅ ObjectProperties-data BATCH — SHIPPED 2026-07-03 (uncommitted; core LIVE-VERIFIED osgrid):**
+- **✅ ObjectProperties-data BATCH — SHIPPED 2026-07-03 (committed; core LIVE-VERIFIED osgrid):**
   whole-linkset ObjectSelect (≤254-id chunks) → per-prim props into worldStore + `objectPermissions.js`
   (selectGetPerm-port `aggregateBit` + `canTakeObject`/`canTakeCopyObject` mirroring PermissionsModule.cs).
   · **Take / Take copy perm gating** ✅ LIVE-VERIFIED — greyed on a no-everyone-perms mailbox, enabled on a
@@ -143,7 +143,7 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**
   ('You don't have enough…' + placeholders for real purchase/currency) — full money system is brainstorm-first.
 
-### 🛠️ Object edit — manipulation — ✅ M-1/M-2/M-3 SHIPPED 2026-07-05 (uncommitted; LIVE-VERIFIED)
+### 🛠️ Object edit — manipulation — ✅ M-1/M-2/M-3 SHIPPED 2026-07-05 (committed; LIVE-VERIFIED)
 **M-1** encodeMultipleObjectUpdate + handler + useLLUDP sendPosition/sendScale/sendRotation (golden-byte
 tests vs the OpenSim type table; ⚠ impl unreviewed — spend limit). **M-2/M-3** (done by hand after the
 sweep): editable Pos/Size/Rot inputs on Gene's floater layout + ±0.05 m/±0.5° steppers + ↑/↓ keys,
@@ -171,7 +171,7 @@ Object tab are read-only `<span>`s (ObjectEditFloater.vue:901–923; `quatToEule
   SL↔Three Y/Z swap care) · **drag-select marquee** (needs multi-object selection state — today only single
   `ui.editObjectId`; FS lltoolselectrect.cpp:72) · **shift-copy** (ObjectDuplicate Low 92, needs gizmo drag first).
 
-### 🎬 Scripted motion & TextureAnim — ✅ SHIPPED 2026-07-05 (uncommitted; NOT live-verified)
+### 🎬 Scripted motion & TextureAnim — ✅ SHIPPED 2026-07-05 (committed; NOT live-verified)
 Full A–G swept 2026-07-05 ultracode. Server wire (E/F decode + forward) REVIEWED-PASS (all cites verified,
 251 server tests green). Client (all A–G in useWorldEngine + src/lib/scriptedMotion.js pure-math port)
 ⚠ UNREVIEWED — the org spend limit killed its reviewer mid-workflow; code self-audited only. KEY UPGRADE
@@ -205,7 +205,7 @@ excluded from / auto-promoted out of the InstancedMesh pool (poolKey snapshots s
   frame = floor(elapsed·rate), x=f%sizeX, y=floor(f/sizeX), offsets centered −0.5+0.5/size; LOOP/PING_PONG/REVERSE.
 - **D. ROTATE / SCALE modes** (0x20/0x40): `map.rotation = frame_counter` (center 0.5,0.5) / repeat=counter.
 
-### 📦 Object Contents — ✅ ALL 6 STEPS SHIPPED 2026-07-05 (uncommitted; list LIVE-VERIFIED)
+### 📦 Object Contents — ✅ ALL 6 STEPS SHIPPED 2026-07-05 (committed; list LIVE-VERIFIED)
 Steps 1–3 (server: Xfer subsystem + RequestTaskInventory/Reply + legacy parser + TASK_INV wire +
 MoveTaskInventory encode; ⚠ impl unreviewed — spend limit; unit tests green). Steps 4–6 done by hand:
 `useTaskInventory` composable (module-singleton state, KILL_OBJECT invalidate, 35s no-reply timeout) +
@@ -245,7 +245,7 @@ exists** in our server. OpenSim has NO RequestTaskInventory HTTP cap → must bu
    FS: llfloateropenobject.cpp:155 moveToInventory, llinventorybridge.cpp:3624. → items land in Objects folder.
    (Unblocks the FEATURE-GAPS "UNBOX perms re-check" watch item.)
 
-### 🔊 Sound — ✅ SHIPPED 2026-07-05 (uncommitted; NOT live-verified)
+### 🔊 Sound — ✅ SHIPPED 2026-07-05 (committed; NOT live-verified)
 S-1…S-8 all swept 2026-07-05 ultracode (server wire REVIEWED-PASS; client useSoundEngine.js REVIEWED with
 ONE blocker — llStopSound could never stop loops because the codec omitted zero-UUID sound fields — FIXED
 by hand same day: codec now emits an id:null STOP marker when Sound=Zero + flags/gain set
@@ -286,9 +286,67 @@ are "state only, no routing yet").
   "can't render this yet" state and the scaffold Stage-3 skeleton work hangs off. Billboard-impostor render
   itself stays 🧠.
 
-### Right-click menus (object + avatar) — FEATURE-GAPS L190–207
-- avatar: zoom-to · inspect (appearance) · invite to group · save outfit · self menu (Sit/Stand/Fly)
-- object: sit-on-object (SitOnObject + RequestObjectPropertiesFamily) · buy/pay · open contents (Xfer)
+### ✅ Right-click menus (object + avatar) — SHIPPED 2026-07-13 (NOT live-verified)
+Full sweep (4-stage workflow, reviewed w/ 2 integration fixes applied; 265 server + 69 targeted client
+tests green, staging build green):
+- **Sit on object** — AvatarSitResponse (High 21) decoded+forwarded (`S.SIT_RESPONSE`, fly forced off per
+  FS llviewermessage.cpp:5489); THE avatar reparent gap FIXED (avatars whose ParentID changes now
+  attach/detach into/out of the seat prim, own + remote; parent-local pos handling; own-avatar DR/gravity/yaw
+  gated while seated; camera + LocationBar read world pos via getWorldPosition).
+  Context-menu row swaps Sit here ↔ Stand Up; sitName label. OpenSim quirks honored (free-sit >10 m =
+  silent refusal; ground-sit sets NO ParentID → tracked optimistically).
+- **Stand up / Sit on ground / Fly** — CTRL_STAND_UP 0x10000 / CTRL_SIT_ON_GROUND 0x20000 (indra_constants.h:338-342)
+  + immediate out-of-cycle AgentUpdate send; wired: AvatarContextMenu self, MenuBar ▸ Movement (incl. Force
+  ground Sit, gated while object-seated), MoveControlsFloater Stand Up / Stop Flying conditional buttons.
+- **Zoom in** (object + avatar menus) → enterOrbitAt via qs:zoom-to-object.
+- **Buy** — ObjectBuy (Low 102) FS-parity bytes; BuyObjectDialog (title-by-saleType, owner, perm letters,
+  insufficient-funds gate, 10s silent-refusal watchdog — stock OpenSim DROPS ObjectBuy w/o money module,
+  BlueBox-refuses priced buys, only L$0 works); menu gate = saleType>0 ∧ owner known ∧ not self (stricter
+  than Take on unknown, deliberate); hover Buy badge now suppressed when not actually for sale.
+- **Pay** — MoneyTransferRequest (Low 311; TRANS_GIFT 5001 / TRANS_PAY_OBJECT 5008); PayFloater (FS fast-pay
+  1/5/10/20 + amount). NOTE: viewer Pay is a sim-side NO-OP on stock OpenSim (SampleMoneyModule.MoneyTransferAction
+  is empty) — needs a real currency module to do anything.
+- **Money balance** — MoneyBalanceRequest/Reply + `useMoney` (stock grids always report L$0).
+- **Invite to group** — InviteGroupRequest (Low 349), submenu from real group list; silent server-side if
+  grid groups are off.
+- **Inspect avatar** — InspectAvatarFloater (born/age/About via existing profile plumbing).
+- **Deliberately left out (gated on 🧠 programs):** Save outfit (appearance), Call (voice).
+- **FIX ROUND 2026-07-13 (Gene's live-test feedback — "just match what the FS code does"):**
+  (a) movement-key-stands REMOVED — FS ground truth: llagent.cpp:763-914 moveAt/moveLeft/moveUp have NO
+  isSitting branch/standUp(); flags are sent, sim ignores them (Gene was right, my spec invented it);
+  (b) 10s buy "No response" watchdog toast REMOVED — FS onClickBuy is fire-and-forget with zero timeout
+  detection (llfloaterbuy.cpp:321-333); success = item appears in inventory + MoneyBalanceReply description
+  toast when the grid sends one; sim refusals still auto-toast via AlertMessage;
+  (c) Stand/Stop-Flying → standalone bottom-center StandStopFlying.vue (FS LLPanelStandStopFlying is
+  independent of the Move floater, llmoveview.cpp:157-182/569-589; shows for ground-sit too; Stand wins
+  over Stop-Flying) — was buried in MoveControlsFloater, invisible when closed;
+  (d) LEFT-CLICK ClickAction dispatch (FS lltoolpie.cpp:350-443): Sit(1)→sit w/ pick offset, Buy(2)→select
+  root + BuyObjectDialog, Pay(3)→PayFloater, Zoom(7)→camera, 4/5/6 eaten (no OpenObject floater/media yet),
+  8 eaten; modifier keys bypass (mask==MASK_NONE gate) — fixes "clicking a for-sale object does nothing";
+  (e) sit OFFSET now sent — FS pick.mObjectOffset (object-local click point, llviewermenu.cpp:6013) through
+  sendSit→server→AgentRequestSit; free-sit prims seat AT the clicked spot, not the prim origin. Scripted
+  (incl. child/multiple) sit targets were always sim-side (FindNextAvailableSitTarget walks the linkset,
+  ScenePresence.cs:3247-3286) — nothing client-side to do there;
+  (f) hover Buy badge = Gene's rule (only when KNOWN for-sale, saleType>0) — made workable by wiring the
+  hover-driven RequestObjectPropertiesFamily (Medium 5) / ObjectPropertiesFamily (Medium 10) pair (the
+  template's own "driven by mouse hovering" message; FS fills node->mSaleInfo the same way,
+  llselectmgr.cpp:6421-6481): hovering a ClickAction=Buy object with unknown sale info fires one request,
+  reply merges into worldStore via applyObjectProperties → badge appears iff genuinely for sale;
+  (g) reload-while-seated 0/0 FIXED — identify-own no longer reads a parked-orphan's parent-local pos as
+  world; avatarSLPos defers until the seat prim streams in, then derives from the real world transform
+  (orphan-attach hook), isSitting set on arrive-parented too.
+- **Follow-ups:** (1) sit CameraEyeOffset/CameraAtOffset not applied (normal orbit cam kept — fine v1);
+  (2) own-avatar sitRotation offset not applied (seat carries the pose; exact pose = avatar program);
+  (3) SIT_ON_GROUND sent edge-triggered (right for OpenSim; FS holds bit — matters only vs SL-proper);
+  (4) useMoney balance re-request on reconnect (floaters re-request on open);
+  (5) RECEIVE side of group invites (IM dialog 22 → accept/decline 23/24) → IM/Groups cluster;
+  (6) LandContextMenu "Sit Here" (walk-to-point + ground-sit chain) → Land cluster;
+  (7) ClickAction OPEN(4) needs a non-destructive LLFloaterOpenObject equivalent (our task-inv "Open"
+  copies immediately — wrong for a left-click); PLAY(5)/OPEN_MEDIA(6) → media program;
+  (8) sit visual pose (avatar bends/sits) + AvatarAnimation decode → 🧠 avatar program — until then a
+  seated avatar stands-on-the-seat-spot; full sit verification blocked on that.
+- ⬜ live-verify list is in the 2026-07-13 session notes (chair sit/stand/W-stands, ground sit, fly toggles,
+  zoom, buy L$0 + watchdog, pay no-op, invite, seated-remote-avatar-before-TP-in regression).
 
 ### Land / Parcel / region (right-click + floaters)
 - About Land · Region details · Parcel details · Location profile · Set Home here · Sit here · Build here ·
@@ -425,7 +483,7 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## Recently shipped (don't re-pick)
-- **2026-07-02 eve (uncommitted):** Post-live-test follow-ups — (1) **Take Copy "no response" root-caused**:
+- **2026-07-02 eve (committed):** Post-live-test follow-ups — (1) **Take Copy "no response" root-caused**:
   OpenSim refuses take-copy without the everyone-copy bit ("full perm" = next-owner perms, not everyone);
   refusals arrived as **AlertMessage (Low 134) we dropped** → now decoded + surfaced as toast + "Grid:"
   nearby-chat line (also catches every future sim refusal/notice). GAP queued: grey out Take/Take copy
@@ -438,7 +496,7 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
   inventory-panel style, via new InventoryScopedTree shadowed-invFilter wrapper; view-mode "list" keeps the
   old flat rows). NOTE: two subagents were killed mid-flight by the org spend limit — their partial work
   (eye scopes, purgeItem) landed in d3f950e and was completed by hand.
-- **2026-07-02 pm (uncommitted, NOT live-verified):** Inventory remaining-polish ultracode sweep — Take/Take
+- **2026-07-02 pm (committed, NOT live-verified):** Inventory remaining-polish ultracode sweep — Take/Take
   copy (all surfaces + wire contract) · Trash menu + Empty Trash (purge + authorized cache shrink) · create
   folder from selected · worn→Detach · search-clear keeps selection · Del→select-next (with focus hand-off) ·
   eye viz dropdown · single-folder list mode · shared `_enrichItem()` perms fix · drag-rez/share diagnosis
@@ -492,7 +550,7 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
   mismatch (resize/rotate bumps the CRC) triggers a fresh full ObjectUpdate; deletes come back as misses.
   Our preseed paints cached objects and trusts them. The DELETE half = the existing 🧠 **Stale-scene genuine
   deletes** item (confirmation-gated preseed); this report widens it to **mutation staleness** → same design
-  pass: validate-on-entry (CRC probe or equivalent) + replace outdated cache rows. Related: ghost-reconcile
+  pass: validate-on-entry (CRC probe or equivalent) + replace outdated cache rows. Even objects that get a live update and look right for a while later go back to stale state on later load from cache.  Related: ghost-reconcile
   (2026-07-02) only culls server-side-known deletes; crcMap poisoning history in [[crc-probe-audit-resolved]].
 
 **2026-07-05 (from live-verifying the motion sweep):**

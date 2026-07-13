@@ -71,6 +71,13 @@ export const useUiStore = defineStore('ui', () => {
 	const floaterStack       = ref([])       // ordered by focus; last = topmost/active floater
 	const alwaysRun          = ref(false)    // SL AGENT_CONTROL_ALWAYS_RUN flag — Ctrl+R toggle
 	const flying             = ref(false)    // mirrors engine isFlying for UI button state
+	// WHY: own-avatar seated state, driven by useWorldEngine. false = standing; 'object' = sim-
+	// confirmed prim-sit (ParentID != 0 on our own avatar's ObjectUpdate/terse — OpenSim
+	// ScenePresence.cs:3641-3648); 'ground' = optimistic-only (ground-sit NEVER sets ParentID,
+	// ScenePresence.cs:3662-3676), set on request and cleared on stand/movement. Right-click
+	// menus (Stand Up / Sit on Ground) and MenuBar read this for active/disabled state.
+	const isSitting          = ref(false)    // false | 'object' | 'ground'
+	function setSitting(v) { isSitting.value = v || false }
 	// Scene-rebuild request channel (MenuBar → worldEngine): bump the tick to ask the engine to
 	// clear cull-evictions, re-queue every known object, and resync from the server. Heavier than
 	// Resync World — that one only replays server state, which the engine IGNORES for objects it
@@ -293,6 +300,9 @@ export const useUiStore = defineStore('ui', () => {
 		'create-landmark': () => { showCreateLandmark.value = false },
 		'movement-help': () => { showMovementHelp.value  = false },
 		quickprefs:      () => { showQuickPrefs.value    = false },
+		pay:             () => { payTarget.value         = null },
+		'buy-object':    () => { buyDialogTarget.value   = null },
+		'inspect-avatar':() => { inspectAvatarId.value    = null },
 	}
 	function closeActiveFloater() {
 		if (!floaterStack.value.length) return
@@ -399,6 +409,27 @@ export const useUiStore = defineStore('ui', () => {
 		floaterStack.value = floaterStack.value.filter(f => f !== id)
 	}
 
+	// WHY: Pay floater — single-instance (mirrors FS: one LLFloaterPay at a time). target =
+	// { targetId, targetName, kind: 'avatar'|'object'|'group' } set by the context-menu "Pay" rows
+	// (AvatarContextMenu/ObjectContextMenu — next sweep stage). null = closed.
+	const payTarget = ref(null)
+	const showPayFloater = computed(() => payTarget.value != null)
+	function openPayFloater(target) { payTarget.value = target; focusFloater('pay') }
+	function closePayFloater() { payTarget.value = null; floaterStack.value = floaterStack.value.filter(f => f !== 'pay') }
+
+	// WHY: Buy dialog — single-instance (FS LLFloaterBuy: only one at a time). target = { localId }.
+	const buyDialogTarget = ref(null)
+	const showBuyDialog = computed(() => buyDialogTarget.value != null)
+	function openBuyDialog(target) { buyDialogTarget.value = target; focusFloater('buy-object') }
+	function closeBuyDialog() { buyDialogTarget.value = null; floaterStack.value = floaterStack.value.filter(f => f !== 'buy-object') }
+
+	// WHY: Inspect-avatar floater — single-instance compact FS LLInspectAvatar equivalent, opened
+	// from AvatarContextMenu "Inspect" (next sweep stage). Holds the target agentId; null = closed.
+	const inspectAvatarId = ref(null)
+	const showInspectAvatar = computed(() => inspectAvatarId.value != null)
+	function openInspectAvatar(avatarId) { inspectAvatarId.value = avatarId; focusFloater('inspect-avatar') }
+	function closeInspectAvatar() { inspectAvatarId.value = null; floaterStack.value = floaterStack.value.filter(f => f !== 'inspect-avatar') }
+
 	return {
 		mode, showAvatarList, showMinimap, showChat, chatActiveTab, openChatOnTab,
 		showInventory, showMap, showNotifications, showSettings, showDebug,
@@ -416,6 +447,7 @@ export const useUiStore = defineStore('ui', () => {
 		toggleMovementHelp, togglePlaces, openPlacesOnTab, placesActiveTab, openPreferencesOnTab,
 		alwaysRun, toggleAlwaysRun, setAlwaysRun,
 		flying, setFlying,
+		isSitting, setSitting,
 		sceneRebuildTick, requestSceneRebuild,
 		textureRefreshReq, requestTextureRefresh,
 		litShading, instancing, showFps, cacheWorker, dayNightCycle, timeOfDay, fps, setFps, netKbps, setNetKbps,
@@ -437,5 +469,8 @@ export const useUiStore = defineStore('ui', () => {
 		editLinked, setEditLinked,
 		gizmoMode, setGizmoMode,
 		teleportStatus,
+		payTarget, showPayFloater, openPayFloater, closePayFloater,
+		buyDialogTarget, showBuyDialog, openBuyDialog, closeBuyDialog,
+		inspectAvatarId, showInspectAvatar, openInspectAvatar, closeInspectAvatar,
 	}
 })
