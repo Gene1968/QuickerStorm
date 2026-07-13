@@ -13,8 +13,11 @@ import { aggregateBit, PERM_TRANSFER, PERM_MODIFY, PERM_COPY, PERM_EXPORT, PERM_
 import { nextOwnerCopyTentative, nextOwnerTransferTentative, everyoneCopyTentative, everyoneMoveEditable, everyoneCopyEditable, everyoneExportEditable, lockedFromOwnerMask } from '@/components/permCheckboxState.js'
 import { C } from '@shared/protocol.js'
 import { quatToEulerDeg, eulerDegToQuat } from '@/utils/eulerQuat.js'
+import { canLinkGate, canUnlinkGate } from '@/utils/linkGating'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { itemIcon } from '@/utils/inventoryIcons.js'
 import { useTaskInventory } from '@/composables/useTaskInventory'
+import { PRIM_SHAPE_KEYS } from '@/lib/primShapes.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import PermCheckbox from '@/components/PermCheckbox.vue'
 import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
@@ -47,6 +50,19 @@ function pickTool(t) {
 	if (t.disabled) return
 	buildTool.value = t.id
 }
+// WHY: FS arms the Create tool the moment the tab is picked (the highlighted default shape IS the
+// armed shape — no extra click needed, Gene 2026-07-13); leaving the tab (or closing the floater,
+// see close()) disarms so a later canvas click can't surprise-rez.
+watch(buildTool, (t) => {
+	if (t === 'create') ui.armBuildPlacement(ui.buildShape)
+	else ui.disarmBuildPlacement()
+})
+// FS flips Create → Edit after a successful place when "Keep tool selected" is off (the rez
+// handler in WorldCanvas disarms; we mirror that back onto the tool tabs so the floater shows
+// the Edit tool for the incoming CreateSelected prim). Esc-disarm routes through here too.
+watch(() => ui.buildPlacementArmed, (armed) => {
+	if (!armed && buildTool.value === 'create' && !ui.buildKeepTool) buildTool.value = 'edit'
+})
 
 // Gizmo operation radios — tied to uiStore.gizmoMode (and the Ctrl / Ctrl+Shift modifiers).
 const gizmoOps = [
@@ -59,7 +75,8 @@ const gizmoOps = [
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
 // ── Editable Name / Description (General tab) → ObjectName (107) / ObjectDescription (108) ──
-const { sendRename, sendDescription, sendObjectPerms, sendSelect, sendPosition, sendScale, sendRotation } = useLLUDP()
+const { sendRename, sendDescription, sendObjectPerms, sendSelect, sendPosition, sendScale, sendRotation, sendLink, sendDelink } = useLLUDP()
+const notif = useNotificationStore()
 const editName = ref('')
 const editDesc = ref('')
 // Reseed editable fields whenever the selected object — or its sim-provided name/desc — changes,
@@ -339,7 +356,16 @@ function permLetters(mask) {
 // Copy needs owner COPY && TRANSFER; Export :931-947: creator==owner + can_set_export) and the
 // Next-owner row (:969-972: Modify needs base MODIFY, Copy needs base COPY, Transfer needs
 // next-owner COPY).
-const selectionRecords = computed(() => (obj.value ? [obj.value] : []))
+// Full selection = primary + shift/ctrl multi-selected roots (uiStore.selectedObjectIds, added
+// 2026-07-13 build-tools sweep). Perm checkboxes aggregate over ALL of it (aggregateBit was
+// already array-ready); the "N objects selected" line and Link gating read the same list.
+const selectedIds = computed(() => {
+	void world.objects.size
+	const ids = [ui.editObjectId, ...ui.selectedObjectIds].filter((id) => id != null)
+	return [...new Set(ids)]
+})
+const selectionRecords = computed(() =>
+	selectedIds.value.map((id) => world.objects.get(id)).filter(Boolean))
 const selfOwned = computed(() => {
 	const o = obj.value
 	return !!o?.ownerId && !!session.agentId && o.ownerId.toLowerCase() === session.agentId.toLowerCase()
@@ -398,9 +424,44 @@ const linkNumber = computed(() => {
 })
 // WHY: no real resource-cost (land impact) or parcel-capacity feed yet (Phase 3 caps). Use the
 // prim count as the legacy land-impact proxy; capacity stays a placeholder until parcel data lands.
-const objectsSelected   = computed(() => (obj.value ? 1 : 0))
-const landImpact        = computed(() => linksetIds.value.length || '—')
+// Counts follow the FULL multi-selection: N = distinct linkset roots, land impact = total prims
+// across every selected linkset (FS floater counts the whole selection, llfloatertools.cpp).
+const selectedRoots = computed(() => {
+	void world.objects.size
+	const roots = new Set()
+	for (const id of selectedIds.value) roots.add(world.linksetMembers(id)[0] ?? id)
+	return [...roots]
+})
+const objectsSelected   = computed(() => selectedRoots.value.length)
+const landImpact        = computed(() => {
+	const n = selectedRoots.value.reduce((sum, id) => sum + (world.linksetMembers(id).length || 1), 0)
+	return n || '—'
+})
 const remainingCapacity = computed(() => '—')
+
+// ── Link / Unlink buttons — same gate + invoke as MenuBar Build ▸ Link/Unlink and the object
+// context menu (linkGating.js = FS enableLinkObjects/enableUnlinkObjects port). Kept as computeds
+// (not call-per-render fns like MenuBar's menu callbacks) so :disabled/:title stay reactive.
+const linkGate   = computed(() => { void world.objects.size; return canLinkGate(world.objects, selectedIds.value) })
+const unlinkGate = computed(() => { void world.objects.size; return canUnlinkGate(world.objects, world.linksetMembers, selectedIds.value) })
+function linkSelected() {
+	const g = linkGate.value
+	if (g.disabled) {
+		if (g.reason === 'differentOwners') {
+			notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
+		}
+		return
+	}
+	sendLink(g.roots)
+	ui.clearMultiSelect()
+}
+function unlinkSelected() {
+	if (unlinkGate.value.disabled) return
+	// SEND_INDIVIDUALS semantics (FS llselectmgr.cpp:5493): a plain root selection delinks its
+	// WHOLE linkset, matching FS's default (non-Edit-Linked) Unlink behavior.
+	sendDelink(selectedIds.value.flatMap((id) => world.linksetMembers(id)))
+	ui.clearMultiSelect()
+}
 
 // Select previous/next linked part in store (arrival) order. Implies part-level editing, so
 // force "Edit linked" on.
@@ -413,7 +474,14 @@ function selectLink(delta) {
 	ui.editObjectId = m[ni]
 }
 
-// ── Texture-tab derived data (Blinn-Phong + PBR) ──────────────────────────
+// ── Create tab: shape picker → uiStore.armBuildPlacement (WorldCanvas.vue does the actual
+// rez-on-click; see src/lib/primShapes.js for the FS-ported per-shape param table). Tree/Grass
+// stay unwired — no rendering pipeline for either yet (Trees cluster, docs/FEATURE-GAPS.md).
+function selectBuildShape(key) {
+	if (!PRIM_SHAPE_KEYS.includes(key)) return
+	ui.armBuildPlacement(key)
+}
+
 // SL "Blank" (5748decc) and the zero UUID are not real textures — the renderer ignores them, so the
 // floater must too (else blank-default faces show as phantom per-face overrides).
 const SL_BLANK = '5748decc-f629-461c-9a36-a35a221fe21f'
@@ -603,11 +671,13 @@ watch(
 function close() {
 	ui.editObjectId = null
 	ui.showObjectEdit = false
+	ui.disarmBuildPlacement()   // closing the floater must never leave a surprise rez-click armed
 }
 </script>
 
 <template>
 	<FloaterWindow
+		v-show="!ui.gizmoDragging"
 		id="object-edit"
 		title="Build Tools"
 		build-tool
@@ -639,9 +709,9 @@ function close() {
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to move camera</p>
 					<div class="flex items-center gap-3">
 						<div class="flex flex-col whitespace-nowrap">
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Zoom</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Orbit (Ctrl)</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Pan (Ctrl+Shift)</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Zoom</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Orbit (Ctrl)</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Pan (Ctrl+Shift)</label>
 						</div>
 						<div class="w-full">
 							<input type="range" min="0" max="100" value="75" disabled class="w-full accent-accent" />
@@ -651,9 +721,9 @@ function close() {
 				<div v-else-if="buildTool === tools[1].id">
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Drag to move, Ctrl to lift, Ctrl+Shift to rotate</p>
 					<div class="flex flex-col whitespace-nowrap">
-						<label for=""><input type="radio" class="accent-accent shrink-0"/> Move</label>
-						<label for=""><input type="radio" class="accent-accent shrink-0"/> Lift (Ctrl)</label>
-						<label for=""><input type="radio" class="accent-accent shrink-0"/> Spin (Ctrl+Shift)</label>
+						<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Move</label>
+						<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Lift (Ctrl)</label>
+						<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Spin (Ctrl+Shift)</label>
 					</div>
 				</div>
 				<div v-else-if="buildTool === tools[2].id">
@@ -685,12 +755,12 @@ function close() {
 							</label>
 						</div>
 						<div class="flex flex-col text-2xs text-fg whitespace-nowrap">
-							<label for=""><input type="checkbox" class="accent-accent" /> Stretch both sides</label>
-							<label for=""><input type="checkbox" class="accent-accent" checked="checked" /> Stretch textures</label>
-							<label for=""><input type="checkbox" class="accent-accent" /> Snap</label>
-							<label for=""><input type="checkbox" class="accent-accent" /> Edit axis at root</label>
-							<label for=""><input type="checkbox" class="accent-accent" checked="checked" /> Show highlight</label>
-							<label for=""><input type="checkbox" class="accent-accent" /> Select reflection probes</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" /> Stretch both sides</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" checked="checked" /> Stretch textures</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" /> Snap</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" /> Edit axis at root</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" checked="checked" /> Show highlight</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" /> Select reflection probes</label>
 						</div>
 						<div class="text-lg" title="See more grid options (to-do)">➡️</div>
 					</div>
@@ -712,14 +782,18 @@ function close() {
 							@click="selectLink(1)"
 						><ChevronRightIcon class="w-3 h-3" /></button>
 						<button
-							title="Link selected objects (Phase 3 — perms)"
-							disabled
-							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/10"
+							:title="linkGate.title || 'Link selected objects (Ctrl+L)'"
+							:disabled="linkGate.disabled"
+							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge transition-colors"
+							:class="linkGate.disabled ? 'text-fg/30 cursor-not-allowed bg-white/10' : 'text-fg/70 hover:text-fg hover:bg-fg/20'"
+							@click="linkSelected"
 						>Link</button>
 						<button
-							title="Unlink selected object (Phase 3 — perms)"
-							disabled
-							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/10"
+							:title="unlinkGate.title || 'Unlink selected objects (Ctrl+Shift+L)'"
+							:disabled="unlinkGate.disabled"
+							class="ui-btn flex-1 p-0.5 px-4 text-2xs rounded-sm border border-edge transition-colors"
+							:class="unlinkGate.disabled ? 'text-fg/30 cursor-not-allowed bg-white/10' : 'text-fg/70 hover:text-fg hover:bg-fg/20'"
+							@click="unlinkSelected"
 						>Unlink</button>
 						<select
 							title="World (Phase 3)"
@@ -736,27 +810,27 @@ function close() {
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click inworld to build</p>
 					<div class="flex items-center gap-2.5 pe-2">
 						<div class="primcreate flex flex-wrap gap-0.5">
-							<label for="" class="grow border border-panel w-6.5 active" title="Cube"><img src="@/assets/img/build/cube.svg" alt="cube" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Prism"><img src="@/assets/img/build/prism.svg" alt="prism" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Pyramid"><img src="@/assets/img/build/pyramid.svg" alt="pyramid" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Tetrahedron"><img src="@/assets/img/build/tetrahedron.svg" alt="tetrahedron" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Cylinder"><img src="@/assets/img/build/cylinder.svg" alt="cylinder" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Hemicylinder"><img src="@/assets/img/build/hemicylinder.svg" alt="hemicylinder" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Cone"><img src="@/assets/img/build/cone.svg" alt="cone" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Hemicone"><img src="@/assets/img/build/hemicone.svg" alt="hemicone" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Sphere"><img src="@/assets/img/build/sphere.svg" alt="sphere" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Hemisphere"><img src="@/assets/img/build/hemisphere.svg" alt="hemisphere" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Torus"><img src="@/assets/img/build/torus.svg" alt="torus" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Tube"><img src="@/assets/img/build/tube.svg" alt="tube" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
-							<label for="" class="grow border border-panel w-6.5" title="Ring"><img src="@/assets/img/build/ring.svg" alt="ring" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'cube' }" title="Cube" @click="selectBuildShape('cube')"><img src="@/assets/img/build/cube.svg" alt="cube" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'prism' }" title="Prism" @click="selectBuildShape('prism')"><img src="@/assets/img/build/prism.svg" alt="prism" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'pyramid' }" title="Pyramid" @click="selectBuildShape('pyramid')"><img src="@/assets/img/build/pyramid.svg" alt="pyramid" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'tetrahedron' }" title="Tetrahedron" @click="selectBuildShape('tetrahedron')"><img src="@/assets/img/build/tetrahedron.svg" alt="tetrahedron" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'cylinder' }" title="Cylinder" @click="selectBuildShape('cylinder')"><img src="@/assets/img/build/cylinder.svg" alt="cylinder" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'hemicylinder' }" title="Hemicylinder" @click="selectBuildShape('hemicylinder')"><img src="@/assets/img/build/hemicylinder.svg" alt="hemicylinder" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'cone' }" title="Cone" @click="selectBuildShape('cone')"><img src="@/assets/img/build/cone.svg" alt="cone" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'hemicone' }" title="Hemicone" @click="selectBuildShape('hemicone')"><img src="@/assets/img/build/hemicone.svg" alt="hemicone" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'sphere' }" title="Sphere" @click="selectBuildShape('sphere')"><img src="@/assets/img/build/sphere.svg" alt="sphere" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'hemisphere' }" title="Hemisphere" @click="selectBuildShape('hemisphere')"><img src="@/assets/img/build/hemisphere.svg" alt="hemisphere" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'torus' }" title="Torus" @click="selectBuildShape('torus')"><img src="@/assets/img/build/torus.svg" alt="torus" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'tube' }" title="Tube" @click="selectBuildShape('tube')"><img src="@/assets/img/build/tube.svg" alt="tube" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
+							<label for="" class="grow border border-panel w-6.5" :class="{ active: ui.buildShape === 'ring' }" title="Ring" @click="selectBuildShape('ring')"><img src="@/assets/img/build/ring.svg" alt="ring" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
 							<label for="" class="grow border border-panel w-6.5" title="Tree"><img src="@/assets/img/build/tree.svg" alt="tree" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
 							<label for="" class="grow border border-panel w-6.5" title="Grass"><img src="@/assets/img/build/grass.svg" alt="grass" class="bg-panel hover:bg-accent-dark p-0.5 aspect-square" /></label>
 						</div>
 						<div class="flex flex-col whitespace-nowrap">
-							<label for=""><input type="checkbox" class="accent-accent" /> Keep tool selected</label>
-							<label for=""><input type="checkbox" class="accent-accent" /> Copy selection</label>
+							<label for=""><input type="checkbox" v-model="ui.buildKeepTool" class="accent-accent" /> Keep tool selected</label>
+							<label for=""><input type="checkbox" title="to-do" class="accent-accent" /> Copy selection</label>
 							<label for="" class="ms-4"><input type="checkbox" class="accent-accent" checked="checked" /> Center copy</label>
-							<label for="" class="ms-4"><input type="checkbox" class="accent-accent" /> Rotate copy</label>
+							<label for="" class="ms-4"><input type="checkbox" title="to-do" class="accent-accent" /> Rotate copy</label>
 							<select class="ui-select bg-fg/20 border border-edge rounded-sm mb-1 ms-2 mt-1 py-0 px-1.5 w-full text-fg">
 								<option value="">Random</option>
 								<option value="">Grass 0</option>
@@ -773,13 +847,13 @@ function close() {
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to select land</p>
 					<div class="flex gap-5">
 						<div class="flex flex-col whitespace-nowrap">
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Select land</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Flatten</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Raise</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Lower</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Smooth</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Roughen</label>
-							<label for=""><input type="radio" class="accent-accent shrink-0"/> Revert</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Select land</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Flatten</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Raise</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Lower</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Smooth</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Roughen</label>
+							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Revert</label>
 						</div>
 						<div class="w-full">
 							<p>Bulldozer:</p>
@@ -799,7 +873,7 @@ function close() {
 						<div class="ps-4">
 							<p class="mb-2">Area: ##### m<sup>2</sup></p>
 							<button class="ui-btn mb-2 py-0.5 px-5 w-full text-xs rounded-sm border transition-colors">About land</button>
-							<label for="" class="flex items-center gap-1" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public"><input type="checkbox" class="accent-accent" /> Show owners</label>
+							<label for="" class="flex items-center gap-1" title="Colorize the parcels according to the type of owners:\n\nGreen = Your land\nAqua = Your group's land\nRed = Owned by others\nYellow = For sale\nPurple = For auction\nGrey = Public"><input type="checkbox" title="to-do" class="accent-accent" /> Show owners</label>
 						</div>
 					</div>
 					<div class="w-36 my-8 ps-2">
@@ -959,7 +1033,7 @@ function close() {
 						prim-shape params + the building-block / mesh / sculpt type. The type row is how
 						you tell a mesh from a sculpt from a plain prim. -->
 					<template v-else-if="activeTab === 'object'">
-						<div class="flex gap-2 px-0.5">
+						<div class="flex gap-1.5 px-0.5">
 							<div class="w-2/5">
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Move permission — object is locked in place"><input type="checkbox" class="accent-accent" :checked="lockedFromOwnerMask(obj.ownerMask) === true" disabled /> Locked</label><!-- FS keys Locked off PERM_MOVE on the owner mask (llpanelobject.cpp:646-663), NOT Modify -->
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" class="accent-accent" :checked="!!obj.physical" disabled /> Physical</label>
@@ -971,11 +1045,11 @@ function close() {
 										{ kind: 'size', label: 'Size (meters)',      colors: ['text-fg/40', 'text-fg/40', 'text-fg/40'] },
 										{ kind: 'rot',  label: 'Rotation (degrees)', colors: ['text-fg/40', 'text-fg/40', 'text-fg/40'] },
 									]" :key="grp.kind" class="my-2">
-									<div class="text-fg/50 text-2xs uppercase tracking-wide">{{ grp.label }}</div>
+									<div class="font-medium text-fg/50 text-2xs whitespace-nowrap">{{ grp.label }}</div>
 									<div class="grid gap-1 text-xs">
 										<!-- Native number spinners (Gene 2026-07-05): press-and-hold + ↑/↓ step by `step`
 											and fire @change per step (FS-spinner feel) — no custom arrow buttons. -->
-										<div v-for="(axis, i) in ['X', 'Y', 'Z']" :key="axis" class="flex items-center gap-1">
+										<div v-for="(axis, i) in ['X', 'Y', 'Z']" :key="axis" class="flex items-center gap-0.5">
 											<span :class="grp.colors[i]">{{ axis }}</span>
 											<input
 												v-model="xf[grp.kind][i]"
@@ -984,12 +1058,13 @@ function close() {
 												:min="grp.kind === 'size' ? 0.00100 : (grp.kind === 'pos' ? 0 : undefined)"
 												:readonly="!canXform"
 												:title="xformTitle"
-												class="w-20 bg-fg/20 border border-edge rounded-sm py-0 ps-1.5 w-full text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												class="w-20 bg-fg/20 border border-edge rounded-sm p-0 w-full text-xs text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
 												@focus="xfFocus = `${grp.kind}-${i}`; selectAll($event)"
 												@blur="xfFocus = null; onBlur(XF_COMMIT[grp.kind])"
 												@keyup.enter="onEnter(XF_COMMIT[grp.kind], $event)"
 												@change="canXform && XF_COMMIT[grp.kind]()"
 											/>
+											<button class="ui-btn text-2xs" title="to-do">C</button>
 										</div>
 									</div>
 								</div>
@@ -1072,8 +1147,8 @@ function close() {
 						<div class="grid grid-cols-[1fr_1fr] gap-x-2 gap-y-1.5 text-xs px-0.5">
 							<div class="flex flex-col gap-1">
 								<div>Edit object features:</div>
-								<div>[ ] Animated mesh</div>
-								<div class="text-fg/50">[ ] Flexible Path</div>
+								<div><input type="checkbox" title="to-do" class="accent-accent" /> Animated mesh</div>
+								<div class="text-fg/50"><input type="checkbox" title="to-do" class="accent-accent" /> Flexible Path</div>
 								<div v-if="flexiLabel" class="text-fg text-2xs">{{ flexiLabel }}</div>
 								<div v-else class="text-fg/40 italic">Off</div>
 								<div>Softness</div>
@@ -1084,7 +1159,7 @@ function close() {
 								<div>Force X</div>
 								<div>Force Y</div>
 								<div>Force Z</div>
-								<div class="text-fg/50">[ ] Light</div>
+								<div class="text-fg/50"><input type="checkbox" title="to-do" class="accent-accent" /> Light</div>
 								<div v-if="obj.light" class="flex items-center gap-2 text-fg text-2xs">
 									<span class="w-4 h-4 shrink-0 rounded-sm border border-edge" :style="{ background: `rgb(${lightRgb})` }"></span>
 									<span>intensity {{ obj.light.intensity.toFixed(2) }} · radius {{ obj.light.radius.toFixed(1) }}m · falloff {{ obj.light.falloff.toFixed(1) }}</span>
@@ -1093,10 +1168,10 @@ function close() {
 								<div>Intensity</div>
 								<div>Radius</div>
 								<div>Falloff</div>
-								<div class="text-fg/50">[ ] Reflection Probe</div>
+								<div class="text-fg/50"><input type="checkbox" title="to-do" class="accent-accent" /> Reflection Probe</div>
 								<div v-if="reflectionProbeLabel" class="text-fg text-2xs">{{ reflectionProbeLabel }}</div>
 								<div v-else class="text-fg/40 italic">Off</div>
-								<div>[ ] Dynamic</div>
+								<div><input type="checkbox" title="to-do" class="accent-accent" /> Dynamic</div>
 								<div>Ambiance</div>
 							</div>
 							<div class="flex flex-col gap-1">
@@ -1385,7 +1460,7 @@ function close() {
 										<label class="inline-flex items-center gap-1 text-fg/50"><input type="checkbox" class="accent-accent" title="Align textures on all selected faces with the last selected face. Requires Planar texture mapping." disabled /> Align planar faces</label>
 									</div>
 									<div>
-										<label class="inline-flex items-center gap-1 text-fg/50 whitespace-nowrap"><input type="checkbox" class="accent-accent" /> Hide water</label>
+										<label class="inline-flex items-center gap-1 text-fg/50 whitespace-nowrap"><input type="checkbox" title="to-do" class="accent-accent" /> Hide water</label>
 										<select class="ui-select bg-fg/20 border border-edge rounded-sm my-1 py-0 px-1.5 w-full text-2xs text-fg" title="Mapping">
 											<option value="default" :selected="defaultMapping.mapping === 'Default'">Default</option>
 											<option value="planar" :selected="defaultMapping.mapping === 'Planar'">Planar</option>

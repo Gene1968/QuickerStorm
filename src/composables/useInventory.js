@@ -21,7 +21,8 @@ import { C, S } from '@shared/protocol.js'
 // SL AssetType — the dispatch keys openInventoryItem switches on. (Confirmed against
 // src/utils/inventoryIcons.js ASSET_TYPE_NAMES.) Only TEXTURE has a full viewer pipeline;
 // the rest get a graceful "coming soon" toast (see docs/FEATURE-GAPS.md 2026-06-30).
-const ASSET_TYPE_TEXTURE = 0
+// Exported: WorldCanvas.vue's drop handler (PACKAGE 5) needs it to detect a texture-onto-face drop.
+export const ASSET_TYPE_TEXTURE = 0
 
 const BATCH        = 40   // folders per cap POST (server batches them into one request)
 const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background bulk load
@@ -776,7 +777,11 @@ export function useInventory() {
 			// Optional sim-raycast placement passthrough. All default server-side to today's
 			// rez-AT-point packet (BypassRaycast=1, RayTargetID=ZERO, rayStart=rayEnd=position).
 			rayStart: opts.rayStart, rayTargetId: opts.rayTargetId, bypassRaycast: opts.bypassRaycast,
+			// FS: rezzing while the Build floater is open selects the new object for editing (Gene
+			// 2026-07-13) — RezSelected on the wire + the one-shot select expectation client-side.
+			rezSelected: ui.showObjectEdit,
 		})
+		if (ui.showObjectEdit) ui.expectCreatedSelection()
 		playSound('rezz.mp3', 0.3)   // FS-style rez cue (both context-menu + drag-to-canvas rez funnel here)
 		notifyInfo('Rezzing', `Rezzing ${it.name || 'object'}…`)
 	}
