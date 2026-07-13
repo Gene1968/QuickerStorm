@@ -20,6 +20,8 @@ import { useGridStore }		from '@/stores/gridStore'
 import { useInventoryStore }	from '@/stores/inventoryStore'
 import { useWorldStore }		from '@/stores/worldStore'
 import { takeGate, takeCopyGate } from '@/utils/takeGating'
+import { canLinkGate, canUnlinkGate } from '@/utils/linkGating'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
 import { useAudio }			from '@/composables/useAudio.js'
 import { useTeleport }		from '@/composables/useTeleport.js'
@@ -32,11 +34,12 @@ const session	= useSessionStore()
 const grid		= useGridStore()
 const inv		= useInventoryStore()
 const world		= useWorldStore()
+const notif		= useNotificationStore()
 const router	= useRouter()
 const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
 const { requestHomeTeleport, setHomeHere } = useTeleport()
-const { takeObject, takeObjectCopy, sendDelete } = useLLUDP()
+const { takeObject, takeObjectCopy, sendDelete, sendLink, sendDelink } = useLLUDP()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -122,6 +125,18 @@ function onKey(e) {
 		e.preventDefault()
 		ui.openNextInventory()
 	}
+	// Ctrl+L — Build ▸ Link (FS menu_viewer.xml:2151-2159 shortcut="control|L").
+	if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+		e.preventDefault()
+		linkSelected()
+		return
+	}
+	// Ctrl+Shift+L — Build ▸ Unlink (FS menu_viewer.xml:2160-2168 shortcut="control|shift|L").
+	if (e.ctrlKey && !e.altKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+		e.preventDefault()
+		unlinkSelected()
+		return
+	}
 	// Del — delete the selected in-world object (FS: Del on a selection → DeRezObject → Trash,
 	// recoverable; menu_viewer.xml Edit ▸ Delete shortcut). Only fires with WORLD focus (body or
 	// canvas): inventory rows own their Delete keydown, and text inputs need Del for editing.
@@ -175,14 +190,45 @@ function hasSelectedObject() { return ui.showObjectEdit && ui.editObjectId != nu
 // reactive world.objects map, so MenuDropdownItem's function-`disabled` re-evaluates live.
 function canTakeSelected()     { return !takeGate(world.objects, ui.editObjectId, session.agentId).disabled }
 function canTakeCopySelected() { return !takeCopyGate(world.objects, ui.editObjectId, session.agentId).disabled }
+
+// Link/Unlink — Build ▸ Link (Ctrl+L) / Unlink (Ctrl+⇧+L), FS menu_viewer.xml:2151-2168.
+// Gating + invoke mirror ObjectContextMenu.vue's identical rows exactly (same uiStore
+// selection: [editObjectId, ...selectedObjectIds]) — see src/utils/linkGating.js for the
+// FS enableLinkObjects/enableUnlinkObjects port (llselectmgr.cpp:877-937).
+function linkGate()   { return canLinkGate(world.objects, [ui.editObjectId, ...ui.selectedObjectIds]) }
+function unlinkGate() { return canUnlinkGate(world.objects, world.linksetMembers, [ui.editObjectId, ...ui.selectedObjectIds]) }
+function linkSelected() {
+	const g = linkGate()
+	if (g.disabled) {
+		// Only the different-owners refusal gets a toast (FS CannotLinkDifferentOwners,
+		// notifications.xml:2305-2308) — other refusals are already surfaced by the disabled row.
+		if (g.reason === 'differentOwners') {
+			notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
+		}
+		return
+	}
+	sendLink(g.roots)
+	ui.clearMultiSelect()
+}
+function unlinkSelected() {
+	const g = unlinkGate()
+	if (g.disabled) return
+	const ids = [ui.editObjectId, ...ui.selectedObjectIds].filter((id) => id != null)
+	// SEND_INDIVIDUALS semantics (FS llselectmgr.cpp:5493): a plain root selection delinks its
+	// WHOLE linkset, matching FS's default (non-Edit-Linked) Unlink behavior.
+	sendDelink(ids.flatMap((id) => world.linksetMembers(id)))
+	ui.clearMultiSelect()
+}
 // Delete it: server maps C.OBJECT_DELETE → DeRezObject(Delete→Trash); the sim's KillObject removes
-// the mesh. Close the Edit floater since its target is gone. Mirrors the object context-menu Delete.
+// the mesh. FS keeps the Build floater OPEN with an empty selection after a delete (Gene
+// 2026-07-13) — clear the target, don't close.
 function deleteSelectedObject() {
 	if (!hasSelectedObject()) return
 	// sendDelete (not a raw emit): the wrapper resolves child prim → linkset ROOT — OpenSim
 	// silently skips DeRezObject on non-root prims (Scene.Inventory.cs:2258-2260).
 	sendDelete(ui.editObjectId)
-	ui.showObjectEdit = false
+	ui.editObjectId = null
+	ui.clearMultiSelect()
 }
 
 // Take the selected object into inventory: DeRezObject Destination=Take(4) → Objects system
@@ -191,12 +237,13 @@ function deleteSelectedObject() {
 // llviewermenu.cpp:6799-6802). Zero UUID when inventory isn't loaded — OpenSim then routes to
 // FromFolderID, else Lost & Found (InventoryAccessModule.cs:830-834); the item still reaches
 // inventory. Perm gating (FS enable_take) is the sim's job.
-// The sim's KillObject removes the mesh, so close the Edit floater like Delete does; the
-// inventory row arrives via BulkUpdateInventory on the existing EQ path.
+// The sim's KillObject removes the mesh; like Delete, the floater stays OPEN with an empty
+// selection (Gene 2026-07-13); the inventory row arrives via BulkUpdateInventory on the EQ path.
 function takeSelectedObject() {
 	if (!hasSelectedObject()) return
 	takeObject(ui.editObjectId, inv.findSystemFolder(6) || ZERO_UUID)
-	ui.showObjectEdit = false
+	ui.editObjectId = null
+	ui.clearMultiSelect()
 }
 
 // Take Copy: DeRezObject Destination=TakeCopy(1) — FS Build > Object > Take Copy
@@ -560,8 +607,10 @@ const MENUS = [
 					{ label: 'Land tool',		disabled: true },
 				],
 			},
-			{ label: 'Link',				disabled: true },
-			{ label: 'Unlink',				disabled: true },
+			{ label: 'Link',	kbd: 'Ctrl+L',	disabled: () => linkGate().disabled,	action: () => act(linkSelected),
+				title: () => linkGate().title || 'Link the selected objects into one linkset (last selected becomes the root)' },
+			{ label: 'Unlink',	kbd: 'Ctrl+⇧+L',	disabled: () => unlinkGate().disabled,	action: () => act(unlinkSelected),
+				title: () => unlinkGate().title || 'Break the selected linkset apart' },
 			{ label: 'Edit linked',			checked: () => ui.editLinked,		action: () => ui.setEditLinked(!ui.editLinked),
 				title: 'When on, clicking a prim selects that individual part instead of the whole linkset' },
 			{
@@ -652,7 +701,9 @@ const MENUS = [
 				title: 'Quick: replay the relay server\'s cached world (terrain, objects, position) — fixes missed packets after a reconnect' },
 			{ label: 'Rebuild scene',										action: rebuildScene,
 				title: 'Thorough: restore memory-evicted objects, rebuild every known mesh, then resync — use when objects are missing (slower)' },
-			{ label: 'Rebake textures',	kbd: 'Ctrl+Alt+R',	action: () => act(rebake),
+			{ label: 'Refresh all textures',								action: () => act(() => ui.requestAllTexturesRefresh()),
+				title: 'Re-resolve and re-apply every texture on every built object — fixes stuck black/blank surfaces in one pass (Rebake only redoes avatar bakes)' },
+			{ label: 'Rebake avatar textures',	kbd: 'Ctrl+Alt+R',	action: () => act(rebake),
 				title: 'Force the sim to rebuild and re-send your avatar bake textures' },
 			{ sep: true },
 			{ label: 'Performance…',						action: () => act(() => ui.openPreferencesOnTab('graphics')) },

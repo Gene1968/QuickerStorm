@@ -10,17 +10,21 @@ import { useUiStore }    from '@/stores/uiStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { useLLUDP }      from '@/composables/useLLUDP'
 import { useTaskInventory } from '@/composables/useTaskInventory'
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition'
 import { takeGate, takeCopyGate } from '@/utils/takeGating'
+import { canLinkGate, canUnlinkGate } from '@/utils/linkGating'
+import { linksetRootLocalId } from '@/utils/linksetRoot'
 import ContextMenuItem   from '@/components/ContextMenuItem.vue'
 
 const ui      = useUiStore()
 const world   = useWorldStore()
 const inv     = useInventoryStore()
 const session = useSessionStore()
-const { sendTouch, sendSit, sendDelete, takeObject, takeObjectCopy } = useLLUDP()
+const notif   = useNotificationStore()
+const { sendTouch, sendSit, sendDelete, takeObject, takeObjectCopy, sendLink, sendDelink } = useLLUDP()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -70,6 +74,63 @@ function takeCopy() {
 function touch() {
 	if (!menu.value) return
 	sendTouch(menu.value.localId)
+	close()
+}
+
+// PACKAGE 4 (2026-07-13) — Link/Unlink act on the PERSISTED multi-select (uiStore's
+// [editObjectId, ...selectedObjectIds] — the SAME selection Build ▸ Link/Unlink uses), not
+// merely the right-clicked prim: FS's pie menu operates on "the selection", and right-clicking
+// a member of an active multi-select must not collapse it back to one object. A bare right-click
+// with NO active selection (the common case — no prior shift-click) falls back to the clicked
+// prim alone; right-clicking something OUTSIDE the current selection also retargets to just that
+// prim (clicking away from a selection already drops it everywhere else — see useWorldEngine's
+// 'Plain click' branch), so Take/Buy/Pay-style single-target intuition still holds for the
+// simple case while a genuine multi-select Link still works.
+const linkSelectionIds = computed(() => {
+	if (!menu.value) return []
+	const clickedRoot = linksetRootLocalId(world.objects, menu.value.localId)
+	const persisted = [ui.editObjectId, ...ui.selectedObjectIds].filter((id) => id != null)
+	if (persisted.length && persisted.some((id) => linksetRootLocalId(world.objects, id) === clickedRoot)) {
+		return persisted
+	}
+	return [menu.value.localId]
+})
+const gLink = computed(() => canLinkGate(world.objects, linkSelectionIds.value))
+// FS pie parity: only show "Unlink" when the CLICKED prim itself is in a linkset (the row is
+// absent, not merely disabled, otherwise — mirrors the FS pie menu only offering the slice when
+// relevant, llselectmgr.cpp enableUnlinkObjects gate).
+const showUnlink = computed(() => !!menu.value && world.linkNumberOf(menu.value.localId) > 0)
+const gUnlink = computed(() => canUnlinkGate(world.objects, world.linksetMembers, linkSelectionIds.value))
+
+function link() {
+	if (!menu.value) return
+	const g = gLink.value
+	if (g.disabled) {
+		// Only the different-owners refusal gets a toast (FS CannotLinkDifferentOwners,
+		// notifications.xml:2305-2308) — the incomplete-set/no-modify cases are already surfaced
+		// by the row being disabled, so clicking through shouldn't be reachable for those.
+		if (g.reason === 'differentOwners') {
+			notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
+		}
+		close()
+		return
+	}
+	sendLink(g.roots)
+	ui.clearMultiSelect()
+	close()
+}
+
+function unlink() {
+	if (!menu.value) return
+	if (gUnlink.value.disabled) { close(); return }
+	// SEND_INDIVIDUALS semantics (FS llselectmgr.cpp:5493): for a plain root/child selection (no
+	// multi-select active) pass every member of the CLICKED prim's linkset so the whole set
+	// delinks, matching FS's default (non-Edit-Linked) Unlink behavior.
+	const ids = linkSelectionIds.value.length > 1
+		? linkSelectionIds.value.flatMap((id) => world.linksetMembers(id))
+		: world.linksetMembers(menu.value.localId)
+	sendDelink(ids)
+	ui.clearMultiSelect()
 	close()
 }
 
@@ -225,8 +286,8 @@ const items = computed(() => {
 			{ sep: true },
 			{ label: confirmDelete.value ? 'Confirm delete?' : 'Delete', danger: () => confirmDelete.value, action: del },
 			{ sep: true },
-			{ label: 'Link',			disabled: true },
-			{ label: 'Unlink',			disabled: true },
+			{ label: 'Link',	disabled: gLink.value.disabled,	title: gLink.value.title,	action: link },
+			...(showUnlink.value ? [{ label: 'Unlink',	disabled: gUnlink.value.disabled,	title: gUnlink.value.title,	action: unlink }] : []),
 			{ label: 'Edit linked parts',	disabled: true },
 			{ sep: true },
 			{

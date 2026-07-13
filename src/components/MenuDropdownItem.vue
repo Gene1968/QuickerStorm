@@ -23,6 +23,11 @@ const props = defineProps({
 const isDisabled = computed(() =>
 	typeof props.item.disabled === 'function' ? props.item.disabled() : props.item.disabled,
 )
+// title likewise: a fn lets a gated row explain WHY it's disabled right now (e.g. Link's
+// "Select two or more objects to link") instead of a one-size-fits-all string.
+const titleText = computed(() =>
+	typeof props.item.title === 'function' ? props.item.title() : props.item.title,
+)
 </script>
 
 <template>
@@ -34,7 +39,7 @@ const isDisabled = computed(() =>
 			class="mb-item mb-item--has-sub"
 			:class="{ 'mb-item--disabled': isDisabled }"
 			:disabled="isDisabled"
-			:title="item.title"
+			:title="titleText"
 			@click="playSound('tick.mp3', 0.6)"
 		>
 			<span class="mb-item-label">
@@ -57,7 +62,7 @@ const isDisabled = computed(() =>
 		class="mb-item"
 		:class="{ 'mb-item--disabled': isDisabled }"
 		:disabled="isDisabled"
-		:title="item.title"
+		:title="titleText"
 		@click="playSound('tick.mp3', 0.6); !isDisabled && item.action && item.action()"
 	>
 		<span class="mb-item-label">
