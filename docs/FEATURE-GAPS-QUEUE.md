@@ -109,8 +109,34 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
 ### Object Build & Edit Floater — FEATURE-GAPS L170–186
 - ✅ edit name & description (audited 2026-07-04: full round-trip live) · numeric size/pos/rot input fields
   → **Object edit — manipulation** cluster below · Select-Face radio
-- texture drag-drop onto faces · Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
-- Link/Unlink prims · Link-number ordering bug (L183) · **create/rez a prim in-world** (Build-tools)
+- ✅ **texture drag-drop onto faces — SHIPPED 2026-07-13 (build-tools sweep PKG-5, uncommitted; NOT
+  live-verified — DnD not drivable via MCP):** drag texture item from inventory → prim face =
+  whole-TE replace via new `C.OBJECT_SET_TEXTURE`/`setObjectTexture(localId, faces)` → ObjectImage
+  (Low 96) with a new bit-exact TextureEntry binary encoder (`buildTextureEntry`, FS llprimitive.cpp
+  packTEMessage parity incl. the round-THEN-subtract color quirk the reviewer caught + fixed; TE
+  parser extended to decode bump/shiny/fullbright/mediaFlags/glow/materialId per-face so the replace
+  can't clobber). Shift=all faces; face pick via `pickObjectFace` (PKG-2). Deliberate cuts (dated
+  FEATURE-GAPS.md entries): no-copy/no-transfer items refused w/ toast (FS moves them into task inv
+  — needs UpdateTaskInventory); no face hover-highlight; unmappable shapes refused rather than risk
+  a short TE. Still open here: Normal/Specular channels (RenderMaterials cap) · sculpt-texture assign
+- ✅ **Link/Unlink prims — SHIPPED 2026-07-13 (PKG-4, uncommitted; NOT live-verified):** ObjectLink/
+  ObjectDelink (Low 115/116; first id = new root, LLClientView.cs:9317) + `sendLink`/`sendDelink` +
+  FS gating port (`src/utils/linkGating.js`, enableLinkObjects/enableUnlinkObjects) on MenuBar Build
+  (Ctrl+L / Ctrl+Shift+L) + ObjectContextMenu + Build-floater Link/Unlink buttons; selection order =
+  [editObjectId, ...selectedObjectIds] (newest = root, FS addNode push_front); only FS's
+  CannotLinkDifferentOwners refusal toasts (others just disable; sim failures silent on OpenSim,
+  Scene.Inventory.cs:3032-3072). 26 client + 5 codec tests. Cuts logged: no client max-prims check,
+  no ConfirmUnlink dialog. L183 link-number ordering bug still open (⬜ compare on the 154-prim linkset).
+- ✅ **create/rez a prim in-world — SHIPPED 2026-07-13 (PKG-3, uncommitted; wire LIVE-VERIFIED osgrid):**
+  Create tab shape buttons (13 shapes, `src/lib/primShapes.js` ported from lltoolplacer.cpp:340-482
+  incl. the sphere/torus/tube/ring 90°-Y quirk) → `armBuildPlacement` → click-inworld →
+  `createPrim`/`C.OBJECT_ADD` (Medium 1, llvolumemessage.cpp quantization, golden-byte tested) →
+  OpenSim runs its own raycast + rezzes + full ObjectUpdate back. **LIVE-VERIFIED 2026-07-13:** two
+  test cubes accepted by the sim (server distinct 4342→4344, correct PATH_LINE/SQUARE params on the
+  wire, no perm refusal) — BUT driven from a hidden MCP tab (stale camera ray) so both landed outside
+  the 96m interest radius: ⚠ **two stray 0.5m plywood cubes owned by Gina 79 are somewhere on Lazarus
+  Taxon 6 — find & delete.** ⬜ visual placement verify (click ground → cube ON the surface at the
+  click point) needs a visible client. "Keep tool selected" wired; Tree/Grass stay to-do (Trees cluster).
 - **✅ ObjectProperties-data BATCH — SHIPPED 2026-07-03 (committed; core LIVE-VERIFIED osgrid):**
   whole-linkset ObjectSelect (≤254-id chunks) → per-prim props into worldStore + `objectPermissions.js`
   (selectGetPerm-port `aggregateBit` + `canTakeObject`/`canTakeCopyObject` mirroring PermissionsModule.cs).
@@ -138,6 +164,52 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
   DO happen, are still silent upstream (PermissionsModule.cs:2019 alert commented out; take-copy of
   others' objects needs everyone Copy+Transfer folded over every prim + contents, :1045/:2017/:2023) —
   covered by the 10s **take-watchdog** toast (useTakeWatch.js).
+- **✅ FIX ROUND 2 — 2026-07-13 pm (Gene's live-test feedback on the build-tools sweep; uncommitted):**
+  (a) **Link actually usable** — floater "N objects selected" now counts distinct roots across the
+  shift/ctrl multi-selection (was hardcoded to the primary only), land impact sums all selected
+  linksets, floater Link/Unlink buttons wired to the same linkGating as MenuBar (were disabled
+  Phase-3 stubs), perm checkboxes aggregate over the full selection;
+  (b) **Create tab arms on open** — entering the tab arms the default shape (FS: highlighted = armed);
+  leaving the tab / closing the floater disarms; after a place with Keep-tool off → flips to Edit tool;
+  (c) **select-on-create/rez** — CreateSelected bit (0x02) now decoded + forwarded (both update
+  decoders) → newborn prim auto-selected via a 30s one-shot expectation armed at OUR send sites
+  (createPrim placement / rezObject-with-floater-open, which now also sends RezSelected) so someone
+  else's create can't hijack selection;
+  (d) **Delete/Take keep the Build floater open** with empty selection (MenuBar + Del key; context-menu
+  delete never closed it);
+  (e) **gizmo affordances** — hover grows + brightens the hovered handle/ring (lightenColor keeps
+  per-axis hue; grab/grabbing cursors), rotate rings 3× thicker + invisible fat hit-proxy torus,
+  non-dragged parts hidden mid-drag, 256m 1-px axis guide ray during drag (depth-tested so it
+  vanishes into objects — the FS alignment aid), Build floater auto-hides while dragging
+  (uiStore.gizmoDragging), gizmo centers on the multi-select UNION bbox;
+  (f) **drag-select marquee** — FS lltoolselectrect port: left-drag on empty canvas (Build floater
+  open, not placement-armed, no alt) draws the rect, mouseup selects prim roots whose projected
+  center falls inside; Shift=add. Deliberate deviations logged in FEATURE-GAPS.md (bbox-center test,
+  shift-to-add, hue-preserving hover).
+  ⬜ live-verify the lot: shift-click 2 cubes → "2 objects selected" + Link enabled → linkset;
+  create-tab-open → click ground rezzes; new prim auto-selected; marquee select; gizmo hover/guide-ray.
+- **✅ FIX ROUND 3 — 2026-07-13 eve (Gene's 2nd live-test feedback; uncommitted):**
+  (a) **linked-drag distortion FIXED** — gizmo commit was missing `linked` → sim moved only the ROOT
+  prim of a linkset (children stayed → distortion); now sends UPD_LINKED_SETS like FS's default drag
+  (llselectmgr.cpp:4901-4919) unless Edit-linked is on (floater numeric fields already did this);
+  (b) **multi-select gizmo drag** — drag now moves the WHOLE selection: move = same delta all roots;
+  rotate = per-root quat + orbit about the shared union-bbox pivot (llmaniprotate.cpp:685-690);
+  scale = same ratio per root about own center; ONE MultipleObjectUpdate w/ per-root blocks; echo
+  suppression + abort-revert + mid-drag-KillObject handling extended to the whole dragged set;
+  (c) **Link gating flakiness** — root causes: multi-selected extras were never ObjectSelect'ed →
+  their perms/owner never arrived (selSync watch now selects/deselects the FULL selection set,
+  diffed); context-menu retarget rule (right-click OUTSIDE the selection collapses to that prim —
+  deliberate, but easy to hit in dense builds); floater button only went live mid-testing. Every
+  Link/Unlink surface now shows the disable REASON as its tooltip (MenuDropdownItem supports fn
+  titles);
+  (d) **marquee live highlight** — halo preview on in-rect roots while dragging (~10Hz, cached
+  candidates — FS lltoolselectrect.cpp:126-141 handleHover parity) + Esc cancels the marquee;
+  (e) **Rebake verified vs FS source** — Avatar Health ▸ "Force Appearance Update (Rebake)"
+  (Ctrl+Alt+R) and Advanced ▸ "Rebake Textures" are the SAME function in FS (menu_viewer.xml:528/
+  3452 both → Advanced.RebakeTextures, avatar bakes only); we already match both surfaces. The
+  object-texture bulk tool remains Advanced ▸ Refresh all textures (ours, no FS equivalent).
+  ⬜ live-verify: drag a linkset (no distortion), multi-select drag (all move), marquee live halos,
+  Link tooltip reasons, floater hides while gizmo-dragging.
 - drag-select multiple objects + gizmo handles → **Object edit — manipulation** cluster below
 - texture anim/scripts → **Scripted motion & TextureAnim** cluster below
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**
@@ -166,10 +238,24 @@ Object tab are read-only `<span>`s (ObjectEditFloater.vue:901–923; `quatToEule
   **Build on Gene's 2026-07-03 floater layout — don't restructure.** → type X → prim moves on sim, echo updates fields.
 - **M-3 Nudge steppers** — ±0.05 m / ±0.5° buttons on each axis, same send path.
 **Needs-design (own pass each, after M-1 lands):**
-- **gizmo drag** (pointer capture on handles, axis-plane projection math per llmaniptranslate.cpp:1079 /
-  llmaniprotate.cpp:488 / llmanipscale.cpp:414 — all send on mouse-up; live local preview during drag;
-  SL↔Three Y/Z swap care) · **drag-select marquee** (needs multi-object selection state — today only single
-  `ui.editObjectId`; FS lltoolselectrect.cpp:72) · **shift-copy** (ObjectDuplicate Low 92, needs gizmo drag first).
+- ✅ **gizmo drag — SHIPPED 2026-07-13 (PKG-2, uncommitted)** — `src/utils/gizmoMath.js` (new, vitest-covered:
+  17 tests, mouseRayPlaneIntersect/projectDeltaOntoAxis/ringAngle/nearestPointOnLineParam ported from FS
+  llmanip*.cpp) + `useWorldEngine.js` drag wiring: mousedown-on-handle (gizmo now raycast FIRST, ahead of
+  prim re-selection) → live local preview (mesh.position/quaternion/scale mutated directly, no network,
+  inbound TerseUpdate/ObjectUpdate echoes for the dragged object suppressed meanwhile) → ONE
+  sendPosition/sendRotation/sendScale on mouseup, matching FS's commit-on-release. Also landed in the same
+  pass: shift/ctrl-click multi-select (`uiStore.selectedObjectIds`, halo on every selected root) and
+  `pickObjectFace(clientX, clientY)` export (per-triangle face pick via the existing primFaceMap table).
+  v1 scope cuts (dated FEATURE-GAPS.md entry): scale is symmetric "about center" (no FS anchored-face
+  stretch, no grid snapping); rotate/scale pivot = dragged object's own origin, not the visual bbox-center;
+  drag only ever moves editObjectId's root (not the rest of a multi-select). NOT live-verified (no running
+  client this session — build/vitest only). Still open: **drag-select marquee** (needs a rect-select tool,
+  FS lltoolselectrect.cpp:72 — multi-select today is click+modifier only, no drag-rectangle) · **shift-copy**
+  (ObjectDuplicate Low 92 — `C.OBJECT_DUPLICATE`/`duplicateObjects()` are in the PKG-1 wire contract but no
+  UI calls them yet). **Post-review hand-fix 2026-07-13:** reviewer blocker (stuck-drag wedge: mouseup lost
+  to browser chrome/alt-tab kept the drag following the hovering cursor forever) fixed via `abortGizmoDrag()`
+  — reverts preview, sends NOTHING — wired on window blur, `e.buttons` released-outside detection, and
+  mid-drag KillObject of the target.
 
 ### 🎬 Scripted motion & TextureAnim — ✅ SHIPPED 2026-07-05 (committed; NOT live-verified)
 Full A–G swept 2026-07-05 ultracode. Server wire (E/F decode + forward) REVIEWED-PASS (all cites verified,
@@ -538,6 +624,26 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 
 ## ⬇️ Raw inbox (Gene dumps here; Claude triages up into the clusters above)
 
+**2026-07-13 (Gene):**
+- 🐛 **Many objects' textures turned black** — per-object "Texture refresh" fixes each; hard reload does
+  NOT; "Rebake textures" doesn't help. **INVESTIGATED 2026-07-13 (root cause still open, needs a live
+  session):** (1) FS-parity note: Rebake (Ctrl+Alt+R) only redoes AVATAR bakes — it never touches object
+  textures in FS either. (2) qs-tex cache sampled (81/46k rows decoded): ~4% decode all-black BUT the same
+  UUIDs are black FRESH from the grid too (checked via new dev hook `__texFetchFresh`) → cache NOT poisoned,
+  those are real black assets. (3) TE-color-decode regression ruled out: only ~1.2% of store objects carry
+  black tints (legit shadow prims). (4) KEY EVIDENCE: per-object Texture refresh does NOT refetch from grid
+  or purge IDB — it only clears the in-memory texture layer + re-applies materials. Since that FIXES black
+  objects, the failure is in the APPLY layer (material.map never landing / upload dropped / stale material
+  state), not in texture data — same family as the old placeholder-normalMap black (lit-shading quarantine)
+  and decode-worker/upload-queue drops. Discriminators for next live look: check `__texStats()` decoderDead/
+  uploadQueued when blacks appear; inspect one black mesh's material (map null? color?).
+  → **Bulk remedy SHIPPED 2026-07-13:** Advanced ▸ **Refresh all textures** (uiStore.requestAllTexturesRefresh
+  → engine refreshAllTextures: clears in-memory tex layer + failure marks, rebuilds every built mesh's
+  materials). ⬜ verify it un-blacks a whole scene in one click.
+- ✅ 🐛 **Sound slider errors** — Changing Master volume slider causes:  TypeError: Cannot create property 'value' on number '1'    at Proxy.fromSlider (AudioControlsWidget.vue:68:15)
+  → FIXED 2026-07-13: template expressions auto-unwrap top-level refs, so `fromSlider($event, masterVolume)`
+  passed a plain number; helper now looks the ref up by name (`volRefs` map). Same latent bug fixed on the
+  Interface + Sounds rows (identical pattern, would have thrown on first touch). ⬜ verify slider moves + volume audibly changes.
 **2026-07-12 (Gene):**
 - 🐛 **Double message when an inventory share is offered TO me** — recipient side shows the offer twice.
   Note: the 2026-07-02 "duplicate IM/offer toasts" fix added keyed socket dedup (`on(type,cb,key)`) — so this
