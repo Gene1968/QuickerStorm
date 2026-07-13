@@ -229,8 +229,8 @@ watch(() => [ui.editObjectId, obj.value?.pos, obj.value?.scale, obj.value?.rot],
 	const o = obj.value
 	const rotDeg = o?.rot ? quatToEulerDeg(o.rot) : ['', '', '']
 	for (let i = 0; i < 3; i++) {
-		if (xfFocus.value !== `pos-${i}`)  xf.pos[i]  = o?.pos?.[i]   != null ? o.pos[i].toFixed(3)   : ''
-		if (xfFocus.value !== `size-${i}`) xf.size[i] = o?.scale?.[i] != null ? o.scale[i].toFixed(3) : ''
+		if (xfFocus.value !== `pos-${i}`)  xf.pos[i]  = o?.pos?.[i]   != null ? o.pos[i].toFixed(5)   : ''
+		if (xfFocus.value !== `size-${i}`) xf.size[i] = o?.scale?.[i] != null ? o.scale[i].toFixed(5) : ''
 		if (xfFocus.value !== `rot-${i}`)  xf.rot[i]  = String(rotDeg[i])
 	}
 }, { immediate: true })
@@ -980,11 +980,11 @@ function close() {
 											<input
 												v-model="xf[grp.kind][i]"
 												type="number"
-												:step="grp.kind === 'rot' ? 0.5 : 0.05"
-												:min="grp.kind === 'size' ? 0.01 : (grp.kind === 'pos' ? 0 : undefined)"
+												:step="grp.kind === 'rot' ? 1.00000 : 0.01000"
+												:min="grp.kind === 'size' ? 0.00100 : (grp.kind === 'pos' ? 0 : undefined)"
 												:readonly="!canXform"
 												:title="xformTitle"
-												class="w-20 bg-fg/20 border border-edge rounded-sm py-0 ps-1.5 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												class="w-20 bg-fg/20 border border-edge rounded-sm py-0 ps-1.5 w-full text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
 												@focus="xfFocus = `${grp.kind}-${i}`; selectAll($event)"
 												@blur="xfFocus = null; onBlur(XF_COMMIT[grp.kind])"
 												@keyup.enter="onEnter(XF_COMMIT[grp.kind], $event)"

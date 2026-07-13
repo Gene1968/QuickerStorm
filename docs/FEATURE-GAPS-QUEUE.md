@@ -401,8 +401,11 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
   remaining = client mesh-fetch concurrency, the ~5-min cold stall, idle texture backfill (L60).
 - **Cross-region / neighbor sims** — adjacent-region draw + child-agent circuits (L214), **neighbor avatar frozen
   at edge** (L418), cross-sim duplicate avatar (L114), cross-region walk handshake (L108).
-- **Stale-scene genuine deletes** — hard fullId/interest-filter piece + FS-style **confirmation-gated preseed**
-  (don't paint unconfirmed cache entries). L417. (localId-churn dup half DONE — [[fullid-dedup-shipped]].)
+- **Stale-scene genuine deletes + mutation staleness** — hard fullId/interest-filter piece + FS-style
+  **confirmation-gated preseed** (don't paint unconfirmed cache entries). L417. WIDENED 2026-07-12: other
+  users' **resizes/rotates** also stay stale (not just deletes) — FS validates cache by **CRC probe on region
+  entry** (mismatch → fresh full ObjectUpdate); design the validate-on-entry pass to cover both.
+  (localId-churn dup half DONE — [[fullid-dedup-shipped]].)
 - **Var-region 512/1024 correctness** — terrain stride/sampling + clamps (L61, L215, L213).
 - **Movement** — springback type-2 (L112), sit-at-corner 1/1 (L106), walk start-over (L107).
 
@@ -476,6 +479,21 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 ---
 
 ## ⬇️ Raw inbox (Gene dumps here; Claude triages up into the clusters above)
+
+**2026-07-12 (Gene):**
+- 🐛 **Double message when an inventory share is offered TO me** — recipient side shows the offer twice.
+  Note: the 2026-07-02 "duplicate IM/offer toasts" fix added keyed socket dedup (`on(type,cb,key)`) — so this
+  is either a recurrence (HMR/remount stacking again?) or a *different* double: OpenSim sends offers via BOTH
+  UDP ImprovedInstantMessage and the EventQueue (FS dedups by IM session/transaction id), or our inline-IM
+  Accept/Decline row + toast both rendering as "messages." Repro + trace both inbound paths before fixing.
+- 🐛 **Objects changed by ANOTHER user (deleted / resized / rotated) stay stale in our cache** — sometimes
+  correct after a later login, usually NOT even on hard reload. FS catches these because its cache is
+  **CRC-validated**: on region entry it sends RequestMultipleObjects/CRC probes and the sim compares — any
+  mismatch (resize/rotate bumps the CRC) triggers a fresh full ObjectUpdate; deletes come back as misses.
+  Our preseed paints cached objects and trusts them. The DELETE half = the existing 🧠 **Stale-scene genuine
+  deletes** item (confirmation-gated preseed); this report widens it to **mutation staleness** → same design
+  pass: validate-on-entry (CRC probe or equivalent) + replace outdated cache rows. Related: ghost-reconcile
+  (2026-07-02) only culls server-side-known deletes; crcMap poisoning history in [[crc-probe-audit-resolved]].
 
 **2026-07-05 (from live-verifying the motion sweep):**
 - 🐛 **All scripted motion pauses when the window loses focus** — pre-existing: `animate()` early-returns on

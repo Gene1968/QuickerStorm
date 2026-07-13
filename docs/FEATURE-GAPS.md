@@ -191,6 +191,8 @@ Working: Object Properties, per-face texture mapping display with Repeats-per-me
 - [x] Edit name and description — DONE (ObjectEditFloater.vue:785 inputs → sendRename/sendDescription → ObjectName Low 107 / ObjectDescription Low 108, full round-trip; verified in 2026-07-04 audit)
 - [ ] Edit permissions — partial (tri-state checkboxes + sendObjectPerms + re-select wired 2026-07-03)
 - [ ] Numeric size / pos / rot input fields — fields are read-only `<span>`s today (ObjectEditFloater.vue:901–923); needs the MultipleObjectUpdate encoder (doesn't exist). → QUEUE "Object edit — manipulation" batch
+- [ ] Holding alt key temp switches to Focus tool.  Focus slider binds to zoom range for current focus.  New focus means new range
+- [ ] Edit rotation should show 5 decimal places like the others.  FS shows 0/280/270deg where we show 80/0/-90; let's make sure we're doing as good a job of wrapping at 360 for all axes
 - [ ] Texture drag and drop onto faces
 - [ ] Select Face radio (target individual face for texture/material edits)
 - [ ] Normal / Specular channels (RenderMaterials cap exists; not consuming yet)
