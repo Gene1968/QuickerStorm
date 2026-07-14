@@ -697,6 +697,52 @@ const clampI8  = (v: number): number => Math.max(-128, Math.min(127, v))
 const clampU8b = (v: number): number => Math.max(0, Math.min(255, v))
 const clampU16 = (v: number): number => Math.max(0, Math.min(65535, v))
 
+// ── Shared path/profile quantizers (llvolumemessage.cpp:39-263 packProfileParams/packPathParams)
+// Used by BOTH encodeObjectAdd and encodeObjectShape so the two wire paths can't drift apart —
+// same 17-field volume-params block appears verbatim in both message templates (compare ObjectAdd
+// message_template.msg:1837-1854 to ObjectShape :2152-2169).
+export interface ShapeFloatParams {
+  pathCurve: number; profileCurve: number
+  pathBegin: number; pathEnd: number         // 0..1 — CUT_QUANTA
+  pathScaleX: number; pathScaleY: number     // 0..1 — SCALE_QUANTA, 200-offset
+  pathShearX: number; pathShearY: number     // -.5..5 — SHEAR_QUANTA
+  pathTwist: number; pathTwistBegin: number  // -1..1 — SCALE_QUANTA
+  pathRadiusOffset: number                   // -1..1 — SCALE_QUANTA
+  pathTaperX: number; pathTaperY: number     // -1..1 — TAPER_QUANTA
+  pathRevolutions: number                    // 1..4  — REV_QUANTA, -1 offset
+  pathSkew: number                           // -1..1 — SCALE_QUANTA
+  profileBegin: number; profileEnd: number; profileHollow: number  // 0..1
+}
+
+/** Quantize the FULL 17-field path/profile float block to its wire-int representation. Field
+ *  ORDER matches both message templates exactly. PathShearX/Y are U8 wire fields carrying a
+ *  signed two's-complement value (message_template.msg comment "-.5 to .5") — masked with &0xFF
+ *  to match the C++ (U8)(S8) cast (fields.ts's U8 writer would otherwise clamp negatives to 0);
+ *  PathTwist/TwistBegin/RadiusOffset/TaperX/Y/Skew are genuine S8 wire fields, no mask needed. */
+function quantizeShapeFields(p: ShapeFloatParams) {
+  const r = Math.round
+  return {
+    PathCurve:    p.pathCurve,
+    ProfileCurve: p.profileCurve,
+    PathBegin:  clampU16(r(p.pathBegin / CUT_QUANTA)),
+    PathEnd:    clampU16(50000 - r(p.pathEnd / CUT_QUANTA)),
+    PathScaleX: clampU8b(200 - r(p.pathScaleX / SCALE_QUANTA)),
+    PathScaleY: clampU8b(200 - r(p.pathScaleY / SCALE_QUANTA)),
+    PathShearX: clampI8(r(p.pathShearX / SHEAR_QUANTA)) & 0xFF,
+    PathShearY: clampI8(r(p.pathShearY / SHEAR_QUANTA)) & 0xFF,
+    PathTwist:        clampI8(r(p.pathTwist / SCALE_QUANTA)),
+    PathTwistBegin:   clampI8(r(p.pathTwistBegin / SCALE_QUANTA)),
+    PathRadiusOffset: clampI8(r(p.pathRadiusOffset / SCALE_QUANTA)),
+    PathTaperX:       clampI8(r(p.pathTaperX / TAPER_QUANTA)),
+    PathTaperY:       clampI8(r(p.pathTaperY / TAPER_QUANTA)),
+    PathRevolutions:  clampU8b(r((p.pathRevolutions - 1.0) / REV_QUANTA)),
+    PathSkew:         clampI8(r(p.pathSkew / SCALE_QUANTA)),
+    ProfileBegin:  clampU16(r(p.profileBegin / CUT_QUANTA)),
+    ProfileEnd:    clampU16(50000 - r(p.profileEnd / CUT_QUANTA)),
+    ProfileHollow: clampU16(r(p.profileHollow / HOLLOW_QUANTA)),
+  }
+}
+
 export interface ObjectAddParams {
   agentId: string; sessionId: string; seq: number
   pcode?: number          // defaults to LL_PCODE_VOLUME (9) — regular prim
@@ -728,35 +774,13 @@ export interface ObjectAddParams {
  *  identical shape params to what the user configured. */
 export function encodeObjectAdd(p: ObjectAddParams): Buffer {
   const ZERO = '00000000-0000-0000-0000-000000000000'
-  const r = Math.round
   return encode('ObjectAdd', {
     AgentData: { AgentID: p.agentId, SessionID: p.sessionId, GroupID: ZERO },
     ObjectData: {
       PCode:    p.pcode ?? LL_PCODE_VOLUME,
       Material: p.material,
       AddFlags: p.addFlags >>> 0,
-      PathCurve:    p.pathCurve,
-      ProfileCurve: p.profileCurve,
-      // llvolumemessage.cpp:220/223 — begin: round(v/quanta); end: 50000 - round(v/quanta)
-      PathBegin:  clampU16(r(p.pathBegin / CUT_QUANTA)),
-      PathEnd:    clampU16(50000 - r(p.pathEnd / CUT_QUANTA)),
-      // :229-230 — 200 - round(scale/quanta); wire field is U8 (unsigned), result is always 100..200
-      PathScaleX: clampU8b(200 - r(p.pathScaleX / SCALE_QUANTA)),
-      PathScaleY: clampU8b(200 - r(p.pathScaleY / SCALE_QUANTA)),
-      // :235-236 — signed value stored in a U8 wire field via two's complement (fields.ts U8 write
-      // masks with &0xFF, matching the C++ (U8)(S8) cast)
-      PathShearX: clampI8(r(p.pathShearX / SHEAR_QUANTA)) & 0xFF,
-      PathShearY: clampI8(r(p.pathShearY / SHEAR_QUANTA)) & 0xFF,
-      PathTwist:        clampI8(r(p.pathTwist / SCALE_QUANTA)),
-      PathTwistBegin:   clampI8(r(p.pathTwistBegin / SCALE_QUANTA)),
-      PathRadiusOffset: clampI8(r(p.pathRadiusOffset / SCALE_QUANTA)),
-      PathTaperX:       clampI8(r(p.pathTaperX / TAPER_QUANTA)),
-      PathTaperY:       clampI8(r(p.pathTaperY / TAPER_QUANTA)),
-      PathRevolutions:  clampU8b(r((p.pathRevolutions - 1.0) / REV_QUANTA)),
-      PathSkew:         clampI8(r(p.pathSkew / SCALE_QUANTA)),
-      ProfileBegin:  clampU16(r(p.profileBegin / CUT_QUANTA)),
-      ProfileEnd:    clampU16(50000 - r(p.profileEnd / CUT_QUANTA)),
-      ProfileHollow: clampU16(r(p.profileHollow / HOLLOW_QUANTA)),
+      ...quantizeShapeFields(p),
       BypassRaycast: p.bypassRaycast ? 1 : 0,
       RayStart: p.rayStart,
       RayEnd:   p.rayEnd,
@@ -766,6 +790,28 @@ export function encodeObjectAdd(p: ObjectAddParams): Buffer {
       Rotation: packQuatToVector3(p.rotation),
       State: p.state ?? 0,
     },
+  }, { seq: p.seq, reliable: true })
+}
+
+// ── ObjectShape (Low 98) — edit a prim's path/profile params (Object-tab shape spinners) ──────
+// message_template.msg:2143-2171. Per-PRIM (no linkset-root resolution — matches FS: the Object
+// tab edits whatever's selected, llpanelobject.cpp sendShape via LLSelectMgr, one block per
+// selected prim). Caller sends RAW FLOATS (volume-params space, same convention as ObjectAdd);
+// quantizeShapeFields applies the identical FS packProfileParams/packPathParams formulas.
+export interface ObjectShapeEntry extends ShapeFloatParams {
+  localId: number
+}
+
+export function encodeObjectShape(p: {
+  agentId: string; sessionId: string; seq: number
+  updates: ObjectShapeEntry[]
+}): Buffer {
+  return encode('ObjectShape', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    ObjectData: p.updates.map(u => ({
+      ObjectLocalID: u.localId,
+      ...quantizeShapeFields(u),
+    })),
   }, { seq: p.seq, reliable: true })
 }
 

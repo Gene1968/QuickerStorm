@@ -46,6 +46,7 @@ import {
 	mapAvatarSitResponse, mapMoneyBalanceReply,
 	encodeRequestObjectPropertiesFamily, mapObjectPropertiesFamily,
 	encodeObjectAdd, encodeObjectLink, encodeObjectDelink, encodeObjectImage, encodeObjectDuplicate,
+	encodeObjectShape, type ObjectShapeEntry,
 	type TextureEntryFaceInput,
 } from '../lib/lludp-codec'
 import {
@@ -2083,6 +2084,29 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		}
 		const fields = [updates[0].position && 'pos', updates[0].rotation && 'rot', updates[0].scale && 'scale'].filter(Boolean).join('+')
 		slog.info(session.ws, `→ MultipleObjectUpdate ${fields}${d.linked ? ' linked' : ''}${d.uniform ? ' uniform' : ''} localIds=[${updates.map(u => u.localId).join(',')}]`)
+		return
+	}
+
+	if (msg.t === C.OBJECT_SHAPE) {
+		// ObjectShape (Low 98) — Object-tab prim-shape edit. Per-PRIM (no root resolution — see
+		// shared/protocol.js C.OBJECT_SHAPE comment); caller sends the FULL 17-field float set,
+		// RAW (volume-params space) — encodeObjectShape quantizes via the same helper ObjectAdd uses.
+		const d = msg.d as { updates?: ObjectShapeEntry[] }
+		const updates = (d.updates ?? []).filter(u =>
+			u && typeof u.localId === 'number' && typeof u.pathCurve === 'number' && typeof u.profileCurve === 'number')
+		if (!updates.length) { slog.warn(session.ws, 'ObjectShape: no valid updates'); return }
+		// WHY chunk 25: same per-packet MTU budget as OBJECT_MULTI_UPDATE (each block here is
+		// 4(localId)+17 fields ≈ 25B, well under the ~1200B LLUDP MTU at 25 blocks/packet).
+		for (let i = 0; i < updates.length; i += 25) {
+			const seq = nextSeq(session)
+			const pkt = encodeObjectShape({
+				agentId: session.agentId, sessionId: session.sessionId, seq,
+				updates: updates.slice(i, i + 25),
+			})
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ ObjectShape localIds=[${updates.map(u => u.localId).join(',')}]`)
 		return
 	}
 

@@ -163,6 +163,15 @@ export function useLLUDP() {
 		emit(C.OBJECT_MULTI_UPDATE, { updates, linked })
 	}
 
+	/** Edit a prim's path/profile shape (Object-tab spinners) — ObjectShape (Low 98). PER-PRIM,
+	 *  no linkset-root resolution (a child prim edits its own shape — llpanelobject.cpp acts on
+	 *  whatever's selected). params = the FULL 17-field FLOAT volume-params set (@/lib/primParams.js
+	 *  uiToWireParams output); server quantizes via the same helper ObjectAdd uses. Convenience
+	 *  single-object wrapper — the wire itself takes updates[] (multi-object capable). */
+	function sendShape(localId, params) {
+		emit(C.OBJECT_SHAPE, { updates: [{ localId, ...params }] })
+	}
+
 	// ── Build/edit wire (rez, link, texture, duplicate) ─────────────────────
 
 	/** Rez a new prim — ObjectAdd (Medium 1). params matches C.OBJECT_ADD's d shape exactly
@@ -254,5 +263,5 @@ export function useLLUDP() {
 		emit(C.GROUP_INVITE, { groupId, inviteeIds, roleId })
 	}
 
-	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, createPrim, sendLink, sendDelink, setObjectTexture, duplicateObjects, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport, buyObject, payMoney, requestMoneyBalance, inviteToGroup, requestObjectPropsFamily }
+	return { sendMove, sendChat, sendLogout, sendIM, sendTouch, sendSit, sendSelect, sendDeselect, sendObjectPerms, sendRename, sendDescription, sendDelete, takeObject, takeObjectCopy, purgeInventoryFolder, sendPosition, sendScale, sendRotation, sendShape, createPrim, sendLink, sendDelink, setObjectTexture, duplicateObjects, requestTaskInventory, moveTaskInventory, sendSetAlwaysRun, sendMapQuery, sendMapNameQuery, sendMapTeleport, buyObject, payMoney, requestMoneyBalance, inviteToGroup, requestObjectPropsFamily }
 }

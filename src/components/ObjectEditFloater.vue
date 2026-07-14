@@ -18,6 +18,7 @@ import { useNotificationStore } from '@/stores/notificationStore'
 import { itemIcon } from '@/utils/inventoryIcons.js'
 import { useTaskInventory } from '@/composables/useTaskInventory'
 import { PRIM_SHAPE_KEYS } from '@/lib/primShapes.js'
+import { displayParams, uiToWireParams } from '@/lib/primParams.js'
 import FloaterWindow from '@/components/FloaterWindow.vue'
 import PermCheckbox from '@/components/PermCheckbox.vue'
 import { ZoomInIcon, HandIcon, SquareMousePointerIcon, WandIcon, PickaxeIcon, ChevronLeftIcon, ChevronRightIcon, XIcon, CopyIcon, ClipboardCopyIcon, ClipboardPasteIcon } from '@lucide/vue'
@@ -75,7 +76,7 @@ const gizmoOps = [
 const obj       = computed(() => ui.editObjectId ? world.objects.get(ui.editObjectId) : null)
 
 // ── Editable Name / Description (General tab) → ObjectName (107) / ObjectDescription (108) ──
-const { sendRename, sendDescription, sendObjectPerms, sendSelect, sendPosition, sendScale, sendRotation, sendLink, sendDelink } = useLLUDP()
+const { sendRename, sendDescription, sendObjectPerms, sendSelect, sendPosition, sendScale, sendRotation, sendShape, sendLink, sendDelink } = useLLUDP()
 const notif = useNotificationStore()
 const editName = ref('')
 const editDesc = ref('')
@@ -248,7 +249,7 @@ watch(() => [ui.editObjectId, obj.value?.pos, obj.value?.scale, obj.value?.rot],
 	for (let i = 0; i < 3; i++) {
 		if (xfFocus.value !== `pos-${i}`)  xf.pos[i]  = o?.pos?.[i]   != null ? o.pos[i].toFixed(5)   : ''
 		if (xfFocus.value !== `size-${i}`) xf.size[i] = o?.scale?.[i] != null ? o.scale[i].toFixed(5) : ''
-		if (xfFocus.value !== `rot-${i}`)  xf.rot[i]  = String(rotDeg[i])
+		if (xfFocus.value !== `rot-${i}`)  xf.rot[i]  = Number(rotDeg[i]).toFixed(5)
 	}
 }, { immediate: true })
 const _clampN = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
@@ -284,13 +285,54 @@ function commitRot() {
 	if (!o || !canXform.value) return
 	const v = _parseTriad(xf.rot, o.rot ? quatToEulerDeg(o.rot).map(parseFloat) : [0, 0, 0])
 		.map((n) => ((n % 360) + 360) % 360)   // FS normalizes spinners to 0-360
-	for (let i = 0; i < 3; i++) xf.rot[i] = v[i].toFixed(1)
+	for (let i = 0; i < 3; i++) xf.rot[i] = v[i].toFixed(5)
 	if (o.rot && quatToEulerDeg(o.rot).every((d, i) => Math.abs(parseFloat(d) - v[i]) < 0.05)) return
 	sendRotation(o.localId, eulerDegToQuat(v[0], v[1], v[2]), { linked: true })
 }
 const XF_COMMIT = { pos: commitPos, size: commitSize, rot: commitRot }
 // M-3 nudge = the native number-input spinners (step 0.05 m / 0.5°): hold-to-repeat and ↑/↓ both
 // fire @change per step, which routes through XF_COMMIT — no custom stepper code needed.
+
+// ── Editable prim-shape params (Object tab) → ObjectShape (Low 98), @/lib/primParams.js ────────
+// Per-PRIM, unlike pos/size/rot above — no linkset-root resolution (a child prim edits its own
+// shape; FS acts on whatever LLSelectMgr has selected, llpanelobject.cpp getVolumeParams/sendShape).
+// Same commit convention as xf: reactive display strings, focus guard so a live ObjectUpdate echo
+// doesn't clobber in-progress typing, commit on Enter/blur/change (llpanelobject.cpp:2598-2621 parity).
+const canShapeEdit = computed(() => canModify.value && obj.value?.pcode === 9)
+const shapeEditTitle = computed(() => !canModify.value ? "You can't modify this object" : 'Enter or Tab to apply')
+// displayParams() derives labels/visibility/ranges fresh from the CURRENT shape every render —
+// these are read-only metadata, not part of the editable reactive state below.
+const shapeMeta = computed(() => obj.value?.shape ? displayParams(obj.value.shape) : null)
+const SHAPE_FIELDS = ['pathCutBegin', 'pathCutEnd', 'advBegin', 'advEnd', 'hollowPct',
+	'twistBegin', 'twistEnd', 'taperX', 'taperY', 'shearX', 'shearY',
+	'radiusOffset', 'revolutions', 'skew']
+// Gene's spec: every row keeps 5 decimals EXCEPT Twist (integer degrees).
+const shapeDecimals = (key) => (key === 'twistBegin' || key === 'twistEnd') ? 0 : 5
+const shapeUi = reactive(Object.fromEntries(SHAPE_FIELDS.map((k) => [k, ''])))
+const shapeFocus = ref(null)
+watch(() => [ui.editObjectId, obj.value?.shape], () => {
+	const m = shapeMeta.value
+	if (!m) return
+	for (const key of SHAPE_FIELDS) {
+		if (shapeFocus.value === key) continue
+		const v = m[key]
+		shapeUi[key] = typeof v === 'number' ? v.toFixed(shapeDecimals(key)) : ''
+	}
+}, { immediate: true, deep: true })
+function _parseShapeField(str, fallback) {
+	const n = parseFloat(str)
+	return Number.isFinite(n) ? n : fallback
+}
+function commitShape() {
+	const o = obj.value
+	if (!o || !canShapeEdit.value || !o.shape) return
+	const m = shapeMeta.value
+	if (!m) return
+	const rows = {}
+	for (const key of SHAPE_FIELDS) rows[key] = _parseShapeField(shapeUi[key], m[key])
+	const wire = uiToWireParams(o.shape, rows)
+	sendShape(o.localId, wire)
+}
 
 // ── Content tab: prim (task) inventory ────────────────────────────────────
 // useTaskInventory owns the wire + state (REQUEST_TASK_INV → TASK_INV/EMPTY); this tab is a thin
@@ -446,10 +488,11 @@ const linkGate   = computed(() => { void world.objects.size; return canLinkGate(
 const unlinkGate = computed(() => { void world.objects.size; return canUnlinkGate(world.objects, world.linksetMembers, selectedIds.value) })
 function linkSelected() {
 	const g = linkGate.value
-	if (g.disabled) {
-		if (g.reason === 'differentOwners') {
-			notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
-		}
+	if (g.disabled) return
+	// FS parity: cross-owner refusal fires at INVOKE, not as a disabled button (llselectmgr.cpp
+	// linkObjects :804-813 — enableLinkObjects never checks owners).
+	if (g.reason === 'differentOwners') {
+		notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
 		return
 	}
 	sendLink(g.roots)
@@ -708,10 +751,10 @@ function close() {
 				<div v-if="buildTool === tools[0].id">
 					<p class="py-0.5 text-2xs text-fg/40 italic ml-auto truncate">Click and drag to move camera</p>
 					<div class="flex items-center gap-3">
-						<div class="flex flex-col whitespace-nowrap">
-							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Zoom</label>
-							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Orbit (Ctrl)</label>
-							<label for=""><input type="radio" title="to-do" class="accent-accent shrink-0"/> Pan (Ctrl+Shift)</label>
+						<div role="radiogroup" aria-label="Focus operation" class="flex flex-col whitespace-nowrap">
+							<label for="" class="flex items-center gap-1 min-w-0 text-2xs text-fg leading-4.5 cursor-pointer select-none"><input type="radio" title="to-do" class="accent-accent shrink-0" selected /> Zoom</label>
+							<label for="" class="flex items-center gap-1 min-w-0 text-2xs text-fg leading-4.5 cursor-pointer select-none"><input type="radio" title="to-do" class="accent-accent shrink-0" /> Orbit (Ctrl)</label>
+							<label for="" class="flex items-center gap-1 min-w-0 text-2xs text-fg leading-4.5 cursor-pointer select-none"><input type="radio" title="to-do" class="accent-accent shrink-0" /> Pan (Ctrl+Shift)</label>
 						</div>
 						<div class="w-full">
 							<input type="range" min="0" max="100" value="75" disabled class="w-full accent-accent" />
@@ -1033,7 +1076,7 @@ function close() {
 						prim-shape params + the building-block / mesh / sculpt type. The type row is how
 						you tell a mesh from a sculpt from a plain prim. -->
 					<template v-else-if="activeTab === 'object'">
-						<div class="flex gap-1.5 px-0.5">
+						<div class="flex gap-2 px-0.5">
 							<div class="w-2/5">
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Owner has removed Move permission — object is locked in place"><input type="checkbox" class="accent-accent" :checked="lockedFromOwnerMask(obj.ownerMask) === true" disabled /> Locked</label><!-- FS keys Locked off PERM_MOVE on the owner mask (llpanelobject.cpp:646-663), NOT Modify -->
 								<label class="inline-flex items-center gap-1 me-4 text-fg/70" title="Physics simulation enabled"><input type="checkbox" class="accent-accent" :checked="!!obj.physical" disabled /> Physical</label>
@@ -1064,19 +1107,27 @@ function close() {
 												@keyup.enter="onEnter(XF_COMMIT[grp.kind], $event)"
 												@change="canXform && XF_COMMIT[grp.kind]()"
 											/>
-											<button class="ui-btn text-2xs" title="to-do">C</button>
+											<button v-if="i === 0" class="ui-btn text-2xs" :title="`Copy ${grp.kind} (to-do)`">C</button>
+											<button v-else-if="i === 1" class="ui-btn text-2xs" :title="`Paste ${grp.kind} (to-do)`">P</button>
+											<button v-else class="ui-btn text-2xs" :title="`Try pasting ${grp.kind} from clipboard (to-do)`">P</button>
 										</div>
 									</div>
 								</div>
 							</div>
-							<div class="w-3/5">
-								<div class="flex justify-end">
-									<button title="Copy object parameters to clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-3 h-3" /></button>
-									<button title="Paste object parameters from clipboard" class="inline me-1" disabled><ClipboardPasteIcon class="w-3 h-3" /></button>
+							<div class="w-3/5 relative">
+								<div class="absolute top-0 right-0 flex justify-end">
+									<button title="Copy object parameters to clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-4 h-4" /></button>
+									<button title="Paste object parameters from clipboard" class="inline" disabled><ClipboardPasteIcon class="w-4 h-4" /></button>
 								</div>
 								<!-- Identity / linkset -->
-								<div class="grid grid-cols-[5.5rem,1fr] gap-x-2 gap-y-1.5 text-xs">
-									<div class="text-fg/50">Building Block</div>
+								<div class="grid grid-cols-[3rem_1fr] gap-y-0 gap-x-1 text-2xs">
+									<div class="text-fg/50 text-3xs">LocalID</div>
+									<div class="text-fg font-mono">{{ obj.localId }}</div>
+									<div class="text-fg/50 text-3xs">Parent ID</div>
+									<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
+									<div class="text-fg/50 text-3xs">Link Count</div>
+									<div class="text-fg">{{ linkCount }}</div>
+									<div class="text-fg/50 text-3xs">Bldg Block</div>
 									<div class="text-fg">{{ typeInfo.label }}</div>
 									<template v-if="typeInfo.detail">
 										<div class="text-fg/50">{{ typeInfo.kind === 'mesh' ? 'Mesh asset' : 'Sculpt map' }}</div>
@@ -1090,51 +1141,168 @@ function close() {
 											</button>
 											<input :value="typeInfo.detail" readonly class="flex-1 min-w-0 bg-fg/20 border border-edge rounded-sm px-1.5 py-0.5 text-fg font-mono text-2xs" />
 										</div>
-										LOD: Num Triangles
-										High: ####
-										Medium: ###
-										Low: ##
-										Lowest: ##
+										<div class="text-fg/50">LOD:</div>
+										<div class="text-fg font-mono">Num Triangles</div>
+										<div class="text-fg/50">High:</div>
+										<div class="text-fg font-mono">####</div>
+										<div class="text-fg/50">Medium:</div>
+										<div class="text-fg font-mono">###</div>
+										<div class="text-fg/50">Low:</div>
+										<div class="text-fg font-mono">##</div>
+										<div class="text-fg/50">Lowest:</div>
+										<div class="text-fg font-mono">##</div>
 									</template>
-									<div class="text-fg/50">LocalID</div>
-									<div class="text-fg font-mono">{{ obj.localId }}</div>
-									<div class="text-fg/50">Parent ID</div>
-									<div class="text-fg font-mono">{{ obj.parentId ?? 0 }}{{ obj.parentId ? '' : ' (root)' }}</div>
-									<div class="text-fg/50">Link Count</div>
-									<div class="text-fg">{{ linkCount }}</div>
 								</div>
-								<!-- Parametric prim shape (FS: lives on the Object tab) -->
-								<div v-if="showPrimShape" class="border-t border-edge pt-2 space-y-2">
+								<!-- Parametric prim shape (FS: lives on the Object tab) — editable spinners, FS-parity
+									display math via @/lib/primParams.js (displayParams/uiToWireParams). Per-PRIM commit
+									(commitShape, no linkset-root resolution — see script section above). 5 decimals
+									everywhere EXCEPT Twist (integer degrees, Gene's spec). -->
+								<div v-if="showPrimShape && shapeMeta" class="border-t border-edge pt-2 space-y-1">
 									<div class="text-fg/50 text-2xs uppercase tracking-wide">Prim Shape</div>
-									<div class="grid grid-cols-[5.25rem_1fr] gap-x-2 gap-y-1.5 text-xs">
-										<div class="text-fg/50">Profile</div>
-										<div class="text-fg">{{ profileCurveLabel }}</div>
-										<div class="text-fg/50">Path Cut (B/E)</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathBegin }} / {{ obj.shape.pathEnd }}</div>
-										<div class="text-fg/50">Profile Cut (B/E)</div>
-										<div class="text-fg font-mono">{{ obj.shape.profileBegin }} / {{ obj.shape.profileEnd }}</div>
-										<div class="text-fg/50">Hollow</div>
-										<div class="text-fg font-mono">{{ obj.shape.profileHollow }}</div>
-										<div class="text-fg/50">Twist (B/E)</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathTwistBegin }} / {{ obj.shape.pathTwist }}</div>
-										<div class="text-fg/50">Taper X/Y</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathTaperX }} / {{ obj.shape.pathTaperY }}</div>
-										<div class="text-fg/50">Top Shear X/Y</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathShearX }} / {{ obj.shape.pathShearY }}</div>
-										<div class="text-fg/50">Hole Size X/Y</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathScaleX }} / {{ obj.shape.pathScaleY }}</div>
-										<div class="text-fg/50">Revolutions</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathRevolutions }}</div>
-										<div class="text-fg/50">Radius Offset</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathRadiusOffset }}</div>
-										<div class="text-fg/50">Skew</div>
-										<div class="text-fg font-mono">{{ obj.shape.pathSkew }}</div>
+									<div class="text-2xs">
+										<div class="flex gap-1">
+											<div class="text-fg/50">Profile</div>
+											<div class="text-fg">{{ profileCurveLabel }}</div>
+										</div>
+										<select title="to-do" class="ui-select bg-fg/20 border border-edge rounded-sm my-1 w-full">
+											<option>Box</option>
+											<option>Cylinder</option>
+											<option>Prism</option>
+											<option>Sphere</option>
+											<option>Torus</option>
+											<option>Tube</option>
+											<option>Ring</option>
+											<option>Sculpted</option>
+											<option>Line->Half-Circle</option>
+											<option>Circle->Half-Circle</option>
+											<option>Circle2->Square</option>
+											<option>Circle2->Triangle</option>
+											<option>Circle2->Circle</option>
+											<option>Circle2->Half-Circle</option>
+											<option>Test->Square</option>
+											<option>Test->Triangle</option>
+											<option>Test->Circle</option>
+											<option>Test->Half-Circle</option>
+											<option>33->Square</option>
+											<option>33->Triangle</option>
+											<option>33->Circle</option>
+											<option>33->Half-Circle</option>
+										</select>
+										<div class="text-fg/50 self-center">Path Cut (begin/end)</div>
+										<div class="flex items-center gap-1 mb-1">
+											<span class="text-fg/40">B</span>
+											<input v-model="shapeUi.pathCutBegin" type="number" step="0.05" min="0" max="1" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'pathCutBegin'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+											<span class="text-fg/40">E</span>
+											<input v-model="shapeUi.pathCutEnd" type="number" step="0.05" min="0" max="1" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'pathCutEnd'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+										</div>
+
+										<div class="text-fg/50 self-center">Hollow (%) and Shape</div>
+										<div class="flex items-center gap-1 mb-1">
+											<input v-model="shapeUi.hollowPct" type="number" step="5.00000" min="0.00000" max="95" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'hollowPct'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+												<select title="to-do" class="ui-select bg-fg/20 border border-edge rounded-sm w-full" :class="{ 'opacity-60 cursor-not-allowed': shapeUi.hollowPct == 0 }" :disabled="shapeUi.hollowPct == 0">
+													<option>Default</option>
+													<option>Circle</option>
+													<option>Square</option>
+													<option>Triangle</option>
+												</select>
+										</div>
+
+										<div class="text-fg/50 self-center">Twist (begin/end)</div>
+										<div class="flex items-center gap-1 mb-1">
+											<span class="text-fg/40">B</span>
+											<input v-model="shapeUi.twistBegin" type="number" :step="shapeMeta.linear ? 9 : 18" :min="shapeMeta.linear ? -180 : -360" :max="shapeMeta.linear ? 180 : 360" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'twistBegin'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+											<span class="text-fg/40">E</span>
+											<input v-model="shapeUi.twistEnd" type="number" :step="shapeMeta.linear ? 9 : 18" :min="shapeMeta.linear ? -180 : -360" :max="shapeMeta.linear ? 180 : 360" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'twistEnd'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+										</div>
+
+										<div class="text-fg/50 self-center">{{ shapeMeta.taperLabel }}</div>
+										<div class="flex items-center gap-1 mb-1">
+											<span class="text-fg/40">X</span>
+											<input v-model="shapeUi.taperX" type="number" step="0.05" :min="shapeMeta.taperXRange[0]" :max="shapeMeta.taperXRange[1]" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'taperX'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+											<span class="text-fg/40">Y</span>
+											<input v-model="shapeUi.taperY" type="number" step="0.05" :min="shapeMeta.taperYRange[0]" :max="shapeMeta.taperYRange[1]" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'taperY'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+										</div>
+
+										<div class="text-fg/50 self-center">Top Shear</div>
+										<div class="flex items-center gap-1 mb-1">
+											<span class="text-fg/40">X</span>
+											<input v-model="shapeUi.shearX" type="number" step="0.05" min="-0.5" max="0.5" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'shearX'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+											<span class="text-fg/40">Y</span>
+											<input v-model="shapeUi.shearY" type="number" step="0.05" min="-0.5" max="0.5" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'shearY'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+										</div>
+
+										<div class="text-fg/50 self-center">{{ shapeMeta.advLabel }} (begin/end)</div>
+										<div class="flex items-center gap-1 mb-1">
+											<span class="text-fg/40">B</span>
+											<input v-model="shapeUi.advBegin" type="number" step="0.05" min="0" max="1" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'advBegin'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+											<span class="text-fg/40">E</span>
+											<input v-model="shapeUi.advEnd" type="number" step="0.05" min="0" max="1" :readonly="!canShapeEdit" :title="shapeEditTitle"
+												class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+												@focus="shapeFocus = 'advEnd'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+												@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+										</div>
+
+										<!-- Radius Offset / Revolutions / Skew — circular family only (torus/tube/ring/sphere) -->
+										<template v-if="shapeMeta.showRadiusRevSkew">
+											<div class="flex items-center justify-between gap-1 mb-1">
+												<div>
+													<div class="text-fg/50 self-center">Radius [Offset?]</div>
+													<input v-model="shapeUi.radiusOffset" type="number" step="0.05" min="-1" max="1" :readonly="!canShapeEdit" :title="shapeEditTitle"
+														class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 w-full text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+														@focus="shapeFocus = 'radiusOffset'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+														@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+												</div>
+												<div>
+													<div class="text-fg/50 self-center">Revolutions</div>
+													<div class="flex items-center gap-1">
+														<input v-model="shapeUi.revolutions" type="number" step="0.05" min="1" max="4" :readonly="!canShapeEdit" :title="shapeEditTitle"
+															class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 w-full text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+															@focus="shapeFocus = 'revolutions'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+															@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+													</div>
+												</div>
+											</div>
+											<div class="text-fg/50 self-center">Skew</div>
+											<div class="flex items-center gap-1">
+												<input v-model="shapeUi.skew" type="number" step="0.05" min="-0.95" max="0.95" :readonly="!canShapeEdit" :title="shapeEditTitle"
+													class="w-full min-w-0 bg-fg/20 border border-edge rounded-sm p-0 text-fg font-mono read-only:opacity-60 read-only:cursor-not-allowed"
+													@focus="shapeFocus = 'skew'; selectAll($event)" @blur="shapeFocus = null; onBlur(commitShape)"
+													@keyup.enter="onEnter(commitShape, $event)" @change="canShapeEdit && commitShape()" />
+											</div>
+										</template>
 									</div>
 								</div>
-								<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">
-									Geometry comes from the mesh asset above. LOD triangle counts arrive with the
-									mesh-info decode (Phase 3).
-								</div>
+								<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">Geometry comes from the mesh asset above. LOD triangle counts arrive with the mesh-info decode (Phase 3).</div>
 							</div>
 						</div>
 					</template>
