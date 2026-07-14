@@ -349,13 +349,14 @@ prim's 4 items (3 animations + a script) through the full Xfer pipeline. ⬜ liv
 itself (creates folder + copies items — left for Gene). New Script / Edit buttons stay disabled
 (no script editor yet — FEATURE-GAPS scripts).
 **Follow-ups (Gene 2026-07-05, after his layout/button pass on the tab):**
-- FS treats contents as a single FOLDER of an inventory tree w/ drag & drop (llpanelobjectinventory =
+- [ ] In Edit floater FS treats obj contents as a single FOLDER of an inventory tree w/ drag & drop (llpanelobjectinventory =
   a filtered inv panel) — either reuse our inventory tree component scoped to the task folder, or faux it here.
-- Per-item context menu (FS: Open / Properties / Rename / Delete) — where FS "Open" = preview-by-type /
+- [ ] Per-item context menu (FS: Open / Properties / Rename / Delete) — where FS "Open" = preview-by-type /
   edit-script; our copy-to-inventory action is deliberately labeled differently to keep the two apart.
-- "xfer timeout" robustness FIXED 2026-07-05: deep-duplicate re-confirm (highest-accepted) + watchdog
+- [ ] "xfer timeout" robustness FIXED 2026-07-05: deep-duplicate re-confirm (highest-accepted) + watchdog
   re-arms on ANY transfer traffic (OpenSim bursts ≤33 chunks, stall-resends ≤4×10s — XferModule.cs:396/:458;
   we could time out mid-recovery on lossy/busy links). If timeouts persist → add ONE auto re-request retry.
+- [ ] script execution, light projection, contents editing, script reset, LSL script apply texture and project
 **SEQUENTIAL mini-program** (steps feed each other — one session/pipelined workflow, not a blind-parallel sweep).
 All 9 UDP messages already in message_template.msg (Xfer :3541–3586, task-inv :6421–6508); **zero Xfer machinery
 exists** in our server. OpenSim has NO RequestTaskInventory HTTP cap → must build the UDP+Xfer path
@@ -671,6 +672,11 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 
 ## ⬇️ Raw inbox (Gene dumps here; Claude triages up into the clusters above)
 
+**2026-07-14 (Gene):**
+- ❓ **Draw distance sliders** — not sure why slider in quick prefs is not connected since one in prefs is.  Is this useful and a good idea to keep?
+- ❓ **Geometry cache RAM** — if this is tab RAM and Chrome limits tabs to 4096mb, shouldn't it pretty much always say 4096mb and discourage changing or disable this just show as informative?  Could we probe to see available limit in case browsers increase it in future?
+- ❓ **Phase 3** — I've said before that phase 3 is overused and meaningless to users looking for features.  Let's replace it and line up all remaining bundles of work.  No matter how many times I've had Claude triage queue and bundle remaining work/'clusters', we only get little slices that ignore countless to-dos and 'not implemented yet' and 'followups' instead of completing any particular area ever.  Inventory is not complete.  Edit obj floater is far from complete.  LSL scripts are very partial.  PBR not seen.  Voice not started, etc.  I'm positive items in feature-gaps are not getting checked off (or moved) at the right times as I've manually checked some off knowing they'd gotten done.  I'm positive we're not bundling right.  Are there any more caps we'll need to get on with remaining features?
+- ❓ **Readme and docs** — Update the readme and completion percentages.  What's the total completion?  What's a good way to list remaining feature bundles?  Why do you often leave 'pending live verify' for weeks?  I don't think that helps users or future developers and I don't know if you mean you need to MCP or you don't think I've looked at it.  Feature-gaps and feature-gaps-queue seem to just be getting longer since we miss so many details on every pass and it's a mess of checkmarks too - can't we org docs better by done vs not done so I don't have to pore through thousands of done lines and can close that one.
 **2026-07-13 (Gene):**
 - 🐛 **Many objects' textures turned black** — per-object "Texture refresh" fixes each; hard reload does
   NOT; "Rebake textures" doesn't help. **INVESTIGATED 2026-07-13 (root cause still open, needs a live

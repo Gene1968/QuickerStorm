@@ -345,7 +345,10 @@
       "PowerShell(npx vite build 2>&1 | Select-Object -Last 6)",
       "PowerShell(npx vite build 2>&1 | Select-Object -Last 4)",
       "PowerShell(npx vite build 2>&1 | Select-Object -Last 3)",
-      "Bash(xargs -I{} echo {})"
+      "Bash(xargs -I{} echo {})",
+      "PowerShell($f = Get-Item \".\\\\server-watch.log\"; \"LogLastWrite : $\\($f.LastWriteTime\\)\"; \"Now          : $\\(Get-Date\\)\"; \"AgeMinutes   : {0:N1}\" -f \\(\\(Get-Date\\) - $f.LastWriteTime\\).TotalMinutes; \"SizeKB       : {0:N0}\" -f \\($f.Length/1KB\\))",
+      "PowerShell(Select-String -Path \".\\\\server-watch.log\" -Pattern \"Inventory|FetchInventoryDescend|INV_|InvFolder|inventoryCap|Descendents\" | Select-Object -Last 40 | ForEach-Object { $_.Line })",
+      "PowerShell(Select-String -Path \".\\\\server-watch.log\" -Pattern \"\\\\[Inv\\\\]|Inventory fetch failed|INV_FETCH|handleInventoryFetch\" | Select-Object -Last 30 | ForEach-Object { $_.Line })"
     ]
   }
 }

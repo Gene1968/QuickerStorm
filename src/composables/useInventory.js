@@ -55,6 +55,39 @@ export function shouldDeferInventoryWalk(sawLoading, sceneLoading, msSinceProgre
 	return msSinceProgress < stallMs                       // loading + progressing → defer; stalled → walk
 }
 
+// A folder fetch (C.INV_FETCH_FOLDER) that never receives its S.INV_FOLDER reply latches the
+// inventoryStore `fetching` set forever: pendingAgentFolders() excludes it AND fetching.size stays
+// > 0, so the bulk-walk pump never satisfies its stop condition — the grand-total number sticks and
+// the global spinner never clears (the 2026-07-14 stuck-inventory bug; see docs/FEATURE-GAPS.md).
+// The server sends S.INV_FOLDER even on its own 25s cap timeout (with an error field, which clears
+// fetching), so the ONLY way a fetch latches is a request/reply dropped on the wire — and no
+// client-side timeout existed to recover from that. This watchdog is that timeout.
+//
+// TIMEOUT is deliberately > the server's 25s cap timeout so a legitimately-slow reply is never
+// raced into a duplicate fetch; only genuinely lost messages exceed it.
+export const FETCH_STALL_TIMEOUT_MS = 30_000
+export const FETCH_MAX_RETRIES      = 2
+
+/**
+ * Partition in-flight folder fetches into those to RETRY (re-issue) vs GIVE UP on (mark empty so
+ * the walk can complete + warn the user). Pure — clock and state injected — so it is unit-testable
+ * without the store or a live socket (mirrors shouldDeferInventoryWalk).
+ * @param fetchingSince Map<folderId, startedAtMs>  when each in-flight fetch was issued
+ * @param retries       Map<folderId, count>        retries already spent per folder
+ * @param now           performance.now() this tick
+ * @returns {{retry: string[], giveUp: string[]}}
+ */
+export function pickStalledFetches(fetchingSince, retries, now,
+	{ timeoutMs = FETCH_STALL_TIMEOUT_MS, maxRetries = FETCH_MAX_RETRIES } = {}) {
+	const retry = [], giveUp = []
+	for (const [id, since] of fetchingSince) {
+		if (now - since < timeoutMs) continue                    // still inside the window — leave it
+		if ((retries.get(id) || 0) < maxRetries) retry.push(id)  // budget left → re-issue
+		else giveUp.push(id)                                     // exhausted → unstick + surface
+	}
+	return { retry, giveUp }
+}
+
 // SL AssetType for an OBJECT (rezzable) = 6; InvType for an OBJECT = 6 too. Only OBJECT items
 // can be rezzed into the world (matches the InventoryContextMenu isObject test + FS behaviour).
 export const ASSET_TYPE_OBJECT = 6
@@ -135,6 +168,11 @@ let _lastProgress = -1        // last seen worldStore.assetProgress value
 let _lastProgressAt = 0       // performance.now() when assetProgress last advanced
 // WHY: mutation-save watcher stopper; module-level so re-login can cancel the previous login's watcher.
 let _stopMutationSave = null
+// WHY: per-folder fetch-retry counts + one-shot "inventory degraded" notice for the lost-message
+// watchdog (pickStalledFetches). Module-level so they persist across the pump's re-creation; both
+// reset per login in onCapsReady so a fresh circuit starts with a full retry budget.
+const _fetchRetries = new Map()
+let _invDegradedNotified = false
 
 export function useInventory() {
 	const { on, off, emit } = useRealtimeSocket()
@@ -143,7 +181,7 @@ export function useInventory() {
 	const session = useSessionStore()
 	const world   = useWorldStore()
 	const ui      = useUiStore()
-	const { notifyInfo } = useNotifications()
+	const { notifyInfo, notifyError } = useNotifications()
 
 	// Double-click / "Open" dispatch for an inventory ITEM, switched once by asset type.
 	// TEXTURE → the texture-preview floater (full pipeline exists). Everything else has no
@@ -203,6 +241,17 @@ export function useInventory() {
 			if (world.sceneLoading || prog > _lastProgress) _sawLoading = true   // region has shown activity
 			if (prog > _lastProgress) { _lastProgress = prog; _lastProgressAt = now }   // assets advanced → reset stall timer
 			if (shouldDeferInventoryWalk(_sawLoading, world.sceneLoading, now - _lastProgressAt, now - capsReadyAt)) return
+			// Watchdog: reclaim fetches whose S.INV_FOLDER reply was lost (see pickStalledFetches). Left
+			// alone, one latched fetch keeps fetching.size > 0 forever → this pump never stops, the total
+			// sticks and the spinner never clears. Retried folders are cleared here and re-issued by the
+			// pending pass below on THIS tick; exhausted ones are marked fetched-empty so the walk can
+			// COMPLETE, then the session is flagged degraded so the user knows to relog.
+			const { retry, giveUp } = pickStalledFetches(inv.fetchingSince, _fetchRetries, now)
+			for (const id of retry) { _fetchRetries.set(id, (_fetchRetries.get(id) || 0) + 1); inv.clearFetching(id) }
+			if (giveUp.length) {
+				for (const id of giveUp) { inv.setItems(id, []); _fetchRetries.delete(id) }
+				notifyInventoryDegraded(giveUp.length)
+			}
 			const slots = MAX_INFLIGHT - inv.fetching.size
 			const pending = inv.pendingAgentFolders()
 			if (pending.length === 0 && inv.fetching.size === 0) { stopFetchAll(); return }
@@ -210,6 +259,17 @@ export function useInventory() {
 		}, PUMP_MS)
 	}
 	function stopFetchAll() { if (pump) { clearInterval(pump); pump = null } }
+
+	// One-shot user-facing signal that inventory could not fully sync (the "hobbled state" — some
+	// folder fetches were dropped and never recovered). The relog re-arms caps + restarts the walk
+	// from a clean fetching set, which a plain reload cannot. Guarded so a multi-folder failure
+	// raises a single toast, not one per folder.
+	function notifyInventoryDegraded(count) {
+		if (_invDegradedNotified) return
+		_invDegradedNotified = true
+		console.warn(`[INV] ${count} folder(s) never returned after ${FETCH_MAX_RETRIES} retries — inventory sync incomplete; relog to finish`)
+		notifyError('Inventory didn’t fully load', 'Some folders stopped responding. Log out and back in to finish syncing.')
+	}
 
 	function onInvFolder(d) {
 		if (!d?.folderId) return
@@ -264,6 +324,9 @@ export function useInventory() {
 		_sawLoading = false
 		_lastProgress = -1
 		_lastProgressAt = capsReadyAt
+		// Fresh circuit → full retry budget + re-arm the one-shot degraded notice.
+		_fetchRetries.clear()
+		_invDegradedNotified = false
 		// Load cache BEFORE starting fetches so items appear immediately.
 		await loadCache()
 		// WHY: one-shot save watcher registered here (not at module level) so it is fresh for

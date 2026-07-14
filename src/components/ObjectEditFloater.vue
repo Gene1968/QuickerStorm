@@ -839,7 +839,7 @@ function close() {
 							@click="unlinkSelected"
 						>Unlink</button>
 						<select
-							title="World (Phase 3)"
+							title="World (to-do)"
 							disabled
 							class="ui-btn ml-auto p-0.5 px-4 text-2xs rounded-sm border border-edge text-fg/30 cursor-not-allowed bg-white/10"
 						>

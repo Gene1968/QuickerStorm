@@ -23,6 +23,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	const filterCollapsedByFloater = ref(new Map())
 	const fetched   = shallowRef(new Set())  // folderIds whose contents have been fetched
 	const fetching  = shallowRef(new Set())  // folderIds with an in-flight fetch
+	// Plain (non-reactive) bookkeeping: folderId → performance.now() when its fetch was issued.
+	// Read by the lost-message watchdog (useInventory.pickStalledFetches) to time out latched fetches.
+	// Kept in lockstep with `fetching`: every add/delete of a fetching entry updates this too.
+	const fetchingSince = new Map()
 	// ── MOVE-RECONCILIATION STATE MACHINE ─────────────────────────────────────────────────────────
 	// WHY: an optimistic move (moveItemLocal) / create (addCreatedItems) places an item at toFolderId
 	// before the grid confirms. A NAÏVE per-item dirty boolean cleared on the first authoritative fetch
@@ -112,6 +116,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		filterCollapsedByFloater.value = new Map()
 		fetched.value   = new Set()
 		fetching.value  = new Set()
+		fetchingSince.clear()
 		pendingMoves.clear()
 		// WHY: caps belong to the session — re-armed by the CAPS_READY message after each login.
 		caps.value       = new Set()
@@ -148,7 +153,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	function isFetched(id)         { return fetched.value.has(id) }
 	function isFetching(id)        { return fetching.value.has(id) }
 
-	function markFetching(id) { fetching.value.add(id); _schedTrigger() }
+	function markFetching(id) { fetching.value.add(id); fetchingSince.set(id, performance.now()); _schedTrigger() }
+	// Drop an in-flight marker WITHOUT marking the folder fetched — the watchdog uses this to make a
+	// stalled folder eligible for re-issue (pendingAgentFolders excludes both fetched and fetching).
+	function clearFetching(id) { fetching.value.delete(id); fetchingSince.delete(id); _schedTrigger() }
 	function setCaps(names) { caps.value = new Set(names || []) }
 
 	// Pre-populate items from IndexedDB cache WITHOUT marking folders as fetched.
@@ -419,6 +427,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		items.value.set(folderId, merged)
 		fetched.value.add(folderId)
 		fetching.value.delete(folderId)
+		fetchingSince.delete(folderId)
 		_schedTrigger()
 	}
 
@@ -827,6 +836,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 				items.value.delete(fid)
 				fetched.value.add(fid)
 				fetching.value.delete(fid)
+				fetchingSince.delete(fid)
 			}
 			folders.value = m
 		}
@@ -834,6 +844,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		items.value.set(folderId, [])
 		fetched.value.add(folderId)
 		fetching.value.delete(folderId)
+		fetchingSince.delete(folderId)
 		_schedTrigger()
 		return out
 	}
@@ -992,7 +1003,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
 		selectedId, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
-		markFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
+		fetchingSince, markFetching, clearFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
 		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder, isInTrash,
 		select, descendantCounts,
 		setSort, setSystemFoldersToTop, toggleSystemFoldersToTop, sortItems, openContextMenu, closeContextMenu, resolveTarget, showProperties, closePropertiesFor, closeProperties, addToFavorites,
