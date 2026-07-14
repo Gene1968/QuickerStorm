@@ -3347,6 +3347,9 @@ export function useWorldEngine(canvasRef) {
 				pathScaleY:       obj.shape.pathScaleY,
 				pathShearX:       obj.shape.pathShearX,
 				pathShearY:       obj.shape.pathShearY,
+				// WHY: pathSliceBegin/pathSliceEnd removed 2026-07-13 — vestigial. obj.shape never
+				// carried these fields (PrimShape decode, lludp-codec.ts:2020-2039, has no such keys),
+				// so this was always passing `undefined` through to the worker. Dead since inception.
 				pathTwist:        obj.shape.pathTwist,
 				pathTwistBegin:   obj.shape.pathTwistBegin,
 				pathRadiusOffset: obj.shape.pathRadiusOffset,
@@ -3574,6 +3577,15 @@ export function useWorldEngine(canvasRef) {
 			}
 			normalizeChildTransform(mesh)
 			meshMap.set(obj.localId, mesh)
+			// WHY: select-on-create picks the newborn prim BEFORE its mesh exists (prims ingest via the
+			// paced pump), so the editObjectId watch's refreshGizmo() found nothing and the gizmo only
+			// appeared after a manual re-select (Gene 2026-07-13). Now that the mesh is real, rebuild
+			// the gizmo/halo if this mesh IS the current selection (or one of its multi-select extras).
+			if (uiStore.showObjectEdit
+					&& (obj.localId === uiStore.editObjectId || uiStore.selectedObjectIds.includes(obj.localId))) {
+				refreshGizmo()
+				refreshHighlight()
+			}
 			// Near-aware (FEATURE-GAPS #13): a ROOT born beyond the draw distance is hidden IMMEDIATELY so
 			// it never flashes for the ~200ms until visibilityTick runs. During load, far objects stream in
 			// AND the governor evicts/reloads them — each rebuild would otherwise show for one cull interval

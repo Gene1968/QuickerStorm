@@ -199,12 +199,11 @@ function linkGate()   { return canLinkGate(world.objects, [ui.editObjectId, ...u
 function unlinkGate() { return canUnlinkGate(world.objects, world.linksetMembers, [ui.editObjectId, ...ui.selectedObjectIds]) }
 function linkSelected() {
 	const g = linkGate()
-	if (g.disabled) {
-		// Only the different-owners refusal gets a toast (FS CannotLinkDifferentOwners,
-		// notifications.xml:2305-2308) — other refusals are already surfaced by the disabled row.
-		if (g.reason === 'differentOwners') {
-			notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
-		}
+	if (g.disabled) return
+	// FS parity: cross-owner refusal fires at INVOKE, not as a disabled row (llselectmgr.cpp
+	// linkObjects :804-813 CannotLinkDifferentOwners — enableLinkObjects never checks owners).
+	if (g.reason === 'differentOwners') {
+		notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
 		return
 	}
 	sendLink(g.roots)

@@ -99,14 +99,17 @@ describe('ObjectContextMenu — Link', () => {
 		const row = findRow(w, 'Link')
 		expect(row.attributes('disabled')).toBeDefined()
 	})
-	it('known-different owners → disabled + toasts "Unable to link"', async () => {
+	it('known-different owners → ENABLED, click toasts "Unable to link", no send (FS invoke-time refusal, llselectmgr.cpp:804-813)', async () => {
 		world.upsertObject({ localId: 1, fullId: 'f1', pcode: PCODE_PRIM, ownerId: AGENT })
 		world.upsertObject({ localId: 2, fullId: 'f2', pcode: PCODE_PRIM, ownerId: OTHER })
 		ui.editObjectId = 1
 		ui.selectedObjectIds = [2]
+		const toastSpy = vi.spyOn(notif, 'pushToast')
 		const w = openMenu(1)
 		const row = findRow(w, 'Link')
-		expect(row.attributes('disabled')).toBeDefined()
-		expect(row.attributes('title')).toBe('Not all of the objects have the same owner')
+		expect(row.attributes('disabled')).toBeUndefined()
+		await row.trigger('click')
+		expect(sendLink).not.toHaveBeenCalled()
+		expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Unable to link' }))
 	})
 })

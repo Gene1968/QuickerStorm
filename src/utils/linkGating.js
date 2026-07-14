@@ -61,11 +61,15 @@ export function canLinkGate(objects, ids) {
 	if (modState === 'off' || modState === 'mixed') {
 		return { disabled: true, title: "You don't have modify permission on all the objects", reason: null, roots }
 	}
-	if (ownersKnownDifferent(objects, roots)) {
-		// FS CannotLinkDifferentOwners (llselectmgr.cpp:804-813 / notifications.xml:2305-2308).
-		return { disabled: true, title: 'Not all of the objects have the same owner', reason: 'differentOwners', roots }
-	}
-	return { disabled: false, title: undefined, reason: null, roots }
+	// WHY the owner check does NOT disable: FS's enableLinkObjects (llselectmgr.cpp:877-916) never
+	// looks at owners — the button stays ENABLED and the CannotLinkDifferentOwners notification only
+	// fires when Link is actually invoked (linkObjects() :804-813). Edit rights make cross-owner
+	// selections modify-passable, so this is a real, reachable state, and on OpenSim the sim
+	// enforces its own single-owner rule regardless (Scene.Inventory.cs:3060-3066 + SceneGraph.cs
+	// :1976 child owner-match — silent drop). `reason` still reports it so invoke sites can toast
+	// exactly like FS (Gene 2026-07-13: FS enables Link on his mixed-owner combo; we greyed it).
+	const reason = ownersKnownDifferent(objects, roots) ? 'differentOwners' : null
+	return { disabled: false, title: undefined, reason, roots }
 }
 
 /**

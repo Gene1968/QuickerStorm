@@ -49,10 +49,10 @@ describe('canLinkGate', () => {
 		expect(g.disabled).toBe(true)
 		expect(g.reason).toBe(null)
 	})
-	it('known-different owners → disabled with differentOwners reason', () => {
+	it('known-different owners → ENABLED with differentOwners reason (FS refuses at invoke, not enable — llselectmgr.cpp:804-813 vs enableLinkObjects :877-916)', () => {
 		const w = world({ localId: 1, ownerId: AGENT }, { localId: 2, ownerId: OTHER })
 		const g = canLinkGate(w, [1, 2])
-		expect(g.disabled).toBe(true)
+		expect(g.disabled).toBe(false)
 		expect(g.reason).toBe('differentOwners')
 	})
 	it('same known owner → enabled', () => {

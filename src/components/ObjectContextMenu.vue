@@ -105,13 +105,11 @@ const gUnlink = computed(() => canUnlinkGate(world.objects, world.linksetMembers
 function link() {
 	if (!menu.value) return
 	const g = gLink.value
-	if (g.disabled) {
-		// Only the different-owners refusal gets a toast (FS CannotLinkDifferentOwners,
-		// notifications.xml:2305-2308) — the incomplete-set/no-modify cases are already surfaced
-		// by the row being disabled, so clicking through shouldn't be reachable for those.
-		if (g.reason === 'differentOwners') {
-			notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
-		}
+	if (g.disabled) { close(); return }
+	// FS parity: cross-owner refusal fires at INVOKE, not as a disabled row (llselectmgr.cpp
+	// linkObjects :804-813 CannotLinkDifferentOwners — enableLinkObjects never checks owners).
+	if (g.reason === 'differentOwners') {
+		notif.pushToast({ kind: 'info', title: 'Unable to link', body: 'Not all of the objects have the same owner.' })
 		close()
 		return
 	}
