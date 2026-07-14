@@ -210,6 +210,53 @@ Swept in the 2026-07-03 ultracode batch (Package E + reviewer + fix round; tests
   object-texture bulk tool remains Advanced ▸ Refresh all textures (ours, no FS equivalent).
   ⬜ live-verify: drag a linkset (no distortion), multi-select drag (all move), marquee live halos,
   Link tooltip reasons, floater hides while gizmo-dragging.
+- **✅ FIX ROUND 4 — 2026-07-13 night (Gene's 3rd feedback; uncommitted):**
+  (a) **Link cross-owner semantics = FS-exact** — verified from source: FS enableLinkObjects NEVER
+  checks owners (button stays enabled; edit rights satisfy modify); CannotLinkDifferentOwners fires
+  at INVOKE only (llselectmgr.cpp:804-813); NO god/admin bypass exists in FS's path; OpenSim
+  enforces single-owner sim-side regardless (silent drop). Gate now returns enabled+reason; all 3
+  invoke sites toast-and-refuse. Tests updated (26/26).
+  (b) **Prim shape params: display FIXED + fully EDITABLE (ObjectShape Low 98, greenfield)** —
+  root cause of Gene's wrong values (cut 0/0, shear −50, revolutions 0): worldStore shape fields
+  are RAW wire ints (primMesher dequantizes privately; the floater displayed them raw; the old
+  "Path slice" fields were bindings to nonexistent decode fields — deleted). NEW src/lib/
+  primParams.js = FS llpanelobject getState/getVolumeParams port (S/T cut swap per type,
+  twist ×180 linear /×360 circular, taper = 1−scale for box/cyl/prism vs Hole Size raw for
+  torus family, hollow %, all FS clamps incl. OBJECT_MIN_CUT_INC + hole-size 1.0/0.5 maxes);
+  Object tab spinners (xf pattern: focus guard + echo-resync + Enter/blur/change commit), 5
+  decimals everywhere per Gene EXCEPT Twist (integer degrees); Radius Offset/Revolutions/Skew
+  v-shown only for circular types; Rot spinners bumped to 5 decimals. Wire: C.OBJECT_SHAPE →
+  encodeObjectShape (quantizer SHARED with encodeObjectAdd via quantizeShapeFields — can't drift),
+  handler chunks 25 blocks; OpenSim CanEditObject is a SILENT no-op on refusal (no watchdog).
+  GOLDEN acceptance = Gene's exact prism report: Path Cut 0/1, Taper 1/0, Shear −0.5/0, Slice 0/1,
+  Rev 1 (21 primParams tests + golden-byte server tests; 316 server green).
+  Gap logged: FS's separate raw PathTaperX/Y spinner (visible for torus family) not exposed yet —
+  passed through unclobbered.
+  ⬜ live-verify: fresh prism shows FS-matching numbers; edit hollow/twist/cut → prim reshapes with
+  sim echo; child-prim shape edit via Edit linked.
+- **🧹 Build-floater TO-DO AUDIT (Gene 2026-07-13: "41 to-dos left — assess grouping"):** most now
+  have their underlying machinery ALREADY BUILT this sweep — these are thin-wire batches:
+  - **⚡ B-1 Quick wins (machinery exists, wire-only):** Select Face radio (pickObjectFace() is
+    exported + tested, unconsumed by any control) · Copy selection / Rotate copy / shift-drag-copy
+    (C.OBJECT_DUPLICATE + duplicateObjects() shipped, ZERO callers) · xform C/P/P clipboard buttons
+    (client-only copy/paste of pos/size/rot triads) · Stretch both sides checkbox (gizmo scale is
+    already symmetric-about-center — checkbox just needs to TOGGLE to FS's anchored-face mode, or
+    v1: bind checked+live to the existing behavior) · Show highlight toggle (halo exists — bind).
+  - **⚡ B-2 Texture-tab write side:** the 3 to-do value slots + repeats/offsets/rotation spinner
+    tabs + Mapping select + default-texture pickers — ALL one setObjectTexture() call away now that
+    buildTextureEntry round-trips every per-face field (bump/shiny/fullbright/texGen/glow included).
+    Biggest bang-for-buck cluster in the floater.
+  - **⚡ B-3 Edit-tool options:** Snap + grid options (➡️) — gizmo grid snap (FS SnapEnabled,
+    llmaniptranslate snap ticks — logged cut from the gizmo pass) · Stretch textures
+    (adjustTexturesByScale) · Edit axis at root · Align radio (FS align tool).
+  - **⚡ B-4 Focus/Move tools (tools[0]/tools[1]):** Zoom/Orbit/Pan camera radios + zoom slider
+    (FS LLToolCamera) · Move/Lift/Spin object-drag-without-gizmo (FS LLToolGrab — ObjectGrab/
+    GrabUpdate/DeGrab are ALREADY in the template, scouted 2026-07-13, undecoded).
+  - **⚡ B-5 Features/physics tab:** Flexible Path / Light / Animated mesh / Reflection Probe /
+    Dynamic checkboxes — READ side decodes exist (flexi/light/reflectionProbe in payloads);
+    write side = ObjectExtraParams (Low 99, in template) — small encoder in the ObjectShape mold.
+  - **Land tab (7 radios + Show owners)** → belongs to the existing Land/Parcel cluster (ModifyLand).
+  - **Media tab** → 🧠 media program. **Hide water** → misc one-off.
 - drag-select multiple objects + gizmo handles → **Object edit — manipulation** cluster below
 - texture anim/scripts → **Scripted motion & TextureAnim** cluster below
 - **"Not for sale" decode** → only show the buy pointer when actually for sale; then **Buy / Buy-for-0**
