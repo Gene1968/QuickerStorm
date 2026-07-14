@@ -47,7 +47,7 @@ Full FS-parity pass (5 waves + a dedicated data-loss fix).
 - **Polish:** gear/cog menu FS-parity + **Filters side panel** + sort default = **most recent** + Collapse clears
   search + Item Properties **real checkboxes**. (Start-with-one-open + Gap-C flat-tab right-click/F2 were already
   shipped.)
-- **Deferred followups (small, own passes):** sound/animation/gesture preview floaters (need those client
+- **Deferred follow-ups (small, own passes):** sound/animation/gesture preview floaters (need those client
   pipelines) · folder-give (category bucket) · arbitrary-recipient avatar picker · rez-failed toast (no-build
   parcel) · texture-preview auto-open focus-steal + on-screen-nudge persistence (FloaterWindow pos ownership) ·
   FS filter subsets (permission/date/links filters, Empty Trash) · bad/missing-asset resilience (100+ blob 404s;
@@ -77,7 +77,7 @@ re-verified against the local FS/OpenSim checkouts, all suites green, staging bu
 - **Perms false NM/NC/NT (inbox 🐛)** — shared `_enrichItem()` choke point on EVERY item-row write incl.
   cache load + move-reconciliation re-place; also fixed applyBulkUpdate MIGRATE dropping masks on move acks.
   Needs live verify on receive/move/unbox.
-- **Deferred followups (logged, small):** multi-select Del only deletes the focused row (FS deletes the whole
+- **Deferred follow-ups (logged, small):** multi-select Del only deletes the focused row (FS deletes the whole
   selection) · list-view rows lack keyboard handlers + drag-source/drop-target · eye menu shows type-visibility
   (FS's is search *scopes*: outfit/trash/library/links) · optimistic worn flag has no rollback on sim reject ·
   worn-in-Trash guard + Empty-Trash enable only see folders fetched this session (no auto-fetch trigger).
@@ -675,8 +675,8 @@ dusk/night sky palette only roughly tuned (daytime matched to FS hexes); water r
 **2026-07-14 (Gene):**
 - ❓ **Draw distance sliders** — not sure why slider in quick prefs is not connected since one in prefs is.  Is this useful and a good idea to keep?
 - ❓ **Geometry cache RAM** — if this is tab RAM and Chrome limits tabs to 4096mb, shouldn't it pretty much always say 4096mb and discourage changing or disable this just show as informative?  Could we probe to see available limit in case browsers increase it in future?
-- ❓ **Phase 3** — I've said before that phase 3 is overused and meaningless to users looking for features.  Let's replace it and line up all remaining bundles of work.  No matter how many times I've had Claude triage queue and bundle remaining work/'clusters', we only get little slices that ignore countless to-dos and 'not implemented yet' and 'followups' instead of completing any particular area ever.  Inventory is not complete.  Edit obj floater is far from complete.  LSL scripts are very partial.  PBR not seen.  Voice not started, etc.  I'm positive items in feature-gaps are not getting checked off (or moved) at the right times as I've manually checked some off knowing they'd gotten done.  I'm positive we're not bundling right.  Are there any more caps we'll need to get on with remaining features?
-- ❓ **Readme and docs** — Update the readme and completion percentages.  What's the total completion?  What's a good way to list remaining feature bundles?  Why do you often leave 'pending live verify' for weeks?  I don't think that helps users or future developers and I don't know if you mean you need to MCP or you don't think I've looked at it.  Feature-gaps and feature-gaps-queue seem to just be getting longer since we miss so many details on every pass and it's a mess of checkmarks too - can't we org docs better by done vs not done so I don't have to pore through thousands of done lines and can close that one.
+- ❓ **Phase 3** — I've said before that phase 3 is overused and meaningless to users looking for features.  Let's replace it and line up all remaining bundles of work.  No matter how many times I've had Claude triage queue and bundle remaining work/'clusters', we only get little slices that ignore countless to-dos and 'not implemented yet' and 'follow-ups' instead of completing any particular area ever.  Inventory is not complete.  Edit obj floater is far from complete.  LSL scripts are very partial.  PBR not seen.  Voice not started, etc.  I'm positive items in feature-gaps are not getting checked off (or moved) at the right times as I've manually checked some off knowing they'd gotten done.  I'm positive we're not bundling right.  Are there any more caps we'll need to get on with remaining features?
+- ❓ **Readme and docs** — Update the readme and completion percentages.  What's the total completion?  What's a good way to list remaining feature bundles?  Why do you often leave 'pending live verify' for weeks?  I don't think that helps users or future developers and I don't know if you mean you need to MCP test or you don't think I've looked at its partial features.  Feature-gaps and feature-gaps-queue seem to just be getting longer since we miss so many details on every pass and it's a mess of checkmarks too - can't we org docs better by done vs not done so I don't have to pore through thousands of done lines and can close that one.
 **2026-07-13 (Gene):**
 - 🐛 **Many objects' textures turned black** — per-object "Texture refresh" fixes each; hard reload does
   NOT; "Rebake textures" doesn't help. **INVESTIGATED 2026-07-13 (root cause still open, needs a live

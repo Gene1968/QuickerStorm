@@ -239,7 +239,7 @@ const canPaste = computed(() => clipboard.value.ids.length > 0 && !!pasteTargetF
 
 // ── Give to the active IM recipient ────────────────────────────────────────
 // Enabled only when an IM conversation is active AND the selection has item targets (folder-give is
-// a followup this pass). Gives the WHOLE item selection to that agent.
+// a follow-up this pass). Gives the WHOLE item selection to that agent.
 const activeIm = computed(() => {
 	const id = im.activeId.value
 	if (!id) return null
@@ -317,7 +317,7 @@ const items = computed(() => {
 			{ sep: true },
 			{ label: 'Share',								disabled: true },
 			// "Give to <IM recipient>" — enabled only while an IM conversation is active; gives the
-			// whole item selection to that agent. Arbitrary-recipient picker is a followup.
+			// whole item selection to that agent. Arbitrary-recipient picker is a follow-up.
 			...(canGiveToIm.value
 				? [{ label: `Give to ${activeIm.value.agentName}`, action: giveToIm }]
 				: [{ label: 'Give to…', disabled: true, title: 'open an IM conversation to give to that resident' }]),

@@ -4,11 +4,24 @@ A web-based 3D viewer for OpenSimulator and Second Life. Open a browser tab, log
 
 Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 
-## Current state · July 2026
+## Current state · July 2026 · **v0.3** · **~53% of a complete viewer**
 
-**Phases 1 and 2 complete.** Login, movement, terrain, cross-region teleport, 1 500–1 800 prim rendering per region, Map 2D, IM, and avatar/object context menus all ship.
+Login, movement, terrain, cross-region teleport, 1 500–1 800 prim rendering per region, Map 2D, IM,
+inventory, object build/edit, and context menus all work — enough for solo/small-group exploration on any
+grid you point it at.
 
-**Phase 3 ~75% complete.** Full asset pipeline live: server-side J2C→WebP transcode, IndexedDB texture + geometry-bake caches, worker-thread mesh bake. Warm reloads skip all re-fetching. Firestorm-style CRC object cache restores the full scene from disk on reload without re-asking the sim. Inventory now spans browse/filter, manage (rename/move/trash/perms), give & accept offers, rez-to-world, and a multi-instance texture preview — with a move-reconciliation cache that keeps created/moved items through OpenSim's write-back lag (no lost items). Friends/contacts, saved accounts, day/night environment, and profile floater wired. Remaining: appearance/bake, groups, voice gateway, large-account inventory load throughput.
+The asset pipeline is the mature part: server-side J2C→WebP transcode, IndexedDB texture + geometry-bake
+caches, worker-thread mesh bake, warm reloads that skip re-fetching, and a Firestorm-style CRC object cache
+that restores the full scene from disk without re-asking the sim. Inventory is data-loss-proof through
+OpenSim's write-back lag.
+
+**Next milestone — v0.4 "Beta-1":** the bar to open to outside testers. The single biggest blocker is
+**avatars** (still robot-tube placeholders); after that it's polishing the build / inventory / chat / social
+loop and going publicly hosted. Voice, groups, media, and appearance-bake are **Beta-2 (v0.5)**.
+
+**Full remaining work is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md)** (open items only, grouped into
+18 area bundles with a transparent weighted completion %). Shipped work lives in
+[`docs/CHANGELOG.md`](docs/CHANGELOG.md).
 
 **✨ Standouts:**
 - Camera-driven interest streaming: the relay forwards only objects inside a camera-centred volume and streams them in/out as you move, so heavy regions (tested ~24k objects on Aspen) hold a bounded working set — the browser tab stays around ~10% heap instead of OOMing on the full region
@@ -24,42 +37,35 @@ Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 
 ## Feature status
 
-| Feature | Status |
-|---|---|
-| Login (multi-grid, saved accounts) | ✅ |
-| Movement + terrain collision + gravity | ✅ ~90% |
-| Region terrain + ocean to horizon | ✅ |
-| Prim geometry + linksets + per-face textures | ✅ ~80% |
-| Mesh geometry (GetMesh, worker bake, IDB cache) | ✅ ~70% |
-| CRC object cache (instant scene reload) | ✅ |
-| Camera-driven interest streaming (bounded heap on heavy regions) | ✅ |
-| Texture + geometry IDB cache | ✅ |
-| Cross-region teleport | ✅ |
-| Map 2D | 🟡 ~80% |
-| Minimap | 🟡 ~75% |
-| Nearby chat | 🟡 ~75% |
-| Instant Messaging | 🟡 ~70% |
-| Inventory (view/browse/filter) | 🟡 ~85% |
-| Inventory (manage/modify/rezz) | 🟡 ~65% (rename/move/trash/perms/rez; pending live-verify) |
-| Inventory (take/copy/share) | 🟡 ~55% (give/copy/accept-offer; pending live-verify) |
-| Friends / Contacts | 🟡 ~70% |
-| Profile floater | 🟡 ~60% |
-| Places floater | 🟡 ~65% |
-| Object Build & Edit | 🟡 ~40% |
-| Appearance / Outfits | 🟡 ~15% |
-| Neighboring-sim terrain | 🔜 |
-| Voice (WebRTC) | 🔜 signaling done, gateway TODO |
-| Groups + Group IM | 🔜 |
-| Environment (sky, day/night) | 🟡 ~70% (sun sky dome + day/night cycle + ocean; trees/shadows TODO) |
-| UI sounds | 🟡 ~25% |
-| Media (sounds, parcel audio, video) | 🔜 |
-| Web-on-prim | 🔜 |
-| Publicly live open for Beta (NAS or VPS backend) | 🔜 |
-| 2D view for mobile, slow, low-end or optional | 🟡 ~10% |
-| Collision? | 🟡 ~10% |
-| Sit - object, land, etc? | 🟡 ~25% |
+Status: ✅ done · 🟡 partial · 🔨 in-progress · 🔜 soon · 🔭 exploring (brainstorm-first). Milestone = the
+release each bundle is targeted at. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the open items in each.
 
-See [`docs/FEATURE-GAPS.md`](docs/FEATURE-GAPS.md) for detailed per-feature gap tracking.
+| Bundle | Status | Milestone |
+|---|---|---|
+| World & Movement (walk/fly/sit/collision) | 🟡 ~85% | v0.4 |
+| Rendering: prims, linksets, mesh, per-face textures | 🟡 ~78% | v0.4 |
+| Rendering: environment (sky, day/night, ocean; trees/shadows todo) | 🟡 ~65% | v0.5 |
+| Object Build & Edit floater | 🟡 ~50% | v0.4 |
+| Object interaction & contents (right-click, take/buy, Xfer) | 🟡 ~72% | v0.4 |
+| Inventory (browse/manage/give/rez/take) | 🟡 ~75% | v0.4 |
+| **Avatars & Appearance** (robot-tube today — #1 beta blocker) | 🟡 ~15% | v0.4/v0.5 |
+| Chat & Instant Messaging | 🟡 ~70% | v0.4 |
+| Groups & Group IM | 🟡 ~8% | v0.5 |
+| Friends & Profile | 🟡 ~62% | v0.4 |
+| Places, Map, Minimap & Parcel | 🟡 ~68% | v0.4 |
+| Voice (WebRTC — signaling done, gateway todo) | 🟡 ~8% | v0.5 |
+| Media & audio (sound done; parcel/web-on-prim todo) | 🟡 ~45% | v0.5 |
+| Scripting behaviors (browser reflects, can't run LSL) | 🟡 ~10% | v0.6 |
+| Cross-region / neighbor sims | 🔭 ~15% | v0.5 |
+| Performance & scale (interest streaming, caches) | 🟡 ~70% | ongoing |
+| UI / floaters / preferences | 🟡 ~55% | v0.4 |
+| Publicly hosted beta + 2D/mobile mode | 🔜 ~12% | v0.4 |
+
+Infrastructure that's already solid: multi-grid login & saved accounts, cross-region teleport, CRC object
+cache, camera-driven interest streaming (bounded heap on ~24k-object regions), texture/geometry/mesh IDB
+caches, warm reloads.
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for open work and [`docs/CHANGELOG.md`](docs/CHANGELOG.md) for what's shipped.
 
 ---
 
