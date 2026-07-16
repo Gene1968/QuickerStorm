@@ -26,6 +26,7 @@ import { useRealtimeSocket }	from '@/composables/useRealtimeSocket'
 import { useAudio }			from '@/composables/useAudio.js'
 import { useTeleport }		from '@/composables/useTeleport.js'
 import { useLLUDP }			from '@/composables/useLLUDP'
+import { useUploadActions }	from '@/composables/useUploadActions'
 import { C }					from '@shared/protocol.js'
 import MenuDropdownItem		from '@/components/MenuDropdownItem.vue'
 
@@ -40,6 +41,7 @@ const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
 const { requestHomeTeleport, setHomeHere } = useTeleport()
 const { takeObject, takeObjectCopy, sendDelete, sendLink, sendDelink } = useLLUDP()
+const { uploadSound } = useUploadActions()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -431,8 +433,8 @@ const MENUS = [
 					{ label: 'Import XML',					disabled: true },
 					{ label: 'Import OBJ',					disabled: true },
 					{ sep: true },
-					{ label: 'Image…',						disabled: true },
-					{ label: 'Sound…',						disabled: true },
+					{ label: 'Image…',						disabled: true, title: 'needs client-side J2C encode (planned)' },
+					{ label: 'Sound (OGG)…',				action: () => act(() => uploadSound()) },
 					{ label: 'Animation…',					disabled: true },
 					{ label: 'Material (glTF)…',			disabled: true },
 					{ label: 'Wearable…',					disabled: true },
@@ -662,8 +664,8 @@ const MENUS = [
 			{
 				label: 'Upload',
 				submenu: [
-					{ label: 'Image…',			disabled: true },
-					{ label: 'Sound…',			disabled: true },
+					{ label: 'Image…',			disabled: true, title: 'needs client-side J2C encode (planned)' },
+					{ label: 'Sound (OGG)…',	action: () => act(() => uploadSound()) },
 					{ label: 'Animation…',		disabled: true },
 					{ label: 'Mesh Model…',		disabled: true },
 					{ label: 'Bulk…',			disabled: true },

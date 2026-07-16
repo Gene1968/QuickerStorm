@@ -15,6 +15,7 @@ import { loadCachedInventory, saveCachedInventory, saveCachedFolders, removeCach
 import { useNotifications } from '@/composables/useNotifications'
 import { disarmTakeWatch } from '@/composables/useTakeWatch'
 import { playSound } from '@/composables/useAudio'
+import { previewSound } from '@/composables/useSoundEngine'
 import { assetTypeName } from '@/utils/inventoryIcons'
 import { C, S } from '@shared/protocol.js'
 
@@ -23,6 +24,7 @@ import { C, S } from '@shared/protocol.js'
 // the rest get a graceful "coming soon" toast (see docs/FEATURE-GAPS.md 2026-06-30).
 // Exported: WorldCanvas.vue's drop handler (PACKAGE 5) needs it to detect a texture-onto-face drop.
 export const ASSET_TYPE_TEXTURE = 0
+export const ASSET_TYPE_SOUND = 1
 export const ASSET_TYPE_NOTECARD = 7
 export const ASSET_TYPE_LSLTEXT = 10
 
@@ -207,6 +209,12 @@ export function useInventory() {
 				// opens two floaters, while re-opening the SAME item just focuses its existing floater.
 				if (item.assetId) ui.openTexturePreview(item.assetId, item.name, item.desc, item.itemId)
 				else notifyInfo('No preview', 'This texture has no asset to show yet.')
+				break
+			case ASSET_TYPE_SOUND:
+				// Preview = fetch + play once (non-positional, full gain). Needs the AudioContext unlocked
+				// by a prior in-world gesture; if not yet, guide the user instead of failing silently.
+				if (!item.assetId) { notifyInfo('No sound', 'This item has no sound asset to play.') }
+				else if (!previewSound(item.assetId)) notifyInfo('Click in-world first', 'Click the 3D scene once to enable audio, then try again.')
 				break
 			case ASSET_TYPE_NOTECARD:
 			case ASSET_TYPE_LSLTEXT:

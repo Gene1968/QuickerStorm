@@ -134,7 +134,7 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 - 🔨 **Create new item** (notecard / script / clothing) — **needs the asset-upload cap** (see [Caps still needed](#caps-still-needed)). Landmark create already works.
 - 🔜 **Folder deep-copy** (recursive category copy / `copy_inventory_category` cap) — item-copy works, folder-copy disabled.
 - 🔜 **Give a whole folder** (folder-bucket encode + walk contents) + arbitrary-recipient **avatar picker** for give.
-- 🔜 Sound / Animation / Gesture **preview floaters** — need the client pipelines (audio decode/play, .anim BVH, gesture interpreter); double-click shows "coming soon" today.
+- 🟡 Preview by type: **sound** = double-click plays it (shipped 2026-07-15). Still 🔜: **animation** (.anim BVH playback) + **gesture** (step interpreter) previews, and a fuller sound preview *floater* (Play/Stop/loop) vs the current play-once.
 - 🔜 Find/filter duplicate UUIDs · FS filter subsets (permission/date/links) · list-view keyboard + drag.
 - 🔭 **Inventory load-at-scale** (50–150k accounts still spin on the initial full walk) — correctness bar is met; this is throughput. Design the paced walk + trusted incremental cache first.
 - 🔜 Wear clothing-layer wearables → gated on bundle 7 (bake).
@@ -243,7 +243,8 @@ empty POST) is wired. The generalized 2-step uploader is being built (§ item 1 
 1. 🟡 **Asset upload** — the reusable 2-step uploader (`uploadNewAsset`/`updateItemAsset`) + `CreateInventoryItem`
    + read-side fetch **shipped 2026-07-15** (see CHANGELOG); notecard/script create+edit+save live. Remaining
    thin call sites on the same framework:
-   - 🔨 **Sound-from-file upload** (`NewFileAgentInventory`, OGG passthrough — no encoding). *(in progress)*
+   - ✅ **Sound-from-file upload** (`NewFileAgentInventory`, OGG) — shipped 2026-07-15 on all surfaces
+     (inventory + menu, MenuBar Build▸Upload, quickerSTORM▸Import) via shared `useUploadActions`. (→ CHANGELOG)
    - 🔜 **Texture / snapshot→inventory** — needs J2C **encode** (we only have decode today; a magick-wasm spike).
    - 🔜 **Bake-texture upload** (`UploadBakedTexture`) for the appearance work (bundle 7).
    - 🔜 `InventoryThumbnailUpload` (rides the same uploader).
@@ -290,5 +291,6 @@ bundle's status; they're a list to burn down in a live session:
 ## Raw inbox (dump here; triaged into bundles above)
 
 - Land context menu 'Build' can be enabled - should open ObjectEditFloater directly to Create section.
+- Still getting ghost items left behind when FS user deletes them.  Will probably clear on next login, but unsure why we can't be as good as FS at clearing those, especially since when I edit them I find they have no name or description, so there are clues that they are ghost items.
 
 *(empty — 2026-07-14 items triaged into bundles 1–18; 2026-07-13/12/05 bug items folded into their bundles.)*

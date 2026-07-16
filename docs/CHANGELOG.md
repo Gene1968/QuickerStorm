@@ -55,6 +55,15 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-15 — Sound upload (all surfaces) + sound preview  [uncommitted]
+- **Upload Sound (OGG)** from disk via `NewFileAgentInventory` — wired on **every** surface through one shared
+  `useUploadActions.uploadSound()`: inventory **+** menu, MenuBar ▸ Build ▸ Upload, MenuBar ▸ quickerSTORM ▸
+  Import/Upload. (Image/Animation/etc. stay disabled with a "needs J2C encode" tooltip.)
+- Uploads route to the **Sounds** system folder when nothing's selected (was landing at root); the new item
+  shows immediately (optimistic `addCreatedItems`, de-duped) instead of only after a hard reload.
+- **Sound preview** — double-clicking a sound now plays it (`useSoundEngine.previewSound`: fetch + decode +
+  play once, non-positional, full gain), replacing the "not supported yet" toast.
+
 ## 2026-07-15 — Asset-upload framework + notecard/script editor  [uncommitted]
 - **Reusable 2-step HTTP-cap uploader** (`server/lib/caps/assetUpload.ts`): `uploadNewAsset`
   (NewFileAgentInventory) + `updateItemAsset` (Update{Notecard,Script}AgentInventory), injectable-fetch,

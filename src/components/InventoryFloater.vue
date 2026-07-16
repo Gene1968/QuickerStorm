@@ -53,6 +53,7 @@ import InventoryFiltersPanel from '@/components/InventoryFiltersPanel.vue'
 import InventorySearchVisibilityMenu from '@/components/InventorySearchVisibilityMenu.vue'
 import InventoryFolderListView from '@/components/InventoryFolderListView.vue'
 import InventoryScopedTree from '@/components/InventoryScopedTree.vue'
+import { useUploadActions } from '@/composables/useUploadActions'
 import { ChevronDownIcon, ChevronRightIcon, ChevronLastIcon, CogIcon, PlusIcon, LuggageIcon, FilterIcon, ListIcon, TableOfContentsIcon, Trash2Icon, Loader2Icon, CheckIcon } from '@lucide/vue'
 
 const props = defineProps({
@@ -62,9 +63,16 @@ const props = defineProps({
 const ui  = useUiStore()
 const inv = useInventoryStore()
 const { fetchFolder, createFolder, createBlankItem, trashItem, trashFolder, pasteInto, isItemWorn } = useInventory()
+const { uploadSound } = useUploadActions()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 
 const showAddMenu = ref(false)
+
+// Upload sound routes through the shared useUploadActions (same action MenuBar uses). Close the menu first.
+function uploadSoundHere() {
+	showAddMenu.value = false
+	uploadSound()
+}
 
 // New Folder from the + menu: nest under the selected folder if one is selected, else My Inventory root.
 function newFolderHere() {
@@ -748,6 +756,10 @@ onUnmounted(() => {
 					<div class="border-t border-edge"></div>
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newBlankHere('script')">New Script</button>
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newBlankHere('notecard')">New Notecard</button>
+					<div class="border-t border-edge"></div>
+					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="uploadSoundHere">Upload Sound (OGG)…</button>
+					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled title="needs client-side J2C encode (planned)">Upload Texture…</button>
+					<div class="border-t border-edge"></div>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Gesture</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Clothing</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Body Part</button>

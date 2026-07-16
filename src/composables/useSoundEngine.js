@@ -214,6 +214,28 @@ function _onSoundTrigger(d) {
 	})
 }
 
+// Play a sound asset ONCE, NON-positionally at full gain, through the sounds bus — for the inventory
+// sound preview (FS floater_preview_sound Play). Skips the panner so a preview isn't attenuated by the
+// listener's distance from the origin. Returns true if playback started, false if the AudioContext isn't
+// unlocked yet (needs an in-world user gesture first).
+export function previewSound(uuid, gain = 1) {
+	if (isNullUuid(uuid)) return false
+	const bus = getSoundsBus()
+	if (!bus) return false
+	fetchSoundBuffer(uuid, bus.ctx).then(buffer => {
+		if (!buffer) return
+		const liveBus = getSoundsBus()
+		if (!liveBus) return
+		const ctx = liveBus.ctx
+		const src = ctx.createBufferSource(); src.buffer = buffer
+		const g = ctx.createGain(); g.gain.value = clamp01(gain)
+		src.connect(g); g.connect(liveBus.input)
+		src.onended = () => { try { src.disconnect(); g.disconnect() } catch { /* ok */ } }
+		try { src.start() } catch { try { src.disconnect(); g.disconnect() } catch { /* ok */ } }
+	})
+	return true
+}
+
 // ── Attached / looping object sounds (S-6) ────────────────────────────────────
 // localId → { soundId, gain, flags, loop, radius, nodes, starting, played, cut }
 const _attached = new Map()

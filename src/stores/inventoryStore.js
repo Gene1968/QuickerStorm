@@ -649,6 +649,14 @@ export const useInventoryStore = defineStore('inventory', () => {
 		_schedTrigger()
 	}
 
+	// Folder id of the agent's system folder for a given FolderType (e.g. 1 = Sounds, 0 = Textures). WHY:
+	// FS routes an uploaded asset to its type's default folder. '' if not present.
+	function systemFolder(typeDefault) {
+		const want = Number(typeDefault)
+		for (const [id, f] of folders.value) if (Number(f.typeDefault) === want && f.source !== 'library') return id
+		return ''
+	}
+
 	// Find an item row by its ItemID across all folders (nulls if absent). WHY: an open notecard/script
 	// editor reads its title/description LIVE from here, so renaming the item in inventory updates the
 	// floater title (FS parity). Reactive via the items shallowRef trigger.
@@ -1046,7 +1054,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	return {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
-		selectedId, resolveTargetFolder, setItemAssetId, itemById, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
+		selectedId, resolveTargetFolder, systemFolder, setItemAssetId, itemById, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		fetchingSince, markFetching, clearFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
 		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder, isInTrash,

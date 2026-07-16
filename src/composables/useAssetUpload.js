@@ -29,6 +29,20 @@ function b64ToUtf8(b64) {
 	const arr = Uint8Array.from(bin, c => c.charCodeAt(0))
 	return new TextDecoder().decode(arr)
 }
+// Raw bytes (ArrayBuffer/Uint8Array) → base64, chunked to stay under the call-stack limit on big files.
+function bytesToB64(buf) {
+	const arr = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
+	let bin = ''
+	const CHUNK = 0x8000
+	for (let i = 0; i < arr.length; i += CHUNK) bin += String.fromCharCode.apply(null, arr.subarray(i, i + CHUNK))
+	return btoa(bin)
+}
+
+// asset_type / inventory_type wire strings for a NEW-file upload, by kind. Only kinds with a working
+// browser path are listed (sound = OGG passthrough; texture/animation need client-side encode → later).
+const NEW_FILE_KINDS = {
+	sound: { assetTypeStr: 'sound', invTypeStr: 'sound' },
+}
 
 function ensureWired() {
 	if (_wired) return
@@ -74,6 +88,24 @@ export function useAssetUpload() {
 		})
 	}
 
+	// Upload a NEW asset from raw file bytes (v1: sound/OGG). Creates a fresh asset + inventory item via
+	// NewFileAgentInventory. Resolves { ok, assetId?, itemId?, error? }. The item itself appears via the
+	// sim's UpdateCreateInventoryItem (→ addCreatedItems), same as create-blank.
+	function uploadNewFile({ kind, name, folderId, bytes }) {
+		const t = NEW_FILE_KINDS[kind]
+		if (!t) return Promise.resolve({ ok: false, error: 'unsupported_kind' })
+		if (!folderId) return Promise.resolve({ ok: false, error: 'missing_folderId' })
+		const dataB64 = bytesToB64(bytes)
+		const id = `up-${++_seq}`
+		return new Promise((resolve) => {
+			_uploads.set(id, { resolve })
+			emit(C.ASSET_UPLOAD, { id, mode: 'new', kind, assetTypeStr: t.assetTypeStr, invTypeStr: t.invTypeStr, name, folderId, dataB64 })
+			setTimeout(() => {
+				if (_uploads.has(id)) { _uploads.delete(id); resolve({ ok: false, error: 'timeout' }) }
+			}, UPLOAD_TIMEOUT_MS)
+		})
+	}
+
 	// Fetch + decode the text of an existing notecard/script asset. Resolves { text, error? }.
 	function fetchAssetText({ kind, assetId }) {
 		if (!assetId) return Promise.resolve({ text: '', error: 'missing_assetId' })
@@ -92,5 +124,5 @@ export function useAssetUpload() {
 		})
 	}
 
-	return { saveAsset, fetchAssetText }
+	return { saveAsset, fetchAssetText, uploadNewFile }
 }
