@@ -63,7 +63,7 @@ const props = defineProps({
 const ui  = useUiStore()
 const inv = useInventoryStore()
 const { fetchFolder, createFolder, createBlankItem, trashItem, trashFolder, pasteInto, isItemWorn } = useInventory()
-const { uploadSound } = useUploadActions()
+const { uploadSound, uploadTexture } = useUploadActions()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 
 const showAddMenu = ref(false)
@@ -72,6 +72,12 @@ const showAddMenu = ref(false)
 function uploadSoundHere() {
 	showAddMenu.value = false
 	uploadSound()
+}
+
+// Upload texture routes through the shared useUploadActions (same action MenuBar uses). Close the menu first.
+function uploadTextureHere() {
+	showAddMenu.value = false
+	uploadTexture()
 }
 
 // New Folder from the + menu: nest under the selected folder if one is selected, else My Inventory root.
@@ -758,7 +764,7 @@ onUnmounted(() => {
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newBlankHere('notecard')">New Notecard</button>
 					<div class="border-t border-edge"></div>
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="uploadSoundHere">Upload Sound (OGG)…</button>
-					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled title="needs client-side J2C encode (planned)">Upload Texture…</button>
+					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="uploadTextureHere">Upload Texture…</button>
 					<div class="border-t border-edge"></div>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Gesture</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Clothing</button>

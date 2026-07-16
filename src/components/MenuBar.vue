@@ -41,7 +41,7 @@ const { playSound } = useAudio()
 const { emit }	= useRealtimeSocket()
 const { requestHomeTeleport, setHomeHere } = useTeleport()
 const { takeObject, takeObjectCopy, sendDelete, sendLink, sendDelink } = useLLUDP()
-const { uploadSound } = useUploadActions()
+const { uploadSound, uploadTexture } = useUploadActions()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -433,7 +433,7 @@ const MENUS = [
 					{ label: 'Import XML',					disabled: true },
 					{ label: 'Import OBJ',					disabled: true },
 					{ sep: true },
-					{ label: 'Image…',						disabled: true, title: 'needs client-side J2C encode (planned)' },
+					{ label: 'Image (Texture)…',			action: () => act(() => uploadTexture()) },
 					{ label: 'Sound (OGG)…',				action: () => act(() => uploadSound()) },
 					{ label: 'Animation…',					disabled: true },
 					{ label: 'Material (glTF)…',			disabled: true },
@@ -664,7 +664,7 @@ const MENUS = [
 			{
 				label: 'Upload',
 				submenu: [
-					{ label: 'Image…',			disabled: true, title: 'needs client-side J2C encode (planned)' },
+					{ label: 'Image (Texture)…',	action: () => act(() => uploadTexture()) },
 					{ label: 'Sound (OGG)…',	action: () => act(() => uploadSound()) },
 					{ label: 'Animation…',		disabled: true },
 					{ label: 'Mesh Model…',		disabled: true },

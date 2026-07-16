@@ -55,6 +55,19 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-15 — Texture / image upload → inventory (J2C encode)  [uncommitted]
+- **Upload Image (Texture)** from disk (png/jpg/gif/webp/bmp) via `NewFileAgentInventory` — wired on **every**
+  surface through the shared `useUploadActions.uploadTexture()`: inventory **+** menu, MenuBar ▸ Build ▸ Upload,
+  MenuBar ▸ quickerSTORM ▸ Import. (The last disabled "needs J2C encode" upload entries are now live.)
+- **Server-side J2C encode** (`server/lib/j2c.ts` `encodeJ2C`) — the browser can't emit J2C, so the client
+  decodes the image (`createImageBitmap`→canvas), scales to power-of-two ≤1024 (FS parity), strips alpha when
+  fully opaque (SL 3-comp convention), and ships raw pixels; Bun encodes to a **raw J2C codestream** and runs
+  the 2-step cap upload. GOTCHA locked in a test: magick's `J2c` format is a JP2 *container* — SL wants the raw
+  codestream magick calls `J2k` (SOC/SIZ `FF 4F FF 51`). Byte-exact lossless round-trip + alpha preservation
+  verified (`server/__tests__/j2c.test.ts`).
+- `useAssetUpload.uploadNewImage(pixels,w,h,channels)` is the reusable pixels→inventory primitive; snapshot→
+  inventory (bundle 17) rides it directly (supply canvas pixels instead of a decoded file).
+
 ## 2026-07-15 — Sound upload (all surfaces) + sound preview  [uncommitted]
 - **Upload Sound (OGG)** from disk via `NewFileAgentInventory` — wired on **every** surface through one shared
   `useUploadActions.uploadSound()`: inventory **+** menu, MenuBar ▸ Build ▸ Upload, MenuBar ▸ quickerSTORM ▸

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { decodeJ2C, j2cToImage, j2cToImageWithAlpha, pixelsHaveAlpha, downscalePixels, encodeWebp, rawFormatFor } from '../lib/j2c'
+import { decodeJ2C, j2cToImage, j2cToImageWithAlpha, pixelsHaveAlpha, downscalePixels, encodeWebp, encodeJ2C, rawFormatFor } from '../lib/j2c'
 import { ImageMagick } from '@imagemagick/magick-wasm'
 
 // Real SL terrain texture codestreams — exercise the actual decoder, not a mock. Fixtures live in
@@ -165,5 +165,52 @@ describe('encodeWebp', () => {
 	it('throws webp_encode_size_mismatch when pixel buffer length does not match dimensions', () => {
 		// WHY synchronous: encodeWebp is sync; the guard fires before any WASM call so no init needed.
 		expect(() => encodeWebp(new Uint8Array(8), 2, 2, 4, true)).toThrow('webp_encode_size_mismatch')
+	})
+})
+
+describe('encodeJ2C (texture upload)', () => {
+	// The upload asset must be a RAW J2C codestream (SOC marker FF 4F, then SIZ FF 51) — NOT a JP2
+	// container (which magick's mis-named J2c format emits). This guards the J2k-vs-J2c gotcha directly.
+	const isRawCodestream = (b: Buffer | Uint8Array) => b[0] === 0xff && b[1] === 0x4f && b[2] === 0xff && b[3] === 0x51
+
+	it('emits a raw J2C codestream (SOC/SIZ markers), not a JP2 container', async () => {
+		await decodeJ2C(fixture)   // ensure magick is initialized
+		const px = new Uint8Array(16 * 16 * 3).fill(90)
+		const j2c = encodeJ2C(px, 16, 16, 3, true)
+		expect(isRawCodestream(j2c)).toBe(true)
+	})
+
+	it('lossless-encodes RGB pixels that our own decoder reads back byte-exact', async () => {
+		await decodeJ2C(fixture)
+		// 4×2 RGB with distinct values per pixel so a round-trip error would show.
+		const px = new Uint8Array([
+			0, 0, 0,   255, 0, 0,   0, 255, 0,   0, 0, 255,
+			128, 64, 32,  10, 20, 30,  200, 150, 100,  90, 90, 90,
+		])
+		const j2c = encodeJ2C(px, 4, 2, 3, true)
+		const back = await decodeJ2C(j2c)
+		expect(back.width).toBe(4); expect(back.height).toBe(2); expect(back.channels).toBe(3)
+		expect(Array.from(back.pixels)).toEqual(Array.from(px))   // reversible wavelet → byte-exact
+	})
+
+	it('preserves the alpha channel through a lossless RGBA round-trip', async () => {
+		await decodeJ2C(fixture)
+		const px = new Uint8Array([10, 20, 30, 0,  40, 50, 60, 128,  70, 80, 90, 255,  1, 2, 3, 200]) // 2×2 RGBA
+		const j2c = encodeJ2C(px, 2, 2, 4, true)
+		const back = await decodeJ2C(j2c)
+		expect(back.channels).toBe(4)
+		expect(pixelsHaveAlpha(back.pixels, 4)).toBe(true)
+		expect(Array.from(back.pixels)).toEqual(Array.from(px))
+	})
+
+	it('lossy encode still decodes back to the correct dimensions', async () => {
+		await decodeJ2C(fixture)
+		const px = new Uint8Array(32 * 32 * 3).fill(120)
+		const back = await decodeJ2C(encodeJ2C(px, 32, 32, 3, false))
+		expect(back.width).toBe(32); expect(back.height).toBe(32); expect(back.channels).toBe(3)
+	})
+
+	it('throws j2c_encode_size_mismatch when pixel buffer length does not match dimensions', () => {
+		expect(() => encodeJ2C(new Uint8Array(8), 2, 2, 4, true)).toThrow('j2c_encode_size_mismatch')
 	})
 })

@@ -4,6 +4,7 @@
 // upload direction. Spec: docs/superpowers/specs/2026-07-15-asset-upload-notecard-script-design.md
 import { getSession } from '../state/sessions'
 import { updateItemAsset, uploadNewAsset } from '../lib/caps/assetUpload'
+import { encodeJ2C } from '../lib/j2c'
 import { slog } from '../lib/serverLog'
 import { S } from '../../shared/protocol.js'
 
@@ -23,7 +24,13 @@ type UploadMsg = {
 	itemId?: string                                   // update mode
 	name?: string; description?: string; folderId?: string  // new mode
 	assetTypeStr?: string; invTypeStr?: string              // new mode
+	imageMeta?: { w: number; h: number; c: number }         // texture: dataB64 is RAW pixels to J2C-encode
 }
+
+// Kinds whose dataB64 is raw interleaved pixels (not the finished asset): the server J2C-encodes them
+// before the cap upload. Textures reach the browser as PNG/JPG but the grid stores raw J2C codestreams
+// and OpenSim does NOT transcode — so we must encode server-side (magick-wasm is already loaded here).
+const ENCODE_TO_J2C = new Set(['texture'])
 
 export async function handleAssetUpload(circuitId: string, msg: UploadMsg): Promise<void> {
 	const s = getSession(circuitId)
@@ -32,7 +39,21 @@ export async function handleAssetUpload(circuitId: string, msg: UploadMsg): Prom
 	const reply = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.ASSET_UPLOAD_RESULT, d: { id, ...d } }))
 
 	if (!id || !msg?.dataB64) { reply({ ok: false, error: 'bad_request' }); return }
-	const bytes = Buffer.from(msg.dataB64, 'base64')
+	let bytes = Buffer.from(msg.dataB64, 'base64')
+
+	// Texture path: dataB64 carried raw pixels — transcode to a raw J2C codestream before uploading.
+	// (Opaque textures arrive as 3-channel, alpha as 4; the client strips alpha when fully opaque.)
+	if (ENCODE_TO_J2C.has(kind)) {
+		const m = msg.imageMeta
+		if (!m || !m.w || !m.h || !m.c) { reply({ ok: false, error: 'missing_imageMeta' }); return }
+		try {
+			bytes = encodeJ2C(new Uint8Array(bytes), m.w, m.h, m.c)
+		} catch (e) {
+			reply({ ok: false, error: (e as Error).message })
+			slog.warn(s.ws, `[Upload] j2c_encode error: ${(e as Error).message}`)
+			return
+		}
+	}
 
 	// Resolve the cap URL. UPDATE → the kind-specific update cap (with fallbacks); NEW → NewFileAgentInventory.
 	const capNames = mode === 'new' ? ['NewFileAgentInventory'] : (UPDATE_CAPS[kind] || [])

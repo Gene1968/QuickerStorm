@@ -245,7 +245,8 @@ empty POST) is wired. The generalized 2-step uploader is being built (§ item 1 
    thin call sites on the same framework:
    - ✅ **Sound-from-file upload** (`NewFileAgentInventory`, OGG) — shipped 2026-07-15 on all surfaces
      (inventory + menu, MenuBar Build▸Upload, quickerSTORM▸Import) via shared `useUploadActions`. (→ CHANGELOG)
-   - 🔜 **Texture / snapshot→inventory** — needs J2C **encode** (we only have decode today; a magick-wasm spike).
+   - ✅ **Texture / image upload** (`NewFileAgentInventory`, server-side J2C encode) — shipped 2026-07-15 on all
+     surfaces via `useUploadActions.uploadTexture()`. Snapshot→inventory rides `uploadNewImage` (capture UI = bundle 17).
    - 🔜 **Bake-texture upload** (`UploadBakedTexture`) for the appearance work (bundle 7).
    - 🔜 `InventoryThumbnailUpload` (rides the same uploader).
 2. **PBR materials** — **not cap-blocked.** `RenderMaterials` fetch handler exists; finish the declared-but-
@@ -279,7 +280,6 @@ bundle's status; they're a list to burn down in a live session:
 - Right-click menus sweep — 2026-07-13.
 - Scripted motion & TextureAnim, Sound, Object Contents — 2026-07-05, committed.
 - Prim shape params editable (FIX ROUND 4) — 2026-07-13, uncommitted.
-- Two stray Gina-79 plywood cubes on Lazarus Taxon 6 — find & delete (from the create-prim test).
 
 ## Project-hygiene debt
 - **ESLint flat-config** so `npm run lint` runs repo-wide again.
@@ -292,5 +292,6 @@ bundle's status; they're a list to burn down in a live session:
 
 - Land context menu 'Build' can be enabled - should open ObjectEditFloater directly to Create section.
 - Still getting ghost items left behind when FS user deletes them.  Will probably clear on next login, but unsure why we can't be as good as FS at clearing those, especially since when I edit them I find they have no name or description, so there are clues that they are ghost items.
+- Where will Inspect Textures floater be bundled?
 
 *(empty — 2026-07-14 items triaged into bundles 1–18; 2026-07-13/12/05 bug items folded into their bundles.)*

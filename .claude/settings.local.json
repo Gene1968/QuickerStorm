@@ -352,7 +352,8 @@
       "Bash(taskkill //F //T //PID 75876)",
       "Bash(taskkill //F //T //PID 44780)",
       "Bash(taskkill //F //T //PID 26044)",
-      "Bash(taskkill //F //T //PID 7212)"
+      "Bash(taskkill //F //T //PID 7212)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }

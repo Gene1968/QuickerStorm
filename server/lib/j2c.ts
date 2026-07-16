@@ -198,6 +198,37 @@ export function encodeWebp(
 	return out
 }
 
+// Encode raw interleaved 8-bit pixels → a raw J2C codestream (the format SL/OpenSim store textures in).
+//
+// GOTCHA (spike-confirmed 2026-07-15): magick's `MagickFormat.J2c` writes a *JP2 container* (magic
+// `00 00 00 0C 6A 50 20 20…`), NOT what SL calls "J2C". An SL texture asset is a **raw codestream**
+// starting with the SOC+SIZ markers `FF 4F FF 51` — which magick produces under the misleadingly-named
+// `MagickFormat.J2k`. libopenmetaverse OpenJPEG.Encode / FS LLImageJ2C both emit the same raw codestream;
+// OpenSim stores the bytes verbatim (no transcode) and serves them Content-Type image/x-j2c. So we MUST
+// use J2k here. `lossless` uses the reversible 5/3 wavelet (quality 100); otherwise quality maps to the
+// OpenJPEG compression rate. Mirrors encodeWebp's raw-pixel import path (same loaded WASM, no native build).
+const J2C_QUALITY = Number(process.env.QS_J2C_QUALITY) || 90
+
+export function encodeJ2C(
+	pixels: Uint8Array, width: number, height: number, channels: number, lossless = false,
+): Buffer {
+	if (pixels.length !== width * height * channels) {
+		throw new Error(`j2c_encode_size_mismatch: got ${pixels.length}B, expected ${width * height * channels} (${width}×${height}×${channels})`)
+	}
+	const settings = new MagickReadSettings()
+	settings.format = rawFormatFor(channels)
+	settings.width = width
+	settings.height = height
+	settings.depth = 8
+	let out: Buffer | null = null
+	ImageMagick.read(pixels, settings, img => {
+		img.quality = lossless ? 100 : J2C_QUALITY
+		img.write(MagickFormat.J2k, data => { out = Buffer.from(data) })
+	})
+	if (!out) throw new Error('j2c_encode_empty')
+	return out
+}
+
 /** Decode a J2C codestream → WebP buffer plus whether it carries real transparency. Opaque textures
  *  use lossy q90; alpha textures use lossless (no cutout edge-bleed).
  *

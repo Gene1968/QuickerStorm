@@ -38,10 +38,11 @@ function bytesToB64(buf) {
 	return btoa(bin)
 }
 
-// asset_type / inventory_type wire strings for a NEW-file upload, by kind. Only kinds with a working
-// browser path are listed (sound = OGG passthrough; texture/animation need client-side encode → later).
+// asset_type / inventory_type wire strings for a NEW-file upload, by kind. sound = OGG passthrough;
+// texture = raw pixels the SERVER J2C-encodes (see uploadNewImage / handlers/assetUpload.ts); animation → later.
 const NEW_FILE_KINDS = {
 	sound: { assetTypeStr: 'sound', invTypeStr: 'sound' },
+	texture: { assetTypeStr: 'texture', invTypeStr: 'texture' },
 }
 
 function ensureWired() {
@@ -106,6 +107,28 @@ export function useAssetUpload() {
 		})
 	}
 
+	// Upload a NEW texture from raw interleaved pixels (RGB opaque / RGBA with alpha). The SERVER encodes
+	// them to a raw J2C codestream before the cap upload (browsers can't emit J2C; magick-wasm is server-side).
+	// `pixels` is a Uint8Array of w*h*channels bytes. Shares the same NewFileAgentInventory path/reply as sound.
+	// Reusable by snapshot→inventory (bundle 17) — it just supplies canvas pixels instead of a decoded file.
+	function uploadNewImage({ name, folderId, pixels, w, h, channels }) {
+		if (!folderId) return Promise.resolve({ ok: false, error: 'missing_folderId' })
+		if (!pixels?.length || !w || !h || !channels) return Promise.resolve({ ok: false, error: 'bad_pixels' })
+		const t = NEW_FILE_KINDS.texture
+		const dataB64 = bytesToB64(pixels)
+		const id = `up-${++_seq}`
+		return new Promise((resolve) => {
+			_uploads.set(id, { resolve })
+			emit(C.ASSET_UPLOAD, {
+				id, mode: 'new', kind: 'texture', assetTypeStr: t.assetTypeStr, invTypeStr: t.invTypeStr,
+				name, folderId, dataB64, imageMeta: { w, h, c: channels },
+			})
+			setTimeout(() => {
+				if (_uploads.has(id)) { _uploads.delete(id); resolve({ ok: false, error: 'timeout' }) }
+			}, UPLOAD_TIMEOUT_MS)
+		})
+	}
+
 	// Fetch + decode the text of an existing notecard/script asset. Resolves { text, error? }.
 	function fetchAssetText({ kind, assetId }) {
 		if (!assetId) return Promise.resolve({ text: '', error: 'missing_assetId' })
@@ -124,5 +147,5 @@ export function useAssetUpload() {
 		})
 	}
 
-	return { saveAsset, fetchAssetText, uploadNewFile }
+	return { saveAsset, fetchAssetText, uploadNewFile, uploadNewImage }
 }
