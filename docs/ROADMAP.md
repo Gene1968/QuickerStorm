@@ -139,11 +139,11 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 - 🔭 **Inventory load-at-scale** (50–150k accounts still spin on the initial full walk) — correctness bar is met; this is throughput. Design the paced walk + trusted incremental cache first.
 - 🔜 Wear clothing-layer wearables → gated on bundle 7 (bake).
 
-### 7. Avatars & Appearance — 🟡 ~15% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
-Today: capsule + tube placeholder; baked-texture UUIDs arrive but are never fetched; no skeleton/anim/skin.
+### 7. Avatars & Appearance — 🟡 ~20% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
+Today: per-UUID jellydoll capsule + tube placeholder; AvatarAppearance now decoded (bakes cached, not composited); no skeleton/anim/skin.
 Staged (from the 2026-07-04 scout):
 - 🔨 **AV-1 SKIN-block decode** → rigged clothing/attachments positioned at bind pose (decode server-side + apply static root-joint/bind offset when parent is an avatar). *Beta-1.*
-- 🔨 **AV-2 Appearance-state enum + jellydoll colored capsule** (honest "can't render yet" state, per-UUID color). *Beta-1.*
+- ✅ **AV-2 Appearance-state + jellydoll colored capsule** — shipped 2026-07-15. Peers get a deterministic per-UUID color (FS `calcMutedAVColor` port); translucent 'cloud' until `AvatarAppearance` (Low 158) arrives → solid 'jellydoll'; bakes cached in worldStore for the bake pipeline. (→ CHANGELOG)
 - 🔭 **Skeleton + default locomotion anims** — THREE.SkinnedMesh w/ SL joint names, AvatarAnimation decode/forward (dropped today), SL-BVH parser + AnimationMixer w/ priority. HIGH risk. *Beta-1/2.*
 - 🔭 **Bake pipeline** (AgentSetAppearance) — risky, can blank avatars globally; needs test-grid. Unblocks clothing-layer wearables + "save outfit." *Beta-2.*
 - 🔜 COF (Current Outfit Folder) sync · Wearing tab wear/unwear · Outfits save/apply/delete · Appearance floater updates on wear.

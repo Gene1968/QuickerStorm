@@ -167,7 +167,27 @@ export const useWorldStore = defineStore('world', () => {
 		return true
 	}
 
-	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear(); _byFullId.clear(); _linkChildren.clear() }
+	// ── Peer-avatar appearance (AV-2) ───────────────────────────────────────────────────────
+	// Keyed by lowercased avatar UUID — AvatarAppearance (Low 158) is UUID-keyed and can arrive BEFORE or
+	// AFTER the avatar's ObjectUpdate, so it lives independently of the localId-keyed object map. state:
+	//   'cloud'     — no AvatarAppearance seen yet: we genuinely don't know their look (translucent placeholder)
+	//   'jellydoll' — appearance received: show a per-UUID colored capsule + cache the baked-texture UUIDs for
+	//                 the future bake pipeline (bundle 7). We don't composite/render the bakes yet.
+	// Non-reactive Map (useWorldEngine reads it imperatively on the S.AVATAR_APPEARANCE event); appearanceRev
+	// bumps so any template consumer can react without deep-watching a Map.
+	const _appearance = new Map()   // uuidLower → { state, bakes, appearanceVersion, cofVersion }
+	const appearanceRev = ref(0)
+	function setAvatarAppearance({ avatarId, bakes, appearanceVersion, cofVersion } = {}) {
+		if (!avatarId) return
+		_appearance.set(String(avatarId).toLowerCase(), { state: 'jellydoll', bakes: bakes || {}, appearanceVersion, cofVersion })
+		appearanceRev.value++
+	}
+	/** Appearance record for an avatar UUID, or undefined (→ treat as 'cloud'). */
+	function avatarAppearance(avatarId) {
+		return avatarId ? _appearance.get(String(avatarId).toLowerCase()) : undefined
+	}
+
+	function clearAll() { objects.value.clear(); _avatars.value.clear(); _prims.value.clear(); _byFullId.clear(); _linkChildren.clear(); _appearance.clear(); appearanceRev.value++ }
 
 	/** localId currently holding this fullId, or undefined. O(1) via the _byFullId index. */
 	function localIdForFullId(fullId) { return _byFullId.get(fullId) }
@@ -288,6 +308,7 @@ export const useWorldStore = defineStore('world', () => {
 		objects, avatars, prims, cullStats, setCullStats, sceneLoading, setSceneLoading,
 		assetProgress, setAssetProgress,
 		upsertObject, updateObjectPos, removeObject, applyObjectProperties, clearAll, localIdForFullId,
+		setAvatarAppearance, avatarAppearance, appearanceRev,
 		linksetMembers, linkNumberOf,
 		avatarPos, setAvatarPos,
 		spawnPos, setSpawnPos,

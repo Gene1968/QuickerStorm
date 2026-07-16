@@ -48,6 +48,7 @@ import {
 	encodeObjectAdd, encodeObjectLink, encodeObjectDelink, encodeObjectImage, encodeObjectDuplicate,
 	encodeObjectShape, type ObjectShapeEntry,
 	type TextureEntryFaceInput,
+	parseTextureEntryFields,
 } from '../lib/lludp-codec'
 import {
 	nextXferId, startXfer, ingestXferChunk, abortXfer, clearXferScope,
@@ -1188,6 +1189,40 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				session.ws.send(JSON.stringify({ t: S.INV_BULK_UPDATE, d: { folders, items } }))
 			}
 		} catch (e) { slog.warn(session.ws, `BulkUpdateInventory decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// AvatarAppearance (Low 158) — a peer avatar's baked-texture set + appearance version. The sim sends this
+	// whenever an avatar's bakes change. We don't composite/render the bakes yet (that's the bake pipeline,
+	// bundle 7); for now forward the identity + bake UUIDs so the client flips the avatar from a translucent
+	// "cloud" placeholder to a per-UUID "jellydoll" colored capsule (AV-2) and caches the bakes for later.
+	// Bake face indices per FS llavatarappearancedefines.h ETextureIndex (VERIFIED against the enum ordering):
+	// HEAD=8 UPPER=9 LOWER=10 EYES=11 SKIRT=19 HAIR=20 (skirt/hair are NOT 12/13 — those are socks/jacket).
+	if (name === 'AvatarAppearance') {
+		try {
+			const m = decode(buf, { alreadyExpanded: true })
+			const avatarId = m.blocks.Sender?.[0]?.ID
+			if (!avatarId) return
+			const teRaw = m.blocks.ObjectData?.[0]?.TextureEntry
+			const te = Buffer.isBuffer(teRaw) ? teRaw : (teRaw ? Buffer.from(teRaw as ArrayLike<number>) : undefined)
+			const bakes: Record<string, string> = {}
+			if (te && te.length) {
+				const tef = parseTextureEntryFields(te, 0, te.length)
+				const faces = tef.faceTextures || []
+				const NULL = '00000000-0000-0000-0000-000000000000'
+				// Per-face override falls back to the TE default texture (SL packs the common UUID as default).
+				const pick = (i: number) => faces[i] ?? tef.defaultTexture
+				for (const [slot, idx] of [['head', 8], ['upper', 9], ['lower', 10], ['eyes', 11], ['skirt', 19], ['hair', 20]] as const) {
+					const u = pick(idx)
+					if (u && u !== NULL) bakes[slot] = u
+				}
+			}
+			const ad = m.blocks.AppearanceData?.[0]
+			session.ws.send(JSON.stringify({ t: S.AVATAR_APPEARANCE, d: {
+				avatarId, bakes,
+				appearanceVersion: ad?.AppearanceVersion, cofVersion: ad?.CofVersion,
+			} }))
+		} catch (e) { slog.warn(session.ws, `AvatarAppearance decode error: ${(e as Error).message}`) }
 		return
 	}
 

@@ -33,6 +33,7 @@ import { correctionBlend } from '@/lib/movementCorrection.js'
 import { resolveAvatarReparent, gateBuyHoverAction } from '@/lib/seatEngine.js'
 import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_S } from '@/lib/scriptedMotion.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
+import { jellydollColorHex } from '@/lib/avatarColor.js'
 import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
@@ -3248,7 +3249,7 @@ export function useWorldEngine(canvasRef) {
 				? new THREE.MeshStandardMaterial({ color: primColor, metalness: 0, roughness: 1 })
 				: wantLit
 					? new THREE.MeshLambertMaterial({ color: primColor })
-					: new THREE.MeshBasicMaterial({ color: isAvatar ? 0x00b4d8 : primColor })
+					: new THREE.MeshBasicMaterial({ color: isAvatar ? jellydollColorHex(obj.fullId) : primColor })
 			if ((hasMaterial || wantLit) && !geo.attributes.normal) geo.computeVertexNormals()   // flicker fix: lit shading needs normals
 			mesh = new THREE.Mesh(geo, mat)
 			if (obj.meshId) mesh.userData.meshLod = meshLod
@@ -3517,6 +3518,12 @@ export function useWorldEngine(canvasRef) {
 
 				mesh.add(leftArm)
 				mesh.add(rightArm)
+
+				// AV-2: body + arms share the per-avatar jellydoll tint / cloud translucency (the face
+				// indicator keeps its contrasting orange so orientation stays readable). Stored so the
+				// S.AVATAR_APPEARANCE handler can flip cloud→solid without rebuilding the mesh.
+				mesh.userData.avatarMats = [mesh.material, armBodyMat]
+				applyAvatarLook(mesh, obj)
 
 				const div = document.createElement('div')
 				div.style.cssText = 'color:#fff;font-size:0.75rem;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:4px;white-space:nowrap;'
@@ -3871,6 +3878,41 @@ export function useWorldEngine(canvasRef) {
 	let objsReceivedTotal = 0
 	let upsertMeshFailures = 0
 	let lastPrimDiagAt = 0
+
+	// ── AV-2: peer-avatar placeholder look ───────────────────────────────────────────────────
+	// Opacity of a 'cloud' avatar (no AvatarAppearance received yet) — translucent = "we don't know
+	// their look yet", vs solid once appearance arrives. Honest per-state, not a guess at their skin.
+	const AVATAR_CLOUD_OPACITY = 0.5
+	// Tint an avatar mesh's body+arm materials: self → green (matches agentId); peers → deterministic
+	// per-UUID jellydoll color (FS calcMutedAVColor port). Translucent while 'cloud'; solid once the
+	// sim's AvatarAppearance has arrived (worldStore.avatarAppearance). Idempotent — safe to re-call.
+	function applyAvatarLook(mesh, obj) {
+		const mats = mesh?.userData?.avatarMats
+		if (!mats) return
+		const fullId = obj?.fullId || worldStore.objects.get(obj?.localId)?.fullId || ''
+		const isSelf = !!fullId && fullId.toLowerCase() === (sessionStore.agentId?.toLowerCase() || '')
+		const hex = isSelf ? 0x00e676 : jellydollColorHex(fullId)
+		const cloud = !isSelf && !worldStore.avatarAppearance(fullId)
+		mesh.userData.isSelf = isSelf
+		for (const m of mats) {
+			m.color.setHex(hex)
+			m.transparent = cloud
+			m.opacity = cloud ? AVATAR_CLOUD_OPACITY : 1
+			m.needsUpdate = true
+		}
+	}
+
+	// S.AVATAR_APPEARANCE (decoded AvatarAppearance Low 158): cache the bakes/state, then flip an
+	// already-spawned peer from translucent cloud to solid jellydoll. May arrive before the avatar's
+	// ObjectUpdate — that's fine, upsertMesh reads the cached state when it later builds the mesh.
+	function onAvatarAppearance(d) {
+		if (!d?.avatarId) return
+		worldStore.setAvatarAppearance(d)
+		const key = d.avatarId.toLowerCase()
+		const rec = worldStore.avatars.find(a => a.fullId?.toLowerCase() === key)
+		if (rec) applyAvatarLook(meshMap.get(rec.localId), rec)
+	}
+
 	function onObjectUpdate(payload) {
 		// WHY: useRealtimeSocket dispatches msg.d (unwrapped) to handlers, not the full {t,d} envelope.
 		// So payload = { objects: [...] } — access as payload.objects, not payload.d.objects.
@@ -4014,7 +4056,9 @@ export function useWorldEngine(canvasRef) {
 					// or already existed (e.g., duplicate ObjectUpdate).
 					const ownMesh = meshMap.get(obj.localId)
 					if (ownMesh) {
-						ownMesh.material.color.setHex(0x00e676)
+						// Own avatar = solid green (applyAvatarLook detects self via agentId → green + opaque,
+						// also fixing arm tint/opacity, not just the body as the old single-material recolor did).
+						applyAvatarLook(ownMesh, obj)
 						// WHY: Own avatar mesh is placed at terrain+FOOT_CLEAR (1.0m) while other avatars
 						// sit at server-reported feet position (~0m above terrain). The 1.0m extra height
 						// pushes the label up in screen space; pull it back down so it appears level with
@@ -6658,6 +6702,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.TELEPORT_FAILED,   onTeleportFailed)
 		on(S.OBJECT_PROPS,      onObjectProps)
 		on(S.OBJECT_PROPS_FAMILY, onObjectPropsFamily)
+		on(S.AVATAR_APPEARANCE, onAvatarAppearance)
 		on(S.MAP_BLOCKS,        onEngineMapBlocks)
 		on(S.SIT_RESPONSE,      onSitResponse)
 	})

@@ -55,6 +55,19 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-15 — AV-2: per-UUID jellydoll avatars + AvatarAppearance decode  [uncommitted]
+- **Peer avatars are now visually distinct.** Each gets a deterministic per-UUID color ported from Firestorm
+  `LLVOAvatar::calcMutedAVColor` (first UUID byte → 7-stop spectrum lerp, normalized, brightness-scaled) —
+  `src/lib/avatarColor.js` (6 unit tests). Replaces the uniform hardcoded cyan capsule; self stays green.
+- **Honest appearance-state.** An avatar with no `AvatarAppearance` yet renders **translucent** ('cloud' — we
+  genuinely don't know their look); once the sim's bakes arrive it goes **solid** ('jellydoll'). State +
+  baked-texture UUIDs cached in `worldStore` (`setAvatarAppearance`/`avatarAppearance`) for the bake pipeline.
+- **Server decodes `AvatarAppearance` (Low 158)** — previously dropped at the unhandled-packet fallthrough.
+  New handler in `lludp.ts` forwards `S.AVATAR_APPEARANCE { avatarId, bakes{head,upper,lower,eyes,skirt,hair},
+  appearanceVersion, cofVersion }`. Bake face indices verified against FS `llavatarappearancedefines.h`
+  (HEAD8/UPPER9/LOWER10/EYES11/**SKIRT19/HAIR20** — not 12/13). Bakes are captured, not yet composited/rendered
+  (that's the bake pipeline, bundle 7 · Beta-2).
+
 ## 2026-07-15 — Texture / image upload → inventory (J2C encode)  [uncommitted]
 - **Upload Image (Texture)** from disk (png/jpg/gif/webp/bmp) via `NewFileAgentInventory` — wired on **every**
   surface through the shared `useUploadActions.uploadTexture()`: inventory **+** menu, MenuBar ▸ Build ▸ Upload,
