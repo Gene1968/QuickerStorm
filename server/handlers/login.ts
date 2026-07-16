@@ -37,6 +37,14 @@ const REQUESTED_CAPS = [
 	'ModifyMaterialParams',
 	'UploadBakedTexture',
 	'RebakeAvatarTextures',
+	// Asset UPLOAD caps (2-step HTTP handshake — server/lib/caps/assetUpload.ts). Without requesting these
+	// at login the grid never returns their URLs → "cap_unavailable" on save. NewFileAgentInventory = new
+	// file from bytes; Update{Notecard,Script}AgentInventory = save content into an existing item (the
+	// notecard/script editor path). OpenSim registers the script cap under both names (BunchOfCaps.cs:234).
+	'NewFileAgentInventory',
+	'UpdateNotecardAgentInventory',
+	'UpdateScriptAgent',
+	'UpdateScriptAgentInventory',
 	'AgentPreferences',
 	'UpdateAgentInformation',
 	// Broader roadmap set (inventory mgmt, object interaction, profile, region, appearance).

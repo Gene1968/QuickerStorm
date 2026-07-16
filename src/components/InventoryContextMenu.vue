@@ -25,7 +25,7 @@ import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
 const ui   = useUiStore()
-const { createFolder, createFolderFromSelected, trashItem, trashFolder, emptyTrash, purgeItem, purgeFolder, restoreItem, restoreFolder, wearAttachment, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
+const { createFolder, createBlankItem, createFolderFromSelected, trashItem, trashFolder, emptyTrash, purgeItem, purgeFolder, restoreItem, restoreFolder, wearAttachment, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 const im = useInstantMessage()
 const menu = computed(() => inv.contextMenu)
@@ -62,6 +62,15 @@ function newFolder() {
 	const parentId = menu.value?.obj?.folderId
 	if (!parentId) return
 	createFolder({ name: 'New Folder', parentId })   // createFolder auto-expands the parent in the focused window
+	inv.closeContextMenu()
+}
+
+// New notecard / script INSIDE the right-clicked folder (explicit parent = o.folderId). Double-click the
+// new row to edit + save content (2-step upload cap).
+function newBlankInFolder(kind) {
+	const parentId = menu.value?.obj?.folderId
+	if (!parentId) return
+	createBlankItem({ kind, parentId })
 	inv.closeContextMenu()
 }
 
@@ -407,8 +416,8 @@ const items = computed(() => {
 			? [{ label: `Give to ${activeIm.value.agentName}`, action: giveToIm }]
 			: [{ label: 'Give to…', disabled: true, title: 'open an IM conversation to give to that resident' }]),
 		{ label: 'New folder',								action: newFolder },
-		{ label: 'New script',			disabled: true },
-		{ label: 'New notecard',		disabled: true },
+		{ label: 'New script',			action: () => newBlankInFolder('script') },
+		{ label: 'New notecard',		action: () => newBlankInFolder('notecard') },
 		{ label: 'New gesture',			disabled: true },
 		{ label: 'New outfit',			disabled: true },
 		{ label: 'New material',		disabled: true },

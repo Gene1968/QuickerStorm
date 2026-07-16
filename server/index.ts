@@ -13,6 +13,7 @@ import { handleCapsFetch } from './handlers/caps'
 import { invokeCap } from './lib/caps/invoke'
 import { handleInventoryFetch, handleCreateFolder } from './handlers/inventory'
 import { handleAssetFetch } from './handlers/assets'
+import { handleAssetUpload } from './handlers/assetUpload'
 import { handleMaterialFetch } from './handlers/materials'
 import { handleMeshFetch } from './handlers/mesh'
 import { handleSculptFetch } from './handlers/sculpt'
@@ -245,6 +246,11 @@ const server = Bun.serve<WSData>({
 				case C.ASSET_FETCH: {
 					const d = msg.d as { assetType: string; uuid: string; full?: boolean }
 					handleAssetFetch(circuitId, d)
+					break
+				}
+				case C.ASSET_UPLOAD: {
+					const d = msg.d as Parameters<typeof handleAssetUpload>[1]
+					handleAssetUpload(circuitId, d)
 					break
 				}
 				case C.MATERIAL_FETCH: {

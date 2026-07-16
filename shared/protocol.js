@@ -51,7 +51,9 @@ export const C = {
 	MESH_FETCH:       'mesh_fetch',       // { meshId, lod } — fetch + decode a mesh asset at LOD 0..3 (high..lowest) → geometry arrays
 	SCULPT_FETCH:     'sculpt_fetch',     // { sculptId, sculptType } — fetch sculpt-map texture (J2C) → sculpt geometry
 	CREATE_LANDMARK:  'create_landmark',  // { name, desc, folderId } — CreateInventoryItem (Low 305) type/invType=3; sim builds LM from current pos
+	CREATE_INV_ITEM:  'create_inv_item',  // { kind:'notecard'|'script', name, desc?, folderId } — CreateInventoryItem (Low 305) with type/invType per kind (notecard 7/7, script 10/10), zero TransactionID → sim mints an empty default asset + item; reply forwarded as S.INV_ITEM_CREATED. Content is saved separately via ASSET_UPLOAD (UpdateNotecard/ScriptAgentInventory)
 	CREATE_INV_FOLDER:'create_inv_folder',// { folderId, parentId, name } — CreateInventoryFolder (Low 273); client supplies the new folderId
+	ASSET_UPLOAD:     'asset_upload',     // { id, mode:'update'|'new', kind:'notecard'|'script'|..., dataB64, itemId? (update), name?/desc?/folderId? (new) } — 2-step HTTP-cap upload. mode 'update' → UpdateNotecard/ScriptAgentInventory (save bytes into an existing item); mode 'new' → NewFileAgentInventory (fresh asset+item from bytes). Reply S.ASSET_UPLOAD_RESULT keyed by id. See docs/superpowers/specs/2026-07-15-asset-upload-notecard-script-design.md
 	// ── Inventory writes (rename/move/delete/perms/wear) ──
 	INV_RENAME_ITEM:    'inv_rename_item',    // { itemId, folderId, name } — MoveInventoryItem / UpdateInventoryItem rename in place
 	INV_RENAME_FOLDER:  'inv_rename_folder',  // { folderId, name } — UpdateInventoryFolder rename
@@ -132,6 +134,7 @@ export const S = {
 	INV_ITEM_REMOVED:'inv_item_removed', // { itemIds:[...] } — decoded RemoveInventoryItem ack / sim-driven removal
 	INV_FOLDER_CREATED:    'inv_folder_created',     // { folderId, parentId, name, typeDefault } — CreateInventoryCategory cap confirmed (persisted)
 	INV_FOLDER_CREATE_FAILED:'inv_folder_create_failed', // { folderId, error } — cap rejected; client reverts the optimistic folder
+	ASSET_UPLOAD_RESULT:   'asset_upload_result',    // { id, ok, assetId?, itemId?, error? } — reply to C.ASSET_UPLOAD (2-step upload complete or failed), correlated by id
 	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error?, hasAlpha?, srcWidth?, srcHeight?, full? } — fetched asset; textures arrive as WebP (server-transcoded from J2C). srcWidth/srcHeight = TRUE J2C-header dims; full=true echoes a full-resolution preview decode
 	MATERIAL_DATA:   'material_data',    // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
 	MESH_DATA:       'mesh_data',        // { meshId, lod, submeshes:[{positions,normals,uvs,indices}], error? }

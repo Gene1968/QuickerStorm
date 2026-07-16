@@ -47,7 +47,7 @@ release each bundle is targeted at. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for
 | Rendering: environment (sky, day/night, ocean; trees/shadows todo) | 🟡 ~65% | v0.5 |
 | Object Build & Edit floater | 🟡 ~50% | v0.4 |
 | Object interaction & contents (right-click, take/buy, Xfer) | 🟡 ~72% | v0.4 |
-| Inventory (browse/manage/give/rez/take) | 🟡 ~75% | v0.4 |
+| Inventory (browse/manage/give/rez/take, create+edit notecards/scripts) | 🟡 ~77% | v0.4 |
 | **Avatars & Appearance** (robot-tube today — #1 beta blocker) | 🟡 ~15% | v0.4/v0.5 |
 | Chat & Instant Messaging | 🟡 ~70% | v0.4 |
 | Groups & Group IM | 🟡 ~8% | v0.5 |
@@ -55,7 +55,7 @@ release each bundle is targeted at. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for
 | Places, Map, Minimap & Parcel | 🟡 ~68% | v0.4 |
 | Voice (WebRTC — signaling done, gateway todo) | 🟡 ~8% | v0.5 |
 | Media & audio (sound done; parcel/web-on-prim todo) | 🟡 ~45% | v0.5 |
-| Scripting behaviors (browser reflects, can't run LSL) | 🟡 ~10% | v0.6 |
+| Scripting behaviors (notecard/script editor done; can't run LSL, compile feedback todo) | 🟡 ~14% | v0.6 |
 | Cross-region / neighbor sims | 🔭 ~15% | v0.5 |
 | Performance & scale (interest streaming, caches) | 🟡 ~70% | ongoing |
 | UI / floaters / preferences | 🟡 ~55% | v0.4 |

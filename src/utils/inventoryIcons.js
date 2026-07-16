@@ -10,7 +10,7 @@ const ITEM_ICONS = {
 	3:  '📍', // Landmark
 	5:  '👕', // Clothing
 	6:  '📦', // Object
-	7:  '📒', // Notecard
+	7:  '🗒️', // Notecard
 	10: '📜', // LSLText (script)
 	11: '📜', // LSLBytecode
 	13: '🧍', // Bodypart
@@ -25,7 +25,7 @@ const ITEM_ICONS = {
 
 // SL InventoryType — fallback when assetType is ambiguous (e.g. wearables).
 const INVTYPE_ICONS = {
-	0:  '🖼️', 1: '🔊', 2: '📇', 3: '📍', 6: '📦', 7: '📒',
+	0:  '🖼️', 1: '🔊', 2: '📇', 3: '📍', 6: '📦', 7: '🗒️',
 	10: '📜', 15: '📸', 17: '📦', 18: '👕', 19: '🎞️', 20: '👋', 22: '🧊',
 	56: '⚙️', 57: '🎨',
 }
@@ -38,7 +38,7 @@ const FOLDER_ICONS = {
 	3:  '📍', // Landmarks
 	5:  '👕', // Clothing
 	6:  '📦', // Objects
-	7:  '📒', // Notecards
+	7:  '🗒️', // Notecards
 	10: '📜', // Scripts
 	13: '🧍', // Body Parts
 	14: '🗑️', // Trash
@@ -120,5 +120,7 @@ export function itemIcon(assetType, invType) {
 export function folderIcon(typeDefault, open) {
 	const t = Number(typeDefault)
 	if (FOLDER_ICONS[t]) return FOLDER_ICONS[t]
-	return open ? '📂' : '📁'
+	// Outline folder glyphs (🗁/🗀) instead of the gold 📂/📁: the gold folder read too close to the
+	// gold notecard/script items in-tree (Gene 2026-07-15). Monochrome outline separates chrome from content.
+	return open ? '🗁' : '🗀'
 }

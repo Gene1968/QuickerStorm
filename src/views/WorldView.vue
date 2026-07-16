@@ -32,6 +32,7 @@ import InventoryFloater		from '@/components/InventoryFloater.vue'
 import InventoryContextMenu	from '@/components/InventoryContextMenu.vue'
 import InventoryItemProperties	from '@/components/InventoryItemProperties.vue'
 import TexturePreviewFloater	from '@/components/TexturePreviewFloater.vue'
+import TextAssetEditorFloater	from '@/components/TextAssetEditorFloater.vue'
 import PayFloater			from '@/components/PayFloater.vue'
 import StandStopFlying		from '@/components/StandStopFlying.vue'
 import BuyObjectDialog		from '@/components/BuyObjectDialog.vue'
@@ -193,6 +194,11 @@ watch(
 					<NotificationsFloater	v-if="ui.showNotifications" />
 					<TexturePreviewFloater
 							v-for="inst in ui.texPreviewInstances"
+							:key="inst.id"
+							:instance="inst"
+						/>
+						<TextAssetEditorFloater
+							v-for="inst in ui.textAssetInstances"
 							:key="inst.id"
 							:instance="inst"
 						/>

@@ -84,6 +84,12 @@ export function assetRequestSpec(assetType: string): AssetRequestSpec | null {
 			return { capNames: ['ViewerAsset'], queryKey: 'sound_id', accept: 'audio/ogg', transcode: false, mime: 'audio/ogg' }
 		case 'animation':
 			return { capNames: ['ViewerAsset'], queryKey: 'animatn_id', accept: 'application/vnd.ll.animation', transcode: false, mime: 'application/vnd.ll.animation' }
+		case 'notecard':
+			// Notecard asset = the "Linden text version 2" envelope (client strips it via assetSerialize).
+			return { capNames: ['ViewerAsset'], queryKey: 'notecard_id', accept: 'application/octet-stream', transcode: false, mime: 'text/plain' }
+		case 'lsltext':
+			// LSL script source = raw UTF-8 text. GetAssetsHandler.cs:61 maps lsltext_id → AssetType.LSLText.
+			return { capNames: ['ViewerAsset'], queryKey: 'lsltext_id', accept: 'application/octet-stream', transcode: false, mime: 'text/plain' }
 		default:
 			return null
 	}

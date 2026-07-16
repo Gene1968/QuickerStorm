@@ -55,4 +55,21 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-15 — Asset-upload framework + notecard/script editor  [uncommitted]
+- **Reusable 2-step HTTP-cap uploader** (`server/lib/caps/assetUpload.ts`): `uploadNewAsset`
+  (NewFileAgentInventory) + `updateItemAsset` (Update{Notecard,Script}AgentInventory), injectable-fetch,
+  unit-tested. Client `C.ASSET_UPLOAD`→`S.ASSET_UPLOAD_RESULT` binary transport (base64 over WS).
+- **Create blank notecard/script** — `C.CREATE_INV_ITEM` (CreateInventoryItem Low 305, type/invType per kind);
+  the sim's `UpdateCreateInventoryItem` reply lands it, then it auto-selects + opens inline rename.
+- **Notecard/script editor** (`TextAssetEditorFloater.vue`) — open (ViewerAsset `notecard_id`/`lsltext_id`) →
+  edit → **Save** (uploads via the update cap) → reopen shows saved text. Description row, live byte count,
+  Ctrl+S, Delete-to-Trash. Titlebar tracks live inventory renames.
+- Wires: inventory **+** menu and folder right-click **New Notecard/Script** (were dead-disabled); double-click
+  open dispatch for notecard/script.
+- Fixes: added the upload caps to the login seed-request (`login.ts`) — was the `cap_unavailable` cause;
+  new items now create in the selected folder (`resolveTargetFolder`); save repoints the item's `assetId` to
+  the sim's new immutable asset (`setItemAssetId`) so reopen isn't stale.
+- `src/lib/assetSerialize.js` — Linden-text-v2 notecard envelope + type maps (11 tests). Spec:
+  `docs/superpowers/specs/2026-07-15-asset-upload-notecard-script-design.md`.
+
 *(New shipped entries go above this line, newest first.)*

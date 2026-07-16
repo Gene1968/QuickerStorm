@@ -120,6 +120,9 @@ all ✅. Remaining (most machinery already built this cycle — thin wires):
 Right-click menus (sit/stand/fly/zoom/take/buy/pay/invite/inspect), take/take-copy perm gating, object
 contents (Xfer → task-inv → Open) all ✅. Remaining:
 - 🔜 Object contents as a **drag-and-drop inv tree** in the Edit floater (FS treats it as one folder).
+- 🔜 **Drag an inventory item (script/notecard/texture/object) onto a prim** → drop into the prim's TASK
+  inventory (RezScript Low + UpdateTaskInventory write side; ScenePresence perms). Pairs with the DnD inv
+  tree above. (2026-07-15 — can't drag a script onto a prim yet.)
 - 🔜 Per-item contents context menu (Open / Properties / Rename / Delete) + New Script / Edit (needs script editor, bundle 14).
 - 🟡 Buy/Pay are real but **no-op on stock OpenSim** (no money module) — needs 🔭 currency system for anything beyond L$0.
 - 🔜 ClickAction OPEN(4) non-destructive open (our task-inv "Open" copies immediately — wrong for left-click).
@@ -184,7 +187,14 @@ Mostly server-authoritative; the browser can only *reflect* script effects, not 
 - 🔭 Touch handler dispatch (llTouch → script event) · general LSL event surface (touch/collision/sensor/timer).
 - 🔜 Script-driven texture/pose changes are already reflected via the ✅ Scripted-motion & TextureAnim work.
 - 🚫 Running LSL client-side — out of scope (scripts run on the sim).
-- 🔜 Script editor / New-Script / Edit buttons (bundle 5 contents) — view/edit notecards & scripts via asset-upload cap.
+- 🟡 **Notecard/script editor** (create/open/edit/save shipped 2026-07-15 — see CHANGELOG). Remaining follow-ons:
+  - 🔜 **Compile feedback on script save** — running a script IN a prim uses `UpdateScriptTaskInventory`,
+    whose reply carries `compiled` + an `errors` array (the FS compile-error list). Agent-inventory script
+    save has nothing to compile; feedback belongs with the in-prim/task-inventory script path here.
+  - 🔜 **Find/Replace bar** in the editor (in-browser; deferred — usefulness TBD, Gene 2026-07-15).
+  - 🚫 External "Edit…" (open in the OS-associated editor + sync the temp file back) — can't-in-browser
+    (no filesystem/launch-app access); deliberately NOT stubbed.
+  - 🔜 Editable Description (save via UpdateInventoryItem) — shown read-only today.
 
 ### 15. Cross-region / neighbor sims — 🔭 ~15% · v0.5
 - 🔭 Neighboring-sim terrain (adjacent ±regionSize; EnableSimulator + second circuit or cap fetch). **Bump priority — you asked for neighbors before crossings.**
@@ -225,13 +235,18 @@ remaining features need **already arrives; it just has no handler wired yet.** S
 
 **Fully wired today:** `ViewerAsset` (texture/mesh/sound/material) + `GetTexture`/`GetMesh(2)` fallbacks ·
 `FetchInventoryDescendents2` (+ lib variants) · `CreateInventoryCategory` · `RenderMaterials` handler ·
-`UploadBakedTexture` (2-step) · `EventQueueGet` long-poll. Inventory *mutations* use LLUDP (OpenSim has no AIS3).
+`EventQueueGet` long-poll. Inventory *mutations* use LLUDP (OpenSim has no AIS3). Note: `UploadBakedTexture`'s
+cap URL is *requested* but **there is no 2-step upload code at all** — only `RebakeAvatarTextures` (a single
+empty POST) is wired. The generalized 2-step uploader is being built (§ item 1 below) and unblocks it too.
 
 **Needs building / finishing (by leverage):**
-1. **Asset upload to inventory** — `NewFileAgentInventory` / `UpdateNotecardAgentInventory` /
-   `UpdateScriptAgentInventory` / `InventoryThumbnailUpload` (last is already *requested*, no handler). This is
-   the **highest-leverage gap**: unblocks create-item (6), snapshot→inventory (17), notecard/script editing (14).
-   Note `UploadBakedTexture` already exists, so appearance-bake upload is *not* blocked here.
+1. 🟡 **Asset upload** — the reusable 2-step uploader (`uploadNewAsset`/`updateItemAsset`) + `CreateInventoryItem`
+   + read-side fetch **shipped 2026-07-15** (see CHANGELOG); notecard/script create+edit+save live. Remaining
+   thin call sites on the same framework:
+   - 🔨 **Sound-from-file upload** (`NewFileAgentInventory`, OGG passthrough — no encoding). *(in progress)*
+   - 🔜 **Texture / snapshot→inventory** — needs J2C **encode** (we only have decode today; a magick-wasm spike).
+   - 🔜 **Bake-texture upload** (`UploadBakedTexture`) for the appearance work (bundle 7).
+   - 🔜 `InventoryThumbnailUpload` (rides the same uploader).
 2. **PBR materials** — **not cap-blocked.** `RenderMaterials` fetch handler exists; finish the declared-but-
    handlerless `ModifyMaterialParams` (set GLTF overrides) + the client shader/edit path. Unblocks bundle 4 ("PBR not seen").
 3. **`ObjectMedia` / `ObjectMediaNavigate`** — *requested, no handler.* Media & web-on-prim (13).
@@ -273,5 +288,7 @@ bundle's status; they're a list to burn down in a live session:
 ---
 
 ## Raw inbox (dump here; triaged into bundles above)
+
+- Land context menu 'Build' can be enabled - should open ObjectEditFloater directly to Create section.
 
 *(empty — 2026-07-14 items triaged into bundles 1–18; 2026-07-13/12/05 bug items folded into their bundles.)*

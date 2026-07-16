@@ -23,6 +23,17 @@ import { C, S } from '@shared/protocol.js'
 // the rest get a graceful "coming soon" toast (see docs/FEATURE-GAPS.md 2026-06-30).
 // Exported: WorldCanvas.vue's drop handler (PACKAGE 5) needs it to detect a texture-onto-face drop.
 export const ASSET_TYPE_TEXTURE = 0
+export const ASSET_TYPE_NOTECARD = 7
+export const ASSET_TYPE_LSLTEXT = 10
+
+// Cross-instance expectation for createBlankItem: the sim owns the new ItemID (returned via
+// UpdateCreateInventoryItem), so we can't select+inline-rename optimistically like folder-create does.
+// createBlankItem records what it just asked for; the single onItemCreated handler consumes it, selecting
+// the matching new row and opening inline rename. Module-level so any component's createBlankItem reaches
+// the mounted composable's handler. Cleared on match or after a short timeout (a stray later create — e.g.
+// an accept-offer — must not hijack the rename).
+let _expectCreatedItem = null   // { folderId, assetType } | null
+let _expectCreatedTimer = null
 
 const BATCH        = 40   // folders per cap POST (server batches them into one request)
 const MAX_INFLIGHT = 80   // cap on folders awaiting reply during the background bulk load
@@ -197,6 +208,15 @@ export function useInventory() {
 				if (item.assetId) ui.openTexturePreview(item.assetId, item.name, item.desc, item.itemId)
 				else notifyInfo('No preview', 'This texture has no asset to show yet.')
 				break
+			case ASSET_TYPE_NOTECARD:
+			case ASSET_TYPE_LSLTEXT:
+				// Notecard (7) / LSL script (10) → the text-asset editor (fetch text via assetId, save
+				// via itemId through the Update{Notecard,Script}AgentInventory 2-step cap).
+				ui.openTextAsset({
+					kind: item.assetType === ASSET_TYPE_LSLTEXT ? 'script' : 'notecard',
+					itemId: item.itemId, assetId: item.assetId, name: item.name, desc: item.desc,
+				})
+				break
 			default: {
 				// Sound / animation / gesture / landmark / calling-card / other: no viewer pipeline yet.
 				const label = assetTypeName(item.assetType)
@@ -368,14 +388,51 @@ export function useInventory() {
 		fetchAll()
 	}
 
-	// UpdateCreateInventoryItem reply → drop the new item(s) into their folder list immediately.
-	function onItemCreated(d) { inv.addCreatedItems(d?.items || []) }
+	// UpdateCreateInventoryItem reply → drop the new item(s) into their folder list immediately. If we're
+	// expecting a freshly-created blank notecard/script, select it + open inline rename (mirrors the
+	// folder-create UX, but deferred to here because the sim assigns the ItemID).
+	function onItemCreated(d) {
+		const list = d?.items || []
+		inv.addCreatedItems(list)
+		if (!_expectCreatedItem || !list.length) return
+		const exp = _expectCreatedItem
+		const target = list.find(it =>
+			it.parentId === exp.folderId && (it.assetType === exp.assetType || it.invType === exp.assetType),
+		) || (list.length === 1 ? list[0] : null)
+		if (!target?.itemId) return
+		_expectCreatedItem = null
+		if (_expectCreatedTimer) { clearTimeout(_expectCreatedTimer); _expectCreatedTimer = null }
+		const folderId = target.parentId || exp.folderId
+		inv.select(target.itemId)
+		const fid = ui.floaterStack.at(-1)
+		if (fid && !inv.isExpanded(fid, folderId)) inv.toggle(fid, folderId)
+		nextTick(() => window.dispatchEvent(new CustomEvent('inv:begin-rename', { detail: { id: target.itemId, kind: 'item' } })))
+	}
 
 	// Ask the sim to create a landmark of the current location in `folderId`. The reply
 	// (S.INV_ITEM_CREATED) lands the item in the store. desc = the user's "My notes".
 	function createLandmark({ name, desc, folderId }) {
 		if (!folderId) return
 		emit(C.CREATE_LANDMARK, { name: name || 'Landmark', desc: desc || '', folderId })
+	}
+
+	// Create a blank notecard or script in `parentId` (defaults to My Inventory root). Fire-and-forget:
+	// the sim mints an empty default asset + item and replies UpdateCreateInventoryItem → onItemCreated →
+	// addCreatedItems drops it into the folder. The user then double-clicks it to edit content, which
+	// uploads via the Update{Notecard,Script}AgentInventory cap (useAssetUpload). kind: 'notecard'|'script'.
+	function createBlankItem({ kind, parentId }) {
+		// Explicit parentId (context-menu on a folder) wins; otherwise resolve from the current selection
+		// (selected folder, or the parent folder of a selected item, else root).
+		const folderId = (parentId && inv.folders.has(parentId)) ? parentId : inv.resolveTargetFolder()
+		if (!folderId) return
+		// Arm the select+inline-rename expectation for the matching UpdateCreateInventoryItem reply.
+		_expectCreatedItem = { folderId, assetType: kind === 'script' ? ASSET_TYPE_LSLTEXT : ASSET_TYPE_NOTECARD }
+		if (_expectCreatedTimer) clearTimeout(_expectCreatedTimer)
+		_expectCreatedTimer = setTimeout(() => { _expectCreatedItem = null; _expectCreatedTimer = null }, 15000)
+		emit(C.CREATE_INV_ITEM, {
+			kind, folderId,
+			name: kind === 'script' ? 'New Script' : 'New Note',
+		})
 	}
 
 	// Create a new folder. The client owns the FolderID, so we generate it, tell the server (which
@@ -894,7 +951,7 @@ export function useInventory() {
 	onUnmounted(() => {})
 
 	return {
-		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder,
+		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder, createBlankItem,
 		createFolderFromSelected, openInventoryItem,
 		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
 		purgeItem, purgeFolder, restoreItem, restoreFolder, emptyTrash, updatePerms, wearAttachment, detach, isItemWorn,

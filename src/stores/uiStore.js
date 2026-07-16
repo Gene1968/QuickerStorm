@@ -414,6 +414,31 @@ export const useUiStore = defineStore('ui', () => {
 		floaterStack.value = floaterStack.value.filter(f => f !== id)
 	}
 
+	// Text-asset editor (notecard / script) — MULTI-instance, keyed by inventory item UUID (mirrors the
+	// texture-preview pattern + FS's separate floater_preview_notecard/_script). Each entry:
+	// { id, kind:'notecard'|'script', itemId, assetId, name, folderId }. Opened by openInventoryItem
+	// (double-click) or right after creating a blank item. Save routes through useAssetUpload.
+	const textAssetInstances = ref([])
+	function textAssetId(key) { return `text-asset-${key}` }
+	function openTextAsset({ kind, itemId, assetId, name, desc, folderId }) {
+		const key = itemId || assetId
+		if (!key) return
+		const id = textAssetId(key)
+		if (textAssetInstances.value.find(t => t.id === id)) { focusFloater(id); return }
+		textAssetInstances.value = [...textAssetInstances.value, {
+			id, kind: kind || 'notecard', itemId: itemId || '', assetId: assetId || '',
+			name: name || (kind === 'script' ? 'Script' : 'Notecard'), desc: desc || '', folderId: folderId || '',
+		}]
+		focusFloater(id)
+	}
+	function closeTextAsset(id) {
+		textAssetInstances.value = textAssetInstances.value.filter(t => t.id !== id)
+		floaterStack.value = floaterStack.value.filter(f => f !== id)
+	}
+	// After a blank item's UpdateCreateInventoryItem reply lands, an open editor placeholder (opened before
+	// the itemId/assetId were known) can be re-targeted in place by matching on name+folder. Kept simple:
+	// callers re-open with the real ids; the find-by-id focus above dedups.
+
 	// WHY: Pay floater — single-instance (mirrors FS: one LLFloaterPay at a time). target =
 	// { targetId, targetName, kind: 'avatar'|'object'|'group' } set by the context-menu "Pay" rows
 	// (AvatarContextMenu/ObjectContextMenu — next sweep stage). null = closed.
@@ -506,6 +531,7 @@ export const useUiStore = defineStore('ui', () => {
 		pendingWarpPos, requestWarp, clearWarp,
 		showObjectEdit, editObjectId, openObjectEdit, toggleObjectEdit,
 		texPreviewInstances, openTexturePreview, closeTexturePreview,
+		textAssetInstances, openTextAsset, closeTextAsset,
 		editLinked, setEditLinked,
 		gizmoMode, setGizmoMode,
 		teleportStatus,

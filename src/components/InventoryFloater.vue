@@ -61,7 +61,7 @@ const props = defineProps({
 
 const ui  = useUiStore()
 const inv = useInventoryStore()
-const { fetchFolder, createFolder, trashItem, trashFolder, pasteInto, isItemWorn } = useInventory()
+const { fetchFolder, createFolder, createBlankItem, trashItem, trashFolder, pasteInto, isItemWorn } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 
 const showAddMenu = ref(false)
@@ -71,6 +71,13 @@ function newFolderHere() {
 	const parentId = inv.folders.has(inv.selectedId) ? inv.selectedId : inv.rootId
 	if (!parentId) return
 	createFolder({ name: 'New Folder', parentId })   // createFolder auto-expands the parent in the focused window
+	showAddMenu.value = false
+}
+
+// New Notecard / New Script from the + menu. createBlankItem resolves the target folder from the current
+// selection (selected folder, or a selected item's parent, else root). Double-click the new row to edit.
+function newBlankHere(kind) {
+	createBlankItem({ kind })
 	showAddMenu.value = false
 }
 
@@ -739,9 +746,8 @@ onUnmounted(() => {
 				<div v-if="showAddMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[10rem] bg-panel border border-edge rounded-sm shadow-lg text-xs" @click.stop>
 					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newFolderHere">New Folder</button>
 					<div class="border-t border-edge"></div>
-					<!-- red = recognised but not yet implemented -->
-					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Script</button>
-					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Notecard</button>
+					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newBlankHere('script')">New Script</button>
+					<button class="block w-full text-left px-3 py-1.5 hover:bg-white/10 text-fg" @click="newBlankHere('notecard')">New Notecard</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Gesture</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Clothing</button>
 					<button class="block w-full text-left px-3 py-1.5 inv-todo" disabled>New Body Part</button>

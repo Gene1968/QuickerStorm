@@ -1547,6 +1547,25 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	if (msg.t === C.CREATE_INV_ITEM) {
+		const d = msg.d as { kind: 'notecard' | 'script'; name: string; desc?: string; folderId: string }
+		if (!d.folderId) { slog.warn(session.ws, 'CreateInvItem: missing folderId'); return }
+		// notecard = Type/InvType 7; script = Type/InvType 10 (llassettype/llinventorytype). Zero
+		// TransactionID (encoder default) → OpenSim mints an empty default asset + item and replies
+		// UpdateCreateInventoryItem → forwarded as S.INV_ITEM_CREATED. Content saved later via ASSET_UPLOAD.
+		const ti = d.kind === 'script' ? 10 : 7
+		const seq = nextSeq(session)
+		const pkt = encodeCreateInventoryItem({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, type: ti, invType: ti,
+			name: d.name || (d.kind === 'script' ? 'New Script' : 'New Note'), description: d.desc || '',
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ CreateInventoryItem (${d.kind}) "${d.name}" → folder ${d.folderId.slice(0, 8)}…`)
+		return
+	}
+
 	if (msg.t === C.CREATE_INV_FOLDER) {
 		const d = msg.d as { folderId: string; parentId: string; name: string }
 		if (!d.folderId || !d.parentId) { slog.warn(session.ws, 'CreateInvFolder: missing ids'); return }

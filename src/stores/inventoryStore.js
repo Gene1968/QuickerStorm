@@ -335,6 +335,21 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	function select(id) { selectedId.value = id }
 
+	// Resolve the folder a new item/folder should be created in from the current selection: the selected
+	// FOLDER itself, else the parent folder of the selected ITEM, else the inventory root. WHY: "New
+	// Notecard/Script" from the + menu was always landing at root because the selection is often an item
+	// (or a folder that isn't the naive selectedId). Used by useInventory.createBlankItem.
+	function resolveTargetFolder() {
+		const sel = selectedId.value
+		if (sel && folders.value.has(sel)) return sel
+		if (sel) {
+			for (const [fid, list] of items.value) {
+				if (list.some(it => it.itemId === sel)) return fid
+			}
+		}
+		return rootId.value
+	}
+
 	// ── Sort (folders stay system-then-name; items sort by the chosen mode) ──
 	function setSort(m) { sortMode.value = m }
 	function setSystemFoldersToTop(on) { systemFoldersToTop.value = !!on }
@@ -632,6 +647,36 @@ export const useInventoryStore = defineStore('inventory', () => {
 			items.value.set(it.parentId, [...cur, { ...enriched, pendingMove: _pendingRowStamp(rec) }])
 		}
 		_schedTrigger()
+	}
+
+	// Find an item row by its ItemID across all folders (nulls if absent). WHY: an open notecard/script
+	// editor reads its title/description LIVE from here, so renaming the item in inventory updates the
+	// floater title (FS parity). Reactive via the items shallowRef trigger.
+	function itemById(itemId) {
+		if (!itemId) return null
+		for (const [, list] of items.value) {
+			const found = list.find(x => x.itemId === itemId)
+			if (found) return found
+		}
+		return null
+	}
+
+	// Point an item at a new asset UUID. WHY: saving a notecard/script uploads new bytes and the sim mints a
+	// NEW immutable asset (LLSDAssetUploadComplete.new_asset) while keeping the same item. Without updating
+	// the item's assetId, reopening the editor re-fetches the OLD asset (stale text). Called on save success.
+	function setItemAssetId(itemId, assetId) {
+		if (!itemId || !assetId) return false
+		for (const [fid, list] of items.value) {
+			const idx = list.findIndex(x => x.itemId === itemId)
+			if (idx >= 0) {
+				const next = list.slice()
+				next[idx] = { ...next[idx], assetId }
+				items.value.set(fid, next)
+				_schedTrigger()
+				return true
+			}
+		}
+		return false
 	}
 
 	// Optimistically add a folder the client just asked the sim to create (CreateInventoryFolder
@@ -1001,7 +1046,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 
 	return {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
-		selectedId, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
+		selectedId, resolveTargetFolder, setItemAssetId, itemById, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
 		fetchingSince, markFetching, clearFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
 		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder, isInTrash,
