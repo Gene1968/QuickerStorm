@@ -113,7 +113,12 @@ export async function meshCacheGet(uuid, now = Date.now()) {
 			req.onsuccess = () => {
 				const rec = req.result
 				if (rec) _touchLater(uuid, now)
-				settle(resolve, rec ? rec.submeshes : null)
+				const subs = rec ? rec.submeshes : null
+				// AV-1: re-attach the `skinned` flag (rest-pose skinned geometry) so a warm relog still
+				// places worn attachments at the avatar root. Rides as a non-indexed prop on the subs
+				// array (structured-clone drops it), so it's stored/read as its own record field.
+				if (rec && subs && rec.skinned) subs.skinned = true
+				settle(resolve, subs)
 			}
 			req.onerror = () => settle(reject, req.error)
 		})
@@ -160,7 +165,9 @@ export async function meshCachePut(uuid, submeshes, now = Date.now()) {
 			const tx = db.transaction([STORE, META], 'readwrite')
 			const st = tx.objectStore(STORE)
 			const mt = tx.objectStore(META)
-			st.put({ uuid, submeshes, bytes, lastUsed: now })
+			const rec = { uuid, submeshes, bytes, lastUsed: now }
+			if (submeshes.skinned) rec.skinned = true   // AV-1: rest-pose skinned geometry (place at avatar root)
+			st.put(rec)
 			let pending = null
 			const finishStats = (total) => {
 				const cReq = st.count()

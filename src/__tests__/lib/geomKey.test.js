@@ -43,9 +43,9 @@ describe('primGeomKey', () => {
 })
 
 describe('meshGeomKey / sculptGeomKey', () => {
-	it('embed asset id + version, scale-FREE (unscaled bakes, m2/s2 prefixes)', () => {
+	it('embed asset id + version, scale-FREE (unscaled bakes, m4/s2 prefixes)', () => {
 		const k = meshGeomKey('aaaa-bbbb')
-		expect(k).toBe(`m2:${GEOM_VERSION}:aaaa-bbbb`)   // lod 0 = bare-uuid (warm-cache back-compat)
+		expect(k).toBe(`m4:${GEOM_VERSION}:aaaa-bbbb`)   // lod 0 = bare-uuid (warm-cache back-compat); m4 = AV-1 server-skinning
 		expect(meshGeomKey('xxxx')).not.toBe(meshGeomKey('yyyy'))
 	})
 	it('sculpt key includes sculptType (type changes decode output)', () => {

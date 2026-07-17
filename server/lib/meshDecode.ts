@@ -10,12 +10,25 @@ export interface LodRef { offset: number; size: number }
 export interface MeshHeader {
 	headerSize: number
 	lods: { high?: LodRef; medium?: LodRef; low?: LodRef; lowest?: LodRef }
+	skin?: LodRef   // rig block (present on rigged/skinned meshes) — sibling header key, same {offset,size} shape
 }
 export interface Submesh {
 	positions: Float32Array
 	normals: Float32Array
 	uvs: Float32Array
 	indices: Uint16Array
+	jointIndices?: Uint8Array    // rigged only: 4 per vertex (index into skin.jointNames), 0-padded
+	jointWeights?: Float32Array   // rigged only: 4 per vertex, renormalized to sum 1, 0-padded
+}
+// Decoded mesh "skin" (rig) block. For the static bind-pose milestone (AV-1) only bindShapeMatrix is
+// consumed by the client; jointNames / inverseBindMatrix / pelvisOffset are captured for later skeletal
+// animation. Field names + row-major 4×4 layout mirror FS LLMeshSkinInfo::fromLLSD (llmodel.cpp:1671).
+export interface SkinInfo {
+	jointNames: string[]
+	bindShapeMatrix: number[]        // 16 floats, row-major (SL/FS convention: v' = v · M)
+	inverseBindMatrix: number[][]    // per-joint 16-float matrices (unused until animated posing)
+	pelvisOffset: number
+	lockScaleIfJointPosition: boolean
 }
 
 /** Parse the mesh asset header. Offsets in the header are relative to headerSize (end of header). */
@@ -30,7 +43,39 @@ export function parseMeshHeader(buf: Buffer): MeshHeader {
 	return {
 		headerSize: end,
 		lods: { high: ref('high_lod'), medium: ref('medium_lod'), low: ref('low_lod'), lowest: ref('lowest_lod') },
+		skin: ref('skin'),
 	}
+}
+
+const IDENTITY16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+
+/**
+ * Decode the mesh "skin" block: a zlib-deflated LLSD-binary MAP (not a submesh array). Carries the rig
+ * data that places a rigged mesh onto the avatar. At rest pose the per-joint skinning blend collapses
+ * to identity, so world_pos ≈ v_local · bind_shape_matrix (FS llvovolume.cpp:5319-5341) — the client
+ * needs only bindShapeMatrix for the static bind-pose milestone. Row-major 4×4 fill matches FS
+ * LLMeshSkinInfo::fromLLSD (llmodel.cpp:1707: mMatrix[j][k] = arr[j*4+k]). Returns null if absent/bad.
+ */
+export function decodeSkinBlock(buf: Buffer, headerSize: number, ref: LodRef): SkinInfo | null {
+	let inflated: Buffer
+	try {
+		inflated = inflateLod(buf.subarray(headerSize + ref.offset, headerSize + ref.offset + ref.size))
+	} catch { return null }
+	const { value } = parseLLSDBinary(inflated, 0)
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+	const m = value as Record<string, any>
+	const mat16 = (a: any): number[] | null => {
+		if (!Array.isArray(a) || a.length !== 16) return null
+		const nums = a.map(Number)
+		return nums.every(Number.isFinite) ? nums : null
+	}
+	const jointNames = Array.isArray(m.joint_names) ? m.joint_names.map((s: any) => String(s)) : []
+	const bindShapeMatrix = mat16(m.bind_shape_matrix) ?? IDENTITY16.slice()
+	const inverseBindMatrix = Array.isArray(m.inverse_bind_matrix)
+		? m.inverse_bind_matrix.map(mat16).filter((r: number[] | null): r is number[] => r !== null)
+		: []
+	const pelvisOffset = Number.isFinite(Number(m.pelvis_offset)) ? Number(m.pelvis_offset) : 0
+	return { jointNames, bindShapeMatrix, inverseBindMatrix, pelvisOffset, lockScaleIfJointPosition: m.lock_scale_if_joint_position === true }
 }
 
 /**
@@ -99,7 +144,31 @@ export function decodeMeshLOD(buf: Buffer, headerSize: number, lod: LodRef): Sub
 		const triCount = Math.floor(idxBuf.length / 2)
 		const indices = new Uint16Array(triCount)
 		for (let i = 0; i < triCount; i++) indices[i] = idxBuf.readUInt16LE(i * 2)
-		out.push({ positions, normals, uvs, indices })
+		// Rigged meshes carry a per-vertex "Weights" blob (parallel to Position). Format (FS
+		// llmodel.cpp:1050-1101): each vertex is up to 4 influences of {u8 boneIdx, u16 weightLE}, and a
+		// 0xFF terminator byte follows ONLY when the vertex has < 4 influences (exactly 4 → no terminator).
+		let jointIndices: Uint8Array | undefined, jointWeights: Float32Array | undefined
+		const wBuf = sm.Weights
+		if (Buffer.isBuffer(wBuf)) {
+			jointIndices = new Uint8Array(vCount * 4)
+			jointWeights = new Float32Array(vCount * 4)
+			let p = 0
+			for (let v = 0; v < vCount; v++) {
+				let sum = 0
+				for (let i = 0; i < 4; i++) {
+					if (p >= wBuf.length) break
+					const idx = wBuf[p]; p++
+					if (idx === 0xFF) break                 // terminator → this vertex has < 4 influences
+					if (p + 2 > wBuf.length) break
+					const w = wBuf.readUInt16LE(p); p += 2
+					jointIndices[v * 4 + i] = idx
+					jointWeights[v * 4 + i] = w
+					sum += w
+				}
+				if (sum > 0) for (let k = 0; k < 4; k++) jointWeights[v * 4 + k] /= sum   // renormalize to 1
+			}
+		}
+		out.push({ positions, normals, uvs, indices, jointIndices, jointWeights })
 	}
 	return out
 }

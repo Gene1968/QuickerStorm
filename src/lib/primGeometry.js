@@ -74,23 +74,43 @@ export function bakePrimScale(geom, scale) {
 // Concatenate decoded submeshes (SL-space verts) into one THREE.BufferGeometry, converting SL→Three
 // (slToThree(x,y,z)=(x,z,-y), a pure 90° X rotation so winding is preserved) and baking prim scale.
 // Shared by the mesh (ExtraParam type 5) and legacy-sculpt (types 1-4) paths. Returns the baked geom.
-export function swapSubmeshesToGeometry(subs, scale) {
+//
+// `bindShape` (AV-1): a rigged mesh's bind_shape_matrix (16 floats, SL row-major). At rest pose the
+// per-joint skinning blend collapses to identity, so world_pos ≈ v_local · bind_shape_matrix (FS
+// llvovolume.cpp:5319-5341). We apply it to each SL-space vertex (row-vector v·M, homogeneous w=1)
+// BEFORE the axis swap so the baked geometry sits in avatar-model space — the attachment then parents
+// at the avatar root with an identity local transform (see placeRiggedAttachment in useWorldEngine).
+export function swapSubmeshesToGeometry(subs, scale, bindShape = null) {
 	let vTotal = 0, iTotal = 0
 	for (const s of subs) { vTotal += s.positions.length / 3; iTotal += s.indices.length }
 	const pos = new Float32Array(vTotal * 3), nor = new Float32Array(vTotal * 3), uv = new Float32Array(vTotal * 2)
 	const idx = new Uint32Array(iTotal)
 	let vOff = 0, iOff = 0
+	// bind_shape_matrix column extractors (row-major arr[i*4+j]): v'_j = Σ_i v_i·M[i][j] + M[3][j].
+	const B = bindShape && bindShape.length === 16 ? bindShape : null
 	const g = new THREE.BufferGeometry()
 	for (let gi = 0; gi < subs.length; gi++) {
 		const s = subs[gi]
 		const v = s.positions.length / 3
 		for (let k = 0; k < v; k++) {
-			pos[(vOff + k) * 3 + 0] = s.positions[k * 3 + 0]    // x
-			pos[(vOff + k) * 3 + 1] = s.positions[k * 3 + 2]    // y ← SL z
-			pos[(vOff + k) * 3 + 2] = -s.positions[k * 3 + 1]   // z ← -SL y
-			nor[(vOff + k) * 3 + 0] = s.normals[k * 3 + 0]
-			nor[(vOff + k) * 3 + 1] = s.normals[k * 3 + 2]
-			nor[(vOff + k) * 3 + 2] = -s.normals[k * 3 + 1]
+			let px = s.positions[k * 3 + 0], py = s.positions[k * 3 + 1], pz = s.positions[k * 3 + 2]
+			let nx = s.normals[k * 3 + 0], ny = s.normals[k * 3 + 1], nz = s.normals[k * 3 + 2]
+			if (B) {
+				// Positions: full affine (row-vector · M, w=1). Normals: rotation part only (no translate).
+				const x2 = px * B[0] + py * B[4] + pz * B[8]  + B[12]
+				const y2 = px * B[1] + py * B[5] + pz * B[9]  + B[13]
+				const z2 = px * B[2] + py * B[6] + pz * B[10] + B[14]
+				const nx2 = nx * B[0] + ny * B[4] + nz * B[8]
+				const ny2 = nx * B[1] + ny * B[5] + nz * B[9]
+				const nz2 = nx * B[2] + ny * B[6] + nz * B[10]
+				px = x2; py = y2; pz = z2; nx = nx2; ny = ny2; nz = nz2
+			}
+			pos[(vOff + k) * 3 + 0] = px     // x
+			pos[(vOff + k) * 3 + 1] = pz     // y ← SL z
+			pos[(vOff + k) * 3 + 2] = -py    // z ← -SL y
+			nor[(vOff + k) * 3 + 0] = nx
+			nor[(vOff + k) * 3 + 1] = nz
+			nor[(vOff + k) * 3 + 2] = -ny
 			uv[(vOff + k) * 2 + 0] = s.uvs[k * 2 + 0]
 			uv[(vOff + k) * 2 + 1] = s.uvs[k * 2 + 1]
 		}
@@ -147,7 +167,7 @@ export function geometryFromArrays(a) {
 // job: { kind:'prim', shape, scale } | { kind:'submesh', subs, scale }
 export function bakeJob(job) {
 	const geom = job.kind === 'submesh'
-		? swapSubmeshesToGeometry(job.subs, job.scale)
+		? swapSubmeshesToGeometry(job.subs, job.scale, job.bindShape)
 		: bakePrimScale(buildPrimGeometry(job.shape), job.scale)
 	if (!geometryHasFiniteVerts(geom)) { geom.dispose?.(); return { bad: true } }
 	const arrays = extractGeomArrays(geom)

@@ -3112,6 +3112,26 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// AV-1: place a rigged mesh attachment on its avatar. The geometry is REST-POSE skinned server-side
+	// into SL avatar-MODEL space (origin at the avatar's FEET/ground, Z-up → Three Y-up after the axis
+	// swap), so the sim child offset/rotation/scale is meaningless. We parent at the avatar node with a
+	// pure vertical shift so the model's foot plane (y=0) lands at the capsule's ground contact: the
+	// capsule (radius 0.33, length 0.96) is centered on the node and spans ±0.81, so its bottom — where
+	// the avatar visually stands — is 0.81 below the node. Without this the whole outfit rides ~0.81m
+	// high (feet at the waist, hats above the head) and reads as a scattered mess. riggedBindPose gates
+	// the terse/full-update paths from clobbering this back to the sim offset. Facing rides the avatar
+	// node's yaw (model +X = SL forward = node local +X after slQuatToThree). Skeletal posing = later.
+	const RIG_FOOT_OFFSET = 0.96 / 2 + 0.33   // capsule half-height (node → capsule bottom / avatar feet)
+	function placeRiggedAttachment(mesh) {
+		mesh.position.set(0, -RIG_FOOT_OFFSET, 0)
+		mesh.quaternion.identity()
+		mesh.scale.set(1, 1, 1)
+		if (mesh.userData.basePos) mesh.userData.basePos.copy(mesh.position)
+		if (mesh.userData.baseScale) mesh.userData.baseScale.set(1, 1, 1)
+		mesh.userData.riggedBindPose = true
+		mesh.visible = true
+	}
+
 	// 🪑 Avatar reparent side effect for resolveAvatarReparent's decision (sit/stand). attach()/
 	// detach() semantics preserve the mesh's WORLD transform across the reparent — unlike
 	// mesh.add(), which keeps the local position/rotation numbers as-is. Avatars carry no
@@ -3188,6 +3208,12 @@ export function useWorldEngine(canvasRef) {
 			const isAsset = !isAvatar && !obj._placeholder && !!(obj.meshId || obj.sculptId)
 			const bakeScale = isAsset ? [1, 1, 1] : (obj.scale ? obj.scale.slice() : [1, 1, 1])
 			const meshLod = obj.meshId ? desiredMeshLod(obj) : 0
+			// AV-1: a mesh whose parent is an avatar is a worn attachment (rigged or rigid). We only KNOW
+			// it's rigged after decode (skin block present), but worn mesh attachments take the bind-pose
+			// path unconditionally: they bypass the shared per-asset geom cache (which could hold a skin-
+			// less bake from a rezzed instance) and fetch-with-skin so a rigged one lands at bind pose.
+			const parentObj = obj.parentId ? worldStore.objects.get(obj.parentId) : null
+			const isWornMeshAttachment = !!obj.meshId && !isAvatar && !obj._placeholder && parentObj?.pcode === PCODE_AVATAR
 			const geomKey = (isAvatar || obj._placeholder) ? null
 				: obj.meshId   ? meshGeomKey(obj.meshId, meshLod)
 				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
@@ -3195,8 +3221,8 @@ export function useWorldEngine(canvasRef) {
 			// Warm-high fallback (mesh LOD): if the desired-LOD bake isn't in the L1 tier, use the cached
 			// HIGH (bare-uuid) bake rather than dropping to placeholder→fetch→bake. Mirrors the async
 			// fallback in _flushGeomLookups; the warm-high bake is the bulk of a revisited region.
-			let cachedArrays = geomKey ? geomMemGet(geomKey) : null
-			if (!cachedArrays && obj.meshId && meshLod !== 0) cachedArrays = geomMemGet(meshGeomKey(obj.meshId, 0))
+			let cachedArrays = (geomKey && !isWornMeshAttachment) ? geomMemGet(geomKey) : null
+			if (!cachedArrays && !isWornMeshAttachment && obj.meshId && meshLod !== 0) cachedArrays = geomMemGet(meshGeomKey(obj.meshId, 0))
 			if (cachedArrays) _geomHitMem++
 			let geo = isAvatar
 				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
@@ -3309,10 +3335,14 @@ export function useWorldEngine(canvasRef) {
 				const baked = geometryFromArrays(out)
 				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); geoNaNCount++; return }
 				if ((hasMaterial || uiStore.litShading) && !baked.attributes.normal) baked.computeVertexNormals()   // lit shading needs normals
+				// AV-1: rigged mesh geometry is already fully placed (server rest-pose skinned) and IGNORES
+				// the sim object scale (rigged verts follow the skeleton, not the object transform). Skip the
+				// primScale re-apply for it — applying obj.scale would wrongly stretch the rig.
+				const rigged = !!mesh.userData.skinned
 				// WHY: an in-flight update may have rescaled the placeholder + advanced primScale since
 				// dispatch. Re-apply the bakeScale→primScale ratio so the swapped geometry matches the
 				// current scale (same axis map as bakePrimScale / the update path). Divisor 0/non-finite → 1.
-				const cur = mesh.userData.primScale
+				const cur = rigged ? null : mesh.userData.primScale
 				if (cur) {
 					const ratio = (n, p) => (Number.isFinite(n) && Number.isFinite(p) && p !== 0) ? n / p : 1
 					const rx = ratio(cur[0], bakeScale[0])
@@ -3324,6 +3354,13 @@ export function useWorldEngine(canvasRef) {
 				mesh.geometry = baked
 				old.dispose()
 				finishGeom()
+				// AV-1: rigged attachment parented under an avatar → snap to bind pose at the avatar root
+				// (the sim child offset is meaningless for rigged mesh). isAvatar node tagged in userData.
+				if (rigged) {
+					const onAvatar = !!mesh.parent?.userData?.isAvatar
+					console.log('[AV1] applySwap skinned mesh=%s parentIsAvatar=%s parent=%s', String(obj.meshId).slice(0, 8), onAvatar, mesh.parent?.userData?.localId)
+					if (onAvatar) placeRiggedAttachment(mesh)
+				}
 				// Real geometry is in — reveal the object (was hidden as a placeholder cube). visibilityTick
 				// takes over distance culling from here (it skips awaitingGeom meshes while the flag is set).
 				if (mesh.userData.awaitingGeom) { mesh.userData.awaitingGeom = false; mesh.visible = true }
@@ -3364,7 +3401,20 @@ export function useWorldEngine(canvasRef) {
 			} : undefined
 
 			if (!isAvatar && !obj._placeholder) {
-				if (cachedArrays) {
+				if (isWornMeshAttachment) {
+					// AV-1: worn mesh attachment — bypass the shared per-asset geom cache and fetch via the
+					// `:skin` lane (ensureSkin). A rigged mesh comes back with REST-POSE skinned positions
+					// (server-baked) + skinned=true → snapped to the avatar root in applySwap. A rigid (non-
+					// rigged) attachment has no skin block, comes back un-skinned, and keeps its sim offset.
+					getMesh(obj.meshId, meshLod, nearRefDist(obj), true).then(subs => {
+						if (!(subs && subs.length)) return
+						if (subs.skinned) mesh.userData.skinned = true
+						console.log('[AV1] worn attach mesh=%s parent=%s skinned=%s dbg=%s', obj.meshId, obj.parentId, !!subs.skinned, subs.skinDbg)
+						// bakeScale is [1,1,1] for assets; server already applied the full skin transform, so
+						// the client only does the SL→Three axis swap (no bindShape, no primScale for rigged).
+						return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
+					})
+				} else if (cachedArrays) {
 					// Tier-1 hit: geometry is already final (created above) — run only the
 					// post-swap finishing. Mesh/sculpt hits never even fetch the raw asset.
 					finishGeom()
@@ -3372,7 +3422,8 @@ export function useWorldEngine(canvasRef) {
 					// Miss path, deferred behind one batched qs-geom lookup (an IDB hit swaps like a
 					// worker result; a true miss runs this thunk → bake → persist).
 					// WHY thunk: a mesh/sculpt cache hit must skip getMesh/getSculpt entirely — the
-					// raw-submesh fetch only happens when the baked cache truly misses.
+					// raw-submesh fetch only happens when the baked cache truly misses. (Rigged worn
+					// attachments take the isWornMeshAttachment branch above; this is the plain lane.)
 					const jobThunk = obj.meshId
 						? () => getMesh(obj.meshId, meshLod, nearRefDist(obj)).then(subs =>
 							(subs && subs.length) ? meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }) : null)
@@ -3491,6 +3542,7 @@ export function useWorldEngine(canvasRef) {
 			mesh.userData.parentId = obj.parentId ?? 0
 
 			if (isAvatar) {
+				mesh.userData.isAvatar = true   // AV-1: lets a rigged child detect its parent is an avatar (bind-pose placement)
 				// ── Face indicator — flat box on front of upper body ─────────────────
 				// WHY: Replaces the old forward-pointing orange "arm" box. Sits on the capsule
 				// front face (~head height) so orbiting to the front reveals which way is forward.
@@ -3634,6 +3686,9 @@ export function useWorldEngine(canvasRef) {
 						other.parent?.remove(other)
 						mesh.add(other)
 						normalizeChildTransform(other)
+						// AV-1: the just-arrived parent is THIS mesh — if it's an avatar and the reparented
+						// child is rest-pose skinned (rigged), snap it to the avatar root.
+						if (mesh.userData.isAvatar && other.userData.skinned) placeRiggedAttachment(other)
 					}
 					other.visible = true
 					if (other.userData.hoverLabel) other.userData.hoverLabel.visible = true
@@ -3649,10 +3704,14 @@ export function useWorldEngine(canvasRef) {
 			// arrive mid-drag and would otherwise snap the mesh back every network tick. Cleared the
 			// instant gizmoDrag ends (mouseup), so the next real update applies normally.
 			const gizmoSuppress = gizmoDrag != null && gizmoDrag.ids.has(obj.localId)
+			// AV-1: rigged attachment stays at bind pose (identity local transform) — a full ObjectUpdate's
+			// scale/rot/pos are the sim's meaningless child offset, so skip the transform writes below. The
+			// reparent (detach) + TE-tint (clothing recolor) handling further down still runs.
+			const riggedBindPose = mesh.userData.riggedBindPose === true
 			// WHY: scale lives in the geometry (node scale stays 1,1,1 so children don't inherit it).
 			// Re-bake by the ratio of new/previous baked scale — preserves the prim's shape geometry
 			// without a rebuild, and is a no-op when the scale is unchanged (the common resync case).
-			if (obj.scale && obj.pcode !== PCODE_AVATAR && !gizmoSuppress) {
+			if (obj.scale && obj.pcode !== PCODE_AVATAR && !gizmoSuppress && !riggedBindPose) {
 				const prev = mesh.userData.primScale || [1, 1, 1]
 				// Guard: a prim can arrive with a 0 scale component (finite, so it passes classifySafety
 				// and bakes to a 0-width geometry). On the next update prev[i]=0 → new/0 = Inf, or 0/0 =
@@ -3665,7 +3724,7 @@ export function useWorldEngine(canvasRef) {
 				if (rx !== 1 || ry !== 1 || rz !== 1) mesh.geometry.scale(rx, ry, rz)
 				mesh.userData.primScale = obj.scale.slice()
 			}
-			if (obj.rot && obj.pcode !== PCODE_AVATAR && !gizmoSuppress) {
+			if (obj.rot && obj.pcode !== PCODE_AVATAR && !gizmoSuppress && !riggedBindPose) {
 				// 🎬 E: server rot lands via applyServerRot so accumulated llTargetOmega spin is
 				// preserved on same-rot resyncs and reset on genuine changes (FS llviewerobject.cpp:2391–2414).
 				applyServerRot(mesh, obj.localId, obj.rot)
@@ -3685,7 +3744,7 @@ export function useWorldEngine(canvasRef) {
 					if (obj.localId === ownAvatarLocalId) uiStore.setSitting(action === 'attach' ? 'object' : false)
 				}
 			}
-			if (obj.pos && !gizmoSuppress) {
+			if (obj.pos && !gizmoSuppress && !riggedBindPose) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				// WHY: ObjectUpdate is sparse (login + new objects in range). Avatar gets GSAP
 				// so a belated full-update doesn't jerk it mid-motion. Prims: direct set.
@@ -3705,8 +3764,11 @@ export function useWorldEngine(canvasRef) {
 			// WHY: A later full ObjectUpdate just overwrote local scale/pos with raw world values —
 			// re-stash the base and re-divide the parent scale so a linked child stays normalized.
 			if (obj.pcode !== PCODE_AVATAR) {
-				mesh.userData.baseScale = mesh.scale.clone()
-				mesh.userData.basePos   = mesh.position.clone()
+				// AV-1: don't re-stash base transform for a rigged attachment (it stays at bind-pose identity).
+				if (!riggedBindPose) {
+					mesh.userData.baseScale = mesh.scale.clone()
+					mesh.userData.basePos   = mesh.position.clone()
+				}
 				// PACKAGE 4 (2026-07-13): reparent on a parentId CHANGE — Link/Unlink (ObjectLink/
 				// ObjectDelink) rebroadcast full ObjectUpdates with a new ParentID for every affected
 				// prim, and OpenSim always sends pos/rot already in the frame matching the prim's
@@ -3747,7 +3809,7 @@ export function useWorldEngine(canvasRef) {
 						if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
 					}
 				}
-				normalizeChildTransform(mesh)
+				if (!riggedBindPose) normalizeChildTransform(mesh)   // AV-1: keep bind-pose identity
 				// TE tint update (2026-07-04): a full ObjectUpdate for an existing mesh can carry a
 				// CHANGED TextureEntry color (object tinted after rez) — everything above only touches
 				// scale/rot/pos, so the new tint never reached the material and the prim stayed the
@@ -4160,7 +4222,11 @@ export function useWorldEngine(canvasRef) {
 			// gizmoSuppress guard (sim's confirmation of the PRE-drag state must not snap the live
 			// preview back mid-gesture).
 			const gizmoSuppress = gizmoDrag != null && gizmoDrag.ids.has(obj.localId)
-			if (mesh && !gizmoSuppress && (obj.localId !== ownAvatarLocalId || uiStore.isSitting === 'object')) {
+			// AV-1: a rigged attachment sits at bind pose (identity local transform under the avatar root).
+			// Its terse-update pos/rot is the sim's meaningless child offset — applying it would yank the
+			// rig off the avatar. Skip pos/rot writes for it (placeRiggedAttachment owns the transform).
+			const riggedBindPose = mesh?.userData?.riggedBindPose === true
+			if (mesh && !gizmoSuppress && !riggedBindPose && (obj.localId !== ownAvatarLocalId || uiStore.isSitting === 'object')) {
 				const t = slToThree(pos[0], pos[1], pos[2])
 				// WHY: Avatars get GSAP lerp to smooth 10Hz TerseUpdate jitter into fluid motion.
 				// Prims use direct set — GSAP on many static prims restarts tweens every update

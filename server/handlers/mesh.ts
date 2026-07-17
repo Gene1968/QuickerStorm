@@ -5,7 +5,9 @@ import { mkdirSync } from 'fs'
 import { dirname } from 'path'
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
-import { parseMeshHeader, decodeMeshLOD, pickLodRef } from '../lib/meshDecode'
+import { parseMeshHeader, decodeMeshLOD, decodeSkinBlock, pickLodRef } from '../lib/meshDecode'
+import { skinSubmeshes } from '../lib/meshSkin'
+import { jointRestWorld } from '../lib/avatarSkeleton'
 import { createAssetMemo } from '../lib/assetMemo'
 import { openAssetDiskCacheSafe, createDisabledAssetDiskCache, type AssetDiskCache, type AssetPayload } from '../lib/assetDiskCache'
 import { S } from '../../shared/protocol.js'
@@ -13,7 +15,12 @@ import { S } from '../../shared/protocol.js'
 // Tier-2 decoded-mesh cache + request coalescing (same rationale as assets.ts: retries used to
 // refire the grid fetch AND the LOD decode). Keyed by `meshId:lod` — mesh bytes are global by UUID,
 // and each LOD level decodes to its own submesh payload (see pickLodRef / the per-level fetch).
-type MeshPayload = { submeshes: { positions: string; normals: string; uvs: string; indices: string }[] }
+// AV-1: a rigged mesh (skin block present) requested WITH skin (wantSkin, from a worn attachment) is
+// baked to REST-POSE positions server-side (meshSkin: v·bind_shape·Σwₖ·invBindₖ·jointRestWorldₖ) and
+// shipped as static geometry with a `skinned` flag — the client places it at the avatar root, no per-frame
+// skinning, no animation yet. These live under a SEPARATE `:skinv2` cache key so the plain geometry cache
+// (877MB, un-skinned) is untouched and only worn meshes re-fetch. skinDbg surfaces why skin is/isn't present.
+type MeshPayload = { submeshes: { positions: string; normals: string; uvs: string; indices: string }[]; skinned?: boolean; skinDbg?: string }
 const MESH_MEMO_BUDGET = 256 * 1048576
 let _meshLogN = 0
 const meshMemo = createAssetMemo<MeshPayload>({
@@ -49,17 +56,25 @@ export function deserializeMeshPayload(a: AssetPayload): MeshPayload {
 	return JSON.parse(Buffer.from(a.dataB64, 'base64').toString('utf8')) as MeshPayload
 }
 
-export async function handleMeshFetch(circuitId: string, req: { meshId: string; lod?: number }): Promise<void> {
+export async function handleMeshFetch(circuitId: string, req: { meshId: string; lod?: number; wantSkin?: boolean }): Promise<void> {
 	const s = getSession(circuitId)
 	if (!s) return
 	const meshId = req?.meshId
 	const wantLod = Math.max(0, Math.min(3, (req?.lod ?? 0) | 0))
-	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.MESH_DATA, d: { meshId, lod: wantLod, ...d } }))
+	// AV-1: a worn attachment asks for skin (wantSkin). It gets its OWN cache key (`:skin`) so it never
+	// answers from a pre-AV-1 geometry-only disk entry (the 877MB mesh.sqlite predates skin decode) — a
+	// fresh fetch+decode populates it WITH the skin block. Non-worn meshes keep the plain key untouched,
+	// so we don't purge/re-fetch the whole mesh cache — only the handful of worn meshes re-fetch once.
+	const wantSkin = !!req?.wantSkin
+	const cacheKey = `${meshId}:${wantLod}${wantSkin ? ':skinv3' : ''}`   // :skinv3 = rest-pose skinning incl. collision-volume (fitted-mesh) joints
+	// Echo wantSkin so the client resolves the correct cache lane (`:skin` vs plain) — the response
+	// otherwise can't be told apart from a plain fetch for the same meshId+lod (AV-1 lane separation).
+	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.MESH_DATA, d: { meshId, lod: wantLod, wantSkin, ...d } }))
 	const cap = s.caps.get('ViewerAsset') || s.caps.get('GetMesh2') || s.caps.get('GetMesh')
 	if (!cap || !meshId) { send({ error: 'cap_unavailable' }); return }
 	try {
-		const payload = await meshMemo.memo(`${meshId}:${wantLod}`, async () => {
-			const key = `${meshId}:${wantLod}`
+		const payload = await meshMemo.memo(cacheKey, async () => {
+			const key = cacheKey
 			// Tier-2: a previously fetched+decoded mesh answers from disk — no grid fetch, no LOD decode.
 			const cached = meshDisk.get(key)
 			if (cached) { _diskHits++; return deserializeMeshPayload(cached) }
@@ -83,16 +98,34 @@ export async function handleMeshFetch(circuitId: string, req: { meshId: string; 
 			// bytes is compact and cheap to stringify.
 			const b64 = (ta: Float32Array | Uint16Array) =>
 				Buffer.from(ta.buffer, ta.byteOffset, ta.byteLength).toString('base64')
-			const submeshes = decodeMeshLOD(buf, h.headerSize, lod).map(sm => ({
-				positions: b64(sm.positions),   // Float32
+			// Decode geometry (submeshes carry per-vertex Weights when rigged). If skin was requested and the
+			// mesh has a skin block, bake REST-POSE skinned positions (meshSkin) so the client can render the
+			// rigged mesh correctly placed on the avatar. bind_shape alone is insufficient for real mesh
+			// bodies (its scale is tiny; the placement lives in the per-joint inverse-bind · skeleton term).
+			let decoded = decodeMeshLOD(buf, h.headerSize, lod)
+			const si = h.skin ? decodeSkinBlock(buf, h.headerSize, h.skin) : null
+			let skinned = false
+			let skinDbg: string   // diagnostic: why skin is / isn't present (surfaced to client [AV1] log)
+			if (!h.skin) skinDbg = 'no-key'
+			else if (!si) skinDbg = 'decode-null'
+			else if (wantSkin) {
+				// missing = joints the mesh weights to but our skeleton lacks → those verts fall back to
+				// bind_shape (mangled). Should be 0 now that collision volumes are in the table (fitted mesh).
+				const missing = si.jointNames.filter(n => !jointRestWorld(n)).length
+				decoded = skinSubmeshes(decoded, si); skinned = true
+				skinDbg = `skinned(${si.jointNames.length}j${missing ? `,${missing}MISSING:${si.jointNames.filter(n => !jointRestWorld(n)).slice(0, 6).join('/')}` : ''})`
+			}
+			else skinDbg = `ok(${si.jointNames.length}j)`
+			const submeshes = decoded.map(sm => ({
+				positions: b64(sm.positions),   // Float32 (rest-pose skinned when `skinned`)
 				normals:   b64(sm.normals),     // Float32
 				uvs:       b64(sm.uvs),         // Float32
 				indices:   b64(sm.indices),     // Uint16
 			}))
 			if (++_meshLogN <= 10 || _meshLogN % 25 === 0) {
-				slog.info(s.ws, `[Mesh] #${_meshLogN} ${meshId.slice(0, 8)}… ${buf.length}B → ${submeshes.length} submesh(es)`)
+				slog.info(s.ws, `[Mesh] #${_meshLogN} ${meshId.slice(0, 8)}… ${buf.length}B → ${submeshes.length} submesh(es) skin=${skinDbg}`)
 			}
-			const result: MeshPayload = { submeshes }
+			const result: MeshPayload = { submeshes, skinned, skinDbg }
 			meshDisk.put(key, serializeMeshPayload(result))   // persist for every later client / visit / restart
 			return result
 		})

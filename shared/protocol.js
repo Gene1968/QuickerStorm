@@ -137,7 +137,8 @@ export const S = {
 	ASSET_UPLOAD_RESULT:   'asset_upload_result',    // { id, ok, assetId?, itemId?, error? } — reply to C.ASSET_UPLOAD (2-step upload complete or failed), correlated by id
 	ASSET_DATA:      'asset_data',       // { uuid, assetType, mime, dataB64, error?, hasAlpha?, srcWidth?, srcHeight?, full? } — fetched asset; textures arrive as WebP (server-transcoded from J2C). srcWidth/srcHeight = TRUE J2C-header dims; full=true echoes a full-resolution preview decode
 	MATERIAL_DATA:   'material_data',    // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
-	MESH_DATA:       'mesh_data',        // { meshId, lod, submeshes:[{positions,normals,uvs,indices}], error? }
+	MESH_DATA:       'mesh_data',        // { meshId, lod, submeshes:[{positions,normals,uvs,indices}], skinned?, skinDbg?, error? } — skinned=true: positions are REST-POSE skinned (rigged attach, server-baked); place at avatar root
+
 	SCULPT_DATA:     'sculpt_data',      // { sculptId, sculptType, submeshes:[{positions,normals,uvs,indices (base64)}], error? }
 	// ── Social (Phase 3) ──
 	// SOCIAL_INIT data is folded into LOGIN_OK under d.social (resume-safe) — no separate message.

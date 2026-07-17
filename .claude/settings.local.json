@@ -355,7 +355,8 @@
       "Bash(taskkill //F //T //PID 7212)",
       "Bash(echo \"EXIT=$?\")",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { \"listening PID=$\\($c.OwningProcess\\)\" } else { \"DOWN\" })",
-      "PowerShell($p = \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($p\\) { Stop-Process -Id $p -Force; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\) { \"still-listening\" } else { \"port-free\" })"
+      "PowerShell($p = \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($p\\) { Stop-Process -Id $p -Force; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\) { \"still-listening\" } else { \"port-free\" })",
+      "Bash(echo \"---exit $?---\")"
     ]
   }
 }
