@@ -3112,16 +3112,24 @@ export function useWorldEngine(canvasRef) {
 		}
 	}
 
+	// ── Avatar placeholder capsule dimensions ────────────────────────────────────────────────────
+	// A slim humanoid pill, sized to read like a real avatar's VISIBLE body. FS/OpenSim agent-size
+	// constants (indra_constants.h DEFAULT_AGENT_DEPTH 0.45 × DEFAULT_AGENT_WIDTH 0.60; BSParam
+	// AvatarCapsule 0.45×0.60, height 1.5) describe the invisible COLLISION volume, not the body — a
+	// 0.60-wide circle reads as ~2× a trunk. So the visual capsule is deliberately slimmer than the
+	// collision footprint. Total height = LEN + 2·RADIUS = 1.80m (SL/FS default visible avatar height).
+	const AVATAR_CAP_RADIUS = 0.18
+	const AVATAR_CAP_LEN    = 1.44
 	// AV-1: place a rigged mesh attachment on its avatar. The geometry is REST-POSE skinned server-side
 	// into SL avatar-MODEL space (origin at the avatar's FEET/ground, Z-up → Three Y-up after the axis
 	// swap), so the sim child offset/rotation/scale is meaningless. We parent at the avatar node with a
 	// pure vertical shift so the model's foot plane (y=0) lands at the capsule's ground contact: the
-	// capsule (radius 0.33, length 0.96) is centered on the node and spans ±0.81, so its bottom — where
-	// the avatar visually stands — is 0.81 below the node. Without this the whole outfit rides ~0.81m
-	// high (feet at the waist, hats above the head) and reads as a scattered mess. riggedBindPose gates
-	// the terse/full-update paths from clobbering this back to the sim offset. Facing rides the avatar
-	// node's yaw (model +X = SL forward = node local +X after slQuatToThree). Skeletal posing = later.
-	const RIG_FOOT_OFFSET = 0.96 / 2 + 0.33   // capsule half-height (node → capsule bottom / avatar feet)
+	// capsule is centered on the node and spans ±(LEN/2 + RADIUS), so its bottom — where the avatar
+	// visually stands — is that far below the node. Without this the whole outfit rides high (feet at
+	// the waist, hats above the head) and reads as a scattered mess. riggedBindPose gates the terse/
+	// full-update paths from clobbering this back to the sim offset. Facing rides the avatar node's yaw
+	// (model +X = SL forward = node local +X after slQuatToThree). Skeletal posing = later.
+	const RIG_FOOT_OFFSET = AVATAR_CAP_LEN / 2 + AVATAR_CAP_RADIUS   // node → capsule bottom / avatar feet (0.90)
 	function placeRiggedAttachment(mesh) {
 		mesh.position.set(0, -RIG_FOOT_OFFSET, 0)
 		mesh.quaternion.identity()
@@ -3192,8 +3200,10 @@ export function useWorldEngine(canvasRef) {
 
 		if (isNew) {
 			const isAvatar = obj.pcode === PCODE_AVATAR
-			// WHY: Capsule radius 0.33 (+10% vs old 0.30) for wider silhouette.
-			// Length 0.96 gives total height 0.96 + 2×0.33 = 1.62m (~10% shorter than 1.80m).
+			// WHY: Slim humanoid capsule — radius AVATAR_CAP_RADIUS (0.18), length AVATAR_CAP_LEN (1.44)
+			// → total height 1.44 + 2×0.18 = 1.80m (SL/FS default visible height). The fat FS/OpenSim
+			// agent-size footprint (0.45×0.60) is the invisible collision volume, not the body — see the
+			// constant block near RIG_FOOT_OFFSET.
 			// Prim shape: show a cheap unit cube immediately (instant, non-blocking); the real geometry
 			// is baked off-thread (useMeshBaker) and hot-swapped in via applySwap below. Box prims swap
 			// cube→box invisibly. Mesh/sculpt prims fetch their asset first, then bake its submeshes.
@@ -3225,7 +3235,7 @@ export function useWorldEngine(canvasRef) {
 			if (!cachedArrays && !isWornMeshAttachment && obj.meshId && meshLod !== 0) cachedArrays = geomMemGet(meshGeomKey(obj.meshId, 0))
 			if (cachedArrays) _geomHitMem++
 			let geo = isAvatar
-				? new THREE.CapsuleGeometry(0.33, 0.96, 4, 8)
+				? new THREE.CapsuleGeometry(AVATAR_CAP_RADIUS, AVATAR_CAP_LEN, 4, 8)
 				: cachedArrays
 					? bakePrimScale(geometryFromArrays(cachedArrays), isAsset ? obj.scale : null)
 					: bakePrimScale(new THREE.BoxGeometry(1, 1, 1), obj.scale)
@@ -3549,29 +3559,29 @@ export function useWorldEngine(canvasRef) {
 				// AV-1 facing reconcile: the avatar node uses the SL-native +X-forward convention
 				// (own node rotation.y = yaw + π/2 in animate(); peers get slQuatToThree(bodyRot) whose
 				// local +X = their heading; rigged meshes are authored +X-forward). So the face box sits
-				// at local +X — just outside capsule radius (0.33 + 0.03 = 0.36) — thin along X.
-				const faceMat = new THREE.MeshBasicMaterial({ color: 0xffc566 })
-				const faceGeo = new THREE.BoxGeometry(0.04, 0.20, 0.22)
+				// on the +X face (just outside the capsule radius), at chest height, thin along X.
+				const faceMat = new THREE.MeshBasicMaterial({ color: 0x9c6f5a })
+				const faceGeo = new THREE.BoxGeometry(0.025, 0.16, 0.16)
 				const faceMesh = new THREE.Mesh(faceGeo, faceMat)
-				faceMesh.position.set(0.36, 0.40, 0)  // upper-body front, +X = forward (SL convention)
+				faceMesh.position.set(AVATAR_CAP_RADIUS - 0.025, 0.72, 0)// chest front, +X = forward (SL convention)
 				mesh.add(faceMesh)
 
 				// ── Arm tubes — cylinders hanging from shoulder height ───────────────
 				// WHY: Two arms tilted slightly outward give a humanoid silhouette without a
-				// full rigged mesh. Shoulders sit near top of the cylindrical section (y ≈ 0.35).
-				// Arm length 0.55m → center at shoulder_y − 0.275 ≈ 0.08. Tilt ~18° outward.
+				// full rigged mesh. Capsule top ≈ +0.90 (LEN/2 + RADIUS); shoulders sit ~+0.60, arm
+				// length 0.66 → center at 0.60 − 0.33 ≈ 0.27, hands near the hip. Tilt ~18° outward.
 				// +X-forward frame: the avatar's right side is +Z, left is −Z (facing +X, up +Y),
 				// so arms hang at ±Z and the outward lean is a tilt about X.
 				const armBodyMat = new THREE.MeshBasicMaterial({ color: 0x0097b5 })
-				const armGeo     = new THREE.CylinderGeometry(0.08, 0.08, 0.55, 7)
+				const armGeo     = new THREE.CylinderGeometry(0.06, 0.06, 0.66, 7)
 
 				const leftArm = new THREE.Mesh(armGeo, armBodyMat)
-				leftArm.position.set(0, 0.08, -(0.33 + 0.12))  // left shoulder (−Z)
-				leftArm.rotation.x = Math.PI / 10               // ~18° outward lean (hand toward −Z)
+				leftArm.position.set(0, 0.27, -(AVATAR_CAP_RADIUS + 0.10))  // left shoulder (−Z)
+				leftArm.rotation.x = Math.PI / 10                           // ~18° outward lean (hand toward −Z)
 
 				const rightArm = new THREE.Mesh(armGeo, armBodyMat)
-				rightArm.position.set(0, 0.08, (0.33 + 0.12))  // right shoulder (+Z)
-				rightArm.rotation.x = -Math.PI / 10             // ~18° outward lean (hand toward +Z)
+				rightArm.position.set(0, 0.27, (AVATAR_CAP_RADIUS + 0.10))  // right shoulder (+Z)
+				rightArm.rotation.x = -Math.PI / 10                         // ~18° outward lean (hand toward +Z)
 
 				mesh.add(leftArm)
 				mesh.add(rightArm)
@@ -3590,7 +3600,7 @@ export function useWorldEngine(canvasRef) {
 				div.textContent = obj.name || worldStore.objects.get(obj.localId)?.name || 'Avatar'
 				mesh.userData.labelDiv = div
 				const label = new CSS2DObject(div)
-				label.position.set(0, 1.10, 0)  // WHY: capsule half-height=0.81; 0.88 puts label ~0.07m above head
+				label.position.set(0, 1.0, 0)  // WHY: capsule top ≈ +0.90 (LEN/2+RADIUS); 1.0 sits ~0.1m above head
 				mesh.userData.label2D = label
 				mesh.add(label)
 			}
