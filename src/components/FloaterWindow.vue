@@ -22,7 +22,7 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore.js'
-import { X as XIcon, ArrowDownToLine as DockIcon } from '@lucide/vue'
+import { X as XIcon, ArrowDownToLine as DockIcon, Minus as MinimizeIcon } from '@lucide/vue'
 import { useAudio } from '@/composables/useAudio.js'
 
 const { playSound } = useAudio()
@@ -205,27 +205,44 @@ const panelStyle = computed(() => ({
 		>
 			<!-- Titlebar / drag handle -->
 			<div
-				class="flex items-center justify-between ps-3 bg-panel-alt border-b border-edge shrink-0 select-none cursor-grab active:cursor-grabbing"
+				class="flex items-center justify-between bg-panel-alt border-b border-edge shrink-0 select-none cursor-grab active:cursor-grabbing"
 				@mousedown.stop="onTitlebarMousedown"
 			>
-				<span class="text-xs font-semibold tracking-wider text-fg truncate">{{ title }}</span>
+				<span class="titletext text-2xs font-medium tracking-wider text-fg truncate">{{ title }}</span>
 				<div class="flex items-center gap-0.5">
 					<!-- Dock: return to default position + size; only shown once moved/resized -->
 					<button
 						v-if="moved"
 						@click.stop="dock"
-						class="p-1 px-2 rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
+						class="py-0.5 px-[1px] rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
 						title="Dock — return to default position"
 						aria-label="Dock"
 					>
-						<DockIcon :size="14" />
+						<DockIcon :size="12" />
+					</button>
+					<button
+						v-if="false"
+						class="py-0.5 px-[1px] rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
+						title="Help (to-do)"
+						aria-label="Help"
+					>
+						<div class="px-1 text-2xs leading-none">?</div>
+					</button>
+					<button
+						class="py-0.5 px-[1px] rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
+						title="Minimize (to-do)"
+						aria-label="Minimize"
+					>
+						<MinimizeIcon :size="12" />
 					</button>
 					<button
 						@click.stop="$emit('close')"
-						class="p-1 px-2 rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
+						class="py-0.5 px-1 rounded-sm text-fg-muted hover:text-fg hover:bg-white/10 transition-colors"
+						title="Close"
 						aria-label="Close"
 					>
-						<XIcon :size="14" />
+						<!-- to-do: is it safe to add Ctrl+w shortcut to close currently focused floater/other like FS and always block its default from closing the tab? -->
+						<XIcon :size="12" />
 					</button>
 				</div>
 			</div>
@@ -242,6 +259,15 @@ const panelStyle = computed(() => ({
 </template>
 
 <style scoped>
+
+.titletext {
+	padding-left: 0.5rem;
+}
+.pullicontitleleft .titletext {
+	padding-left: 0.25rem;
+}
+
+
 /* Caret tail — bordered + filled triangle, matches the panel border/bg, points at the opener. */
 .fw-caret {
 	position: absolute;

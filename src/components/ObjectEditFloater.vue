@@ -1116,8 +1116,8 @@ function close() {
 							</div>
 							<div class="w-3/5 relative">
 								<div class="absolute top-0 right-0 flex justify-end">
-									<button title="Copy object parameters to clipboard" class="inline mx-1" disabled><ClipboardCopyIcon class="w-4 h-4" /></button>
-									<button title="Paste object parameters from clipboard" class="inline" disabled><ClipboardPasteIcon class="w-4 h-4" /></button>
+									<button title="Copy object parameters to clipboard (to-do)" class="inline mx-1" disabled><ClipboardCopyIcon class="w-4 h-4" /></button>
+									<button title="Paste object parameters from clipboard (to-do)" class="inline" disabled><ClipboardPasteIcon class="w-4 h-4" /></button>
 								</div>
 								<!-- Identity / linkset -->
 								<div class="grid grid-cols-[3rem_1fr] gap-y-0 gap-x-1 text-2xs">

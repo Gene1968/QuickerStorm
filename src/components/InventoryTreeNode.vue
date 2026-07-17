@@ -55,8 +55,8 @@ const items    = computed(() => {
 })
 
 // WHY: indent each level; chevron column is fixed so folder glyphs line up.
-const padLeft  = computed(() => `${props.depth * 0.85 + 0.25}rem`)
-const itemPad  = computed(() => `${(props.depth + 1) * 0.85 + 1.1}rem`)
+const padLeft  = computed(() => `${props.depth * 0.75 + 0.125}rem`)
+const itemPad  = computed(() => `${(props.depth + 1) * 0.85 + 1}rem`)
 
 // Build the "(no copy)(no modify)(no transfer)" suffix for an item row.
 function permTags(it) {
@@ -454,7 +454,7 @@ function onItemMouseLeave() { hidePreview() }
 <template>
 	<div v-if="folder && visible">
 		<div
-			class="flex items-center gap-1 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-fg select-none"
+			class="flex items-center gap-1 px-1 py-[1px] rounded-sm cursor-pointer text-xs text-fg select-none"
 			:class="[
 				selected ? 'bg-accent/50' : 'hover:bg-accent/20',
 				dropTarget === folderId ? 'ring-1 ring-inset ring-accent/70 bg-accent/15' : '',

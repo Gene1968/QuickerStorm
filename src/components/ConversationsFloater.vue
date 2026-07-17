@@ -275,8 +275,8 @@ async function submitChat() {
 	<FloaterWindow
 		id="conversations"
 		:title="floaterTitle"
-		:wrap-style="{ width: '32.25vw', height: '39vh', resize: 'both' }"
-		:default-pos="{ left: '0.0625vw', top: '7vh' }"
+		:wrap-style="{ width: '33.33rem', height: '26rem', resize: 'both' }"
+		:default-pos="{ left: '0.0125rem', top: '3.65rem' }"
 		@close="ui.toggleChat()"
 	>
 		<!-- ── Body: vertical tabs + content ─────────────────────── -->
@@ -455,7 +455,7 @@ async function submitChat() {
 				<!-- IM tab (per avatar) ──────────────────────────────── -->
 				<template v-else-if="activeConv">
 					<!-- IM action bar (FS-style; several disabled until those systems exist) -->
-					<div class="flex flex-wrap gap-1 px-2 py-1.5 border-b border-edge shrink-0">
+					<div class="flex flex-wrap gap-0.5 p-0.5 border-b border-edge shrink-0">
 						<button class="qs-btn-mini" title="Show this resident's profile" @click="imProfile"><ShieldUserIcon class="w-4 h-4" /></button>
 						<button :disabled="imIsFriend" class="qs-btn-mini" title="Add this resident as a friend" @click="imAddFriend"><HandshakeIcon class="w-4 h-4" /></button>
 						<!-- <button v-else class="qs-btn-mini" title="Remove friend" @click="imRemove">Remove</button> -->

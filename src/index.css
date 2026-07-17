@@ -153,7 +153,7 @@ html.light {
 
 	/* Compact action-bar button (Contacts tab). */
 	.qs-btn-mini {
-		@apply py-0.5 px-1.5 text-2xs rounded border border-edge text-fg hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed;
+		@apply py-0.5 px-1 text-2xs rounded border border-edge text-fg hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed;
 	}
 
 

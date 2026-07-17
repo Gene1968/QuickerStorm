@@ -147,7 +147,7 @@ function onContextMenuFolder(event, fo) {
 			<div
 				v-for="fo in folderRows"
 				:key="fo.folderId"
-				class="flex items-center gap-1 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-fg select-none"
+				class="flex items-center gap-0.5 px-1 py-0.5 rounded-sm cursor-pointer text-xs text-fg select-none"
 				:class="invSel.isSelected(fo.folderId) ? 'bg-accent/50' : 'hover:bg-accent/20'"
 				:title="fo.name"
 				@click="onSelectFolder(fo.folderId, $event)"

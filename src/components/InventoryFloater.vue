@@ -353,7 +353,7 @@ const floaterId   = computed(() => `inventory-${props.index}`)
 // event to the floater the user is actually acting in (= the focused one, top of the floater stack).
 provide('invFloaterId', floaterId)
 const defaultPos  = computed(() => INVENTORY_DEFAULT_POS[props.index] ?? INVENTORY_DEFAULT_POS[0])
-const title       = computed(() => props.index === 0 ? '📦 Inventory' : `📦 Inventory ${props.index + 1}`)
+const title       = computed(() => props.index === 0 ? 'Inventory' : `Inventory ${props.index + 1}`)
 const isLast      = computed(() => props.index >= MAX_INVENTORY - 1)
 const nextOpen    = computed(() => ui.inventoryInstances.includes(props.index + 1))
 
@@ -600,14 +600,14 @@ onUnmounted(() => {
 <template>
 	<FloaterWindow
 		:id="floaterId"
-		:title="title"
+		:title="'📦&hairsp;' + title"
 		:wrap-style="{ width: '17.25rem', height: '28rem', resize: 'both' }"
 		:default-pos="defaultPos"
 		@close="close"
-		class="min-w-[16.5rem]"
+		class="min-w-[16.5rem] pullicontitleleft"
 	>
-		<div class="relative flex p-1">
-				<input v-model="rawFilter" class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory&#8230;" type="search" />
+		<div class="relative flex py-1 px-1.5">
+				<input v-model="rawFilter" class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-0.5 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent" placeholder="Filter Inventory&#8230;" type="search" />
 				<Loader2Icon v-if="searching" class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-accent animate-spin pointer-events-none" />
 			</div>
 		<div class="flex flex-row items-center justify-evenly w-full mb-1 text-fg">

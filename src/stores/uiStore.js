@@ -17,8 +17,8 @@ let _inventoryAutoOpened = false
 // row 3: #4+#5 full; row 4: #6 half-offset. User drag overrides defaultPos.
 export const MAX_INVENTORY = 6
 const INV_ROW_TOP = [
-	'calc(100vh - 2.175rem - 28rem)',
-	'calc(100vh - 2.175rem - 56rem - 0.125rem)',
+	'calc(100vh - 2.175rem - 28rem - 0.0625rem)',
+	'calc(100vh - 2.175rem - 56rem - 0.0625rem)',
 ]
 export const INVENTORY_DEFAULT_POS = [
 	{ left: '0.0625rem', top: INV_ROW_TOP[0] },// #1
