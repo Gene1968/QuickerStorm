@@ -55,6 +55,17 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-17 — AV-1 followup: avatar facing (+X-forward reconcile)  [uncommitted]
+- **Avatars now face the right way.** Reconciled the split forward-axis convention onto SL-native **+X-forward**
+  everywhere. Was: own avatar/camera used −Z-forward while peers + rigged meshes used +X (SL `bodyRot`), so the
+  own avatar's rigged clothing sat 90° off its capsule, and peers' face indicator pointed 90° off their heading.
+- Client-only (`useWorldEngine.js`): placeholder geometry authored in the +X frame (face box local −Z → +X;
+  arm tubes ±X → ±Z sides); own-avatar node `rotation.y = yaw + π/2` so its local +X tracks camera/heading;
+  rigged mesh stays identity (**no per-mesh rotation hack**). Peers needed no change — the fix corrected their
+  face box for free. Own spawn heading already seeded from the login `bodyRot`.
+- Verified live against the 1–2 aligned rigged meshes available. Camera/movement math read `yaw` independently,
+  so input-driven controls are untouched.
+
 ## 2026-07-15 — AV-2: per-UUID jellydoll avatars + AvatarAppearance decode  [uncommitted]
 - **Peer avatars are now visually distinct.** Each gets a deterministic per-UUID color ported from Firestorm
   `LLVOAvatar::calcMutedAVColor` (first UUID byte → 7-stop spectrum lerp, normalized, brightness-scaled) —

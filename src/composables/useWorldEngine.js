@@ -3546,27 +3546,32 @@ export function useWorldEngine(canvasRef) {
 				// ── Face indicator — flat box on front of upper body ─────────────────
 				// WHY: Replaces the old forward-pointing orange "arm" box. Sits on the capsule
 				// front face (~head height) so orbiting to the front reveals which way is forward.
-				// Three.js -Z = forward. Positioned just outside capsule radius (0.33 + 0.03 = 0.36).
+				// AV-1 facing reconcile: the avatar node uses the SL-native +X-forward convention
+				// (own node rotation.y = yaw + π/2 in animate(); peers get slQuatToThree(bodyRot) whose
+				// local +X = their heading; rigged meshes are authored +X-forward). So the face box sits
+				// at local +X — just outside capsule radius (0.33 + 0.03 = 0.36) — thin along X.
 				const faceMat = new THREE.MeshBasicMaterial({ color: 0xffc566 })
-				const faceGeo = new THREE.BoxGeometry(0.22, 0.20, 0.04)
+				const faceGeo = new THREE.BoxGeometry(0.04, 0.20, 0.22)
 				const faceMesh = new THREE.Mesh(faceGeo, faceMat)
-				faceMesh.position.set(0, 0.40, -0.36)  // upper-body front, -Z = forward
+				faceMesh.position.set(0.36, 0.40, 0)  // upper-body front, +X = forward (SL convention)
 				mesh.add(faceMesh)
 
 				// ── Arm tubes — cylinders hanging from shoulder height ───────────────
 				// WHY: Two arms tilted slightly outward give a humanoid silhouette without a
 				// full rigged mesh. Shoulders sit near top of the cylindrical section (y ≈ 0.35).
-				// Arm length 0.55m → center at shoulder_y − 0.275 ≈ 0.08. Tilt 18° outward.
+				// Arm length 0.55m → center at shoulder_y − 0.275 ≈ 0.08. Tilt ~18° outward.
+				// +X-forward frame: the avatar's right side is +Z, left is −Z (facing +X, up +Y),
+				// so arms hang at ±Z and the outward lean is a tilt about X.
 				const armBodyMat = new THREE.MeshBasicMaterial({ color: 0x0097b5 })
 				const armGeo     = new THREE.CylinderGeometry(0.08, 0.08, 0.55, 7)
 
 				const leftArm = new THREE.Mesh(armGeo, armBodyMat)
-				leftArm.position.set(-(0.33 + 0.12), 0.08, 0)  // left shoulder
-				leftArm.rotation.z = Math.PI / 10               // ~18° outward lean
+				leftArm.position.set(0, 0.08, -(0.33 + 0.12))  // left shoulder (−Z)
+				leftArm.rotation.x = Math.PI / 10               // ~18° outward lean (hand toward −Z)
 
 				const rightArm = new THREE.Mesh(armGeo, armBodyMat)
-				rightArm.position.set( (0.33 + 0.12), 0.08, 0)  // right shoulder
-				rightArm.rotation.z = -Math.PI / 10              // ~18° outward lean
+				rightArm.position.set(0, 0.08, (0.33 + 0.12))  // right shoulder (+Z)
+				rightArm.rotation.x = -Math.PI / 10             // ~18° outward lean (hand toward +Z)
 
 				mesh.add(leftArm)
 				mesh.add(rightArm)
@@ -6224,17 +6229,20 @@ export function useWorldEngine(canvasRef) {
 			else camLook.lerp(lookTarget, 1 - Math.exp(-(isAirborne ? CAM_AIR_RATE : camReturning ? CAM_RETURN_RATE : CAM_LOOK_RATE) * dt))
 			camera.lookAt(camLook)
 
-			// WHY: Rotate own avatar mesh to match current yaw so it faces camera direction.
-			// Capsule is symmetric so visual diff is subtle, but sets up correct orientation
-			// for when we get directional avatar geometry. Three.js Y-up: rotation.y = yaw
-			// where yaw=0 faces -Z (= SL north). No TerseUpdate rotation decode needed for own avatar.
+			// WHY: Rotate own avatar mesh so its FRONT (the SL-native +X-forward axis — face box,
+			// arms, any rigged mesh) points along the camera/heading direction. The node's local +X
+			// must map to the camera forward (−sin yaw, 0, −cos yaw); that requires rotation.y =
+			// yaw + π/2 (local +X → world (cos R, −sin R) with R = yaw+π/2 gives exactly that vector).
+			// This is the +X-forward reconcile: peers already use +X (slQuatToThree(bodyRot)); this
+			// aligns the own avatar + its rigged attachments to the same convention. Camera and
+			// movement math read `yaw` independently, so they're untouched.
 			// 🪑 Skipped while seated on an object — the avatar's local rotation is fixed relative
 			// to the seat (correct: you're stuck in the sit pose; a moving/rotating vehicle carries
 			// you along via its OWN transform since ownMesh is now its child), and free-look yaw
 			// must not spin the avatar independently of the seat.
 			if (ownAvatarLocalId && uiStore.isSitting !== 'object') {
 				const ownMesh = meshMap.get(ownAvatarLocalId)
-				if (ownMesh) ownMesh.rotation.y = yaw
+				if (ownMesh) ownMesh.rotation.y = yaw + Math.PI / 2
 			}
 		}
 
