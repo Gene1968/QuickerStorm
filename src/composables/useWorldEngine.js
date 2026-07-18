@@ -34,6 +34,7 @@ import { resolveAvatarReparent, gateBuyHoverAction } from '@/lib/seatEngine.js'
 import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_S } from '@/lib/scriptedMotion.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { jellydollColorHex } from '@/lib/avatarColor.js'
+import { loadAvatarModel, createAvatarModel } from '@/lib/avatarModel.js'
 import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
@@ -3585,12 +3586,17 @@ export function useWorldEngine(canvasRef) {
 
 				mesh.add(leftArm)
 				mesh.add(rightArm)
+				// Track the cheap capsule sub-parts so the jellydoll humanoid can hide them (and restore
+				// them as a fallback if the GLB fails). The capsule body is `mesh.material` itself.
+				mesh.userData.capsuleParts = [faceMesh, leftArm, rightArm]
 
 				// AV-2: body + arms share the per-avatar jellydoll tint / cloud translucency (the face
 				// indicator keeps its contrasting orange so orientation stays readable). Stored so the
 				// S.AVATAR_APPEARANCE handler can flip cloud→solid without rebuilding the mesh.
 				mesh.userData.avatarMats = [mesh.material, armBodyMat]
 				applyAvatarLook(mesh, obj)
+				// Swap in the shared rigged-humanoid jellydoll (async GLB load; hides the capsule on arrival).
+				attachJellydoll(mesh, obj)
 
 				const div = document.createElement('div')
 				div.style.cssText = 'color:#fff;font-size:0.75rem;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:4px;white-space:nowrap;'
@@ -3923,10 +3929,14 @@ export function useWorldEngine(canvasRef) {
 		if (_instancePool && _instancePool.has(localId)) { _instancePool.remove(localId); return }
 		const mesh = meshMap.get(localId)
 		if (mesh) {
+			// 🧍 Stop advancing this avatar's jellydoll animation mixer (if any) before disposal.
+			avatarMixers.delete(localId)
 			// WHY: Traverse to dispose child geometry/materials (arm indicator etc.) not just root
 			mesh.traverse(child => {
-				if (child.isMesh) {
-					child.geometry.dispose()
+				if (child.isMesh || child.isSkinnedMesh) {
+					// 🧍 Jellydoll clones SHARE one GLB geometry (SkeletonUtils.clone) — disposing it here
+					// would corrupt every other avatar. Dispose only the per-clone material for those.
+					if (!child.userData?.sharedAvatarGeom) child.geometry.dispose()
 					// material may be a per-face array (mesh multi-material) — dispose each
 					if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.())
 					else child.material.dispose()
@@ -3973,10 +3983,61 @@ export function useWorldEngine(canvasRef) {
 		mesh.userData.isSelf = isSelf
 		for (const m of mats) {
 			m.color.setHex(hex)
+			// Jellydoll humanoid uses MeshStandard — give it an emissive floor of the same hue so the
+			// body form reads under scene lights and the per-UUID color shows even in shadow. The capsule
+			// (MeshBasic) has no .emissive; the guard skips it.
+			if (m.emissive) { m.emissive.setHex(hex); m.emissiveIntensity = 0.3 }
 			m.transparent = cloud
 			m.opacity = cloud ? AVATAR_CLOUD_OPACITY : 1
 			m.needsUpdate = true
 		}
+	}
+
+	// ── Jellydoll humanoid placeholder (bundle 7) ─────────────────────────────────────────────────
+	// A shared rigged humanoid GLB stands in for the avatar until we decode real shape/skin/attachments
+	// (FS renders unresolved / too-complex avatars as the muted system-avatar humanoid). Loaded once,
+	// cloned per avatar, tinted per-UUID via applyAvatarLook, idle-animated. It REPLACES the capsule+arms
+	// visuals (kept hidden as a fallback if the GLB fails to load), parented at the avatar node's feet on
+	// the same −RIG_FOOT_OFFSET contract as rigged attachments so worn mesh still lines up.
+	const avatarMixers = new Map()   // localId → THREE.AnimationMixer (advanced in animate)
+	// Humanoid forward within the +X-forward avatar node. LIVE-TWEAK knob: if the humanoid faces
+	// sideways/backward, nudge by ±π/2 or π (model authored facing +Z → +π/2 turns it to node +X).
+	const AVATAR_MODEL_FACING_Y = Math.PI / 2
+
+	// Hide/show the cheap capsule body + arm/face children (fallback placeholder) without touching the
+	// node itself (it carries position/rotation/label + rigged attachments).
+	function setCapsulePlaceholderVisible(mesh, vis) {
+		if (mesh.material && !Array.isArray(mesh.material)) mesh.material.visible = vis
+		for (const c of mesh.userData?.capsuleParts || []) c.visible = vis
+	}
+
+	function attachJellydoll(mesh, obj) {
+		const localId = obj.localId
+		loadAvatarModel().then(() => {
+			// Bail if the avatar was removed while the GLB was loading, or a model is already attached.
+			if (meshMap.get(localId) !== mesh || mesh.userData.jellydoll) return
+			const model = createAvatarModel()
+			if (!model) return
+			const { root, clips, mats } = model
+			root.position.y = -RIG_FOOT_OFFSET       // feet → capsule bottom / avatar ground contact
+			root.rotation.y = AVATAR_MODEL_FACING_Y
+			root.userData.jellydoll = true
+			// SkeletonUtils.clone SHARES the GLB geometry across clones — flag so removeMesh disposes the
+			// per-clone material but NOT the shared geometry (would corrupt every other avatar).
+			root.traverse(o => { if (o.isMesh || o.isSkinnedMesh) o.userData.sharedAvatarGeom = true })
+			mesh.add(root)
+			mesh.userData.jellydoll = root
+			setCapsulePlaceholderVisible(mesh, false)   // hide the tube; humanoid takes over
+			mesh.userData.avatarMats = mats             // tint the humanoid instead of the capsule
+			applyAvatarLook(mesh, obj)
+			// Idle animation (the GLB ships Idle_Loop + 10 more clips; locomotion state machine = later).
+			const clip = clips?.find(c => /idle/i.test(c.name)) || clips?.[0]
+			if (clip) {
+				const mixer = new THREE.AnimationMixer(root)
+				mixer.clipAction(clip).play()
+				avatarMixers.set(localId, mixer)
+			}
+		}).catch(err => debugStore.push('warn', `[AV] jellydoll load failed: ${err?.message || err}`))
 	}
 
 	// S.AVATAR_APPEARANCE (decoded AvatarAppearance Low 158): cache the bakes/state, then flip an
@@ -6144,6 +6205,9 @@ export function useWorldEngine(canvasRef) {
 		const dt = Math.min((time - lastTime) * 0.001, 0.1)
 		lastTime = time
 		const cf = updateCamera(dt)
+
+		// 🧍 Advance jellydoll humanoid idle animations (one AnimationMixer per placeholder avatar).
+		if (avatarMixers.size) for (const mx of avatarMixers.values()) mx.update(dt)
 
 		// Day/night: advance the cycle and push it to lights, fog, exposure, and the sky dome.
 		environment.update(dt)

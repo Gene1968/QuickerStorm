@@ -55,6 +55,20 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-17 — Jellydoll humanoid avatar placeholder  [uncommitted]
+- **Avatars are a rigged humanoid now, not a tube.** A shared low-poly rigged-humanoid GLB
+  (`src/assets/3d/avatar-default.glb` — 67-bone skeleton, 11 baked clips) stands in for every avatar
+  until we decode real shape/skin/attachments — mirroring FS, which renders unresolved/too-complex
+  avatars as the muted system-avatar humanoid ("jellydoll").
+- Loaded once, cloned per avatar via `SkeletonUtils.clone` (shared geometry, per-clone material), scaled
+  to 1.8m with feet on the `−RIG_FOOT_OFFSET` contract (lines up with rigged attachments), tinted
+  per-UUID via `applyAvatarLook` (self=green, peers=jellydoll color, translucent while 'cloud'), and
+  **idle-animated** (one `AnimationMixer` per avatar, `Idle_Loop`, advanced in the render loop).
+- Capsule/arms/face-box kept hidden as a fallback if the GLB fails to load. Cleanup wired: mixer stopped
+  + per-clone material disposed on removal, shared geometry preserved. `src/lib/avatarModel.js` (new) +
+  `useWorldEngine.js`. Also corrected an earlier misconception: there was never a "humanoid-tee" — the
+  only prior placeholder was the tube; cloud/jellydoll were always just its translucent/solid states.
+
 ## 2026-07-17 — AV-1 followup: avatar facing (+X-forward reconcile)  [uncommitted]
 - **Avatars now face the right way.** Reconciled the split forward-axis convention onto SL-native **+X-forward**
   everywhere. Was: own avatar/camera used −Z-forward while peers + rigged meshes used +X (SL `bodyRot`), so the
