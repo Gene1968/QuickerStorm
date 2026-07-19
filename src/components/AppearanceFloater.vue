@@ -6,7 +6,7 @@ import { useCurrentOutfit } from '@/composables/useCurrentOutfit'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
 import {
 	WrenchIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon,
-	CogIcon, Trash2Icon, ShoppingBagIcon, FilterIcon, ArrowUpDownIcon, PlusIcon,
+	CogIcon, Trash2Icon, ShoppingBagIcon, FilterIcon, ArrowUpDownIcon, PlusIcon, XIcon,
 } from '@lucide/vue'
 
 const ui     = useUiStore()
@@ -25,6 +25,8 @@ const editColor     = ref('')
 const editSkinTone  = ref('')
 const editHairColor = ref('')
 const editHairStyle = ref('')
+
+const showCogMenu   = ref(false)
 
 function openEdit() {
 	editColor.value     = avatar.color
@@ -69,7 +71,14 @@ function toRow(item) {
 		detail: outfit.detailFor(item),
 		color: null,
 		icon: outfit.iconFor(item),
+		removable: outfit.canRemove(item),
+		raw: item,
 	}
+}
+
+// 7·B-4: detach an attachment / take off clothing straight from the Wearing tab.
+function removeRow(row) {
+	if (row.removable) outfit.removeWorn(row.raw)
 }
 
 const wearableGroups = computed(() => {
@@ -150,7 +159,7 @@ const outfitFolders = [
 					<input
 						v-model="filterText"
 						type="search"
-						placeholder="Filter Outfits&#8230;"
+						placeholder="🔎 Filter Outfits&#8230;"
 						class="flex-1 bg-fg/10 rounded-xl w-full me-1 px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 					/>
 					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Options — to-do" disabled>
@@ -273,7 +282,7 @@ const outfitFolders = [
 								<div
 									v-for="item in group.items"
 									:key="item.id"
-									class="flex items-center gap-1.5 px-2 py-1 hover:bg-white/5 transition-colors"
+									class="flex items-center gap-1.5 px-2 py-1 hover:bg-white/5 transition-colors group/row"
 								>
 									<span class="text-sm leading-none shrink-0">{{ item.icon }}</span>
 									<div class="flex flex-col flex-1 min-w-0">
@@ -287,6 +296,15 @@ const outfitFolders = [
 										:style="{ background: item.color }"
 										:title="item.color"
 									/>
+									<!-- Detach / take off (attachments + clothing; body parts only replace) -->
+									<button
+										v-if="item.removable"
+										class="p-0.5 rounded-sm text-fg/30 hover:text-fg hover:bg-white/10 opacity-0 group-hover/row:opacity-100 transition-opacity shrink-0"
+										:title="group.id === 'attachments' ? 'Detach from yourself' : 'Take off'"
+										@click.stop="removeRow(item)"
+									>
+										<XIcon class="w-3.5 h-3.5" />
+									</button>
 								</div>
 							</template>
 						</div>
@@ -295,11 +313,26 @@ const outfitFolders = [
 				</div>
 
 				<!-- Bottom status bar -->
-				<div class="flex items-center px-2.5 py-1.5 border-t border-edge shrink-0 bg-panel-alt gap-2">
-					<span class="text-fg-muted/50 text-xs flex-1">Complexity: — (to-do)</span>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40 hover:text-fg" title="Marketplace — to-do" disabled>
-						<ShoppingBagIcon class="w-3.5 h-3.5" />
-					</button>
+				<div class="relative flex items-center justify-between gap-2 shrink-0 border-t border-edge bg-panel-alt">
+					<div class="flex items-center">
+						<button class="ui-btn pe-0.5 ps-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon class="w-3.5 h-3.5" /><ChevronDownIcon class="w-2.5 h-3.5" /></button>
+						<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[11rem] bg-panel border border-edge rounded-sm shadow-lg text-2xs" @click.stop>
+							<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" title="(to-do)" disabled>Touch</button>
+							<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" title="(to-do)" disabled>Edit</button>
+							<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" title="(to-do)" disabled>Take off</button>
+							<div class="border-t border-edge"></div>
+							<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" title="(to-do)" disabled>Edit outfit</button>
+							<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" title="(to-do)" disabled>Copy outfit list to clipboard</button>
+						</div>
+						<button class="ui-btn px-1" title="Marketplace — (to-do?)" disabled>
+							<ShoppingBagIcon class="w-3.5 h-3.5" />
+						</button>
+					</div>
+					<span class="flex-1 text-end text-fg-muted/80 text-xs pe-2">Complexity: ##,### (to-do)</span>
+				</div>
+				<div class="flex items-center justify-start gap-2 shrink-0 py-1 px-1.5 bg-panel">
+					<button class="ui-btn w-20" title="Save (to-do)" :disabled="true">Save</button>
+					<button class="ui-btn w-20" title="Save as (to-do)" disabled>Save as</button>
 				</div>
 
 			</template>

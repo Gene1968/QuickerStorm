@@ -394,6 +394,12 @@ export function useInventory() {
 		for (const id of inv.expandedUnion()) if (!inv.isFetched(id)) fetchFolder(id)
 		// Kick off the background full load so totals reach the exact count.
 		fetchAll()
+		// 7·C: arm the one-shot login attachment-rez. 12s gives the sim time to stream any
+		// auto-reattached items (so we can tell "sim has them" from "sim has none") and the COF
+		// to hydrate from cache/fetch.
+		_rezCofDone = false
+		clearTimeout(_rezCofTimer)
+		_rezCofTimer = setTimeout(maybeRezCofAttachments, 12000)
 	}
 
 	// UpdateCreateInventoryItem reply → drop the new item(s) into their folder list immediately. If we're
@@ -712,6 +718,124 @@ export function useInventory() {
 		emit(C.INV_UPDATE_PERMS, { ...itemServerFields(cur), itemId, folderId, ...masks })
 	}
 
+	// ── 7·C: login attachment rez ─────────────────────────────────────────────────────────────
+	// Real viewers rez their COF attachments grid-side at login (FS llappearancemgr →
+	// RezMultipleAttachmentsFromInv); QS never did, so the sim held NO attachments for us — peers'
+	// viewers cleared the cloud on our AgentSetAppearance echo, then had nothing to draw (mesh-body
+	// outfits alpha out the system body → invisible-with-label, Gene live 2026-07-19). Once the COF
+	// is readable AND the sim demonstrably streamed us no own-attachment ObjectUpdates, rez the
+	// COF's attachment links. One-shot per login; a sim that DID auto-reattach (state persisted
+	// from a real-viewer session) is left untouched.
+	let _rezCofDone = false
+	let _rezCofTimer = null
+	function maybeRezCofAttachments() {
+		if (_rezCofDone) return
+		const cofId = inv.systemFolder(FOLDER_TYPE_COF)
+		const agentId = (session.agentId || '').toLowerCase()
+		const own = agentId ? world.avatars.find(a => a.fullId?.toLowerCase() === agentId) : null
+		if (!cofId || !inv.isFetched(cofId) || !own) {
+			_rezCofTimer = setTimeout(maybeRezCofAttachments, 4000)   // COF/avatar not ready — retry
+			return
+		}
+		// Any object already parented to our avatar = the sim reattached on its own; don't double-rez.
+		for (const o of world.prims) {
+			if (o?.parentId === own.localId) { _rezCofDone = true; return }
+		}
+		const items = []
+		const seen = new Set()
+		for (const row of inv.folderItems(cofId)) {
+			if (row.assetType !== AT_LINK) continue
+			const target = inv.itemById(row.assetId)
+			const isObj = target ? target.assetType === 6 : row.invType === 6
+			if (!isObj) continue
+			const id = target?.itemId || row.assetId
+			if (seen.has(id)) continue
+			seen.add(id)
+			const eff = target || row
+			items.push({ itemId: id, name: eff.name || '', description: eff.desc || '' })
+		}
+		_rezCofDone = true
+		if (!items.length) return
+		for (const it of items) inv.markWorn(it.itemId)
+		emit(C.INV_REZ_ATTACHMENTS, { items, firstDetachAll: false })
+	}
+
+	// ── COF (Current Outfit Folder, type 46) link maintenance — bundle 7·B-4 ──────────────────
+	// SL/OpenSim track worn state as AT_LINK rows in the COF; on OpenSim (no AIS3 atomic slam) the
+	// VIEWER maintains them one by one: wear = LinkInventoryItem, unwear = RemoveInventoryItem with
+	// the LINK's id (caps-feature-map spec; FS llappearancemgr.cpp). The link ack lands via the
+	// normal UpdateCreateInventoryItem → addCreatedItems path, so the "Now wearing" floater follows.
+	const FOLDER_TYPE_COF = 46
+	const AT_LINK = 24
+
+	/** The COF link row (assetType 24) pointing at itemId, or null. */
+	function cofLinkFor(itemId) {
+		const cofId = inv.systemFolder(FOLDER_TYPE_COF)
+		if (!cofId || !itemId) return null
+		return inv.folderItems(cofId).find(r => r.assetType === AT_LINK && r.assetId === itemId) || null
+	}
+
+	function createCofLink(item) {
+		const cofId = inv.systemFolder(FOLDER_TYPE_COF)
+		if (!cofId || !item?.itemId || cofLinkFor(item.itemId)) return
+		emit(C.INV_CREATE_LINK, {
+			folderId: cofId, targetItemId: item.itemId,
+			type: AT_LINK, invType: item.invType ?? 0,
+			name: item.name || '', description: item.desc || '',
+		})
+	}
+
+	/** Worn body-part/clothing set from the COF links — the AgentIsNowWearing payload (full list,
+	 *  not a delta). Attachments (AT_OBJECT targets) are excluded; they ride the attach messages. */
+	function cofWearablesList() {
+		const cofId = inv.systemFolder(FOLDER_TYPE_COF)
+		if (!cofId) return []
+		const out = [], seen = new Set()
+		for (const row of inv.folderItems(cofId)) {
+			if (row.assetType !== AT_LINK) continue
+			const target = inv.itemById(row.assetId)
+			const eff = target || row
+			// Wearable = body part (13) or clothing (5); unresolved links fall back to invType 18.
+			const isWearable = target ? (target.assetType === 5 || target.assetType === 13) : eff.invType === 18
+			if (!isWearable) continue
+			const id = target?.itemId || row.assetId
+			if (seen.has(id)) continue
+			seen.add(id)
+			out.push({ itemId: id, wearableType: (eff.flags ?? 0) & 0xff })
+		}
+		return out
+	}
+
+	/** Wear a body part or clothing item: replace the same-type COF link (classic one-slot-per-type
+	 *  wearables table — layering UI is later) + declare the updated set via AgentIsNowWearing.
+	 *  Visually nothing changes until the bake pipeline (we don't composite); this keeps the COF,
+	 *  the sim's wearables table, and the "Now wearing" floater truthful. */
+	function wearWearable(item) {
+		if (!item?.itemId) return
+		const wt = (item.flags ?? 0) & 0xff
+		const cofId = inv.systemFolder(FOLDER_TYPE_COF)
+		if (cofId) {
+			for (const row of inv.folderItems(cofId)) {
+				if (row.assetType !== AT_LINK) continue
+				const eff = inv.itemById(row.assetId) || row
+				const isWearable = eff.assetType === 5 || eff.assetType === 13 || eff.invType === 18
+				if (isWearable && ((eff.flags ?? 0) & 0xff) === wt) purgeItem(row.itemId)
+			}
+		}
+		createCofLink(item)
+		const list = cofWearablesList().filter(w => w.wearableType !== wt)
+		list.push({ itemId: item.itemId, wearableType: wt })
+		emit(C.AGENT_WEARING, { wearables: list })
+	}
+
+	/** Take off a CLOTHING item (body parts can only be replaced, never removed — FS parity). */
+	function takeOffWearable(item) {
+		if (!item?.itemId || item.assetType === 13) return
+		const link = cofLinkFor(item.itemId)
+		if (link) purgeItem(link.itemId)
+		emit(C.AGENT_WEARING, { wearables: cofWearablesList().filter(w => w.itemId !== item.itemId) })
+	}
+
 	function wearAttachment(itemId, attachPoint = 0) {
 		if (!itemId) return
 		// Optimistic worn-mark: FS flips the item's menu to "Detach From Yourself" as soon as the
@@ -719,12 +843,18 @@ export function useInventory() {
 		// as an ObjectUpdate whose NameValue AttachItemID then confirms it via isItemWorn).
 		inv.markWorn(itemId)
 		emit(C.INV_WEAR_ATTACHMENT, { itemId, attachPoint })
+		// 7·B-4: FS pairs the attach with a COF link so worn state survives relog / shows in COF.
+		const item = inv.itemById(itemId)
+		if (item) createCofLink(item)
 	}
 
 	function detach(itemId) {
 		if (!itemId) return
 		inv.markDetached(itemId)
 		emit(C.INV_DETACH, { itemId })
+		// 7·B-4: drop the COF link (unlink = RemoveInventoryItem with the LINK's id).
+		const link = cofLinkFor(itemId)
+		if (link) purgeItem(link.itemId)
 	}
 
 	/**
@@ -963,6 +1093,7 @@ export function useInventory() {
 		createFolderFromSelected, openInventoryItem,
 		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
 		purgeItem, purgeFolder, restoreItem, restoreFolder, emptyTrash, updatePerms, wearAttachment, detach, isItemWorn,
+		wearWearable, takeOffWearable, cofLinkFor,
 		giveInventory, giveInventoryFolder, shareToAgent, rezObject,
 	}
 }

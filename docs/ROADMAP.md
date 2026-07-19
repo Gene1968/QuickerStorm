@@ -35,7 +35,7 @@ at the bottom — that's *my* bookkeeping, it never parks a bundle in limbo or d
 | **v0.5** | **Beta-2 — richer world** | Voice, groups, appearance bake, media / web-on-prim, neighboring sims. |
 | **v0.6 → v1.0** | **depth & polish** | PBR materials, scripting behaviors, LOD & heavy-region scale, cross-region *walk*, mobile 2D. |
 
-**The single biggest Beta-1 blocker is avatars** (bundle 7, ~60%). Everything else on the social loop is
+**The single biggest Beta-1 blocker is avatars** (bundle 7, ~70%). Everything else on the social loop is
 already 🟡. Voice / groups / media are deliberately **Beta-2**, not Beta-1.
 
 ---
@@ -139,7 +139,7 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 - 🔭 **Inventory load-at-scale** (50–150k accounts still spin on the initial full walk) — correctness bar is met; this is throughput. Design the paced walk + trusted incremental cache first.
 - 🔜 Wear clothing-layer wearables → gated on bundle 7 (bake).
 
-### 7. Avatars & Appearance — 🟡 ~60% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
+### 7. Avatars & Appearance — 🟡 ~70% · v0.4 (jellydoll/attachments) → v0.5 (anims/bake) · **#1 beta blocker**
 Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, **locomotion-animated** idle/walk/sit, **shape-height-scaled**) replaces the tube; AvatarAppearance fully decoded (bakes + VisualParams + height; cached server-side, replayed on resync); **"Now wearing" floater is REAL** (COF read); **AgentSetAppearance echoes our params/bakes**; **rigged mesh skins at rest pose (AV-1)**, faces correctly (+X-forward), and **rigid attachments mount at their SL attachment points** (hair at head, shoes at feet) with linkset children riding a child proxy. Bakes not composited (jellydoll body, not real skin); peers still see us invisible (see 7·C).
 **Shipped (→ CHANGELOG for detail):** ✅ **7·A appearance read-model** (VisualParams decode + OpenSim height estimate → shape-scaled jellydoll · COF read → real Now-wearing · codec fix: OSGrid's absent trailing blocks were killing ALL AvatarAppearance decode · appearance resync replay) · ✅ **7·C first pass** — `AgentSetAppearance` echo (sent+acked live; *peer-visual check from a second viewer still pending*) · ✅ AV-1 rigged-mesh rest-pose skinning · ✅ Avatar facing (+X-forward) · ✅ AV-2 per-UUID jellydoll tint + cloud/jellydoll state · 🟡 Jellydoll humanoid placeholder. *Note: "humanoid-tee" was never real — the only prior placeholder was the tube.*
 
@@ -147,15 +147,18 @@ Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, **locomotion-an
 
 **7·B — Attachment & outfit placement (mostly shipped 2026-07-18 → CHANGELOG).**
 - ✅ **Attachment-point mounting** — rigid attachments mount at their SL attachment point (State-byte decode + full avatar_lad point table + skeleton rest positions, `src/lib/attachmentPoints.js`); HUD points hidden; rigged keep AV-1 skinning. *Rest-pose mounting — points follow bones only once real animations land.*
-- ✅ **Linkset-attachment child prims** — child proxy at the root's sim transform decouples children from the bind-posed skinned mesh.
+- ✅ **Linkset-attachment child prims** — child proxy at the root's sim transform decouples children from the bind-posed skinned mesh. ✅ 2026-07-19 followups: ancestor-aware skinning (rigged CHILDREN skin to the avatar — Bento bodies), skin-refetch on late avatar-ancestry discovery, skin-lane concurrency gate (heap blowout fix), Chest/Spine euler-order fix, peer avatars replayed on probe-resync (empty-Nearby-after-reload fix).
 - ✅ **Locomotion clips** — idle/walk/sit by speed + ParentID (0.2s crossfade). 🔜 remaining: fly/swim clips (GLB has them, needs fly-state signal) · complexity/LOD fallback to capsule for far/many avatars · **retire the tube for real** (gate placeholder→content swap on a body item actually loaded+placed).
-- 🔜 Wearing tab actions (wear/unwear = COF link writes) · proportion beyond height (torso/leg ratios from params → bone scales). *(2026-07-18: read side shipped; write side is the next coherent stretch.)*
+- ✅ **COF write side** (2026-07-18 → CHANGELOG) — wear/unwear as COF link writes (`LinkInventoryItem`/`RemoveInventoryItem`) + `AgentIsNowWearing` full-set declaration; Wearing-tab ✕ actions; context-menu Wear enabled for wearables. 🔜 remaining: clothing LAYERING (add vs replace, FS "Add"), outfit save/load (My Outfits ▸ Replace Outfit), duplicate-link cleanup tool, proportion beyond height (torso/leg ratios from params → bone scales).
 
 **7·C — Outbound appearance (remaining).**
-- 🔜 **Peers still see us invisible-with-label** (Gene, FS, 2026-07-18 — post-echo). The AgentSetAppearance echo ships+acks but doesn't resolve peer visibility by itself. Hypotheses: (a) sim doesn't rebroadcast our AvatarAppearance to peers unless it considers the appearance *changed/valid* (check OpenSim AvatarFactoryModule SetAppearance→SendAppearanceToAllOtherAgents path); (b) FS renders a cloud only while bakes are *fetchable* — if the echoed bake UUIDs aren't servable (no bake service on OSGrid), FS gives up → invisible; that gate is the 🔭 bake pipeline. Needs a watch-from-FS session while QS logs in.
+- ✅ **Login attachment rez** (2026-07-19 → CHANGELOG) — ROOT CAUSE of invisible-with-label: QS never rezzed COF attachments grid-side, so after the appearance echo cleared the cloud, a mesh-body outfit (system body alpha'd out) had nothing to draw. `RezMultipleAttachmentsFromInv` from COF links, one-shot per login. **PEER-CONFIRMED (Gene, FS, 2026-07-19): "nearly perfect appearance" — animesh wings move, sim plays her stand/walk/jump for other viewers.** Outbound appearance is DONE for mesh bodies without the bake pipeline; classic baked layers remain Beta-2.
+- 🔜 **Body-type test matrix** (Gene 2026-07-19): track/verify all three outfit styles — **classic** (system body + baked clothing layers: needs the bake pipeline; e.g. Gene@OS's "missing pants" are classic-layer pants, invisible until composited) · **mesh** (attachments — now rezzed+skinned) · **Bento** (extended skeleton: wings/tail place at rest pose now; animation = Animesh/anim work, later). Each with linkset-children coverage.
 - 🔭 **Bake pipeline** (`UploadBakedTexture`, real skin+clothing compositing) — risky (can blank avatars grid-wide), needs a test grid. Unblocks clothing-layer wearables + "save outfit." *Beta-2.*
 
-**Later:** 🔭 real SL animation (AvatarAnimation decode + SL-BVH + AnimationMixer priority) · billboard impostor render · facial/lip · Animesh · gestures.
+**7·D — Render & animate the worn look (the next major stretch — Gene 2026-07-19: "majority of work is back in how we will display and move those attachments").** Peers see us right; now OUR renderer has to match what FS shows. This is the runtime-skeleton project: a live SL skeleton per avatar (THREE.Skeleton with SL joint names + Bento), worn rigged mesh skinned to it at RUNTIME (replaces the AV-1 static rest-pose bake), attachment points riding their bones, `AvatarAnimation` decode + SL anim asset (internal format/BVH) playback with priority blending — then worn meshes walk/sit/fly with the avatar instead of standing at rest pose. HIGH effort/risk; design-first (brainstorm section below).
+
+**Later:** 🔭 billboard impostor render · facial/lip · Animesh · gestures.
 
 ### 8. Chat & IM — 🟡 ~70% · v0.4
 - 🔜 Nearby chat: scrollback persistence · mute names/words · options panel (range/channel/font) · search · tear-off · reopen-without-losing-history.

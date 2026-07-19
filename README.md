@@ -44,7 +44,7 @@ release each bundle is targeted at. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for
 |---|---|---|
 | World & Movement (walk/fly/sit/collision) | 🟡 ~85% | v0.4 |
 | Rendering: prims, linksets, mesh, per-face textures | 🟡 ~78% | v0.4 |
-| Rendering: environment (sky, day/night, ocean; trees/shadows todo) | 🟡 ~65% | v0.5 |
+| Rendering: environment (sky, day/night, ocean; trees/shadows to-do) | 🟡 ~65% | v0.5 |
 | Object Build & Edit floater | 🟡 ~50% | v0.4 |
 | Object interaction & contents (right-click, take/buy, Xfer) | 🟡 ~72% | v0.4 |
 | Inventory (browse/manage/give/rez/take, create+edit notecards/scripts) | 🟡 ~77% | v0.4 |
@@ -53,9 +53,9 @@ release each bundle is targeted at. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for
 | Groups & Group IM | 🟡 ~8% | v0.5 |
 | Friends & Profile | 🟡 ~62% | v0.4 |
 | Places, Map, Minimap & Parcel | 🟡 ~68% | v0.4 |
-| Voice (WebRTC — signaling done, gateway todo) | 🟡 ~8% | v0.5 |
-| Media & audio (sound done; parcel/web-on-prim todo) | 🟡 ~45% | v0.5 |
-| Scripting behaviors (notecard/script editor done; can't run LSL, compile feedback todo) | 🟡 ~14% | v0.6 |
+| Voice (WebRTC — signaling done, gateway to-do) | 🟡 ~8% | v0.5 |
+| Media & audio (sound done; parcel/web-on-prim to-do) | 🟡 ~45% | v0.5 |
+| Scripting behaviors (notecard/script editor done; can't run LSL, compile feedback to-do) | 🟡 ~14% | v0.6 |
 | Cross-region / neighbor sims | 🔭 ~15% | v0.5 |
 | Performance & scale (interest streaming, caches) | 🟡 ~70% | ongoing |
 | UI / floaters / preferences | 🟡 ~55% | v0.4 |

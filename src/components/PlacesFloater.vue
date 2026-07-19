@@ -56,17 +56,19 @@ const filteredHistory = computed(() => {
 		<div class="flex flex-col h-full text-xs">
 
 			<!-- Top toolbar: filter + icon buttons -->
-			<div class="flex items-stretch gap-0 border-b border-edge shrink-0">
+			<div class="flex items-stretch gap-1.5 shrink-0 p-1">
 				<input
 					v-model="filter"
 					type="search"
 					placeholder="Filter My Places"
 					class="flex-1 bg-fg/10 rounded-xl w-full px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 				/>
-				<button class="tb-btn" title="Show options (TO-DO)"><CogIcon /><ChevronDownIcon class="w-3" /></button>
-				<button class="tb-btn" title="Show sorting options (TO-DO)"><ArrowUpDownIcon /><ChevronDownIcon class="w-3" /></button>
-				<button v-if="ui.placesActiveTab !== 'history'" class="tb-btn" title="Add new landmark" @click="openAddLandmark"><PlusIcon /></button>
-				<button v-if="ui.placesActiveTab !== 'history'" class="tb-btn" title="Remove selected landmark or folder (TO-DO)"><Trash2Icon /></button>
+				<div class="flex items-center">
+					<button class="ui-btn px-1" title="Show options (to-do)"><CogIcon class="w-3.5" /><ChevronDownIcon class="w-2.5" /></button>
+					<button class="ui-btn px-1" title="Show sorting options (to-do)"><ArrowUpDownIcon class="w-3.5" /><ChevronDownIcon class="w-2.5" /></button>
+					<button v-if="ui.placesActiveTab !== 'history'" class="ui-btn" title="Add new landmark" @click="openAddLandmark"><PlusIcon class="w-3.5" /></button>
+					<button v-if="ui.placesActiveTab !== 'history'" class="ui-btn" title="Remove selected landmark or folder (to-do)"><Trash2Icon class="w-3.5" /></button>
+				</div>
 			</div>
 
 			<!-- Tab row -->
@@ -80,7 +82,7 @@ const filteredHistory = computed(() => {
 			</div>
 
 			<!-- Tab content area -->
-			<div class="flex-1 min-h-0">
+			<div class="flex-1 min-h-0 overflow-y-auto">
 
 				<!-- ── Favorites ── -->
 				<template v-if="ui.placesActiveTab === 'favorites'">
@@ -99,7 +101,7 @@ const filteredHistory = computed(() => {
 						</li>
 					</ul>
 					<div v-else class="py-8 text-fg/30 italic text-center">
-						{{ filter ? 'No matches (clear filter above).' : 'No favorites yet — use the star ✦ or + to add one.' }}
+						{{ filter ? 'No matches (clear filter above).' : 'No favorites yet — use the star ⭐ or ➕ to add one.' }}
 					</div>
 				</template>
 
@@ -178,13 +180,13 @@ const filteredHistory = computed(() => {
 				</template>
 			</div>
 
-			<!-- History: clear log -->
-			<div
-				v-if="ui.placesActiveTab === 'history' && history.length"
-				class="flex justify-end px-3 py-2 border-t border-edge shrink-0"
-			>
-				<button class="save-btn" @click="clearHistory">
-					<Trash2Icon class="w-3 h-3" /> Clear history
+			<div class="flex items-center justify-evenly gap-2 shrink-0 py-1 px-1.5 bg-panel">
+				<button class="ui-btn grow" title="Teleport (to-do)" disabled>Teleport</button>
+				<button class="ui-btn grow" title="Map (to-do)" disabled>Map</button>
+				<button class="ui-btn grow" title="Profile (to-do)" disabled>Profile</button>
+				<!-- History: clear log (to-do: move this to the sorting menu) -->
+				<button v-if="ui.placesActiveTab === 'history' && history.length" class="hidden ui-btn" @click="clearHistory">
+					<Trash2Icon class="w-3 h-3" /> Clear Teleport History
 				</button>
 			</div>
 
@@ -193,25 +195,6 @@ const filteredHistory = computed(() => {
 </template>
 
 <style scoped>
-/* ── Toolbar icon buttons (top strip) ── */
-.tb-btn {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	padding: 0.35rem;
-	border: none;
-	border-left: 1px solid var(--edge);
-	border-radius: 0;
-	background: none;
-	color: var(--fg-subtle);
-	cursor: pointer;
-	transition: color 0.15s, background 0.15s;
-}
-.tb-btn:hover {
-	background: rgba(255, 255, 255, 0.07);
-	color: var(--fg);
-}
-.tb-btn svg { width: 1rem; height: 1rem; }
 
 /* ── Inline list row buttons ── */
 .inline-btn {
@@ -236,22 +219,4 @@ li:hover .inline-btn { opacity: 1; }
 }
 .inline-btn--trash:hover { color: #f87171; }
 
-/* ── Save button ── */
-.save-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.25rem;
-	padding: 0.125rem 0.5rem;
-	font-size: 0.75rem;
-	background: var(--accent);
-	color: #fff;
-	border: none;
-	border-radius: 0.25rem;
-	cursor: pointer;
-	white-space: nowrap;
-	flex-shrink: 0;
-	transition: opacity 0.1s;
-}
-.save-btn:hover { opacity: 0.8; }
-.save-btn svg { width: 0.75rem; height: 0.75rem; }
 </style>

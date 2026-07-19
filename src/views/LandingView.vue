@@ -136,16 +136,16 @@ onMounted(async () => {
 					</div>
 
 					<!-- Disclaimer -->
-					<div class="w-full mt-2 text-fg text-xs leading-relaxed">
+					<div class="w-full mb-2 text-fg text-2xs leading-relaxed">
 						<p>
 							quickerSTORM is an independent project, not affiliated with or sponsored by FireStorm or by Linden Research, Inc.  <em>Second Life®</em> is a registered trademark of Linden Research, Inc.
 						</p>
-						<p class="mt-2">
+						<p class="mb-2">
 							Credentials are used for grid login only and are never saved. Only with <em>Remember me</em> option are they stored in your own browser for next time.
 						</p>
-						<p class="mt-3 opacity-60">
+						<p class="opacity-60">
 							Inspired by Firestorm Viewer &amp; SpeedLight
-							<br />Built with Vue 3 · Three.js · Bun · WebRTC
+							<br />Built with Vue 3 · Three.js · Bun · WebRTC · Tailwind
 						</p>
 					</div>
 				</template>

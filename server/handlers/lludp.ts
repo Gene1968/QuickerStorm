@@ -36,6 +36,7 @@ import {
 	encodeUpdateInventoryFolder, encodeRemoveInventoryItem, encodeRemoveInventoryFolder,
 	encodePurgeInventoryDescendents,
 	encodeRezSingleAttachmentFromInv, encodeDetachAttachmentIntoInv, decodeBulkUpdateInventory,
+	encodeLinkInventoryItem, encodeAgentIsNowWearing, encodeRezMultipleAttachmentsFromInv,
 	encodeRezObject,
 	buildGiveFolderBucket,
 	uuidToBytes,
@@ -2209,6 +2210,69 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		return
 	}
 
+	// 7·B-4: create an inventory LINK (COF worn-state bookkeeping — wear adds a link, unwear removes
+	// it via the existing INV_PURGE_ITEM/RemoveInventoryItem path with the LINK's id). The sim's
+	// UpdateCreateInventoryItem reply lands in the COF through the normal S.INV_ITEM_CREATED flow.
+	if (msg.t === C.INV_CREATE_LINK) {
+		const d = msg.d as { folderId: string; targetItemId: string; type?: number; invType?: number; name?: string; description?: string }
+		if (!d.folderId || !d.targetItemId) {
+			slog.warn(session.ws, 'InvCreateLink: missing folderId/targetItemId')
+			return
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeLinkInventoryItem({
+			agentId: session.agentId, sessionId: session.sessionId, seq,
+			folderId: d.folderId, oldItemId: d.targetItemId,
+			type: d.type ?? 24, invType: d.invType ?? 0,
+			name: d.name, description: d.description,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ LinkInventoryItem ${d.targetItemId.slice(0, 8)}… → folder ${d.folderId.slice(0, 8)}…`)
+		return
+	}
+
+	// 7·C: rez a batch of COF attachments grid-side (login outfit restore). Chunked ≤4 per packet
+	// with a shared CompoundMsgID per the template. Without this the sim holds NO attachments for
+	// us — peers' viewers clear the cloud on our appearance echo, then have nothing to draw
+	// (mesh-body outfits alpha out the system body → invisible-with-label).
+	if (msg.t === C.INV_REZ_ATTACHMENTS) {
+		const d = msg.d as { items: Array<{ itemId: string; name?: string; description?: string; attachPoint?: number }>; firstDetachAll?: boolean }
+		if (!Array.isArray(d.items) || !d.items.length) return
+		const compoundId = crypto.randomUUID()
+		for (let i = 0; i < d.items.length; i += 4) {
+			const seq = nextSeq(session)
+			const pkt = encodeRezMultipleAttachmentsFromInv({
+				agentId: session.agentId, sessionId: session.sessionId, seq,
+				compoundId, totalObjects: d.items.length,
+				firstDetachAll: !!d.firstDetachAll && i === 0,
+				objects: d.items.slice(i, i + 4),
+			})
+			trackReliable(session, seq, pkt)
+			session.udpSocket.send(pkt, session.simPort, session.simIp)
+		}
+		slog.info(session.ws, `→ RezMultipleAttachmentsFromInv ${d.items.length} attachment(s), ${Math.ceil(d.items.length / 4)} packet(s)`)
+		return
+	}
+
+	// 7·B-4: declare the full worn-wearables set (body parts + clothing) — the sim replaces its
+	// AvatarWearables table with this list. Sent by the client after clothing wear/take-off.
+	if (msg.t === C.AGENT_WEARING) {
+		const d = msg.d as { wearables: Array<{ itemId: string; wearableType: number }> }
+		if (!Array.isArray(d.wearables)) {
+			slog.warn(session.ws, 'AgentWearing: missing wearables list')
+			return
+		}
+		const seq = nextSeq(session)
+		const pkt = encodeAgentIsNowWearing({
+			agentId: session.agentId, sessionId: session.sessionId, seq, wearables: d.wearables,
+		})
+		trackReliable(session, seq, pkt)
+		session.udpSocket.send(pkt, session.simPort, session.simIp)
+		slog.info(session.ws, `→ AgentIsNowWearing (${d.wearables.length} wearables)`)
+		return
+	}
+
 	if (msg.t === C.CHAT) {
 		const d = msg.d as {
 			message: string
@@ -2313,6 +2377,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 				session.ws,
 				`→ own-avatar re-sent on probe-resync (engine ready)`,
 			)
+		}
+		// PEER avatars have the same no-recovery problem as the own avatar: never in the client's
+		// IDB cache (so no probe) and the sim won't re-blast them unprompted — a reloaded client
+		// shows an empty Nearby list until a manual scene rebuild (Gene, live 2026-07-19). Replay
+		// every cached avatar ObjectUpdate; their attachments rebuild via the normal probe path
+		// and re-adopt through orphansByParent once these roots exist again.
+		const peerAvatars = [...session.objCache.values()].filter(o => (o as { pcode?: number }).pcode === 47)
+		if (peerAvatars.length) {
+			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: peerAvatars } }))
+			slog.info(session.ws, `→ ${peerAvatars.length} avatar(s) re-sent on probe-resync (engine ready)`)
 		}
 		// Same pre-mount loss applies to TERRAIN: the resume's replayCachedWorld TERRAIN_PATCH frames
 		// arrive before the engine's handler mounts, so worldStore.terrainHeights stays zeroed → the

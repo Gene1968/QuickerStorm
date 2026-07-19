@@ -136,9 +136,11 @@ export function attachPointLocal(id, footOffset) {
 	if (!j) return null
 	const sx = j[0] + px, sy = j[1] + py, sz = j[2] + pz
 	const pos = new THREE.Vector3(sx, sz - footOffset, -sy)   // slToThree permutation
-	// SL euler (deg, fixed axes X→Y→Z: q = qz·qy·qx) → quaternion, then permute vector part (x,z,−y).
+	// SL euler (deg) composes about FIXED axes X→Y→Z (LLQuaternion q = qz·qy·qx) — that's three.js
+	// intrinsic order 'ZYX', NOT 'XYZ' (wrong order visibly mis-rotates Chest/Spine, the two points
+	// with two non-zero axes). Build in SL axis space, then permute the vector part (x,z,−y).
 	const d = Math.PI / 180
-	const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx * d, ry * d, rz * d, 'XYZ'))
+	const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx * d, ry * d, rz * d, 'ZYX'))
 	const quat = new THREE.Quaternion(q.x, q.z, -q.y, q.w)
 	return { pos, quat }
 }

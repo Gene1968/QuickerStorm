@@ -160,7 +160,8 @@ html.light {
 	button, .button {
 		cursor: pointer;
 	}
-	button:disabled, .button.disabled {
+	button:disabled, .button.disabled, .ui-btn[disabled] {
+		opacity: 0.5;
 		cursor: not-allowed;
 	}
 
@@ -182,7 +183,8 @@ html.light {
 		color: var(--fg-subtle);
 		transition: color 0.15s, border-color 0.15s, background 0.15s;
 	}
-	.floater button:hover {
+
+	.floater button:not([disabled]):hover {
 		background: rgba(255, 255, 255, 0.05);
 		border-color: var(--accent);
 		color: var(--fg);

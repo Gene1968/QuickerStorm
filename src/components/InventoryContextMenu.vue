@@ -25,7 +25,7 @@ import ContextMenuItem from '@/components/ContextMenuItem.vue'
 
 const inv  = useInventoryStore()
 const ui   = useUiStore()
-const { createFolder, createBlankItem, createFolderFromSelected, trashItem, trashFolder, emptyTrash, purgeItem, purgeFolder, restoreItem, restoreFolder, wearAttachment, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
+const { createFolder, createBlankItem, createFolderFromSelected, trashItem, trashFolder, emptyTrash, purgeItem, purgeFolder, restoreItem, restoreFolder, wearAttachment, wearWearable, detach, isItemWorn, pasteInto, giveInventory, shareToAgent, rezObject, openInventoryItem } = useInventory()
 const { clipboard, setCut, setCopy, clear: clearClipboard } = useInventoryClipboard()
 const im = useInstantMessage()
 const menu = computed(() => inv.contextMenu)
@@ -110,6 +110,13 @@ function wearAttach(itemId) {
 /** Detach an attachment. Harmless to call for non-attached items. */
 function doDetach(itemId) {
 	detach(itemId)
+	inv.closeContextMenu()
+}
+
+/** 7·B-4: wear a clothing/body-part item — COF link + AgentIsNowWearing (no visual change until
+ *  the bake pipeline; keeps worn-state truthful across COF, sim wearables table, Now-wearing). */
+function wearClothing(item) {
+	wearWearable(item)
 	inv.closeContextMenu()
 }
 
@@ -366,11 +373,14 @@ const items = computed(() => {
 			...(isObject && isItemWorn(o.itemId)
 			? [{ label: 'Detach from yourself',				action: () => doDetach(o.itemId) }]
 			: [
-				// Objects → wearAttachment; Wearables → disabled with tooltip (needs appearance bake).
+				// Objects → wearAttachment; Wearables (7·B-4) → COF link + AgentIsNowWearing. The
+				// wearable is bookkept truthfully (COF, sim wearables table, "Now wearing" floater)
+				// even though nothing changes visually until the bake pipeline composites textures.
 				isObject
 				? { label: 'Wear / attach',					action: () => wearAttach(o.itemId) }
-				: { label: 'Wear / attach',	disabled: true,
-				title: isWearable ? 'needs appearance bake (planned)' : undefined },
+				: isWearable
+				? { label: 'Wear',							action: () => wearClothing(o) }
+				: { label: 'Wear / attach',	disabled: true },
 				// Rez in world: object items only (rezObject re-guards). Rezzes ~2m in front of the avatar.
 				isObject
 				? { label: 'Rez in world',						action: () => rezInWorld(o.itemId) }

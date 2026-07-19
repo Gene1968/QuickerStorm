@@ -3670,6 +3670,28 @@ export function encodeRezSingleAttachmentFromInv(p: {
   }, { seq: p.seq, reliable: true })
 }
 
+/** RezMultipleAttachmentsFromInv (Low #396) — rez a BATCH of inventory attachments (login outfit
+ *  restore / Replace Outfit). Template message_template.msg:8619-8644: ≤4 ObjectData blocks per
+ *  packet; all packets of one logical operation share CompoundMsgID, with TotalObjects = the full
+ *  count so the sim knows when the compound op is complete. FirstDetachAll on the first packet
+ *  strips existing attachments before rezzing (Replace semantics).
+ */
+export function encodeRezMultipleAttachmentsFromInv(p: {
+  agentId: string; sessionId: string; seq: number
+  compoundId: string; totalObjects: number; firstDetachAll: boolean
+  objects: Array<{ itemId: string; ownerId?: string; attachPoint?: number; name?: string; description?: string }>
+}): Buffer {
+  return encode('RezMultipleAttachmentsFromInv', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    HeaderData: { CompoundMsgID: p.compoundId, TotalObjects: p.totalObjects & 0xFF, FirstDetachAll: p.firstDetachAll ? 1 : 0 },
+    ObjectData: p.objects.map(o => ({
+      ItemID: o.itemId, OwnerID: o.ownerId ?? p.agentId, AttachmentPt: (o.attachPoint ?? 0) & 0xFF,
+      ItemFlags: 0, GroupMask: 0, EveryoneMask: 0, NextOwnerMask: FULL_PERM,
+      Name: Buffer.from((o.name ?? '') + '\0', 'utf8'), Description: Buffer.from((o.description ?? '') + '\0', 'utf8'),
+    })),
+  }, { seq: p.seq, reliable: true })
+}
+
 /** DetachAttachmentIntoInv (Low #397) — detach an attached object back into inventory by ItemID.
  *  ObjectData Single { AgentID, ItemID }. (No SessionID — the only block is ObjectData.)
  *  WHY this over ObjectDetach (Low #113): ObjectDetach takes ObjectLocalID (the rezzed
@@ -3681,6 +3703,50 @@ export function encodeDetachAttachmentIntoInv(p: {
 }): Buffer {
   return encode('DetachAttachmentIntoInv', {
     ObjectData: { AgentID: p.agentId, ItemID: p.itemId },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** LinkInventoryItem (Low #426) — create an inventory LINK (assetType 24/25) pointing at OldItemID,
+ *  in FolderID (the COF for worn-state bookkeeping). Template message_template.msg:9185-9203.
+ *  Sim replies via UpdateCreateInventoryItem with the new link row (its assetId = OldItemID) —
+ *  flows into the existing S.INV_ITEM_CREATED path, no new ack plumbing. Unlink = RemoveInventoryItem
+ *  with the LINK's own item id. (FS llviewerinventory.cpp link_inventory_array; OpenSim
+ *  LLClientView.cs HandleLinkInventoryItem:10115.)
+ */
+export function encodeLinkInventoryItem(p: {
+  agentId: string; sessionId: string; seq: number
+  folderId: string; oldItemId: string; type: number; invType: number
+  name?: string; description?: string; callbackId?: number
+}): Buffer {
+  const NULL_UUID = '00000000-0000-0000-0000-000000000000'
+  return encode('LinkInventoryItem', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    InventoryBlock: {
+      CallbackID: (p.callbackId ?? 0) >>> 0,
+      FolderID: p.folderId,
+      TransactionID: NULL_UUID,
+      OldItemID: p.oldItemId,
+      Type: p.type & 0xFF,
+      InvType: p.invType & 0xFF,
+      Name: Buffer.from((p.name ?? '') + '\0', 'utf8'),
+      Description: Buffer.from((p.description ?? '') + '\0', 'utf8'),
+    },
+  }, { seq: p.seq, reliable: true })
+}
+
+/** AgentIsNowWearing (Low #383) — declare the FULL set of worn wearables (body parts + clothing)
+ *  as { ItemID, WearableType } pairs. The sim replaces its AvatarWearables table with this list —
+ *  send the complete remaining set on every change, not a delta (FS llagentwearables.cpp
+ *  sendAgentWearablesUpdate → AgentIsNowWearing). Attachments are NOT in this list (they ride
+ *  RezSingleAttachmentFromInv / DetachAttachmentIntoInv).
+ */
+export function encodeAgentIsNowWearing(p: {
+  agentId: string; sessionId: string; seq: number
+  wearables: Array<{ itemId: string; wearableType: number }>
+}): Buffer {
+  return encode('AgentIsNowWearing', {
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId },
+    WearableData: p.wearables.map(w => ({ ItemID: w.itemId, WearableType: w.wearableType & 0xFF })),
   }, { seq: p.seq, reliable: true })
 }
 

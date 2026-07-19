@@ -350,6 +350,9 @@ export function useWorldEngine(canvasRef) {
 	const environment = useEnvironment()
 	const _psSrcVec = new THREE.Vector3()   // reused scratch for emitter world-position reads
 	const meshMap = new Map()  // localId → THREE.Mesh
+	// Dev-only console handle for live scene forensics (avatar/attachment debugging) — pairs with
+	// the Pinia console access pattern; not shipped in prod builds.
+	if (import.meta.env.DEV) window.__qs = { meshMap }
 	// ── FEATURE-GAPS #6 draw-call instancing (gated on uiStore.instancing) ──
 	const _lastMoveAt = new Map()   // localId → performance.now() of last upsert/move (settle clock)
 	const _partsCache = new Map()   // geomKey → splitParts() templates (multi-material only)
@@ -3172,8 +3175,9 @@ export function useWorldEngine(canvasRef) {
 	// proxy for children of a rigged attachment root (7·B-2), plain add otherwise. The obj record
 	// supplies the State byte (attachment point id, nibble-swapped server note in lludp-codec.ts).
 	function mountChild(parentMesh, mesh, obj) {
+		const localId = mesh.userData.localId ?? obj?.localId
 		if (parentMesh.userData.isAvatar && !mesh.userData.skinned) {
-			const state = obj?.state ?? worldStore.objects.get(mesh.userData.localId ?? obj?.localId)?.state
+			const state = obj?.state ?? worldStore.objects.get(localId)?.state
 			const id = attachPointFromState(state)
 			if (isHudAttachPoint(id)) {
 				mesh.visible = false
@@ -3182,10 +3186,52 @@ export function useWorldEngine(canvasRef) {
 				return
 			}
 			attachContainerFor(parentMesh, id).add(mesh)
+			refetchWornSkin(localId)   // 7·B-5: built before its avatar ancestry was known? re-skin.
 			return
 		}
-		if (parentMesh.userData.childProxy) { parentMesh.userData.childProxy.add(mesh); return }
+		if (parentMesh.userData.childProxy) {
+			parentMesh.userData.childProxy.add(mesh)
+			refetchWornSkin(localId)   // 7·B-5: same for children of a rigged attachment root
+			return
+		}
 		parentMesh.add(mesh)
+	}
+
+	// 7·B-5: worn-skin recovery for the ordering race. isWornMeshAttachment is decided at BUILD time
+	// from the worldStore parent chain — but on the IDB/probe reload path children usually build
+	// BEFORE their avatar/root records exist (live: 239 of 246 DW body meshes took the plain lane →
+	// unskinned "giant pants"). When a mesh later joins an avatar subtree (mountChild/adoption),
+	// re-fetch via the :skin lane and swap in the rest-pose bake; a rigid mesh (no skin block) is a
+	// cheap no-op fetch and keeps its point/proxy placement. One-shot per mesh (skinRefetched flag —
+	// set on the upsert-time skin path too so fresh worn meshes don't double-fetch).
+	function refetchWornSkin(localId) {
+		const obj = worldStore.objects.get(localId)
+		const mesh = meshMap.get(localId)
+		if (!obj?.meshId || !mesh || mesh.userData.skinned || mesh.userData.skinRefetched) return
+		mesh.userData.skinRefetched = true
+		enqueueSkinFetch(() => getMesh(obj.meshId, 0, nearRefDist(obj), true).then(subs => {
+			if (!(subs && subs.length) || !subs.skinned) return   // rigid — current placement is right
+			if (meshMap.get(localId) !== mesh) return             // killed/rebuilt while queued
+			return meshBaker.bake({
+				kind: 'submesh',
+				scale: [1, 1, 1],
+				subs: subs.map(s => ({ positions: s.positions, normals: s.normals, uvs: s.uvs, indices: s.indices })),
+			}).then(out => {
+				if (!out || out.bad || meshMap.get(localId) !== mesh) return
+				const baked = geometryFromArrays(out)
+				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); return }
+				const old = mesh.geometry
+				mesh.geometry = baked
+				old.dispose()
+				mesh.userData.skinned = true
+				// Mirror the applySwap rigged branch: hoist out of any point/proxy frame, bind-pose at avatar.
+				let anc = mesh.parent
+				while (anc && !anc.userData?.isAvatar && (anc.userData?.attachPointId != null || anc.userData?.childProxyFor != null)) anc = anc.parent
+				if (anc?.userData?.isAvatar && mesh.parent !== anc) anc.add(mesh)
+				if (mesh.parent?.userData?.isAvatar) placeRiggedAttachment(mesh)
+				if (mesh.userData.awaitingGeom) { mesh.userData.awaitingGeom = false; mesh.visible = true }
+			})
+		}))
 	}
 
 	// 7·B-2: a rigged attachment root stays at bind pose (identity at the avatar node), so its
@@ -3295,7 +3341,23 @@ export function useWorldEngine(canvasRef) {
 			// path unconditionally: they bypass the shared per-asset geom cache (which could hold a skin-
 			// less bake from a rezzed instance) and fetch-with-skin so a rigged one lands at bind pose.
 			const parentObj = obj.parentId ? worldStore.objects.get(obj.parentId) : null
-			const isWornMeshAttachment = !!obj.meshId && !isAvatar && !obj._placeholder && parentObj?.pcode === PCODE_AVATAR
+			// AV-1 + 7·B-2: worn mesh = ANY mesh descendant of an avatar, not just the attachment ROOT —
+			// a rigged linkset CHILD of a rigged root skins to the avatar exactly like the root (live bug:
+			// DW body linksets rendered their 200+ child meshes unskinned at the proxy — giant pants).
+			// Rigid children come back skin-less and keep their sim offsets under the child proxy.
+			// Depth-capped walk; a child that arrives before its root misses here (plain lane) — rare,
+			// root-first is the sim's normal blast order.
+			const hasAvatarAncestor = (o) => {
+				for (let depth = 0; o?.parentId && depth < 4; depth++) {
+					const p = worldStore.objects.get(o.parentId)
+					if (!p) return false
+					if (p.pcode === PCODE_AVATAR) return true
+					o = p
+				}
+				return false
+			}
+			const isWornMeshAttachment = !!obj.meshId && !isAvatar && !obj._placeholder
+				&& (parentObj?.pcode === PCODE_AVATAR || hasAvatarAncestor(parentObj))
 			const geomKey = (isAvatar || obj._placeholder) ? null
 				: obj.meshId   ? meshGeomKey(obj.meshId, meshLod)
 				: obj.sculptId ? sculptGeomKey(obj.sculptId, obj.sculptType ?? 1)
@@ -3497,14 +3559,19 @@ export function useWorldEngine(canvasRef) {
 					// `:skin` lane (ensureSkin). A rigged mesh comes back with REST-POSE skinned positions
 					// (server-baked) + skinned=true → snapped to the avatar root in applySwap. A rigid (non-
 					// rigged) attachment has no skin block, comes back un-skinned, and keeps its sim offset.
-					getMesh(obj.meshId, meshLod, nearRefDist(obj), true).then(subs => {
+					// GATED (7·B-5): the skin lane skips the budgeted geometry pump, so a 200+-mesh body
+					// linkset dispatching every full-LOD fetch at once blew the heap to 92% (soft-heap brake
+					// froze the whole scene at 547 objs, live 2026-07-19). enqueueSkinFetch runs a few at a time.
+					mesh.userData.skinRefetched = true   // this IS the skin fetch — refetchWornSkin is a no-op
+					enqueueSkinFetch(() => getMesh(obj.meshId, meshLod, nearRefDist(obj), true).then(subs => {
 						if (!(subs && subs.length)) return
+						if (meshMap.get(obj.localId) !== mesh) return   // killed/rebuilt while queued
 						if (subs.skinned) mesh.userData.skinned = true
 						console.log('[AV1] worn attach mesh=%s parent=%s skinned=%s dbg=%s', obj.meshId, obj.parentId, !!subs.skinned, subs.skinDbg)
 						// bakeScale is [1,1,1] for assets; server already applied the full skin transform, so
 						// the client only does the SL→Three axis swap (no bindShape, no primScale for rigged).
 						return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
-					})
+					}))
 				} else if (cachedArrays) {
 					// Tier-1 hit: geometry is already final (created above) — run only the
 					// post-swap finishing. Mesh/sculpt hits never even fetch the raw asset.
@@ -4093,6 +4160,22 @@ export function useWorldEngine(canvasRef) {
 	// Humanoid forward within the +X-forward avatar node. LIVE-TWEAK knob: if the humanoid faces
 	// sideways/backward, nudge by ±π/2 or π (model authored facing +Z → +π/2 turns it to node +X).
 	const AVATAR_MODEL_FACING_Y = Math.PI / 2
+
+	// 7·B-5: concurrency gate for worn-mesh skin fetches. The `:skin` lane bypasses the budgeted
+	// geometry pump BY DESIGN (per-wearer bakes can't share the geom cache), so it needs its own
+	// inflight cap — a Bento body linkset carries 200+ child meshes and un-gated dispatch of full-LOD
+	// fetch+bake for all of them blew the JS heap to 92% (soft-heap brake → whole-scene stall).
+	const _skinFetchQ = []
+	let _skinFetchActive = 0
+	const SKIN_FETCH_MAX = 4
+	function _pumpSkinFetch() {
+		while (_skinFetchActive < SKIN_FETCH_MAX && _skinFetchQ.length) {
+			const job = _skinFetchQ.shift()
+			_skinFetchActive++
+			Promise.resolve().then(job).catch(() => {}).finally(() => { _skinFetchActive--; _pumpSkinFetch() })
+		}
+	}
+	function enqueueSkinFetch(job) { _skinFetchQ.push(job); _pumpSkinFetch() }
 
 	// Hide/show the cheap capsule body + arm/face children (fallback placeholder) without touching the
 	// node itself (it carries position/rotation/label + rigged attachments).

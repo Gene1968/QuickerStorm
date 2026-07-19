@@ -55,6 +55,56 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-19 — 7·C: login attachment rez (peers can finally see us)  [uncommitted]
+- **Root cause of "invisible with floating label"** (as seen from FS): real viewers rez their COF
+  attachments grid-side at login; QS never did, so the sim held ZERO attachments for us. Peers'
+  viewers cleared the cloud on our AgentSetAppearance echo (valid params/bakes), and with a
+  mesh-body outfit (FULL BODY ALPHA hides the system body) there was nothing left to draw.
+- **`RezMultipleAttachmentsFromInv`** (Low 396) encoder + `C.INV_REZ_ATTACHMENTS` — chunked ≤4
+  ObjectData per packet, shared CompoundMsgID. Client one-shot per login (armed in onCapsReady,
+  12s settle): once the COF is readable and the sim demonstrably streamed no own-attachments,
+  rez the COF's attachment links (deduped targets). A sim that auto-reattached is left untouched.
+- LIVE: 16 attachments rezzed in 4 packets → sim streamed all 16 back parented to own avatar →
+  **own outfit now assembles on the jellydoll in QS**, and the worn ZHAO AO's script BOOTED and
+  spoke in local chat — grid-side rez confirmed. Peer-side FS visual check with Gene.
+
+## 2026-07-19 — 7·B-5: attachment placement fixes + peer-avatar resync  [uncommitted]
+- **Ancestor-aware worn-mesh skinning** — `isWornMeshAttachment` now matches ANY mesh descendant of
+  an avatar, not just attachment roots: a Bento body linkset's 246 child meshes were taking the
+  plain lane and rendering unskinned at the proxy (Gene's "7-8m pants beside the jellydoll"). Plus
+  **skin recovery for the ordering race**: on the IDB/probe reload path children usually build
+  before their avatar chain is known — `refetchWornSkin` re-fetches via the :skin lane when a mesh
+  joins an avatar subtree (one-shot, rigid meshes no-op and keep their point/proxy placement).
+  LIVE: DW body went 7 → 196+/246 skinned, outfit assembles on the avatar.
+- **Skin-lane concurrency gate** — the :skin lane bypasses the budgeted geometry pump by design, so
+  246 simultaneous full-LOD fetch+bakes blew the JS heap to 97% and the soft-heap brake froze the
+  whole scene at 547 objs. `enqueueSkinFetch` caps it at 4 in flight (heap now stable ~1GB through
+  a full rebuild).
+- **Attach-point euler order** — SL composes fixed-axis X→Y→Z (`q = qz·qy·qx`) = three.js `'ZYX'`,
+  not `'XYZ'`; wrong order visibly mis-rotated Chest/Spine mounts (the "shirt rotated 90° forward").
+- **Peer avatars replayed on probe-resync** — peers are never client-cached and the sim won't
+  re-blast them, so a reloaded client had an empty Nearby until a manual rebuild (Gene, live).
+  Cached avatar ObjectUpdates now re-send at the engine-ready moment; attachments re-adopt via
+  orphansByParent. LIVE: Nearby populates immediately after reload.
+- Dev aid: `window.__qs = { meshMap }` (DEV only) for live scene forensics alongside the Pinia
+  console pattern.
+
+## 2026-07-18 — Bundle 7·B-4: COF write side (wear/unwear)  [uncommitted]
+- **COF link maintenance** — wear/detach now keep the Current Outfit Folder truthful, viewer-managed
+  per FS/OpenSim (no AIS3 slam): wear = `LinkInventoryItem` (Low 426, new encoder; ack lands via the
+  normal UpdateCreateInventoryItem→INV_ITEM_CREATED path), unwear = `RemoveInventoryItem` with the
+  LINK's id. Central in `useInventory` (`createCofLink`/`cofLinkFor`), so attachments wear/detach
+  from ANY surface maintain their links too.
+- **Clothing/body-part wear** — new `AgentIsNowWearing` (Low 383) encoder + `C.AGENT_WEARING`: the
+  FULL worn wearables set (classic one-slot-per-type; layering UI later). `wearWearable` (replace
+  same type) + `takeOffWearable` (clothing only — body parts replace-only, FS parity). No visual
+  change until the bake pipeline; keeps COF, sim wearables table, and "Now wearing" truthful.
+- **Surfaces** — Appearance floater Wearing tab rows get hover ✕ (Detach / Take off); inventory
+  context menu "Wear" now ENABLED for clothing/body parts (was disabled "needs appearance bake").
+- LIVE-verified on OSGrid: take-off → `RemoveInventoryItem` + `AgentIsNowWearing (8)`, floater count
+  10→9; re-wear via context menu → `LinkInventoryItem` + `AgentIsNowWearing (9)`, link ack row back
+  in the COF. Note: OpenSim COFs contain BOTH links and real item copies — the read model handles both.
+
 ## 2026-07-18 — Bundle 7·B: attachment-point mounting + linkset decouple + locomotion  [uncommitted]
 - **Attachment-point mounting (7·B-1)** — rigid (non-rigged) attachments mount at their named SL
   attachment point instead of piling at the feet. Server forwards the ObjectUpdate `State` byte

@@ -37,7 +37,7 @@ export function useCurrentOutfit() {
 	const inv = useInventoryStore()
 	const worldStore = useWorldStore()
 	const sessionStore = useSessionStore()
-	const { fetchFolders } = useInventory()
+	const { fetchFolders, detach, takeOffWearable } = useInventory()
 
 	const cofFolderId = computed(() => inv.systemFolder(FOLDER_CURRENT_OUTFIT))
 
@@ -93,6 +93,14 @@ export function useCurrentOutfit() {
 	const attachments = computed(() => wornItems.value.filter(i => i.assetType === AT_OBJECT))
 	const gestures = computed(() => wornItems.value.filter(i => i.assetType === AT_GESTURE))
 
+	// 7·B-4 write side: attachments detach (DetachAttachmentIntoInv + COF unlink); clothing takes
+	// off (COF unlink + AgentIsNowWearing). Body parts can only be replaced, never removed (FS).
+	function canRemove(item) { return item.assetType === AT_OBJECT || item.assetType === AT_CLOTHING }
+	function removeWorn(item) {
+		if (item.assetType === AT_OBJECT) detach(item.itemId)
+		else if (item.assetType === AT_CLOTHING) takeOffWearable(item)
+	}
+
 	function iconFor(item) { return itemIcon(item.assetType, item.invType) }
 	function detailFor(item) {
 		if (item.assetType === AT_BODYPART || item.assetType === AT_CLOTHING) return wearableTypeName(item.flags)
@@ -104,6 +112,6 @@ export function useCurrentOutfit() {
 	return {
 		cofFolderId, refresh, wornItems,
 		bodyParts, clothing, attachments, gestures,
-		iconFor, detailFor,
+		iconFor, detailFor, canRemove, removeWorn,
 	}
 }

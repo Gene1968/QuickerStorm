@@ -722,7 +722,7 @@ onUnmounted(() => {
 		<div v-if="!tabFills" class="flex-1"/>
 		<div class="flex flex-row items-center justify-between shrink-0 text-xs text-fg">
 			<div class="relative">
-				<button class="ui-btn px-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon class="w-3.5 h-3.5" /><ChevronDownIcon class="w-2.5" /></button>
+				<button class="ui-btn pe-0.5 ps-1" title="Show additional options" @click.stop="showCogMenu = !showCogMenu"><CogIcon class="w-3.5 h-3.5" /><ChevronDownIcon class="w-2.5 h-3.5" /></button>
 				<!-- Gear menu — mirrors menu_inventory_gear_default.xml, backed items only. -->
 				<div v-if="showCogMenu" class="absolute bottom-full mb-1 left-0 z-[60] min-w-[11rem] bg-panel border border-edge rounded-sm shadow-lg text-2xs" @click.stop>
 					<button class="block w-full text-left px-2 py-1.5 hover:bg-white/10 text-fg disabled:opacity-40" :disabled="isLast" title="Open another inventory window" @click="newInventoryWindow">New Inventory Window</button>

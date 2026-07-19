@@ -68,6 +68,9 @@ export const C = {
 	INV_UPDATE_PERMS: 'inv_update_perms', // { itemId, folderId, nextOwnerMask, everyoneMask?, groupMask? } — UpdateInventoryItem permission change
 	INV_WEAR_ATTACHMENT: 'inv_wear_attachment', // { itemId, attachPoint? } — RezSingleAttachmentFromInv (attachPoint 0 = default)
 	INV_DETACH: 'inv_detach', // { itemId } — detach attached object back to inventory
+	INV_CREATE_LINK: 'inv_create_link', // { folderId, targetItemId, type?(24), invType?, name?, description? } — LinkInventoryItem (Low 426): create an AT_LINK row (COF worn bookkeeping); reply lands via S.INV_ITEM_CREATED. Unlink = INV_PURGE_ITEM with the LINK's id
+	AGENT_WEARING: 'agent_wearing', // { wearables:[{itemId, wearableType}] } — AgentIsNowWearing (Low 383): FULL worn body-part/clothing set (not a delta); sim replaces its AvatarWearables table. Attachments excluded (they ride INV_WEAR_ATTACHMENT/INV_DETACH)
+	INV_REZ_ATTACHMENTS: 'inv_rez_attachments', // { items:[{itemId, name?, description?, attachPoint?}], firstDetachAll? } — RezMultipleAttachmentsFromInv (Low 396), chunked ≤4/packet w/ shared CompoundMsgID. Login outfit restore: rez the COF's attachment links grid-side so peers can actually see us (7·C)
 	REZ_OBJECT: 'rez_object', // { itemId, folderId, position:{x,y,z}, name, description, assetType, invType, flags, saleType, salePrice, creationDate, creatorId, ownerId, groupId, baseMask, ownerMask, groupMask, everyoneMask, nextOwnerMask } — RezObject (Low 293); server holds no inventory so client sends the full InventoryData row (same fields as INV_UPDATE_PERMS). position = drop point in region coords; server rezzes AT it (BypassRaycast=1, RayEnd=position). removeItem defaults to !copyable
 	// ── Social (to-do) ──
 	AVATAR_PROPS_REQ: 'avatar_props_req', // { avatarId } — AvatarPropertiesRequest (Low 169); sim replies Properties/Interests/Groups
