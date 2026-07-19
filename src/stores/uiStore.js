@@ -117,6 +117,16 @@ export const useUiStore = defineStore('ui', () => {
 	// Kill-switch for the off-main-thread cache I/O worker (qs-geom + qs-mesh). Default ON; turning
 	// it off forces the main-thread cache path (sync fallback). See useCacheIO / geomCache client.
 	const cacheWorker = ref(localStorage.getItem('qs-cache-worker') !== '0')
+	// 7·D avatar body mode: force EVERY avatar to the jellydoll placeholder (Advanced/Dev toggle —
+	// simpler/temp rendering, FS "mute everyone" analogue). Auto mode still jellydolls an avatar
+	// whose complexity proxy (worn triangles) exceeds avatarMaxComplexity, FS RenderAvatarMaxComplexity-
+	// style. See useWorldEngine updateAvatarBodyMode.
+	const jellydollAll = ref(localStorage.getItem('qs-jellydoll-all') === '1')
+	function toggleJellydollAll() { jellydollAll.value = !jellydollAll.value }
+	const _avcSaved = Number(localStorage.getItem('qs-av-max-complexity'))
+	const avatarMaxComplexity = ref(
+		Number.isFinite(_avcSaved) && _avcSaved >= 10_000 ? _avcSaved : 300_000,
+	)
 	// Day/night cycle: follow region sun time (default ON). When off, a fixed time-of-day override
 	// (0..1) drives the sky directly. See useEnvironment.js + skyDome.js.
 	const dayNightCycle = ref(localStorage.getItem('qs-daynight-cycle') !== '0')
@@ -139,6 +149,12 @@ export const useUiStore = defineStore('ui', () => {
 	watch(showFps, (v) => localStorage.setItem('qs-show-fps', v ? '1' : '0'))
 	watch(cacheWorker, (v) =>
 		localStorage.setItem('qs-cache-worker', v ? '1' : '0'),
+	)
+	watch(jellydollAll, (v) =>
+		localStorage.setItem('qs-jellydoll-all', v ? '1' : '0'),
+	)
+	watch(avatarMaxComplexity, (v) =>
+		localStorage.setItem('qs-av-max-complexity', String(v)),
 	)
 	// Live FPS + inbound WS bandwidth (kbps) — written by useWorldEngine's animate loop at ~1 Hz
 	// (not every frame). Displayed in the AudioControlsWidget top-bar stats cluster.
@@ -840,6 +856,9 @@ export const useUiStore = defineStore('ui', () => {
 		instancing,
 		showFps,
 		cacheWorker,
+		jellydollAll,
+		toggleJellydollAll,
+		avatarMaxComplexity,
 		dayNightCycle,
 		timeOfDay,
 		fps,

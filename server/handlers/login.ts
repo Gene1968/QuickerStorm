@@ -266,6 +266,7 @@ export async function handleLogin(
 		terrainCache:       new Map(),
 		coveredLandPatches: new Set(),
 		appearanceCache:    new Map(),
+		animationCache:     new Map(),
 		objCache:           new Map(),
 		sentToClient:       new Set<number>(),
 		clientCached:       null,

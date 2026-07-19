@@ -180,6 +180,9 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	// for every avatar in view (and for us). Keep the echo dedup key: our own appearance is
 	// region-independent, so re-echoing the identical params after a TP would be redundant.
 	session.appearanceCache.clear()
+	// Animation state is per-region-run too — the destination sim re-signals AvatarAnimation
+	// for every avatar in view once we arrive.
+	session.animationCache.clear()
 	session.caps.clear()
 	session.seqNum = 0
 	session.lastPingAt = 0
@@ -351,6 +354,8 @@ export function applyTeleportFinish(
 const WATCH_LOCALIDS = new Set(
 	(process.env.QS_WATCH_LOCALIDS ?? '').split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0),
 )
+// 7·D: sampled AvatarAnimation log counter (first 10 per server run).
+let _animLogN = 0
 // Startup proof the watch is armed — absence of this line in the log = env var never reached us.
 if (WATCH_LOCALIDS.size) console.log(`[Watch] armed for localIds: ${[...WATCH_LOCALIDS].join(',')}`)
 function watchDump(session: CircuitState, path: string, objects: Array<{ localId?: number; pcode?: number }>, buf: Buffer, dataOffset: number): void {
@@ -1262,6 +1267,31 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 				}
 			}
 		} catch (e) { slog.warn(session.ws, `AvatarAppearance decode error: ${(e as Error).message}`) }
+		return
+	}
+
+	// AvatarAnimation (High 20) — the FULL set of animations currently signaled for one avatar
+	// (FS process_avatar_animation, llviewermessage.cpp:5231: mSignaledAnimations is cleared and
+	// repopulated on every message — NOT a delta). AnimID = animation asset UUID (fetchable via
+	// ViewerAsset ?animatn_id=), AnimSequenceID = restart marker (same id, new seq → replay from 0).
+	// Forward + cache per avatar so resync replays the pose state (sim only re-sends on change).
+	if (name === 'AvatarAnimation') {
+		try {
+			const m = decode(buf, { alreadyExpanded: true })
+			const avatarId = m.blocks.Sender?.[0]?.ID
+			if (!avatarId) return
+			const anims = (m.blocks.AnimationList ?? []).map(b => ({
+				id: String(b.AnimID),
+				seq: (b.AnimSequenceID as number) | 0,
+			}))
+			const payload = { avatarId, anims }
+			session.animationCache.set(String(avatarId).toLowerCase(), payload)
+			session.ws.send(JSON.stringify({ t: S.AVATAR_ANIMATION, d: payload }))
+			// Sampled (first 10): enough to confirm the 7·D pipeline live without flooding the log.
+			if (++_animLogN <= 10) {
+				slog.info(session.ws, `← AvatarAnimation ${String(avatarId).slice(0, 8)}… ${anims.length} anim(s): ${anims.map(a => a.id.slice(0, 8)).join(',')}`)
+			}
+		} catch (e) { slog.warn(session.ws, `AvatarAnimation decode error: ${(e as Error).message}`) }
 		return
 	}
 
@@ -2410,6 +2440,17 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			slog.info(
 				session.ws,
 				`→ ${session.appearanceCache.size} avatar appearance(s) re-sent on probe-resync (engine ready)`,
+			)
+		}
+		// Same pre-mount loss for ANIMATIONS (7·D): AvatarAnimation is a full-state signal sent only
+		// on change — replay the cached signaled set so avatars resume their pose after reload.
+		if (session.animationCache.size) {
+			for (const d of session.animationCache.values()) {
+				session.ws.send(JSON.stringify({ t: S.AVATAR_ANIMATION, d }))
+			}
+			slog.info(
+				session.ws,
+				`→ ${session.animationCache.size} avatar animation set(s) re-sent on probe-resync (engine ready)`,
 			)
 		}
 		return

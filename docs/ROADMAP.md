@@ -35,7 +35,7 @@ at the bottom — that's *my* bookkeeping, it never parks a bundle in limbo or d
 | **v0.5** | **Beta-2 — richer world** | Voice, groups, appearance bake, media / web-on-prim, neighboring sims. |
 | **v0.6 → v1.0** | **depth & polish** | PBR materials, scripting behaviors, LOD & heavy-region scale, cross-region *walk*, mobile 2D. |
 
-**The single biggest Beta-1 blocker is avatars** (bundle 7, ~70%). Everything else on the social loop is
+**The single biggest Beta-1 blocker is avatars** (bundle 7, ~80% — mesh-body outfits render + animate; classic/system bodies = 7·E). Everything else on the social loop is
 already 🟡. Voice / groups / media are deliberately **Beta-2**, not Beta-1.
 
 ---
@@ -43,7 +43,7 @@ already 🟡. Voice / groups / media are deliberately **Beta-2**, not Beta-1.
 ## Completion — the honest number
 
 Weighted by how much each bundle matters to "a usable general-purpose viewer" (not by line count — a
-one-line fix ≠ Voice). **Headline: ~53% of a complete viewer.** (The old README's "Phase 3 ~75%" measured
+one-line fix ≠ Voice). **Headline: ~59% of a complete viewer.** (The old README's "Phase 3 ~75%" measured
 only the asset-pipeline slice, not the whole product.)
 
 | Bundle | Weight | % | Milestone |
@@ -54,7 +54,7 @@ only the asset-pipeline slice, not the whole product.)
 | 4. Object Build & Edit | 7 | 50 | v0.4 |
 | 5. Object Interaction & Contents | 6 | 72 | v0.4 |
 | 6. Inventory | 9 | 75 | v0.4 |
-| 7. Avatars & Appearance | 10 | 15 | v0.4/v0.5 |
+| 7. Avatars & Appearance | 10 | 80 | v0.4/v0.5 |
 | 8. Chat & IM | 7 | 70 | v0.4 |
 | 9. Groups & Group IM | 4 | 8 | v0.5 |
 | 10. Friends & Profile | 5 | 62 | v0.4 |
@@ -66,7 +66,7 @@ only the asset-pipeline slice, not the whole product.)
 | 16. Performance & Scale (infra) | 6 | 70 | ongoing |
 | 17. UI / Floaters / Preferences | 5 | 55 | v0.4 |
 | 18. Beta hosting / 2D-mobile | 5 | 12 | v0.4 |
-| **Weighted total** | **110** | **~53%** | |
+| **Weighted total** | **110** | **~59%** | |
 
 > Weights are editable — if you disagree that (say) Voice is a 5 or Avatars a 10, change them and the headline
 > re-rolls. The point is one transparent number, not a vibe.
@@ -139,8 +139,8 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 - 🔭 **Inventory load-at-scale** (50–150k accounts still spin on the initial full walk) — correctness bar is met; this is throughput. Design the paced walk + trusted incremental cache first.
 - 🔜 Wear clothing-layer wearables → gated on bundle 7 (bake).
 
-### 7. Avatars & Appearance — 🟡 ~70% · v0.4 (jellydoll/attachments) → v0.5 (anims/bake) · **#1 beta blocker**
-Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, **locomotion-animated** idle/walk/sit, **shape-height-scaled**) replaces the tube; AvatarAppearance fully decoded (bakes + VisualParams + height; cached server-side, replayed on resync); **"Now wearing" floater is REAL** (COF read); **AgentSetAppearance echoes our params/bakes**; **rigged mesh skins at rest pose (AV-1)**, faces correctly (+X-forward), and **rigid attachments mount at their SL attachment points** (hair at head, shoes at feet) with linkset children riding a child proxy. Bakes not composited (jellydoll body, not real skin); peers still see us invisible (see 7·C).
+### 7. Avatars & Appearance — 🟡 ~80% · v0.4 (mesh outfits LIVE) → v0.5 (classic/bake) · **#1 beta blocker**
+Today: **mesh-body outfits render AND animate in our viewer** — live Bento SL skeleton per avatar, worn rigged mesh runtime-skinned to it, attachment points riding bones, real SL animations (AvatarAnimation → .anim playback with per-joint priority blending); jellydoll is now a render MODE (load placeholder → real body on coverage; complexity-cap + Advanced/Dev "Jellydoll all avatars" mute). AvatarAppearance fully decoded + resync-replayed; "Now wearing" REAL (COF read); AgentSetAppearance echo + login attachment rez = **peers see us right (FS-confirmed)**. NOT yet: classic/system bodies (baked layers — Gene@OS's pants; see 7·E), proportions beyond height, facial/lip.
 **Shipped (→ CHANGELOG for detail):** ✅ **7·A appearance read-model** (VisualParams decode + OpenSim height estimate → shape-scaled jellydoll · COF read → real Now-wearing · codec fix: OSGrid's absent trailing blocks were killing ALL AvatarAppearance decode · appearance resync replay) · ✅ **7·C first pass** — `AgentSetAppearance` echo (sent+acked live; *peer-visual check from a second viewer still pending*) · ✅ AV-1 rigged-mesh rest-pose skinning · ✅ Avatar facing (+X-forward) · ✅ AV-2 per-UUID jellydoll tint + cloud/jellydoll state · 🟡 Jellydoll humanoid placeholder. *Note: "humanoid-tee" was never real — the only prior placeholder was the tube.*
 
 **Open work — staged in dependency order.**
@@ -154,11 +154,21 @@ Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, **locomotion-an
 **7·C — Outbound appearance (remaining).**
 - ✅ **Login attachment rez** (2026-07-19 → CHANGELOG) — ROOT CAUSE of invisible-with-label: QS never rezzed COF attachments grid-side, so after the appearance echo cleared the cloud, a mesh-body outfit (system body alpha'd out) had nothing to draw. `RezMultipleAttachmentsFromInv` from COF links, one-shot per login. **PEER-CONFIRMED (Gene, FS, 2026-07-19): "nearly perfect appearance" — animesh wings move, sim plays her stand/walk/jump for other viewers.** Outbound appearance is DONE for mesh bodies without the bake pipeline; classic baked layers remain Beta-2.
 - 🔜 **Body-type test matrix** (Gene 2026-07-19): track/verify all three outfit styles — **classic** (system body + baked clothing layers: needs the bake pipeline; e.g. Gene@OS's "missing pants" are classic-layer pants, invisible until composited) · **mesh** (attachments — now rezzed+skinned) · **Bento** (extended skeleton: wings/tail place at rest pose now; animation = Animesh/anim work, later). Each with linkset-children coverage.
-- 🔭 **Bake pipeline** (`UploadBakedTexture`, real skin+clothing compositing) — risky (can blank avatars grid-wide), needs a test grid. Unblocks clothing-layer wearables + "save outfit." *Beta-2.*
+- 🔭 **Bake pipeline** — moved to **7·E** (classic/system avatar) below.
 
-**7·D — Render & animate the worn look (the next major stretch — Gene 2026-07-19: "majority of work is back in how we will display and move those attachments").** Peers see us right; now OUR renderer has to match what FS shows. This is the runtime-skeleton project: a live SL skeleton per avatar (THREE.Skeleton with SL joint names + Bento), worn rigged mesh skinned to it at RUNTIME (replaces the AV-1 static rest-pose bake), attachment points riding their bones, `AvatarAnimation` decode + SL anim asset (internal format/BVH) playback with priority blending — then worn meshes walk/sit/fly with the avatar instead of standing at rest pose. HIGH effort/risk; design-first (brainstorm section below).
+**7·D — Render & animate the worn look.** ✅ **CORE SHIPPED 2026-07-19 (→ CHANGELOG, uncommitted, live-verify pending):** live Bento SL skeleton per avatar · worn rigged mesh RUNTIME-skinned to it (replaces the AV-1 rest-pose bake; `:skinv4`/`:skin3` cache lanes) · attachment points ride bones · `AvatarAnimation` decode/forward/resync-replay · `.anim` parser (FS LLKeyframeMotion port) + fetch · per-joint priority/ease/loop AnimPlayer. Remaining follow-ups:
+- ✅ **Live-verified on OSGrid 2026-07-19** (MCP): own avatar's FULL mesh outfit renders textured (wings/hair/jacket/pants), peer worn meshes at correct heights, animesh wings animating, anims fetch/decode/play, resync replay works. Still to eyeball: sit pose · own-avatar walk · Gene's FS side-by-side. One HG visitor T-poses (their AO anim 404s on this grid — rest-pose fallback, expected; but check the jellydoll GLB idle isn't dropping for them).
+- ✅ **Jellydoll = render MODE** (2026-07-19): 'loading' (doll + attachments as they land) → 'body' (torso-covering skinned mesh in, 2s settle → doll hides) ⇄ 'muted' (complexity proxy > `avatarMaxComplexity` triangles OR Advanced/Dev ▸ "Jellydoll all avatars" → doll shown, worn hidden, FS-style). 🔜 complexity-cap slider in Prefs/QuickPrefs (store value `avatarMaxComplexity` exists, default 300k tris) · FS-parity ARC formula (ours = raw triangles) · drive/retarget the doll from the SL skeleton (GLB clips vs SL anims can disagree today).
+- 🔜 Proportions: VisualParam-driven bone scaling + `alt_inverse_bind_matrix` joint offsets (mesh-body joint positions) + pelvisOffset.
+- 🔜 Skinned-mesh raycast/bounds (pick precision on worn meshes) · anim IDB cache tier if fetch volume warrants.
+- 🔭 Constraints/IK (foot lock, `Female_land`) · facial/lip · hand poses · emotes.
 
-**Later:** 🔭 billboard impostor render · facial/lip · Animesh · gestures.
+**7·E — Classic/system avatar (the remaining body type — closes bundle 7).** Mesh outfits are done end-to-end; a CLASSIC outfit (system body + system clothing layers, e.g. Gene@OS) still shows nothing because we render NO system avatar mesh at all — the system body isn't a rigged mesh asset, it's the viewer-built avatar mesh (FS `character/avatar_*.llm` LOD meshes) morphed by VisualParams and painted with COMPOSITED baked textures. Scope:
+- 🔭 **System avatar mesh** — port/convert the FS .llm avatar meshes (head/upper/lower/eyes/hair/skirt), skin them to the SAME runtime skeleton, drive shape with VisualParam morphs (we already decode the params).
+- 🔭 **Bake pipeline** — composite skin+clothing layers into baked textures (`UploadBakedTexture`); risky (can blank avatars grid-wide), needs a test grid. Unblocks clothing-layer wearables + "save outfit". *Beta-2.*
+- 🔜 Proportions: VisualParam-driven bone scaling + `alt_inverse_bind_matrix` joint offsets + pelvisOffset (mesh-body joint positions).
+
+**Later:** 🔭 billboard impostor render · facial/lip · Animesh · gestures · constraints/IK (foot lock) · hand poses.
 
 ### 8. Chat & IM — 🟡 ~70% · v0.4
 - 🔜 Nearby chat: scrollback persistence · mute names/words · options panel (range/channel/font) · search · tear-off · reopen-without-losing-history.

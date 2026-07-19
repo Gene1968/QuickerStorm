@@ -55,6 +55,45 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-19 — 7·D: runtime skeleton + AvatarAnimation playback  [uncommitted]
+- **Live SL skeleton per avatar** — full Bento THREE.Bone hierarchy (133 bones + 26 collision
+  volumes) generated from FS `avatar_skeleton.xml` (`shared/slSkeletonDef.js`, cross-checked exactly
+  against the AV-1 `jointRestWorld` table); bones sit in the SL frame, one root conversion
+  (`src/lib/slSkeleton.js`), built sync at avatar creation.
+- **Runtime skinning replaces the AV-1 server bake** — the `:skin` mesh lane now ships RAW bind-space
+  geometry + 4-influence joint indices/weights + the rig block (`skinv4` server / `skin3` client cache
+  keys); client builds a THREE.SkinnedMesh bound to the live skeleton (row-major SL matrices land via
+  `fromArray` = the row→column-vector transpose; `bindMode 'attached'` keeps placement 100% bone-driven).
+  Zero-weight verts keep the FS joint-0 fallback. `meshSkin.ts` (bake) stays as tested reference.
+- **Attachment points ride bones** — point groups parent to their SL joint's bone
+  (`attachPointBoneLocal`: raw SL offset + point rot with the root conversion factored out), so rigid
+  attachments and linkset-child proxies follow animation; id 40 (Avatar Center/mRoot) keeps the
+  legacy avatar-node mount.
+- **AvatarAnimation (High 20) decoded + forwarded** (`S.AVATAR_ANIMATION`) — full-state signaled set
+  per avatar (FS `process_avatar_animation` semantics: same id + new seq = restart); cached per
+  session and replayed on resync/probe-resync (like appearance) so nobody freezes at rest after reload.
+- **.anim asset parser** (`shared/animDecode.js`, ported from FS `LLKeyframeMotion::deserialize`,
+  bun-tested incl. legacy 0/1 format + constraint skip) + client fetch via the existing generic
+  `ASSET_FETCH assetType:'animation'` path (`useAnimFetch.js`).
+- **AnimPlayer** (`src/lib/animPlayer.js`) — hand-rolled sampler (NOT AnimationMixer): per-joint
+  priority masking in ascending order, cubic-step ease in/out, loop-in/out cycling, seq restarts;
+  writes bone locals each frame. 11 new client tests pin frames/blend/loop (`slSkeletonAnim.test.js`).
+- Worn rigged meshes now walk/sit/fly with the avatar in OUR renderer (they were frozen at rest pose);
+  jellydoll body keeps its GLB locomotion clips for now (retarget/retire = follow-up).
+- **Pelvis pos-key fix (live-caught: whole body ~1m low)** — mPelvis pos keys are authored relative to
+  the AVATAR ROOT (decoded live stand/walk assets: pelvis keys ≈ 0, not ~1.067), so they anchor at the
+  pelvis REST position; every other joint's keys replace its local offset (wing-fold anims carry
+  rest-magnitude values). **LIVE-VERIFIED (MCP, 2026-07-19): worn shirt/pants/hair at correct heights,
+  animesh wings flapping frame-to-frame, own mesh body skinning in; zero client errors.**
+- **Jellydoll = render MODE** (same day) — 'loading' (doll + attachments as they land) → 'body'
+  (torso-covering skinned mesh in + 2s settle → doll hides, real outfit shows) ⇄ 'muted' (complexity
+  proxy > `ui.avatarMaxComplexity` triangles, or Advanced/Dev ▸ **"Jellydoll all avatars"** → doll
+  shown, worn hidden, FS complexity semantics). LIVE-VERIFIED: own avatar's full textured outfit
+  (wings/hair/jacket/pants) replaces the doll after load.
+- Follow-ups: complexity slider UI + FS ARC formula · skinned-mesh raycast/bounds precision ·
+  VisualParam bone scaling (proportions) · alt inverse-bind joint offsets · constraints/IK ·
+  classic/system bodies → **7·E**.
+
 ## 2026-07-19 — 7·C: login attachment rez (peers can finally see us)  [uncommitted]
 - **Root cause of "invisible with floating label"** (as seen from FS): real viewers rez their COF
   attachments grid-side at login; QS never did, so the sim held ZERO attachments for us. Peers'

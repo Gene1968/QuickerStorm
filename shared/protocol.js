@@ -140,7 +140,7 @@ export const S = {
 	ASSET_UPLOAD_RESULT: 'asset_upload_result', // { id, ok, assetId?, itemId?, error? } — reply to C.ASSET_UPLOAD (2-step upload complete or failed), correlated by id
 	ASSET_DATA: 'asset_data', // { uuid, assetType, mime, dataB64, error?, hasAlpha?, srcWidth?, srcHeight?, full? } — fetched asset; textures arrive as WebP (server-transcoded from J2C). srcWidth/srcHeight = TRUE J2C-header dims; full=true echoes a full-resolution preview decode
 	MATERIAL_DATA: 'material_data', // { kind:'pbr'|'legacy', materials:{ [uuid]: descriptor }, error? } — PBR GLTF json or legacy normal/spec record
-	MESH_DATA: 'mesh_data', // { meshId, lod, submeshes:[{positions,normals,uvs,indices}], skinned?, skinDbg?, error? } — skinned=true: positions are REST-POSE skinned (rigged attach, server-baked); place at avatar root
+	MESH_DATA: 'mesh_data', // { meshId, lod, submeshes:[{positions,normals,uvs,indices, jointIndices?, jointWeights?}], skin?, skinDbg?, error? } — skin={jointNames,bindShapeMatrix,inverseBindMatrix,pelvisOffset}: rigged mesh, client runtime-skins onto the live SL skeleton (7·D)
 
 	SCULPT_DATA: 'sculpt_data', // { sculptId, sculptType, submeshes:[{positions,normals,uvs,indices (base64)}], error? }
 	// ── Social (to-do) ──
@@ -149,6 +149,7 @@ export const S = {
 	SELF_GROUPS: 'self_groups', // { groups:[{ id, name, insignia, powers, acceptNotices, contribution }] } — AgentGroupDataUpdate
 	AGENT_DATA: 'agent_data', // { activeGroupId, groupTitle, groupName, groupPowers } — AgentDataUpdate
 	AVATAR_PROPS: 'avatar_props', // { avatarId, properties?, interests?, groups? } — AvatarProperties/Interests/GroupsReply
+	AVATAR_ANIMATION: 'avatar_animation', // { avatarId, anims:[{ id, seq }] } — decoded AvatarAnimation (High 20). The FULL signaled set for that avatar (not a delta — FS process_avatar_animation clears + repopulates); id = animation asset UUID, seq = AnimSequenceID (same id with a NEW seq = restart from t=0). Client diffs vs playing motions to start/stop. Replayed from server cache on resync.
 	AVATAR_APPEARANCE: 'avatar_appearance', // { avatarId, bakes:{head?,upper?,lower?,eyes?,skirt?,hair?}, params:[U8...], height, appearanceVersion?, cofVersion? } — decoded AvatarAppearance (Low 158); baked-texture UUIDs per FS ETextureIndex (HEAD8/UPPER9/LOWER10/EYES11/SKIRT19/HAIR20); params = raw VisualParam bytes (ascending-ID tweakable sequence, no ids on the wire), height = OpenSim SetHeight() estimate (m). Client flips peer cloud→jellydoll + scales the placeholder; bakes cached for the bake pipeline (bundle 7). Replayed from server cache on resync.
 	PARCEL_INFO: 'parcel_info', // { parcel:{ parcelId, ownerId, name, desc, actualArea, globalX, globalY, globalZ, simName, snapshotId, dwell, salePrice } } — ParcelInfoReply
 	NAME_REPLY: 'name_reply', // { names: { [uuid]: "First Last" } } — UUIDNameReply

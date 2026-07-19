@@ -140,6 +140,10 @@ export interface CircuitState {
 	// reconnect/reload the client's appearance map is empty and the sim won't re-send, so every
 	// peer would re-cloud. Cache the forwarded WS payload per avatarId and replay on resync.
 	appearanceCache: Map<string, unknown>   // avatarId → S.AVATAR_APPEARANCE `d` payload
+	// WHY: same replay rationale as appearanceCache — AvatarAnimation is a full-state signal sent
+	// only on change, so a reloaded client would leave every avatar frozen at rest pose until their
+	// NEXT anim change. Cache the latest signaled set per avatarId and replay on resync (7·D).
+	animationCache: Map<string, unknown>    // avatarId → S.AVATAR_ANIMATION `d` payload
 	/** AgentSetAppearance SerialNum counter — stub send is 1, each appearance echo bumps it. */
 	appearanceSerial?: number
 	/** Dedup key (params+TE hash) of the last echoed own appearance — breaks the echo loop when

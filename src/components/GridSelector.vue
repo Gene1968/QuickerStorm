@@ -20,7 +20,7 @@ function onChange(e) {
 <template>
 	<div class="flex flex-row gap-3">
 		<select
-			class="flex-1 w-full px-3 py-2 rounded-sm bg-panel-alt border border-edge text-fg focus:outline-hidden focus:ring-2 focus:ring-accent"
+			class="flex-1 bg-panel-alt border border-edge rounded-sm w-full py-1 px-2 text-fg focus:outline-hidden focus:ring-2 focus:ring-accent"
 			:value="store.selectedNick"
 			@change="onChange"
 		>
@@ -51,7 +51,7 @@ function onChange(e) {
 		<!-- Delete user-added grid -->
 		<button
 			v-if="store.isUserGrid(store.selectedNick)"
-			class="px-2 py-2 rounded-sm border border-edge hover:border-red-500 text-fg-subtle hover:text-red-500 transition-colors"
+			class="border border-edge hover:border-red-500 rounded-sm py-1 px-2 text-fg-subtle hover:text-red-500 transition-colors"
 			title="Remove this grid"
 			@click="store.removeUserGrid(store.selectedNick)"
 		>×</button>
@@ -62,7 +62,7 @@ function onChange(e) {
 			:href="store.selectedGrid?.about ?? store.selectedGrid?.loginPage"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="btn py-2 px-3 rounded-sm border border-edge bg-accent text-white hover:opacity-80 transition-colors text-lg"
+			class="border border-edge bg-accent rounded-sm py-0 px-2.5 text-xl text-white leading-[2rem] hover:opacity-80 transition-colors"
 			title="Visit the grid's website"
 		>↗</a>
 	</div>

@@ -35,7 +35,10 @@ import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { jellydollColorHex } from '@/lib/avatarColor.js'
 import { loadAvatarModel, createAvatarModel, AVATAR_MODEL_HEIGHT } from '@/lib/avatarModel.js'
-import { attachPointFromState, isHudAttachPoint, attachPointLocal } from '@/lib/attachmentPoints.js'
+import { attachPointFromState, isHudAttachPoint, attachPointLocal, attachPointBoneLocal } from '@/lib/attachmentPoints.js'
+import { createSLSkeleton, mergeSkinnedGeometry, bindToSkeleton } from '@/lib/slSkeleton.js'
+import { AnimPlayer } from '@/lib/animPlayer.js'
+import { getAnim } from '@/composables/useAnimFetch.js'
 import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
@@ -3152,25 +3155,56 @@ export function useWorldEngine(canvasRef) {
 		mesh.visible = true
 	}
 
+	// ── 7·D: live SL skeleton per avatar ──────────────────────────────────────────────────────
+	// Every avatar node gets a real THREE.Bone hierarchy (slSkeleton.js — full Bento table incl.
+	// collision volumes) the moment it's built. Worn rigged mesh binds to it (runtime skinning),
+	// attachment-point groups ride its bones, and the AnimPlayer (AvatarAnimation-driven) poses it.
+	const animPlayers = new Map()       // localId → AnimPlayer
+	const pendingAnimSets = new Map()   // avatarId(lower) → anims[] that arrived before the avatar built
+	function ensureSLSkeleton(mesh, obj) {
+		if (mesh.userData.slSkel) return mesh.userData.slSkel
+		const skel = createSLSkeleton(RIG_FOOT_OFFSET)
+		mesh.add(skel.root)
+		mesh.userData.slSkel = skel
+		const player = new AnimPlayer(skel.bones)
+		animPlayers.set(obj.localId, player)
+		// An AvatarAnimation that arrived before this avatar's ObjectUpdate replays now.
+		const key = (obj.fullId || '').toLowerCase()
+		const parked = pendingAnimSets.get(key)
+		if (parked) { pendingAnimSets.delete(key); applySignaledAnims(player, parked) }
+		return skel
+	}
+
 	// ── 7·B: attachment-point mounting ────────────────────────────────────────────────────────
-	// Rigid (non-rigged) attachments mount inside a per-point Group positioned at the SL default-
-	// skeleton REST position of the point's joint + the avatar_lad offset/rot (attachmentPoints.js).
+	// Attachments mount inside a per-point Group parented to the point's BONE on the live SL
+	// skeleton (7·D — points follow animation), at the avatar_lad offset/rot (attachmentPoints.js).
 	// The wire pos/rot of an attached root are POINT-local (FS llviewerjointattachment.cpp), so with
-	// the group in place the existing child pos/rot writes land in the right frame. Rest-pose only —
-	// points don't follow the idle animation yet (comes with the real animation system).
+	// the group in place the existing child pos/rot writes land in the right frame. Points whose
+	// joint isn't a skeleton bone (id 40 "Avatar Center" = mRoot) keep the legacy avatar-node mount.
 	function attachContainerFor(avatarMesh, pointId) {
 		if (!pointId || isHudAttachPoint(pointId)) return avatarMesh
 		let groups = avatarMesh.userData.attachGroups
 		if (!groups) { groups = new Map(); avatarMesh.userData.attachGroups = groups }
 		let g = groups.get(pointId)
 		if (!g) {
-			const local = attachPointLocal(pointId, RIG_FOOT_OFFSET)
-			if (!local) return avatarMesh
-			g = new THREE.Group()
-			g.position.copy(local.pos)
-			g.quaternion.copy(local.quat)
-			g.userData.attachPointId = pointId
-			avatarMesh.add(g)
+			const skel = avatarMesh.userData.slSkel
+			const boneLocal = skel ? attachPointBoneLocal(pointId) : null
+			const bone = boneLocal ? skel.bones.get(boneLocal.joint) : null
+			if (bone) {
+				g = new THREE.Group()
+				g.position.copy(boneLocal.pos)     // raw SL offset — bone frame IS the SL frame
+				g.quaternion.copy(boneLocal.quat)  // point rot with the root's SL→Three conv factored out
+				g.userData.attachPointId = pointId
+				bone.add(g)
+			} else {
+				const local = attachPointLocal(pointId, RIG_FOOT_OFFSET)
+				if (!local) return avatarMesh
+				g = new THREE.Group()
+				g.position.copy(local.pos)
+				g.quaternion.copy(local.quat)
+				g.userData.attachPointId = pointId
+				avatarMesh.add(g)
+			}
 			groups.set(pointId, g)
 		}
 		return g
@@ -3203,40 +3237,128 @@ export function useWorldEngine(canvasRef) {
 		parentMesh.add(mesh)
 	}
 
+	// ── 7·D: avatar body mode — jellydoll placeholder vs worn mesh body ───────────────────────
+	// The jellydoll GLB is a render MODE, not just a load placeholder (FS complexity semantics):
+	//   'loading' — worn mesh body hasn't covered the torso yet → doll shown, attachments show as
+	//               they land (current progressive behavior).
+	//   'body'    — a torso-covering skinned mesh is in and settled → doll hidden, worn shows.
+	//               Swap happens BODY_MODE_SETTLE_MS after coverage first lands (a touch later than
+	//               FS, so the outfit pops in more complete — Gene 2026-07-19).
+	//   'muted'   — complexity proxy (worn triangle count) exceeds ui.avatarMaxComplexity, or
+	//               Advanced/Dev ▸ "Jellydoll all avatars" is on → doll shown, worn HIDDEN
+	//               (FS jellydolls don't render attachments).
+	const BODY_MODE_SETTLE_MS = 2000
+	// "Body item" = a rigged mesh weighting to torso core joints (a chest-covering mesh). Feet/leg/
+	// head-only attachments (shoes, hair) never hide the doll on their own.
+	const TORSO_JOINTS = new Set(['mTorso', 'mChest', 'mSpine1', 'mSpine2', 'mSpine3', 'mSpine4', 'CHEST', 'BELLY', 'LOWER_BACK', 'UPPER_BACK'])
+
+	function avatarBodyStats(avatarMesh) {
+		let covered = false, tris = 0
+		avatarMesh.traverse(o => {
+			// Real worn/attached objects only (they carry localId); the jellydoll GLB, capsule parts,
+			// labels, bones and point groups don't.
+			if (!(o.isMesh || o.isSkinnedMesh) || o.userData?.localId === undefined || o.userData.hudAttachment) return
+			const g = o.geometry
+			tris += (g?.index ? g.index.count : (g?.attributes?.position?.count ?? 0)) / 3
+			if (o.isSkinnedMesh && o.userData.skinJointNames?.some(n => TORSO_JOINTS.has(n))) covered = true
+		})
+		return { covered, tris }
+	}
+
+	function applyAvatarBodyMode(avatarMesh, mode) {
+		avatarMesh.userData.bodyMode = mode
+		const doll = avatarMesh.userData.jellydoll
+		if (doll) doll.visible = mode !== 'body'
+		const showWorn = mode !== 'muted'
+		avatarMesh.traverse(o => {
+			if (!(o.isMesh || o.isSkinnedMesh) || o.userData?.localId === undefined || o.userData.hudAttachment) return
+			if (o.userData.awaitingGeom) return   // still a hidden placeholder — geometry reveal owns it
+			o.visible = showWorn
+		})
+	}
+
+	function updateAvatarBodyMode(avatarMesh) {
+		if (!avatarMesh?.userData?.isAvatar || meshMap.get(avatarMesh.userData.localId) !== avatarMesh) return
+		const { covered, tris } = avatarBodyStats(avatarMesh)
+		const mode = (uiStore.jellydollAll || tris > uiStore.avatarMaxComplexity) ? 'muted'
+			: covered ? 'body' : 'loading'
+		const cur = avatarMesh.userData.bodyMode ?? 'loading'
+		if (mode === cur) return
+		// loading → body waits out the settle window so the outfit lands more complete first.
+		if (mode === 'body' && cur === 'loading') {
+			if (avatarMesh.userData.bodyModeTimer) return
+			avatarMesh.userData.bodyModeTimer = setTimeout(() => {
+				avatarMesh.userData.bodyModeTimer = null
+				if (meshMap.get(avatarMesh.userData.localId) !== avatarMesh) return
+				const s = avatarBodyStats(avatarMesh)   // re-check — outfit may have grown past the cap
+				const m = (uiStore.jellydollAll || s.tris > uiStore.avatarMaxComplexity) ? 'muted' : s.covered ? 'body' : 'loading'
+				if (m !== (avatarMesh.userData.bodyMode ?? 'loading')) applyAvatarBodyMode(avatarMesh, m)
+			}, BODY_MODE_SETTLE_MS)
+			return
+		}
+		applyAvatarBodyMode(avatarMesh, mode)
+	}
+
+	// Advanced/Dev ▸ "Jellydoll all avatars" — recompute every live avatar on toggle.
+	watch(() => uiStore.jellydollAll, () => {
+		for (const m of meshMap.values()) if (m.userData?.isAvatar) updateAvatarBodyMode(m)
+	})
+
+	// 7·D: swap a worn rigged mesh to a live SkinnedMesh bound to its avatar's SL skeleton. The raw
+	// :skin payload (bind-space verts + per-vertex joint indices/weights + the rig block) becomes ONE
+	// grouped BufferGeometry (materialIndex = submesh/face index, same contract as the baked path) on
+	// a THREE.SkinnedMesh that REPLACES the placeholder Mesh in the scene + meshMap. Placement is
+	// 100% bone-driven from then on (bindMode 'attached' cancels the node transform), so the sim's
+	// child offset stays irrelevant exactly as under the AV-1 bake. Returns false when the avatar
+	// ancestor (or its skeleton) isn't known yet — the caller leaves the mesh eligible for the
+	// mountChild-triggered retry (fetch replays from the mem cache, cheap).
+	function applySkinnedRig(localId, obj, mesh, subs) {
+		let anc = mesh.parent
+		while (anc && !anc.userData?.isAvatar) anc = anc.parent   // bone/point/proxy chain → avatar node
+		const skel = anc?.userData?.slSkel
+		if (!skel) return false
+		const geo = mergeSkinnedGeometry(subs)
+		if (!geometryHasFiniteVerts(geo)) { geo.dispose?.(); geoNaNCount++; return true }
+		const sk = new THREE.SkinnedMesh(geo, mesh.material)
+		sk.name = mesh.name
+		sk.userData = mesh.userData
+		sk.userData.skinned = true
+		sk.userData.skinJointNames = subs.skin.jointNames   // body-mode torso-coverage check
+		sk.userData.riggedBindPose = true   // keep terse/full updates off the node transform
+		sk.onBeforeRender = mesh.onBeforeRender
+		// Adopt children that latched onto the placeholder before the rig landed (proxy re-homes them).
+		for (const c of [...mesh.children]) sk.add(c)
+		anc.add(sk)
+		mesh.parent?.remove(mesh)
+		mesh.geometry?.dispose()
+		meshMap.set(localId, sk)
+		bindToSkeleton(sk, skel, subs.skin)
+		applyPlanarUVs(sk, obj, null)
+		if (hasMultiFaceMesh(obj)) buildFaceMaterials(sk, obj)
+		ensureChildProxy(sk, worldStore.objects.get(localId) || obj)   // 7·B-2
+		if (sk.userData.awaitingGeom) { sk.userData.awaitingGeom = false }
+		sk.visible = anc.userData.bodyMode !== 'muted'
+		updateAvatarBodyMode(anc)   // torso coverage / complexity may have just changed
+		return true
+	}
+
 	// 7·B-5: worn-skin recovery for the ordering race. isWornMeshAttachment is decided at BUILD time
 	// from the worldStore parent chain — but on the IDB/probe reload path children usually build
 	// BEFORE their avatar/root records exist (live: 239 of 246 DW body meshes took the plain lane →
 	// unskinned "giant pants"). When a mesh later joins an avatar subtree (mountChild/adoption),
-	// re-fetch via the :skin lane and swap in the rest-pose bake; a rigid mesh (no skin block) is a
-	// cheap no-op fetch and keeps its point/proxy placement. One-shot per mesh (skinRefetched flag —
-	// set on the upsert-time skin path too so fresh worn meshes don't double-fetch).
+	// re-fetch via the :skin lane and bind to the live skeleton (7·D); a rigid mesh (no rig block) is
+	// a cheap no-op fetch and keeps its point/proxy placement. One-shot per mesh (skinRefetched flag —
+	// set on the upsert-time skin path too so fresh worn meshes don't double-fetch); cleared when the
+	// avatar ancestry still isn't known so the NEXT mount retries.
 	function refetchWornSkin(localId) {
 		const obj = worldStore.objects.get(localId)
 		const mesh = meshMap.get(localId)
 		if (!obj?.meshId || !mesh || mesh.userData.skinned || mesh.userData.skinRefetched) return
 		mesh.userData.skinRefetched = true
 		enqueueSkinFetch(() => getMesh(obj.meshId, 0, nearRefDist(obj), true).then(subs => {
-			if (!(subs && subs.length) || !subs.skinned) return   // rigid — current placement is right
+			if (!(subs && subs.length) || !subs.skin) return      // rigid — current placement is right
 			if (meshMap.get(localId) !== mesh) return             // killed/rebuilt while queued
-			return meshBaker.bake({
-				kind: 'submesh',
-				scale: [1, 1, 1],
-				subs: subs.map(s => ({ positions: s.positions, normals: s.normals, uvs: s.uvs, indices: s.indices })),
-			}).then(out => {
-				if (!out || out.bad || meshMap.get(localId) !== mesh) return
-				const baked = geometryFromArrays(out)
-				if (!geometryHasFiniteVerts(baked)) { baked.dispose?.(); return }
-				const old = mesh.geometry
-				mesh.geometry = baked
-				old.dispose()
-				mesh.userData.skinned = true
-				// Mirror the applySwap rigged branch: hoist out of any point/proxy frame, bind-pose at avatar.
-				let anc = mesh.parent
-				while (anc && !anc.userData?.isAvatar && (anc.userData?.attachPointId != null || anc.userData?.childProxyFor != null)) anc = anc.parent
-				if (anc?.userData?.isAvatar && mesh.parent !== anc) anc.add(mesh)
-				if (mesh.parent?.userData?.isAvatar) placeRiggedAttachment(mesh)
-				if (mesh.userData.awaitingGeom) { mesh.userData.awaitingGeom = false; mesh.visible = true }
-			})
+			if (!applySkinnedRig(localId, obj, mesh, subs)) mesh.userData.skinRefetched = false
 		}))
 	}
 
@@ -3561,10 +3683,11 @@ export function useWorldEngine(canvasRef) {
 
 			if (!isAvatar && !obj._placeholder) {
 				if (isWornMeshAttachment) {
-					// AV-1: worn mesh attachment — bypass the shared per-asset geom cache and fetch via the
-					// `:skin` lane (ensureSkin). A rigged mesh comes back with REST-POSE skinned positions
-					// (server-baked) + skinned=true → snapped to the avatar root in applySwap. A rigid (non-
-					// rigged) attachment has no skin block, comes back un-skinned, and keeps its sim offset.
+					// 7·D: worn mesh attachment — bypass the shared per-asset geom cache and fetch via the
+					// `:skin` lane (ensureSkin). A rigged mesh comes back with RAW bind-space geometry + the
+					// rig block → applySkinnedRig binds a SkinnedMesh to the avatar's live skeleton. A rigid
+					// (non-rigged) attachment has no rig block, bakes like a plain mesh, and keeps its sim
+					// offset inside its attachment-point group.
 					// GATED (7·B-5): the skin lane skips the budgeted geometry pump, so a 200+-mesh body
 					// linkset dispatching every full-LOD fetch at once blew the heap to 92% (soft-heap brake
 					// froze the whole scene at 547 objs, live 2026-07-19). enqueueSkinFetch runs a few at a time.
@@ -3572,10 +3695,14 @@ export function useWorldEngine(canvasRef) {
 					enqueueSkinFetch(() => getMesh(obj.meshId, meshLod, nearRefDist(obj), true).then(subs => {
 						if (!(subs && subs.length)) return
 						if (meshMap.get(obj.localId) !== mesh) return   // killed/rebuilt while queued
-						if (subs.skinned) mesh.userData.skinned = true
-						console.log('[AV1] worn attach mesh=%s parent=%s skinned=%s dbg=%s', obj.meshId, obj.parentId, !!subs.skinned, subs.skinDbg)
-						// bakeScale is [1,1,1] for assets; server already applied the full skin transform, so
-						// the client only does the SL→Three axis swap (no bindShape, no primScale for rigged).
+						console.log('[AV1] worn attach mesh=%s parent=%s rig=%s dbg=%s', obj.meshId, obj.parentId, !!subs.skin, subs.skinDbg)
+						if (subs.skin) {
+							// Avatar ancestry may still be unknown (build-order race) — leave the mesh
+							// eligible for the mountChild-triggered refetch (mem-cache replay, cheap).
+							if (!applySkinnedRig(obj.localId, obj, mesh, subs)) mesh.userData.skinRefetched = false
+							return
+						}
+						// Rigid attachment: plain bake (SL→Three swap only), keeps point placement.
 						return meshBaker.bake({ kind: 'submesh', subs: plainSubs(subs), scale: bakeScale }).then(applySwap)
 					}))
 				} else if (cachedArrays) {
@@ -3750,6 +3877,8 @@ export function useWorldEngine(canvasRef) {
 				applyAvatarLook(mesh, obj)
 				// Swap in the shared rigged-humanoid jellydoll (async GLB load; hides the capsule on arrival).
 				attachJellydoll(mesh, obj)
+				// 7·D: live SL skeleton + anim player (sync — bones must exist before attachments mount).
+				ensureSLSkeleton(mesh, obj)
 
 				const div = document.createElement('div')
 				div.style.cssText = 'color:#fff;font-size:0.75rem;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:4px;white-space:nowrap;'
@@ -4091,6 +4220,17 @@ export function useWorldEngine(canvasRef) {
 		if (mesh) {
 			// 🧍 Stop advancing this avatar's jellydoll animation mixer (if any) before disposal.
 			avatarMixers.delete(localId)
+			// 7·D: retire its SL-skeleton anim player + pending body-mode swap timer.
+			const _pl = animPlayers.get(localId)
+			if (_pl) { _pl.dispose(); animPlayers.delete(localId) }
+			if (mesh.userData.bodyModeTimer) { clearTimeout(mesh.userData.bodyModeTimer); mesh.userData.bodyModeTimer = null }
+			// 7·D body mode: a removed worn item changes its avatar's coverage/complexity — recompute
+			// after this removal settles (detach may drop the torso mesh → doll comes back).
+			if (!mesh.userData.isAvatar) {
+				let anc = mesh.parent
+				while (anc && !anc.userData?.isAvatar) anc = anc.parent
+				if (anc) queueMicrotask(() => updateAvatarBodyMode(anc))
+			}
 			// 7·B-2: the child proxy lives OUTSIDE the mesh subtree (in the avatar's attachment-point
 			// group) — detach it explicitly or it leaks with any still-parented children.
 			if (mesh.userData.childProxy) mesh.userData.childProxy.parent?.remove(mesh.userData.childProxy)
@@ -4100,6 +4240,9 @@ export function useWorldEngine(canvasRef) {
 					// 🧍 Jellydoll clones SHARE one GLB geometry (SkeletonUtils.clone) — disposing it here
 					// would corrupt every other avatar. Dispose only the per-clone material for those.
 					if (!child.userData?.sharedAvatarGeom) child.geometry.dispose()
+					// 7·D: a worn SkinnedMesh owns its THREE.Skeleton (per-mesh inverse-bind set over the
+					// shared bones) — dispose it to free the GPU bone texture.
+					if (child.isSkinnedMesh && child.skeleton && !child.userData?.sharedAvatarGeom) child.skeleton.dispose()
 					// material may be a per-face array (mesh multi-material) — dispose each
 					if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.())
 					else child.material.dispose()
@@ -4219,6 +4362,8 @@ export function useWorldEngine(canvasRef) {
 			root.traverse(o => { if (o.isMesh || o.isSkinnedMesh) o.userData.sharedAvatarGeom = true })
 			mesh.add(root)
 			mesh.userData.jellydoll = root
+			// 7·D body mode: the GLB can land AFTER the worn body already won — respect the mode.
+			root.visible = (mesh.userData.bodyMode ?? 'loading') !== 'body'
 			setCapsulePlaceholderVisible(mesh, false)   // hide the tube; humanoid takes over
 			mesh.userData.avatarMats = mats             // tint the humanoid instead of the capsule
 			applyAvatarLook(mesh, obj)
@@ -4253,6 +4398,27 @@ export function useWorldEngine(canvasRef) {
 			applyAvatarLook(mesh, rec)
 			applyJellydollShape(mesh, rec)   // 7·A: rescale an already-attached jellydoll
 		}
+	}
+
+	// S.AVATAR_ANIMATION (decoded AvatarAnimation High 20, 7·D): the sim's FULL signaled set for one
+	// avatar. Diff → start/stop keyframe motions on that avatar's AnimPlayer; unknown assets fetch
+	// through useAnimFetch and join once decoded (if still signaled). May arrive before the avatar's
+	// ObjectUpdate (live join) — parked and replayed when the skeleton is built.
+	function applySignaledAnims(player, anims) {
+		const now = performance.now() / 1000
+		const missing = player.setSignaled(anims, now)
+		for (const id of missing) {
+			getAnim(id).then(ok => { if (ok) player.noteAnimLoaded(id, performance.now() / 1000) })
+		}
+	}
+
+	function onAvatarAnimation(d) {
+		if (!d?.avatarId) return
+		const key = d.avatarId.toLowerCase()
+		const rec = worldStore.avatars.find(a => a.fullId?.toLowerCase() === key)
+		const player = rec ? animPlayers.get(rec.localId) : null
+		if (!player) { pendingAnimSets.set(key, d.anims || []); return }
+		applySignaledAnims(player, d.anims || [])
 	}
 
 	function onObjectUpdate(payload) {
@@ -6416,6 +6582,13 @@ export function useWorldEngine(canvasRef) {
 		// 🧍 Advance jellydoll animations + 7·B-3 locomotion: sit when parented to a prim, walk when
 		// the node is actually moving (world-space horizontal speed), idle otherwise. 0.35 m/s
 		// threshold sits well under SL walk (~3.2 m/s) but above GSAP settle jitter.
+		// 7·D: pose every live SL skeleton from its signaled SL animations (worn rigged mesh +
+		// bone-mounted attachments follow; the jellydoll body keeps its own GLB locomotion below).
+		if (animPlayers.size) {
+			const nowS = performance.now() / 1000
+			for (const player of animPlayers.values()) player.update(nowS)
+		}
+
 		if (avatarMixers.size) {
 			for (const [lid, rec] of avatarMixers) {
 				rec.mixer.update(dt)
@@ -7077,6 +7250,7 @@ export function useWorldEngine(canvasRef) {
 		on(S.OBJECT_PROPS,      onObjectProps)
 		on(S.OBJECT_PROPS_FAMILY, onObjectPropsFamily)
 		on(S.AVATAR_APPEARANCE, onAvatarAppearance)
+		on(S.AVATAR_ANIMATION,  onAvatarAnimation)
 		on(S.MAP_BLOCKS,        onEngineMapBlocks)
 		on(S.SIT_RESPONSE,      onSitResponse)
 	})

@@ -138,7 +138,7 @@ async function submit() {
 				type="text"
 				placeholder="Username: First Last"
 				autocomplete="new-password"
-				class="reset-input w-full px-3 py-2 pr-8 rounded-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
+				class="reset-input rounded-sm py-1 pe-8 ps-3 w-full focus:outline-hidden focus:ring-2 focus:ring-accent"
 				required
 				@focus="openAccountSuggestions"
 				@input="openAccountSuggestions"
@@ -155,18 +155,18 @@ async function submit() {
 			><ChevronDownIcon class="w-4 h-4 transition-transform" :class="showAccountSuggestions ? 'rotate-180' : ''" /></button>
 			<ul
 				v-if="showAccountSuggestions"
-				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto rounded-sm border border-edge bg-panel shadow-lg"
+				class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-40 overflow-y-auto border border-edge rounded-sm bg-panel shadow-lg"
 				@mousedown.prevent
 			>
 				<template v-if="accountsStore.accounts.length">
 					<li
 						v-for="acct in accountsStore.accounts"
 						:key="acct.username + '@' + acct.gridNick"
-						class="cursor-pointer px-3 py-1.5 text-sm text-fg hover:bg-accent/15"
+						class="py-1.5 px-3 text-sm text-fg hover:bg-accent/15 cursor-pointer"
 						@click="pickAccount(acct)"
 					>{{ acct.username }} <span class="text-fg-subtle">@ {{ gridStore.grids.find(g => g.nick === acct.gridNick)?.name ?? acct.gridNick }}</span></li>
 				</template>
-				<li v-else class="px-3 py-1.5 text-sm text-fg-subtle italic select-none">None stored</li>
+				<li v-else class="py-1.5 px-3 text-sm text-fg-subtle italic select-none">None stored</li>
 			</ul>
 		</div>
 
@@ -175,7 +175,7 @@ async function submit() {
 			type="password"
 			placeholder="Password"
 			autocomplete="new-password"
-			class="reset-input px-3 py-2 rounded-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
+			class="reset-input rounded-sm py-1 px-3 focus:outline-hidden focus:ring-2 focus:ring-accent"
 			required
 			@keydown.enter="submit"
 		/>
@@ -209,7 +209,7 @@ async function submit() {
 						type="text"
 						placeholder="Region name"
 						autocomplete="off"
-						class="w-full px-3 py-1.5 rounded-sm bg-panel border border-edge text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
+						class="border border-edge rounded-sm bg-panel py-1.5 px-3 w-full text-fg text-sm focus:outline-hidden focus:ring-1 focus:ring-accent"
 						@focus="openRegionSuggestions"
 						@input="openRegionSuggestions"
 						@blur="closeRegionSuggestions"
@@ -223,7 +223,7 @@ async function submit() {
 						<li
 							v-for="r in filteredRegions"
 							:key="r"
-							class="cursor-pointer px-3 py-1.5 text-sm text-fg hover:bg-accent/15"
+							class="py-1.5 px-3 text-sm text-fg hover:bg-accent/15 cursor-pointer"
 							@click="pickRegion(r)"
 						>{{ r }}</li>
 					</ul>
@@ -242,7 +242,7 @@ async function submit() {
 
 		<button
 			type="button"
-			class="px-4 py-2 rounded-sm bg-accent-dark text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
+			class="rounded-sm bg-accent-dark py-1.5 px-4 text-white font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
 			:disabled="submitting"
 			@click="submit"
 		>

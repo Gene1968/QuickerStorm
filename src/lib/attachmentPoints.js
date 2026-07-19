@@ -144,3 +144,23 @@ export function attachPointLocal(id, footOffset) {
 	const quat = new THREE.Quaternion(q.x, q.z, -q.y, q.w)
 	return { pos, quat }
 }
+
+// SL→Three frame conversion C (matches slSkeleton.js SL_TO_THREE_QUAT: R_x(−90°)) and its inverse,
+// prebuilt for the bone-local variant below.
+const _CONV_INV = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)).invert()
+
+/** 7·D: point transform LOCAL TO ITS BONE, for mounting on the live SL skeleton (slSkeleton.js).
+ *  Bones sit in the SL frame under a root that carries the SL→Three conversion C, so the group's
+ *  local offset is the RAW SL-metre point offset, and its rotation needs C factored back out:
+ *  world = A·C·T_joint·anim·T_off·R_g must equal the legacy A·T₃·R₃ at rest, which (with
+ *  R₃ = C·q_SL·C⁻¹, the permuted quat above) gives R_g = q_SL·C⁻¹. Children keep receiving
+ *  three-frame (slToThree'd) transforms unchanged — and now ride the animated bone.
+ *  Returns { joint, pos: Vector3 (SL, bone-local), quat } or null for HUD/unknown. */
+export function attachPointBoneLocal(id) {
+	const p = POINTS[id]
+	if (!p) return null
+	const [joint, px, py, pz, rx, ry, rz] = p
+	const d = Math.PI / 180
+	const qSL = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx * d, ry * d, rz * d, 'ZYX'))
+	return { joint, pos: new THREE.Vector3(px, py, pz), quat: qSL.multiply(_CONV_INV) }
+}

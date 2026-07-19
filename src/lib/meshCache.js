@@ -114,10 +114,11 @@ export async function meshCacheGet(uuid, now = Date.now()) {
 				const rec = req.result
 				if (rec) _touchLater(uuid, now)
 				const subs = rec ? rec.submeshes : null
-				// AV-1: re-attach the `skinned` flag (rest-pose skinned geometry) so a warm relog still
-				// places worn attachments at the avatar root. Rides as a non-indexed prop on the subs
-				// array (structured-clone drops it), so it's stored/read as its own record field.
-				if (rec && subs && rec.skinned) subs.skinned = true
+				// 7·D: re-attach the rig block so a warm relog still runtime-skins worn attachments.
+				// Rides as a non-indexed prop on the subs array (structured-clone drops array expando
+				// props), so it's stored/read as its own record field. (rec.skinned was the AV-1 baked
+				// flag — those records live under the retired `:skin2` key lane and are never read.)
+				if (rec && subs && rec.skin) subs.skin = rec.skin
 				settle(resolve, subs)
 			}
 			req.onerror = () => settle(reject, req.error)
@@ -160,13 +161,14 @@ export async function meshCachePut(uuid, submeshes, now = Date.now()) {
 		const db = await openDb()
 		const bytes = submeshes.reduce((sum, s) =>
 			sum + s.positions.byteLength + s.normals.byteLength +
-			      s.uvs.byteLength + s.indices.byteLength, 0)
+			      s.uvs.byteLength + s.indices.byteLength +
+			      (s.jointIndices?.byteLength || 0) + (s.jointWeights?.byteLength || 0), 0)
 		await new Promise((resolve, reject) => {
 			const tx = db.transaction([STORE, META], 'readwrite')
 			const st = tx.objectStore(STORE)
 			const mt = tx.objectStore(META)
 			const rec = { uuid, submeshes, bytes, lastUsed: now }
-			if (submeshes.skinned) rec.skinned = true   // AV-1: rest-pose skinned geometry (place at avatar root)
+			if (submeshes.skin) rec.skin = submeshes.skin   // 7·D: rig block (see meshCacheGet re-attach)
 			st.put(rec)
 			let pending = null
 			const finishStats = (total) => {

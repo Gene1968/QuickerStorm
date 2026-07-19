@@ -4,7 +4,7 @@ A web-based 3D viewer for OpenSimulator and Second Life. Open a browser tab, log
 
 Tested so far on OSGrid, NeverWorld, DigiWorldz and others.
 
-## Current state · July 2026 · **v0.3** · **~53% of a complete viewer**
+## Current state · July 2026 · **v0.3** · **~59% of a complete viewer**
 
 Login, movement, terrain, cross-region teleport, 1 500–1 800 prim rendering per region, Map 2D, IM,
 inventory, object build/edit, and context menus all work — enough for solo/small-group exploration on any
@@ -15,9 +15,12 @@ caches, worker-thread mesh bake, warm reloads that skip re-fetching, and a Fires
 that restores the full scene from disk without re-asking the sim. Inventory is data-loss-proof through
 OpenSim's write-back lag.
 
-**Next milestone — v0.4 "Beta-1":** the bar to open to outside testers. The single biggest blocker is
-**avatars** (still robot-tube placeholders); after that it's polishing the build / inventory / chat / social
-loop and going publicly hosted. Voice, groups, media, and appearance-bake are **Beta-2 (v0.5)**.
+**Next milestone — v0.4 "Beta-1":** the bar to open to outside testers. Avatars — the long-time #1
+blocker — now render **mesh-body outfits fully**: a live Bento skeleton per avatar, worn rigged mesh
+skinned at runtime, attachments riding bones, and real SL animations playing (jellydoll placeholder
+only during load / over the complexity cap). Remaining avatar work is the **classic/system body**
+(baked-layer outfits); after that it's polishing the build / inventory / chat / social loop and going
+publicly hosted. Voice, groups, media, and appearance-bake are **Beta-2 (v0.5)**.
 
 **Full remaining work is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md)** (open items only, grouped into
 18 area bundles with a transparent weighted completion %). Shipped work lives in
@@ -48,7 +51,7 @@ release each bundle is targeted at. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for
 | Object Build & Edit floater | 🟡 ~50% | v0.4 |
 | Object interaction & contents (right-click, take/buy, Xfer) | 🟡 ~72% | v0.4 |
 | Inventory (browse/manage/give/rez/take, create+edit notecards/scripts) | 🟡 ~77% | v0.4 |
-| **Avatars & Appearance** (robot-tube today — #1 beta blocker) | 🟡 ~15% | v0.4/v0.5 |
+| **Avatars & Appearance** (mesh outfits render + animate; classic bodies to-do) | 🟡 ~80% | v0.4/v0.5 |
 | Chat & Instant Messaging | 🟡 ~70% | v0.4 |
 | Groups & Group IM | 🟡 ~8% | v0.5 |
 | Friends & Profile | 🟡 ~62% | v0.4 |

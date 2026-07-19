@@ -706,6 +706,8 @@ const MENUS = [
 				title: 'Re-resolve and re-apply every texture on every built object — fixes stuck black/blank surfaces in one pass (Rebake only redoes avatar bakes)' },
 			{ label: 'Rebake avatar textures',	kbd: 'Ctrl+Alt+R',	action: () => act(rebake),
 				title: 'Force the sim to rebuild and re-send your avatar bake textures' },
+			{ label: 'Jellydoll all avatars',	checked: () => ui.jellydollAll,	action: () => act(() => ui.toggleJellydollAll()),
+				title: 'Render every avatar as the simple tinted placeholder (worn meshes hidden) — temp/simple rendering; auto mode still jellydolls avatars over the complexity cap' },
 			{ sep: true },
 			{ label: 'Performance…',						action: () => act(() => ui.openPreferencesOnTab('graphics')) },
 			{ label: 'Quick Preferences',	checked: () => ui.showQuickPrefs,	action: () => ui.toggleQuickPrefs() },

@@ -11,10 +11,11 @@ import { C, S } from '@shared/protocol.js'
 // Cache/dedup key per LOD level — the IDB store keyPath is an opaque string, so "uuid:lod" just works.
 // CRITICAL: lod 0 (high) keeps the BARE uuid so pre-LOD warm qs-mesh entries (keyed by uuid = the
 // high decode) still hit — else every mesh re-downloads from the grid on a warm region (cube storm).
-// AV-1: a rigged worn attachment (skin=true) gets REST-POSE skinned geometry from the server, which is
-// DIFFERENT bytes from the same asset's plain (un-skinned) decode — so it lives under a separate `:skin`
-// cache lane. Worn attachments always use skin=true; everything else uses the plain lane. No collision.
-const mkKey = (uuid, lod, skin = false) => `${lod === 0 ? uuid : `${uuid}:${lod}`}${skin ? ':skin2' : ''}`
+// 7·D: a rigged worn attachment (skin=true) gets RAW bind-space geometry + per-vertex joint
+// indices/weights + the rig block from the server — different bytes from the same asset's plain
+// decode, so it lives under a separate `:skin` cache lane. `:skin3` = runtime-skinning payload
+// (`:skin2` was the AV-1 server rest-pose bake; stale entries just miss and refetch once).
+const mkKey = (uuid, lod, skin = false) => `${lod === 0 ? uuid : `${uuid}:${lod}`}${skin ? ':skin3' : ''}`
 
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_INFLIGHT = 12       // concurrent network mesh fetches (was 6; 0 timeouts at 6 → headroom)
@@ -62,11 +63,14 @@ function _on(d) {
 		normals:   b64ToTyped(s.normals, Float32Array),
 		uvs:       b64ToTyped(s.uvs, Float32Array),
 		indices:   b64ToTyped(s.indices, Uint16Array),
+		// 7·D rig attributes (skin lane only): 4 influences per vertex, index into skin.jointNames.
+		...(s.jointIndices ? { jointIndices: b64ToTyped(s.jointIndices, Uint8Array) } : {}),
+		...(s.jointWeights ? { jointWeights: b64ToTyped(s.jointWeights, Float32Array) } : {}),
 	}))
-	// AV-1: skinned=true → positions are REST-POSE skinned (server-baked); the render path places the mesh
-	// at the avatar root. Rides as a prop on the subs array; persisted by meshCache (below).
-	if (d.skinned) subs.skinned = true
-	if (d.skinDbg) subs.skinDbg = d.skinDbg   // AV-1 diagnostic (no-key | decode-null | ok | skinned)
+	// 7·D: skin block present → geometry is RAW bind-space; the render path builds a SkinnedMesh
+	// bound to the live SL skeleton. Rides as a prop on the subs array; persisted by meshCache (below).
+	if (d.skin) subs.skin = d.skin
+	if (d.skinDbg) subs.skinDbg = d.skinDbg   // diagnostic (no-key | decode-null | ok | rig)
 	if (resolve) { resolve(subs); return }
 	// Late arrival (request already timed out): cache under the composite key + clear the failure mark.
 	stats.late++

@@ -84,6 +84,12 @@ export function replayCachedWorld(session: CircuitState): void {
 		ws.send(JSON.stringify({ t: S.AVATAR_APPEARANCE, d }))
 	}
 
+	// Same for animation state (7·D): AvatarAnimation is full-state, sent only on change — replay
+	// the cached signaled set per avatar so nobody freezes at rest pose after a reload.
+	for (const d of session.animationCache.values()) {
+		ws.send(JSON.stringify({ t: S.AVATAR_ANIMATION, d }))
+	}
+
 	slog.info(ws, `[resync] replayed cached world: region="${session.cachedRegionName ?? ''}" patches=${nPatches} objects=${objs.length} appearances=${session.appearanceCache.size} ownAvatar=${session.ownAvatarUpdate ? 'yes' : 'NONE'} spawnPos=${session.cachedSpawnPos?.join(',') ?? '?'}`)
 	// Decode-forensics companion (lludp.ts WATCH_LOCALIDS): resync is a delivery path the packet
 	// watch can't see — report whether a watched object was part of this replay and what it carried.

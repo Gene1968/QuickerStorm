@@ -358,7 +358,11 @@
       "PowerShell($p = \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($p\\) { Stop-Process -Id $p -Force; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue\\) { \"still-listening\" } else { \"port-free\" })",
       "Bash(echo \"---exit $?---\")",
       "Bash(echo \"---exit=$?---\")",
-      "Bash(npx esbuild *)"
+      "Bash(npx esbuild *)",
+      "Bash(node parseSkeleton.js)",
+      "Bash(./node_modules/.bin/esbuild src/lib/meshCache.js --outfile=/dev/null --log-level=error)",
+      "Bash(./node_modules/.bin/esbuild src/composables/useWorldEngine.js --outfile=/dev/null --log-level=error)",
+      "Bash(./node_modules/.bin/esbuild src/stores/uiStore.js --outfile=/dev/null --log-level=error)"
     ]
   }
 }

@@ -6,7 +6,6 @@ import { dirname } from 'path'
 import { getSession } from '../state/sessions'
 import { slog } from '../lib/serverLog'
 import { parseMeshHeader, decodeMeshLOD, decodeSkinBlock, pickLodRef } from '../lib/meshDecode'
-import { skinSubmeshes } from '../lib/meshSkin'
 import { jointRestWorld } from '../lib/avatarSkeleton'
 import { createAssetMemo } from '../lib/assetMemo'
 import { openAssetDiskCacheSafe, createDisabledAssetDiskCache, type AssetDiskCache, type AssetPayload } from '../lib/assetDiskCache'
@@ -15,17 +14,22 @@ import { S } from '../../shared/protocol.js'
 // Tier-2 decoded-mesh cache + request coalescing (same rationale as assets.ts: retries used to
 // refire the grid fetch AND the LOD decode). Keyed by `meshId:lod` — mesh bytes are global by UUID,
 // and each LOD level decodes to its own submesh payload (see pickLodRef / the per-level fetch).
-// AV-1: a rigged mesh (skin block present) requested WITH skin (wantSkin, from a worn attachment) is
-// baked to REST-POSE positions server-side (meshSkin: v·bind_shape·Σwₖ·invBindₖ·jointRestWorldₖ) and
-// shipped as static geometry with a `skinned` flag — the client places it at the avatar root, no per-frame
-// skinning, no animation yet. These live under a SEPARATE `:skinv2` cache key so the plain geometry cache
-// (877MB, un-skinned) is untouched and only worn meshes re-fetch. skinDbg surfaces why skin is/isn't present.
-type MeshPayload = { submeshes: { positions: string; normals: string; uvs: string; indices: string }[]; skinned?: boolean; skinDbg?: string }
+// 7·D: a rigged mesh (skin block present) requested WITH skin (wantSkin, from a worn attachment) ships
+// RAW bind-space geometry + per-vertex joint indices/weights + the skin block (jointNames, bindShapeMatrix,
+// inverseBindMatrix) — the CLIENT runtime-skins it onto a live THREE.Skeleton (SL joints), replacing the
+// AV-1 server rest-pose bake (meshSkin.ts, kept for reference/tests). These live under a SEPARATE `:skinv4`
+// cache key so the plain geometry cache (877MB, un-skinned) is untouched and only worn meshes re-fetch.
+// skinDbg surfaces why skin is/isn't present.
+type MeshPayload = {
+	submeshes: { positions: string; normals: string; uvs: string; indices: string; jointIndices?: string; jointWeights?: string }[]
+	skin?: { jointNames: string[]; bindShapeMatrix: number[]; inverseBindMatrix: number[][]; pelvisOffset: number }
+	skinDbg?: string
+}
 const MESH_MEMO_BUDGET = 256 * 1048576
 let _meshLogN = 0
 const meshMemo = createAssetMemo<MeshPayload>({
 	budgetBytes: MESH_MEMO_BUDGET,
-	sizeOf: v => v.submeshes.reduce((b, sm) => b + sm.positions.length + sm.normals.length + sm.uvs.length + sm.indices.length, 0),
+	sizeOf: v => v.submeshes.reduce((b, sm) => b + sm.positions.length + sm.normals.length + sm.uvs.length + sm.indices.length + (sm.jointIndices?.length || 0) + (sm.jointWeights?.length || 0), 0),
 })
 
 // Tier-2 DISK cache for DECODED meshes (survives restart; shared across clients). The grid fetch +
@@ -66,7 +70,7 @@ export async function handleMeshFetch(circuitId: string, req: { meshId: string; 
 	// fresh fetch+decode populates it WITH the skin block. Non-worn meshes keep the plain key untouched,
 	// so we don't purge/re-fetch the whole mesh cache — only the handful of worn meshes re-fetch once.
 	const wantSkin = !!req?.wantSkin
-	const cacheKey = `${meshId}:${wantLod}${wantSkin ? ':skinv3' : ''}`   // :skinv3 = rest-pose skinning incl. collision-volume (fitted-mesh) joints
+	const cacheKey = `${meshId}:${wantLod}${wantSkin ? ':skinv4' : ''}`   // :skinv4 = RAW rig data for client runtime skinning (7·D; v3 was the server rest-pose bake)
 	// Echo wantSkin so the client resolves the correct cache lane (`:skin` vs plain) — the response
 	// otherwise can't be told apart from a plain fetch for the same meshId+lod (AV-1 lane separation).
 	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.MESH_DATA, d: { meshId, lod: wantLod, wantSkin, ...d } }))
@@ -96,36 +100,44 @@ export async function handleMeshFetch(circuitId: string, req: { meshId: string; 
 			// JSON number[] is ~3× larger and JSON.stringify of huge arrays blocks the event loop long
 			// enough to stall AgentUpdate → sim drops the circuit ("no response 65s"). base64 of the raw
 			// bytes is compact and cheap to stringify.
-			const b64 = (ta: Float32Array | Uint16Array) =>
+			const b64 = (ta: Float32Array | Uint16Array | Uint8Array) =>
 				Buffer.from(ta.buffer, ta.byteOffset, ta.byteLength).toString('base64')
-			// Decode geometry (submeshes carry per-vertex Weights when rigged). If skin was requested and the
-			// mesh has a skin block, bake REST-POSE skinned positions (meshSkin) so the client can render the
-			// rigged mesh correctly placed on the avatar. bind_shape alone is insufficient for real mesh
-			// bodies (its scale is tiny; the placement lives in the per-joint inverse-bind · skeleton term).
-			let decoded = decodeMeshLOD(buf, h.headerSize, lod)
+			// Decode geometry (submeshes carry per-vertex Weights when rigged). If skin was requested and
+			// the mesh has a skin block, ship the RAW rig data (7·D): bind-space positions + per-vertex
+			// joint indices/weights + the skin matrices. The client binds a THREE.SkinnedMesh to the live
+			// SL skeleton — animation moves the bones, the GPU does the blend (replaces the AV-1 bake).
+			const decoded = decodeMeshLOD(buf, h.headerSize, lod)
 			const si = h.skin ? decodeSkinBlock(buf, h.headerSize, h.skin) : null
-			let skinned = false
+			let skin: MeshPayload['skin']
 			let skinDbg: string   // diagnostic: why skin is / isn't present (surfaced to client [AV1] log)
 			if (!h.skin) skinDbg = 'no-key'
 			else if (!si) skinDbg = 'decode-null'
 			else if (wantSkin) {
-				// missing = joints the mesh weights to but our skeleton lacks → those verts fall back to
-				// bind_shape (mangled). Should be 0 now that collision volumes are in the table (fitted mesh).
+				// missing = joints the mesh weights to but our skeleton lacks → the client remaps those
+				// influences to mPelvis. Should be 0 now that collision volumes are in the table.
 				const missing = si.jointNames.filter(n => !jointRestWorld(n)).length
-				decoded = skinSubmeshes(decoded, si); skinned = true
-				skinDbg = `skinned(${si.jointNames.length}j${missing ? `,${missing}MISSING:${si.jointNames.filter(n => !jointRestWorld(n)).slice(0, 6).join('/')}` : ''})`
+				skin = {
+					jointNames: si.jointNames,
+					bindShapeMatrix: si.bindShapeMatrix,
+					inverseBindMatrix: si.inverseBindMatrix,
+					pelvisOffset: si.pelvisOffset,
+				}
+				skinDbg = `rig(${si.jointNames.length}j${missing ? `,${missing}MISSING:${si.jointNames.filter(n => !jointRestWorld(n)).slice(0, 6).join('/')}` : ''})`
 			}
 			else skinDbg = `ok(${si.jointNames.length}j)`
 			const submeshes = decoded.map(sm => ({
-				positions: b64(sm.positions),   // Float32 (rest-pose skinned when `skinned`)
+				positions: b64(sm.positions),   // Float32 (bind-space; client skins at runtime when `skin`)
 				normals:   b64(sm.normals),     // Float32
 				uvs:       b64(sm.uvs),         // Float32
 				indices:   b64(sm.indices),     // Uint16
+				// Rig attributes ride only on the skin lane (plain lane payloads stay byte-identical).
+				...(skin && sm.jointIndices ? { jointIndices: b64(sm.jointIndices) } : {}),   // Uint8 ×4/vtx
+				...(skin && sm.jointWeights ? { jointWeights: b64(sm.jointWeights) } : {}),   // Float32 ×4/vtx
 			}))
 			if (++_meshLogN <= 10 || _meshLogN % 25 === 0) {
 				slog.info(s.ws, `[Mesh] #${_meshLogN} ${meshId.slice(0, 8)}… ${buf.length}B → ${submeshes.length} submesh(es) skin=${skinDbg}`)
 			}
-			const result: MeshPayload = { submeshes, skinned, skinDbg }
+			const result: MeshPayload = { submeshes, skin, skinDbg }
 			meshDisk.put(key, serializeMeshPayload(result))   // persist for every later client / visit / restart
 			return result
 		})
