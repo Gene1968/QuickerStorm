@@ -35,6 +35,7 @@ import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { jellydollColorHex } from '@/lib/avatarColor.js'
 import { loadAvatarModel, createAvatarModel, AVATAR_MODEL_HEIGHT } from '@/lib/avatarModel.js'
+import { attachPointFromState, isHudAttachPoint, attachPointLocal } from '@/lib/attachmentPoints.js'
 import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
@@ -1079,6 +1080,7 @@ export function useWorldEngine(canvasRef) {
 	let camLookInit = false
 	const _v3a      = new THREE.Vector3()  // scratch — reused for per-frame lookAt target
 	const _v3Seat   = new THREE.Vector3()  // scratch — seated own-avatar world position (getWorldPosition)
+	const _v3AnimTmp = new THREE.Vector3() // scratch — per-avatar world position for locomotion speed (7·B-3)
 	// Frame-rate-independent lerp rates (larger = snappier). POS faster than LOOK so the
 	// camera tracks position while the view angle eases. Half-life ≈ ln(2)/rate seconds.
 	const CAM_POS_RATE  = 12  // ~0.06s half-life
@@ -3141,6 +3143,75 @@ export function useWorldEngine(canvasRef) {
 		mesh.visible = true
 	}
 
+	// ── 7·B: attachment-point mounting ────────────────────────────────────────────────────────
+	// Rigid (non-rigged) attachments mount inside a per-point Group positioned at the SL default-
+	// skeleton REST position of the point's joint + the avatar_lad offset/rot (attachmentPoints.js).
+	// The wire pos/rot of an attached root are POINT-local (FS llviewerjointattachment.cpp), so with
+	// the group in place the existing child pos/rot writes land in the right frame. Rest-pose only —
+	// points don't follow the idle animation yet (comes with the real animation system).
+	function attachContainerFor(avatarMesh, pointId) {
+		if (!pointId || isHudAttachPoint(pointId)) return avatarMesh
+		let groups = avatarMesh.userData.attachGroups
+		if (!groups) { groups = new Map(); avatarMesh.userData.attachGroups = groups }
+		let g = groups.get(pointId)
+		if (!g) {
+			const local = attachPointLocal(pointId, RIG_FOOT_OFFSET)
+			if (!local) return avatarMesh
+			g = new THREE.Group()
+			g.position.copy(local.pos)
+			g.quaternion.copy(local.quat)
+			g.userData.attachPointId = pointId
+			avatarMesh.add(g)
+			groups.set(pointId, g)
+		}
+		return g
+	}
+
+	// Route a child mesh under its parent: attachment-point group for rigid avatar children (HUD
+	// points 31-38 are the wearer's screen-space UI — parked hidden, never world-placed), the child
+	// proxy for children of a rigged attachment root (7·B-2), plain add otherwise. The obj record
+	// supplies the State byte (attachment point id, nibble-swapped server note in lludp-codec.ts).
+	function mountChild(parentMesh, mesh, obj) {
+		if (parentMesh.userData.isAvatar && !mesh.userData.skinned) {
+			const state = obj?.state ?? worldStore.objects.get(mesh.userData.localId ?? obj?.localId)?.state
+			const id = attachPointFromState(state)
+			if (isHudAttachPoint(id)) {
+				mesh.visible = false
+				mesh.userData.hudAttachment = true
+				parentMesh.add(mesh)
+				return
+			}
+			attachContainerFor(parentMesh, id).add(mesh)
+			return
+		}
+		if (parentMesh.userData.childProxy) { parentMesh.userData.childProxy.add(mesh); return }
+		parentMesh.add(mesh)
+	}
+
+	// 7·B-2: a rigged attachment root stays at bind pose (identity at the avatar node), so its
+	// linkset CHILDREN need a normal prim frame to hang from — a proxy Group parked at the root's
+	// sim transform inside its attachment-point group. Children route here via mountChild; the
+	// root's suppressed pos/rot updates (riggedBindPose) land on the proxy instead.
+	function ensureChildProxy(riggedMesh, obj) {
+		if (!obj) return
+		const avatarMesh = riggedMesh.parent
+		if (!avatarMesh?.userData?.isAvatar) return
+		let proxy = riggedMesh.userData.childProxy
+		if (!proxy) {
+			proxy = new THREE.Group()
+			proxy.userData.childProxyFor = riggedMesh.userData.localId
+			riggedMesh.userData.childProxy = proxy
+			// Adopt children that attached to the rigged mesh before its skin decode landed.
+			for (const c of [...riggedMesh.children]) {
+				if (c.userData?.localId !== undefined && !c.userData.skinned) proxy.add(c)
+			}
+		}
+		const container = attachContainerFor(avatarMesh, attachPointFromState(obj.state))
+		if (proxy.parent !== container) container.add(proxy)
+		if (obj.pos) { const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2]); proxy.position.set(t.x, t.y, t.z) }
+		if (obj.rot) proxy.quaternion.copy(slQuatToThree(obj.rot[0], obj.rot[1], obj.rot[2], obj.rot[3]))
+	}
+
 	// 🪑 Avatar reparent side effect for resolveAvatarReparent's decision (sit/stand). attach()/
 	// detach() semantics preserve the mesh's WORLD transform across the reparent — unlike
 	// mesh.add(), which keeps the local position/rotation numbers as-is. Avatars carry no
@@ -3368,9 +3439,18 @@ export function useWorldEngine(canvasRef) {
 				// AV-1: rigged attachment parented under an avatar → snap to bind pose at the avatar root
 				// (the sim child offset is meaningless for rigged mesh). isAvatar node tagged in userData.
 				if (rigged) {
+					// 7·B: skinned-ness is unknown at creation, so this mesh may have been routed into an
+					// attachment-point group (or a rigged root's child proxy). Rigged mesh obeys the AV-1
+					// bind-pose contract at the AVATAR node — hoist it out of the point frame first.
+					let anc = mesh.parent
+					while (anc && !anc.userData?.isAvatar && (anc.userData?.attachPointId != null || anc.userData?.childProxyFor != null)) anc = anc.parent
+					if (anc?.userData?.isAvatar && mesh.parent !== anc) anc.add(mesh)
 					const onAvatar = !!mesh.parent?.userData?.isAvatar
 					console.log('[AV1] applySwap skinned mesh=%s parentIsAvatar=%s parent=%s', String(obj.meshId).slice(0, 8), onAvatar, mesh.parent?.userData?.localId)
-					if (onAvatar) placeRiggedAttachment(mesh)
+					if (onAvatar) {
+						placeRiggedAttachment(mesh)
+						ensureChildProxy(mesh, worldStore.objects.get(obj.localId) || obj)   // 7·B-2
+					}
 				}
 				// Real geometry is in — reveal the object (was hidden as a placeholder cube). visibilityTick
 				// takes over distance culling from here (it skips awaitingGeom meshes while the flag is set).
@@ -3645,7 +3725,7 @@ export function useWorldEngine(canvasRef) {
 			const parentLocalId = obj.parentId ?? 0
 			const parentMesh = parentLocalId ? meshMap.get(parentLocalId) : null
 			if (parentMesh) {
-				parentMesh.add(mesh)
+				mountChild(parentMesh, mesh, obj)   // 7·B: attachment-point / rigged-proxy aware
 			} else {
 				if (parentLocalId) {
 					mesh.visible = false  // orphan child — hide until parent arrives
@@ -3705,13 +3785,16 @@ export function useWorldEngine(canvasRef) {
 						}
 					} else {
 						other.parent?.remove(other)
-						mesh.add(other)
+						mountChild(mesh, other, worldStore.objects.get(childId))   // 7·B
 						normalizeChildTransform(other)
 						// AV-1: the just-arrived parent is THIS mesh — if it's an avatar and the reparented
 						// child is rest-pose skinned (rigged), snap it to the avatar root.
-						if (mesh.userData.isAvatar && other.userData.skinned) placeRiggedAttachment(other)
+						if (mesh.userData.isAvatar && other.userData.skinned) {
+							placeRiggedAttachment(other)
+							ensureChildProxy(other, worldStore.objects.get(childId))   // 7·B-2
+						}
 					}
-					other.visible = true
+					other.visible = !other.userData.hudAttachment
 					if (other.userData.hoverLabel) other.userData.hoverLabel.visible = true
 				}
 				orphansByParent.delete(obj.localId)
@@ -3765,6 +3848,9 @@ export function useWorldEngine(canvasRef) {
 					if (obj.localId === ownAvatarLocalId) uiStore.setSitting(action === 'attach' ? 'object' : false)
 				}
 			}
+			// 7·B-2: a rigged root's pos/rot updates are suppressed on the mesh (bind pose) — but its
+			// linkset children hang off the child proxy, which must track the root's sim transform.
+			if (riggedBindPose && !gizmoSuppress) ensureChildProxy(mesh, obj)
 			if (obj.pos && !gizmoSuppress && !riggedBindPose) {
 				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
 				// WHY: ObjectUpdate is sparse (login + new objects in range). Avatar gets GSAP
@@ -3815,8 +3901,9 @@ export function useWorldEngine(canvasRef) {
 						if (!set) { set = new Set(); orphansByParent.set(newParentId, set) }
 						set.add(obj.localId)
 					} else {
-						;(pm || scene).add(mesh)
-						mesh.visible = true
+						if (pm) mountChild(pm, mesh, obj)   // 7·B: attachment-point / rigged-proxy aware
+						else scene.add(mesh)
+						mesh.visible = !mesh.userData.hudAttachment
 						if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
 					}
 				} else if (newParentId && mesh.parent === scene) {
@@ -3825,8 +3912,8 @@ export function useWorldEngine(canvasRef) {
 					const pm = meshMap.get(newParentId)
 					if (pm) {
 						scene.remove(mesh)
-						pm.add(mesh)
-						mesh.visible = true
+						mountChild(pm, mesh, obj)   // 7·B
+						mesh.visible = !mesh.userData.hudAttachment
 						if (mesh.userData.hoverLabel) mesh.userData.hoverLabel.visible = true
 					}
 				}
@@ -3931,6 +4018,9 @@ export function useWorldEngine(canvasRef) {
 		if (mesh) {
 			// 🧍 Stop advancing this avatar's jellydoll animation mixer (if any) before disposal.
 			avatarMixers.delete(localId)
+			// 7·B-2: the child proxy lives OUTSIDE the mesh subtree (in the avatar's attachment-point
+			// group) — detach it explicitly or it leaks with any still-parented children.
+			if (mesh.userData.childProxy) mesh.userData.childProxy.parent?.remove(mesh.userData.childProxy)
 			// WHY: Traverse to dispose child geometry/materials (arm indicator etc.) not just root
 			mesh.traverse(child => {
 				if (child.isMesh || child.isSkinnedMesh) {
@@ -4044,12 +4134,19 @@ export function useWorldEngine(canvasRef) {
 			mesh.userData.avatarMats = mats             // tint the humanoid instead of the capsule
 			applyAvatarLook(mesh, obj)
 			applyJellydollShape(mesh, obj)              // 7·A: shape-driven height (if appearance known)
-			// Idle animation (the GLB ships Idle_Loop + 10 more clips; locomotion state machine = later).
-			const clip = clips?.find(c => /idle/i.test(c.name)) || clips?.[0]
-			if (clip) {
-				const mixer = new THREE.AnimationMixer(root)
-				mixer.clipAction(clip).play()
-				avatarMixers.set(localId, mixer)
+			// 7·B-3: locomotion state machine — idle/walk by observed speed, sit by ParentID (an avatar
+			// parented to a prim IS seated; ground-sit has no ParentID and stays idle for now). Real SL
+			// animations (AvatarAnimation decode + BVH) supersede this later.
+			const mixer = new THREE.AnimationMixer(root)
+			const pick = (re) => { const c = clips?.find(c => re.test(c.name)); return c ? mixer.clipAction(c) : null }
+			const actions = {
+				idle: pick(/^Idle_Loop$/i) || (clips?.[0] ? mixer.clipAction(clips[0]) : null),
+				walk: pick(/^Walk_Loop$/i),
+				sit:  pick(/^Sitting_Idle_Loop$/i),
+			}
+			if (actions.idle) {
+				actions.idle.play()
+				avatarMixers.set(localId, { mixer, actions, cur: 'idle', lastPos: null })
 			}
 		}).catch(err => debugStore.push('warn', `[AV] jellydoll load failed: ${err?.message || err}`))
 	}
@@ -6224,8 +6321,27 @@ export function useWorldEngine(canvasRef) {
 		lastTime = time
 		const cf = updateCamera(dt)
 
-		// 🧍 Advance jellydoll humanoid idle animations (one AnimationMixer per placeholder avatar).
-		if (avatarMixers.size) for (const mx of avatarMixers.values()) mx.update(dt)
+		// 🧍 Advance jellydoll animations + 7·B-3 locomotion: sit when parented to a prim, walk when
+		// the node is actually moving (world-space horizontal speed), idle otherwise. 0.35 m/s
+		// threshold sits well under SL walk (~3.2 m/s) but above GSAP settle jitter.
+		if (avatarMixers.size) {
+			for (const [lid, rec] of avatarMixers) {
+				rec.mixer.update(dt)
+				const mesh = meshMap.get(lid)
+				if (!mesh || !rec.actions) continue
+				const wp = mesh.getWorldPosition(_v3AnimTmp)
+				let speed = 0
+				if (rec.lastPos && dt > 0) speed = Math.hypot(wp.x - rec.lastPos.x, wp.z - rec.lastPos.z) / dt
+				if (rec.lastPos) rec.lastPos.copy(wp); else rec.lastPos = wp.clone()
+				const seated = (worldStore.objects.get(lid)?.parentId ?? 0) !== 0
+				const want = (seated && rec.actions.sit) ? 'sit' : (speed > 0.35 && rec.actions.walk) ? 'walk' : 'idle'
+				if (want !== rec.cur && rec.actions[want]) {
+					rec.actions[want].reset().fadeIn(0.2).play()
+					rec.actions[rec.cur]?.fadeOut(0.2)
+					rec.cur = want
+				}
+			}
+		}
 
 		// Day/night: advance the cycle and push it to lights, fog, exposure, and the sky dome.
 		environment.update(dt)

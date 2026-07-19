@@ -55,6 +55,26 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-18 — Bundle 7·B: attachment-point mounting + linkset decouple + locomotion  [uncommitted]
+- **Attachment-point mounting (7·B-1)** — rigid (non-rigged) attachments mount at their named SL
+  attachment point instead of piling at the feet. Server forwards the ObjectUpdate `State` byte
+  (attachment-point id in the high nibble); new `src/lib/attachmentPoints.js` carries the full FS
+  `avatar_lad.xml` point table (ids 1-55 incl. Bento; joint + offset + rotation) + the
+  `ATTACHMENT_ID_FROM_STATE` nibble swap + SL default-skeleton rest positions (from the AV-1
+  `avatarSkeleton.ts` table). Points materialize as per-avatar Groups; the wire pos/rot of an attached
+  root are point-local (FS `llviewerjointattachment.cpp` composition), so existing child-transform
+  writes land correctly. HUD points (31-38, `mScreen`) are parked hidden — never world-rendered.
+  Rest-pose mounting: points don't follow the idle animation yet (comes with real SL animations).
+- **Linkset-attachment child prims (7·B-2)** — a rigged root's linkset children no longer fall to the
+  pile: the skinned mesh keeps the AV-1 bind-pose contract while a proxy Group parked at the root's
+  sim transform (inside its attachment-point group) carries the children; the root's suppressed
+  pos/rot updates drive the proxy. Rigged meshes routed into a point group before their skin decode
+  are hoisted back to the avatar node (AV-1 contract preserved).
+- **Locomotion (7·B-3 core)** — jellydolls play `Walk_Loop` when actually moving (world-space speed
+  > 0.35 m/s), `Sitting_Idle_Loop` when parented to a prim, `Idle_Loop` otherwise (0.2s crossfades).
+  LIVE: peers' hair/shoes mount at head/feet on OSGrid; no console errors through login+movement.
+  *Remaining in ROADMAP 7·B: capsule LOD fallback, tube-retirement gate, COF write side.*
+
 ## 2026-07-18 — Bundle 7·A appearance read-model + 7·C AgentSetAppearance echo  [uncommitted]
 - **VisualParams decode (7·A)** — server parses the `AvatarAppearance` (Low 158) VisualParam byte array
   (ascending-ID tweakable sequence, no ids on the wire — FS `llvoavatar.cpp parseAppearanceMessage`) and

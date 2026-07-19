@@ -119,7 +119,7 @@ const outfitFolders = [
 		<div class="flex flex-col flex-1 min-h-0 text-xs text-fg">
 
 			<!-- ── Current Look header (always visible) ──────────────── -->
-			<div class="flex items-center gap-1 px-2.5 py-2 border-b border-edge shrink-0 bg-panel-alt">
+			<div class="flex items-center gap-1 p-1.5 ps-0.5 border-b border-edge shrink-0 bg-panel-alt">
 				<span class="text-3xl leading-none shrink-0 -mt-2">👕</span>
 				<div class="flex flex-col flex-1 min-w-0">
 					<span class="text-xs text-fg/50 uppercase tracking-wide leading-none mb-0.5">
@@ -153,13 +153,13 @@ const outfitFolders = [
 						placeholder="Filter Outfits&#8230;"
 						class="flex-1 bg-fg/10 rounded-xl w-full me-1 px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-hidden focus:ring-1 focus:ring-inset focus:ring-accent"
 					/>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Options — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Options — to-do" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Sort — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Sort — to-do" disabled>
 						<ArrowUpDownIcon class="w-3.5 h-3.5" />
 					</button>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Delete Outfit — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/50 hover:text-fg shrink-0" title="Delete Outfit — to-do" disabled>
 						<Trash2Icon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -193,7 +193,7 @@ const outfitFolders = [
 								v-for="item in galleryItems"
 								:key="item.id"
 								class="flex flex-col items-center gap-1 cursor-pointer group"
-								title="Outfit Gallery — Phase 3"
+								title="Outfit Gallery — to-do"
 							>
 								<div
 									class="w-full aspect-square rounded-sm border-2 border-edge group-hover:border-accent transition-colors"
@@ -204,7 +204,7 @@ const outfitFolders = [
 								<span class="text-xs text-fg-muted text-center truncate w-full">{{ item.name }}</span>
 							</div>
 						</div>
-						<div class="px-3 pb-2 text-fg-muted/50 text-xs italic text-center">Outfit Gallery — Phase 3</div>
+						<div class="px-3 pb-2 text-fg-muted/50 text-xs italic text-center">Outfit Gallery — to-do</div>
 					</template>
 
 					<!-- Outfits tab ─────────────────────────────────── -->
@@ -217,7 +217,7 @@ const outfitFolders = [
 							>
 								<!-- Folder row -->
 								<button
-									class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors text-left"
+									class="flex items-center gap-1.5 w-full py-0.5 px-2 hover:bg-white/5 transition-colors text-left"
 									@click="folder.open.value = !folder.open.value"
 								>
 									<component
@@ -230,7 +230,7 @@ const outfitFolders = [
 								<!-- Folder contents placeholder -->
 								<template v-if="folder.open.value && folder.count > 0">
 									<div class="px-4 py-1 text-fg-muted/40 text-sm italic">
-										Contents — Phase 3
+										Contents — to-do
 									</div>
 								</template>
 								<template v-else-if="folder.open.value">
@@ -239,7 +239,7 @@ const outfitFolders = [
 							</div>
 						</div>
 						<div class="px-3 py-2 text-fg-muted/40 text-xs italic text-center">
-							Full outfit library — Phase 3
+							Full outfit library — to-do
 						</div>
 					</template>
 
@@ -252,7 +252,7 @@ const outfitFolders = [
 						>
 							<!-- Group header -->
 							<button
-								class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+								class="flex items-center gap-1.5 w-full py-0.5 px-2 hover:bg-white/5 transition-colors"
 								@click="expanded[group.id] = !expanded[group.id]"
 							>
 								<component
@@ -296,8 +296,8 @@ const outfitFolders = [
 
 				<!-- Bottom status bar -->
 				<div class="flex items-center px-2.5 py-1.5 border-t border-edge shrink-0 bg-panel-alt gap-2">
-					<span class="text-fg-muted/50 text-xs flex-1">Complexity: — (Phase 3)</span>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40 hover:text-fg" title="Marketplace — Phase 3" disabled>
+					<span class="text-fg-muted/50 text-xs flex-1">Complexity: — (to-do)</span>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40 hover:text-fg" title="Marketplace — to-do" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -327,7 +327,7 @@ const outfitFolders = [
 					<!-- Body Parts -->
 					<div class="border-b border-edge/40">
 						<button
-							class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+							class="flex items-center gap-1.5 w-full py-0.5 px-2 hover:bg-white/5 transition-colors"
 							@click="expanded.body = !expanded.body"
 						>
 							<component :is="expanded.body ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-fg/40 shrink-0" />
@@ -339,7 +339,7 @@ const outfitFolders = [
 								<span class="text-sm shrink-0">🧍</span>
 								<div class="flex flex-col flex-1 min-w-0">
 									<span class="text-fg font-medium leading-tight">Shape</span>
-									<span class="text-fg-muted/50 text-xs">Classic Avatar — Phase 3</span>
+									<span class="text-fg-muted/50 text-xs">Classic Avatar — to-do</span>
 								</div>
 							</div>
 							<!-- Skin -->
@@ -382,7 +382,7 @@ const outfitFolders = [
 								<span class="text-sm shrink-0">👁</span>
 								<div class="flex flex-col flex-1 min-w-0">
 									<span class="text-fg font-medium leading-tight">Eyes</span>
-									<span class="text-fg-muted/50 text-xs">Default — Phase 3</span>
+									<span class="text-fg-muted/50 text-xs">Default — to-do</span>
 								</div>
 							</div>
 						</template>
@@ -391,7 +391,7 @@ const outfitFolders = [
 					<!-- Clothing -->
 					<div class="border-b border-edge/40">
 						<button
-							class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+							class="flex items-center gap-1.5 w-full py-0.5 px-2 hover:bg-white/5 transition-colors"
 							@click="expanded.clothing = !expanded.clothing"
 						>
 							<component :is="expanded.clothing ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-fg/40 shrink-0" />
@@ -418,7 +418,7 @@ const outfitFolders = [
 					<!-- Attachments -->
 					<div class="border-b border-edge/40">
 						<button
-							class="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+							class="flex items-center gap-1.5 w-full py-0.5 px-2 hover:bg-white/5 transition-colors"
 							@click="expanded.attachments = !expanded.attachments"
 						>
 							<component :is="expanded.attachments ? ChevronDownIcon : ChevronRightIcon" class="w-3 h-3 text-fg/40 shrink-0" />
@@ -434,14 +434,14 @@ const outfitFolders = [
 					<div class="px-3 py-2 border-b border-edge/40">
 						<button
 							class="flex items-center gap-1.5 px-2 py-1 border border-edge rounded-sm text-fg-muted hover:bg-white/5 hover:text-fg transition-colors text-sm"
-							title="Browse inventory to add wearables — Phase 3"
+							title="Browse inventory to add wearables — to-do"
 							@click="showAddMore = !showAddMore"
 						>
 							<PlusIcon class="w-3 h-3" />
 							Add More…
 						</button>
 						<div v-if="showAddMore" class="mt-2 px-1 py-3 bg-panel-alt border border-edge rounded-sm text-center text-fg-muted/40 text-sm italic">
-							Inventory browser — Phase 3
+							Inventory browser — to-do
 						</div>
 					</div>
 
@@ -449,11 +449,11 @@ const outfitFolders = [
 
 				<!-- Bottom bar: gear + complexity + shop -->
 				<div class="flex items-center px-2 py-1.5 border-t border-edge shrink-0 bg-panel-alt gap-1">
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40" title="Options — Phase 3" disabled>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40" title="Options — to-do" disabled>
 						<CogIcon class="w-3.5 h-3.5" />
 					</button>
-					<span class="flex-1 text-fg-muted/40 text-xs text-center">Complexity: — (Phase 3)</span>
-					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40" title="Marketplace — Phase 3" disabled>
+					<span class="flex-1 text-fg-muted/40 text-xs text-center">Complexity: — (to-do)</span>
+					<button class="p-1 rounded-sm hover:bg-white/10 text-fg/40" title="Marketplace — to-do" disabled>
 						<ShoppingBagIcon class="w-3.5 h-3.5" />
 					</button>
 				</div>
@@ -466,7 +466,7 @@ const outfitFolders = [
 					>Save</button>
 					<button
 						class="flex-1 py-1.5 bg-panel-alt border border-edge text-fg-muted rounded-sm text-xs hover:bg-white/5 transition-colors opacity-50 cursor-not-allowed"
-						disabled title="Save As — Phase 3"
+						disabled title="Save As — to-do"
 					>Save As…</button>
 					<button
 						class="flex-1 py-1.5 bg-panel-alt border border-edge text-fg rounded-sm text-xs hover:bg-white/5 transition-colors"

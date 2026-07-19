@@ -106,7 +106,7 @@ const FIXED_PACKET_ACK        = 251   // PacketAck fixed ID
 const ACK_FLUSH_THRESHOLD     = 16    // flush pending acks immediately once this many queue up
 const MEDIUM_COARSE_LOCATION_UPDATE = 6  // CoarseLocationUpdate (minimap positions) — Medium freq, msg ID 6
 const MEDIUM_OBJECT_PROPERTIES      = 9  // ObjectProperties — sim's reply to ObjectSelect (Medium freq)
-// ── Social (Phase 3) inbound Low-freq message IDs ──
+// ── Social (to-do) inbound Low-freq message IDs ──
 const LOW_PARCEL_INFO_REPLY         = 55   // ParcelInfoReply (Zerocoded)
 const LOW_AVATAR_PROPERTIES_REPLY   = 171  // AvatarPropertiesReply (Zerocoded)
 const LOW_AVATAR_INTERESTS_REPLY    = 172  // AvatarInterestsReply (Zerocoded)
@@ -1046,7 +1046,7 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
-	// ══ Social (Phase 3) — friends / profile / groups / parcel ════════════════
+	// ══ Social (to-do) — friends / profile / groups / parcel ════════════════
 	if (type === `low:${LOW_ONLINE_NOTIFICATION}` || type === `low:${LOW_OFFLINE_NOTIFICATION}`) {
 		try {
 			const online = type === `low:${LOW_ONLINE_NOTIFICATION}`
@@ -1506,23 +1506,28 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 				typeof v[2] === 'number' ? v[2] : 0,
 			]
 		}
-		d.bodyRot   = safeVec(d.bodyRot)
-		d.headRot   = safeVec(d.headRot)
+		d.bodyRot = safeVec(d.bodyRot)
+		d.headRot = safeVec(d.headRot)
 		d.camCenter = safeVec(d.camCenter)
-		d.camAt     = safeVec(d.camAt)
-		d.camLeft   = safeVec(d.camLeft)
-		d.camUp     = safeVec(d.camUp)
-		if (typeof d.far !== 'number') d.far = 512   // draw distance → sim interest radius (region-wide)
+		d.camAt = safeVec(d.camAt)
+		d.camLeft = safeVec(d.camLeft)
+		d.camUp = safeVec(d.camUp)
+		if (typeof d.far !== 'number') d.far = 512 // draw distance → sim interest radius (region-wide)
 		if (typeof d.interestRadius !== 'number') d.interestRadius = undefined
 		// Save for heartbeat retransmit when client is idle
-		session.lastAgentParams    = d
-		session.lastAgentUpdateAt  = Date.now()
+		session.lastAgentParams = d
+		session.lastAgentUpdateAt = Date.now()
 		// WHY: Match FS `send_agent_update()` line 4188 — no AgentUpdates during teleport.
 		// The sim treats incoming AgentUpdates as "avatar still active here", which appears to
 		// prevent TeleportFinish from routing back. pendingTpHandle is cleared on arrival or failure.
 		if (session.pendingTpHandle) return
 		const seq = nextSeq(session)
-		const pkt = encodeAgentUpdate({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		const pkt = encodeAgentUpdate({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			...d,
+		})
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		// WHY: Log move count so we can verify moves reach server even when cf=0.
 		// Log first move, every 50th, and every non-zero cf (first per unique value).
@@ -1534,13 +1539,24 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			// threw TypeError that killed Bun's WebSocket message handler.
 			const fmtVec = (v: unknown): string => {
 				if (!Array.isArray(v)) return String(v)
-				return v.map(c => (typeof c === 'number' ? c.toFixed(1) : '?')).join(',')
+				return v
+					.map((c) => (typeof c === 'number' ? c.toFixed(1) : '?'))
+					.join(',')
 			}
-			slog.info(session.ws, `→ MOVE #${mc} cf=0x${d.controlFlags.toString(16)} camCenter=${fmtVec(d.camCenter)}`)
+			slog.info(
+				session.ws,
+				`→ MOVE #${mc} cf=0x${d.controlFlags.toString(16)} camCenter=${fmtVec(d.camCenter)}`,
+			)
 		}
-		if (d.controlFlags !== 0 && !session.loggedTypes.has(`cf:${d.controlFlags}`)) {
+		if (
+			d.controlFlags !== 0 &&
+			!session.loggedTypes.has(`cf:${d.controlFlags}`)
+		) {
 			session.loggedTypes.add(`cf:${d.controlFlags}`)
-			slog.info(session.ws, `→ AgentUpdate controlFlags=0x${d.controlFlags.toString(16)} (first occurrence)`)
+			slog.info(
+				session.ws,
+				`→ AgentUpdate controlFlags=0x${d.controlFlags.toString(16)} (first occurrence)`,
+			)
 		}
 		return
 	}
@@ -1554,15 +1570,20 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const z = Math.max(0.5, d.z)
 		const seq = nextSeq(session)
 		const pkt = encodeTeleportLocationRequest({
-			agentId:      session.agentId,
-			sessionId:    session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
 			regionHandle: session.regionHandle,
-			x, y, z,
+			x,
+			y,
+			z,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ TeleportLocationRequest: ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`)
+		slog.info(
+			session.ws,
+			`→ TeleportLocationRequest: ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} handle=${session.regionHandle}`,
+		)
 		return
 	}
 
@@ -1570,16 +1591,29 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { landmarkId: string }
 		if (!d.landmarkId) return
 		const seq = nextSeq(session)
-		const pkt = encodeTeleportLandmarkRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, landmarkId: d.landmarkId })
+		const pkt = encodeTeleportLandmarkRequest({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			landmarkId: d.landmarkId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ TeleportLandmarkRequest lm=${d.landmarkId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ TeleportLandmarkRequest lm=${d.landmarkId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.TP_HOME) {
 		const seq = nextSeq(session)
-		const pkt = encodeTeleportLandmarkRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, landmarkId: '00000000-0000-0000-0000-000000000000' })
+		const pkt = encodeTeleportLandmarkRequest({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			landmarkId: '00000000-0000-0000-0000-000000000000',
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, '→ TeleportLandmarkRequest (home/zero UUID)')
@@ -1587,106 +1621,201 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	}
 
 	if (msg.t === C.SET_HOME) {
-		const d = msg.d as { regionName: string; x: number; y: number; z: number }
+		const d = msg.d as {
+			regionName: string
+			x: number
+			y: number
+			z: number
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeSetStartLocationRequest({
-			agentId:    session.agentId,
-			sessionId:  session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
-			simName:    d.regionName || '',
+			simName: d.regionName || '',
 			locationId: 1,
-			x: d.x, y: d.y, z: d.z,
+			x: d.x,
+			y: d.y,
+			z: d.z,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ SetStartLocationRequest home @ ${d.regionName} ${d.x.toFixed(0)},${d.y.toFixed(0)},${d.z.toFixed(0)}`)
+		slog.info(
+			session.ws,
+			`→ SetStartLocationRequest home @ ${d.regionName} ${d.x.toFixed(0)},${d.y.toFixed(0)},${d.z.toFixed(0)}`,
+		)
 		return
 	}
 
 	if (msg.t === C.CREATE_LANDMARK) {
 		const d = msg.d as { name: string; desc?: string; folderId: string }
-		if (!d.folderId) { slog.warn(session.ws, 'CreateLandmark: missing folderId'); return }
+		if (!d.folderId) {
+			slog.warn(session.ws, 'CreateLandmark: missing folderId')
+			return
+		}
 		const seq = nextSeq(session)
 		// WHY: Type=InvType=3 (Landmark) + zero TransactionID → sim creates the LM from the agent's
 		// current position. Reply (UpdateCreateInventoryItem) is forwarded as S.INV_ITEM_CREATED.
 		const pkt = encodeCreateInventoryItem({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, type: 3, invType: 3,
-			name: d.name || 'Landmark', description: d.desc || '',
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			type: 3,
+			invType: 3,
+			name: d.name || 'Landmark',
+			description: d.desc || '',
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ CreateInventoryItem (landmark) "${d.name}" → folder ${d.folderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ CreateInventoryItem (landmark) "${d.name}" → folder ${d.folderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.CREATE_INV_ITEM) {
-		const d = msg.d as { kind: 'notecard' | 'script'; name: string; desc?: string; folderId: string }
-		if (!d.folderId) { slog.warn(session.ws, 'CreateInvItem: missing folderId'); return }
+		const d = msg.d as {
+			kind: 'notecard' | 'script'
+			name: string
+			desc?: string
+			folderId: string
+		}
+		if (!d.folderId) {
+			slog.warn(session.ws, 'CreateInvItem: missing folderId')
+			return
+		}
 		// notecard = Type/InvType 7; script = Type/InvType 10 (llassettype/llinventorytype). Zero
 		// TransactionID (encoder default) → OpenSim mints an empty default asset + item and replies
 		// UpdateCreateInventoryItem → forwarded as S.INV_ITEM_CREATED. Content saved later via ASSET_UPLOAD.
 		const ti = d.kind === 'script' ? 10 : 7
 		const seq = nextSeq(session)
 		const pkt = encodeCreateInventoryItem({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, type: ti, invType: ti,
-			name: d.name || (d.kind === 'script' ? 'New Script' : 'New Note'), description: d.desc || '',
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			type: ti,
+			invType: ti,
+			name: d.name || (d.kind === 'script' ? 'New Script' : 'New Note'),
+			description: d.desc || '',
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ CreateInventoryItem (${d.kind}) "${d.name}" → folder ${d.folderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ CreateInventoryItem (${d.kind}) "${d.name}" → folder ${d.folderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.CREATE_INV_FOLDER) {
 		const d = msg.d as { folderId: string; parentId: string; name: string }
-		if (!d.folderId || !d.parentId) { slog.warn(session.ws, 'CreateInvFolder: missing ids'); return }
+		if (!d.folderId || !d.parentId) {
+			slog.warn(session.ws, 'CreateInvFolder: missing ids')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeCreateInventoryFolder({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, parentId: d.parentId, name: d.name || 'New Folder',
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			parentId: d.parentId,
+			name: d.name || 'New Folder',
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ CreateInventoryFolder "${d.name}" ${d.folderId.slice(0, 8)}… under ${d.parentId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ CreateInventoryFolder "${d.name}" ${d.folderId.slice(0, 8)}… under ${d.parentId.slice(0, 8)}…`,
+		)
 		return
 	}
 
-	// ── Inventory mutation (Phase 3) ───────────────────────────────────────
+	// ── Inventory mutation (to-do) ───────────────────────────────────────
 	// Each block: nextSeq → encode → trackReliable → udp.send. Sim acks with BulkUpdateInventory
 	// (forwarded as S.INV_BULK_UPDATE). Payloads are tolerant — read whatever fields msg.d provides;
 	// the client sends the full item/folder row it already holds so unchanged fields are preserved.
 
 	if (msg.t === C.INV_RENAME_ITEM) {
 		const d = msg.d as {
-			itemId: string; folderId: string; name: string
-			creatorId?: string; ownerId?: string; groupId?: string
-			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
-			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
+			itemId: string
+			folderId: string
+			name: string
+			creatorId?: string
+			ownerId?: string
+			groupId?: string
+			baseMask?: number
+			ownerMask?: number
+			groupMask?: number
+			everyoneMask?: number
+			nextOwnerMask?: number
+			assetType?: number
+			invType?: number
+			flags?: number
+			saleType?: number
+			salePrice?: number
+			createdAt?: number
 		}
-		if (!d.itemId || !d.folderId) { slog.warn(session.ws, 'InvRenameItem: missing itemId/folderId'); return }
+		if (!d.itemId || !d.folderId) {
+			slog.warn(session.ws, 'InvRenameItem: missing itemId/folderId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeUpdateInventoryItem({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		const pkt = encodeUpdateInventoryItem({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			...d,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ UpdateInventoryItem (rename) ${d.itemId.slice(0, 8)}… → "${d.name}"`)
+		slog.info(
+			session.ws,
+			`→ UpdateInventoryItem (rename) ${d.itemId.slice(0, 8)}… → "${d.name}"`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_UPDATE_PERMS) {
 		const d = msg.d as {
-			itemId: string; folderId: string; name?: string
-			creatorId?: string; ownerId?: string; groupId?: string
-			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
-			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
+			itemId: string
+			folderId: string
+			name?: string
+			creatorId?: string
+			ownerId?: string
+			groupId?: string
+			baseMask?: number
+			ownerMask?: number
+			groupMask?: number
+			everyoneMask?: number
+			nextOwnerMask?: number
+			assetType?: number
+			invType?: number
+			flags?: number
+			saleType?: number
+			salePrice?: number
+			createdAt?: number
 		}
-		if (!d.itemId || !d.folderId) { slog.warn(session.ws, 'InvUpdatePerms: missing itemId/folderId'); return }
+		if (!d.itemId || !d.folderId) {
+			slog.warn(session.ws, 'InvUpdatePerms: missing itemId/folderId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeUpdateInventoryItem({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		const pkt = encodeUpdateInventoryItem({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			...d,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ UpdateInventoryItem (perms) ${d.itemId.slice(0, 8)}… next=${(d.nextOwnerMask ?? 0).toString(16)}`)
+		slog.info(
+			session.ws,
+			`→ UpdateInventoryItem (perms) ${d.itemId.slice(0, 8)}… next=${(d.nextOwnerMask ?? 0).toString(16)}`,
+		)
 		return
 	}
 
@@ -1696,106 +1825,205 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// drop position. Sim rezzes AT position (BypassRaycast=1, RayEnd=position); the new object then
 		// streams back as an ObjectUpdate. See ../phoenix-firestorm lltooldraganddrop.cpp dropObject.
 		const d = msg.d as {
-			itemId: string; folderId: string; position: { x: number; y: number; z: number }
-			name?: string; description?: string
-			creatorId?: string; ownerId?: string; groupId?: string
-			baseMask?: number; ownerMask?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
-			assetType?: number; invType?: number; flags?: number; saleType?: number; salePrice?: number; createdAt?: number
-			groupOwned?: boolean; rezSelected?: boolean; removeItem?: boolean; rezGroupId?: string
-			rayStart?: { x: number; y: number; z: number }; rayTargetId?: string; bypassRaycast?: boolean
+			itemId: string
+			folderId: string
+			position: { x: number; y: number; z: number }
+			name?: string
+			description?: string
+			creatorId?: string
+			ownerId?: string
+			groupId?: string
+			baseMask?: number
+			ownerMask?: number
+			groupMask?: number
+			everyoneMask?: number
+			nextOwnerMask?: number
+			assetType?: number
+			invType?: number
+			flags?: number
+			saleType?: number
+			salePrice?: number
+			createdAt?: number
+			groupOwned?: boolean
+			rezSelected?: boolean
+			removeItem?: boolean
+			rezGroupId?: string
+			rayStart?: { x: number; y: number; z: number }
+			rayTargetId?: string
+			bypassRaycast?: boolean
 		}
-		if (!d.itemId || !d.folderId || !d.position) { slog.warn(session.ws, 'RezObject: missing itemId/folderId/position'); return }
+		if (!d.itemId || !d.folderId || !d.position) {
+			slog.warn(session.ws, 'RezObject: missing itemId/folderId/position')
+			return
+		}
 		// WHY default removeItem = !copyable: a no-copy item is consumed on rez (FS remove_from_inventory).
 		// PERM_COPY bit is 0x00008000; if the item's ownerMask lacks copy, remove it from inventory.
 		const PERM_COPY = 0x00008000
-		const copyable = ((d.ownerMask ?? 0x7FFFFFFF) & PERM_COPY) !== 0
+		const copyable = ((d.ownerMask ?? 0x7fffffff) & PERM_COPY) !== 0
 		const removeItem = d.removeItem ?? !copyable
-		const pos: [number, number, number] = [d.position.x, d.position.y, d.position.z]
+		const pos: [number, number, number] = [
+			d.position.x,
+			d.position.y,
+			d.position.z,
+		]
 		// Sim-raycast placement (FS lltooldraganddrop.cpp:1963-1964 dropObject: RayStart = camera pos,
 		// RayEnd = hit point; OpenSim Scene.cs:2376 GetNewRezLocation). Defaults preserve today's
 		// rez-AT-point behavior: rayStart = rayEnd = position, BypassRaycast=1, RayTargetID=ZERO.
-		const rayStart: [number, number, number] =
-			d.rayStart ? [d.rayStart.x, d.rayStart.y, d.rayStart.z] : pos
+		const rayStart: [number, number, number] = d.rayStart
+			? [d.rayStart.x, d.rayStart.y, d.rayStart.z]
+			: pos
 		const seq = nextSeq(session)
 		const pkt = encodeRezObject({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
 			groupId: d.rezGroupId,
-			rayStart, rayEnd: pos,
-			bypassRaycast: d.bypassRaycast, rayTargetId: d.rayTargetId,
-			rezSelected: d.rezSelected, removeItem,
+			rayStart,
+			rayEnd: pos,
+			bypassRaycast: d.bypassRaycast,
+			rayTargetId: d.rayTargetId,
+			rezSelected: d.rezSelected,
+			removeItem,
 			inventoryData: {
-				itemId: d.itemId, folderId: d.folderId,
-				name: d.name, description: d.description,
-				creatorId: d.creatorId, ownerId: d.ownerId, groupId: d.groupId,
-				baseMask: d.baseMask, ownerMask: d.ownerMask, groupMask: d.groupMask,
-				everyoneMask: d.everyoneMask, nextOwnerMask: d.nextOwnerMask, groupOwned: d.groupOwned,
-				assetType: d.assetType, invType: d.invType, flags: d.flags,
-				saleType: d.saleType, salePrice: d.salePrice, createdAt: d.createdAt,
+				itemId: d.itemId,
+				folderId: d.folderId,
+				name: d.name,
+				description: d.description,
+				creatorId: d.creatorId,
+				ownerId: d.ownerId,
+				groupId: d.groupId,
+				baseMask: d.baseMask,
+				ownerMask: d.ownerMask,
+				groupMask: d.groupMask,
+				everyoneMask: d.everyoneMask,
+				nextOwnerMask: d.nextOwnerMask,
+				groupOwned: d.groupOwned,
+				assetType: d.assetType,
+				invType: d.invType,
+				flags: d.flags,
+				saleType: d.saleType,
+				salePrice: d.salePrice,
+				createdAt: d.createdAt,
 			},
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ RezObject ${d.itemId.slice(0, 8)}… @ (${pos.map(n => n.toFixed(1)).join(', ')}) removeItem=${removeItem}`)
+		slog.info(
+			session.ws,
+			`→ RezObject ${d.itemId.slice(0, 8)}… @ (${pos.map((n) => n.toFixed(1)).join(', ')}) removeItem=${removeItem}`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_RENAME_FOLDER) {
-		const d = msg.d as { folderId: string; name: string; parentId?: string; typeDefault?: number }
-		if (!d.folderId) { slog.warn(session.ws, 'InvRenameFolder: missing folderId'); return }
+		const d = msg.d as {
+			folderId: string
+			name: string
+			parentId?: string
+			typeDefault?: number
+		}
+		if (!d.folderId) {
+			slog.warn(session.ws, 'InvRenameFolder: missing folderId')
+			return
+		}
 		const seq = nextSeq(session)
 		// WHY UpdateInventoryFolder (not MoveInventoryFolder): the Move message has no Name field.
 		const pkt = encodeUpdateInventoryFolder({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, parentId: d.parentId ?? '00000000-0000-0000-0000-000000000000',
-			type: d.typeDefault ?? -1, name: d.name || 'New Folder',
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			parentId: d.parentId ?? '00000000-0000-0000-0000-000000000000',
+			type: d.typeDefault ?? -1,
+			name: d.name || 'New Folder',
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ UpdateInventoryFolder (rename) ${d.folderId.slice(0, 8)}… → "${d.name}"`)
+		slog.info(
+			session.ws,
+			`→ UpdateInventoryFolder (rename) ${d.folderId.slice(0, 8)}… → "${d.name}"`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_MOVE_ITEM) {
-		const d = msg.d as { itemId: string; toFolderId: string; newName?: string }
-		if (!d.itemId || !d.toFolderId) { slog.warn(session.ws, 'InvMoveItem: missing itemId/toFolderId'); return }
+		const d = msg.d as {
+			itemId: string
+			toFolderId: string
+			newName?: string
+		}
+		if (!d.itemId || !d.toFolderId) {
+			slog.warn(session.ws, 'InvMoveItem: missing itemId/toFolderId')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeMoveInventoryItem({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			itemId: d.itemId, folderId: d.toFolderId, newName: d.newName,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			itemId: d.itemId,
+			folderId: d.toFolderId,
+			newName: d.newName,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MoveInventoryItem ${d.itemId.slice(0, 8)}… → folder ${d.toFolderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ MoveInventoryItem ${d.itemId.slice(0, 8)}… → folder ${d.toFolderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_MOVE_FOLDER) {
 		const d = msg.d as { folderId: string; toParentId: string }
-		if (!d.folderId || !d.toParentId) { slog.warn(session.ws, 'InvMoveFolder: missing folderId/toParentId'); return }
+		if (!d.folderId || !d.toParentId) {
+			slog.warn(session.ws, 'InvMoveFolder: missing folderId/toParentId')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeMoveInventoryFolder({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, parentId: d.toParentId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			parentId: d.toParentId,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MoveInventoryFolder ${d.folderId.slice(0, 8)}… → parent ${d.toParentId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ MoveInventoryFolder ${d.folderId.slice(0, 8)}… → parent ${d.toParentId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.COPY_INV_ITEM) {
 		// Duplicate a copyable item into a folder as a NEW item (clipboard COPY→PASTE). The sim mints a
 		// fresh ItemID and acks via BulkUpdateInventory (→ S.INV_BULK_UPDATE), which surfaces the copy.
-		const d = msg.d as { oldItemId: string; newFolderId: string; newName?: string }
-		if (!d.oldItemId || !d.newFolderId) { slog.warn(session.ws, 'CopyInvItem: missing oldItemId/newFolderId'); return }
+		const d = msg.d as {
+			oldItemId: string
+			newFolderId: string
+			newName?: string
+		}
+		if (!d.oldItemId || !d.newFolderId) {
+			slog.warn(session.ws, 'CopyInvItem: missing oldItemId/newFolderId')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeCopyInventoryItem({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			oldItemId: d.oldItemId, newFolderId: d.newFolderId, newName: d.newName,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			oldItemId: d.oldItemId,
+			newFolderId: d.newFolderId,
+			newName: d.newName,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ CopyInventoryItem ${d.oldItemId.slice(0, 8)}… → folder ${d.newFolderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ CopyInventoryItem ${d.oldItemId.slice(0, 8)}… → folder ${d.newFolderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -1803,44 +2031,79 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// Delete == move to Trash (Firestorm semantics). Client may pass trashFolderId (it knows the
 		// skeleton); fall back to the agent's system Trash if it didn't.
 		const d = msg.d as { itemId: string; trashFolderId?: string }
-		if (!d.itemId) { slog.warn(session.ws, 'InvTrashItem: missing itemId'); return }
+		if (!d.itemId) {
+			slog.warn(session.ws, 'InvTrashItem: missing itemId')
+			return
+		}
 		const trash = d.trashFolderId
-		if (!trash) { slog.warn(session.ws, 'InvTrashItem: missing trashFolderId'); return }
+		if (!trash) {
+			slog.warn(session.ws, 'InvTrashItem: missing trashFolderId')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeMoveInventoryItem({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			itemId: d.itemId, folderId: trash,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			itemId: d.itemId,
+			folderId: trash,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MoveInventoryItem (trash) ${d.itemId.slice(0, 8)}… → ${trash.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ MoveInventoryItem (trash) ${d.itemId.slice(0, 8)}… → ${trash.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_TRASH_FOLDER) {
 		const d = msg.d as { folderId: string; trashFolderId?: string }
-		if (!d.folderId) { slog.warn(session.ws, 'InvTrashFolder: missing folderId'); return }
+		if (!d.folderId) {
+			slog.warn(session.ws, 'InvTrashFolder: missing folderId')
+			return
+		}
 		const trash = d.trashFolderId
-		if (!trash) { slog.warn(session.ws, 'InvTrashFolder: missing trashFolderId'); return }
+		if (!trash) {
+			slog.warn(session.ws, 'InvTrashFolder: missing trashFolderId')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeMoveInventoryFolder({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, parentId: trash,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			parentId: trash,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MoveInventoryFolder (trash) ${d.folderId.slice(0, 8)}… → ${trash.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ MoveInventoryFolder (trash) ${d.folderId.slice(0, 8)}… → ${trash.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_PURGE_ITEM) {
 		const d = msg.d as { itemId: string }
-		if (!d.itemId) { slog.warn(session.ws, 'InvPurgeItem: missing itemId'); return }
+		if (!d.itemId) {
+			slog.warn(session.ws, 'InvPurgeItem: missing itemId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeRemoveInventoryItem({ agentId: session.agentId, sessionId: session.sessionId, seq, itemId: d.itemId })
+		const pkt = encodeRemoveInventoryItem({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			itemId: d.itemId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ RemoveInventoryItem (purge) ${d.itemId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ RemoveInventoryItem (purge) ${d.itemId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -1848,12 +2111,23 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// Single-folder purge (FS "Purge Item" on a trashed category): the client first sends
 		// INV_PURGE_FOLDER (contents), then this deletes the folder row itself.
 		const d = msg.d as { folderId: string }
-		if (!d.folderId) { slog.warn(session.ws, 'InvRemoveFolder: missing folderId'); return }
+		if (!d.folderId) {
+			slog.warn(session.ws, 'InvRemoveFolder: missing folderId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeRemoveInventoryFolder({ agentId: session.agentId, sessionId: session.sessionId, seq, folderId: d.folderId })
+		const pkt = encodeRemoveInventoryFolder({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ RemoveInventoryFolder (purge) ${d.folderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ RemoveInventoryFolder (purge) ${d.folderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -1862,48 +2136,98 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// the folder itself survives. OpenSim: LLClientView HandlePurgeInventoryDescendents →
 		// Scene.PacketHandlers.cs:705 HandlePurgeInventoryDescendents.
 		const d = msg.d as { folderId: string }
-		if (!d.folderId) { slog.warn(session.ws, 'InvPurgeFolder: missing folderId'); return }
+		if (!d.folderId) {
+			slog.warn(session.ws, 'InvPurgeFolder: missing folderId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodePurgeInventoryDescendents({ agentId: session.agentId, sessionId: session.sessionId, seq, folderId: d.folderId })
+		const pkt = encodePurgeInventoryDescendents({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ PurgeInventoryDescendents (empty) ${d.folderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ PurgeInventoryDescendents (empty) ${d.folderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_WEAR_ATTACHMENT) {
 		const d = msg.d as {
-			itemId: string; attachPoint?: number; ownerId?: string
-			itemFlags?: number; groupMask?: number; everyoneMask?: number; nextOwnerMask?: number
-			name?: string; description?: string
+			itemId: string
+			attachPoint?: number
+			ownerId?: string
+			itemFlags?: number
+			groupMask?: number
+			everyoneMask?: number
+			nextOwnerMask?: number
+			name?: string
+			description?: string
 		}
-		if (!d.itemId) { slog.warn(session.ws, 'InvWearAttachment: missing itemId'); return }
+		if (!d.itemId) {
+			slog.warn(session.ws, 'InvWearAttachment: missing itemId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeRezSingleAttachmentFromInv({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		const pkt = encodeRezSingleAttachmentFromInv({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			...d,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ RezSingleAttachmentFromInv ${d.itemId.slice(0, 8)}… pt=${d.attachPoint ?? 0}`)
+		slog.info(
+			session.ws,
+			`→ RezSingleAttachmentFromInv ${d.itemId.slice(0, 8)}… pt=${d.attachPoint ?? 0}`,
+		)
 		return
 	}
 
 	if (msg.t === C.INV_DETACH) {
 		const d = msg.d as { itemId: string }
-		if (!d.itemId) { slog.warn(session.ws, 'InvDetach: missing itemId'); return }
+		if (!d.itemId) {
+			slog.warn(session.ws, 'InvDetach: missing itemId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeDetachAttachmentIntoInv({ agentId: session.agentId, seq, itemId: d.itemId })
+		const pkt = encodeDetachAttachmentIntoInv({
+			agentId: session.agentId,
+			seq,
+			itemId: d.itemId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ DetachAttachmentIntoInv ${d.itemId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ DetachAttachmentIntoInv ${d.itemId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.CHAT) {
-		const d = msg.d as { message: string; chatType: number; channel: number }
+		const d = msg.d as {
+			message: string
+			chatType: number
+			channel: number
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeChatFromViewer({ agentId: session.agentId, sessionId: session.sessionId, seq, ...d })
+		const pkt = encodeChatFromViewer({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			...d,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ChatFromViewer: "${d.message.slice(0, 40)}" type=${d.chatType} ch=${d.channel}`)
+		slog.info(
+			session.ws,
+			`→ ChatFromViewer: "${d.message.slice(0, 40)}" type=${d.chatType} ch=${d.channel}`,
+		)
 		return
 	}
 
@@ -1916,15 +2240,25 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		for (let i = 0; i < d.localIds.length; i += 254) {
 			const chunk = d.localIds.slice(i, i + 254)
 			const seq = nextSeq(session)
-			const pkt = encodeObjectSelect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: chunk })
+			const pkt = encodeObjectSelect({
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: chunk,
+			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 			// Stale-id check: ids never seen in live sim traffic this session (full/compressed updates or
 			// cache probes) are almost certainly stale IDB-cache paint from a previous region run — the sim
 			// silently ignores ObjectSelect for localIds it doesn't know, which presents as the edit
 			// floater stuck on "Loading properties from sim…".
-			const stale = chunk.filter(id => !session.distinctLocalIds.has(id))
-			slog.info(session.ws, `→ ObjectSelect seq=${seq} ids=[${chunk.join(',')}] live=${chunk.length - stale.length}/${chunk.length}${stale.length ? ` STALE=[${stale.join(',')}]` : ''}`)
+			const stale = chunk.filter(
+				(id) => !session.distinctLocalIds.has(id),
+			)
+			slog.info(
+				session.ws,
+				`→ ObjectSelect seq=${seq} ids=[${chunk.join(',')}] live=${chunk.length - stale.length}/${chunk.length}${stale.length ? ` STALE=[${stale.join(',')}]` : ''}`,
+			)
 		}
 		return
 	}
@@ -1936,10 +2270,18 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		for (let i = 0; i < d.localIds.length; i += 254) {
 			const chunk = d.localIds.slice(i, i + 254)
 			const seq = nextSeq(session)
-			const pkt = encodeObjectDeselect({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: chunk })
+			const pkt = encodeObjectDeselect({
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: chunk,
+			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
-			slog.info(session.ws, `→ ObjectDeselect seq=${seq} ids=[${chunk.join(',')}]`)
+			slog.info(
+				session.ws,
+				`→ ObjectDeselect seq=${seq} ids=[${chunk.join(',')}]`,
+			)
 		}
 		return
 	}
@@ -1950,7 +2292,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// because this request usually arrives BEFORE the flood (preseed fires on the first
 		// ObjectUpdate); replying immediately would replay an empty/partial backlog.
 		session.probeResyncWanted = true
-		slog.info(session.ws, `[ObjCached] probe-resync armed (backlog=${session.probeBacklog?.size ?? 0} so far)`)
+		slog.info(
+			session.ws,
+			`[ObjCached] probe-resync armed (backlog=${session.probeBacklog?.size ?? 0} so far)`,
+		)
 		// The engine just registered its OBJECT_UPDATE handler — re-send the own avatar NOW. WHY: the
 		// replayCachedWorld burst on resume fires BEFORE the engine mounts, so its avatar frame is lost
 		// (AGENT_SPAWN_POS survives only because App.vue catches it pre-mount). Prims recover via the
@@ -1958,8 +2303,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// recovery path. This frame reaches the mounted engine → ownAvatarLocalId set, follow-cam +
 		// movement restored; the session-stable localId lets live TerseUpdates reconcile the position.
 		if (session.ownAvatarUpdate) {
-			session.ws.send(JSON.stringify({ t: S.OBJECT_UPDATE, d: { objects: [session.ownAvatarUpdate] } }))
-			slog.info(session.ws, `→ own-avatar re-sent on probe-resync (engine ready)`)
+			session.ws.send(
+				JSON.stringify({
+					t: S.OBJECT_UPDATE,
+					d: { objects: [session.ownAvatarUpdate] },
+				}),
+			)
+			slog.info(
+				session.ws,
+				`→ own-avatar re-sent on probe-resync (engine ready)`,
+			)
 		}
 		// Same pre-mount loss applies to TERRAIN: the resume's replayCachedWorld TERRAIN_PATCH frames
 		// arrive before the engine's handler mounts, so worldStore.terrainHeights stays zeroed → the
@@ -1967,7 +2320,11 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// 1m" bug; focus-dependent, fixed only by a manual resync until now). Re-send terrain NOW (engine
 		// ready) so the collision heightmap rebuilds — automatic resync, no user action needed.
 		const tPatches = replayTerrain(session)
-		if (tPatches > 0) slog.info(session.ws, `→ terrain re-sent on probe-resync (${tPatches} patches, engine ready)`)
+		if (tPatches > 0)
+			slog.info(
+				session.ws,
+				`→ terrain re-sent on probe-resync (${tPatches} patches, engine ready)`,
+			)
 		// Same pre-mount loss for APPEARANCE: the sim sends AvatarAppearance once per avatar, so a
 		// reloaded client would re-cloud every peer (and lose its own shape-height) without a replay.
 		// The sim happens to re-send some appearances when avatars are re-probed, but that's not
@@ -1976,7 +2333,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			for (const d of session.appearanceCache.values()) {
 				session.ws.send(JSON.stringify({ t: S.AVATAR_APPEARANCE, d }))
 			}
-			slog.info(session.ws, `→ ${session.appearanceCache.size} avatar appearance(s) re-sent on probe-resync (engine ready)`)
+			slog.info(
+				session.ws,
+				`→ ${session.appearanceCache.size} avatar appearance(s) re-sent on probe-resync (engine ready)`,
+			)
 		}
 		return
 	}
@@ -1997,7 +2357,10 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		if (enqueued > 0) session.lastCacheEnumAt = Date.now()
 		if (!session.loggedTypes.has('cachemiss')) {
 			session.loggedTypes.add('cachemiss')
-			slog.info(session.ws, `[CacheMiss] first batch: rx=${d.ids.length} enqueued=${enqueued} pending=${session.cacheMissPending.length}`)
+			slog.info(
+				session.ws,
+				`[CacheMiss] first batch: rx=${d.ids.length} enqueued=${enqueued} pending=${session.cacheMissPending.length}`,
+			)
 		}
 		return
 	}
@@ -2009,28 +2372,49 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { ids: number[] }
 		session.clientCached = new Set(d?.ids ?? [])
 		session.ghostReconcileDone = false
-		slog.info(session.ws, `[GhostReconcile] client cached set: ${session.clientCached.size} ids`)
+		slog.info(
+			session.ws,
+			`[GhostReconcile] client cached set: ${session.clientCached.size} ids`,
+		)
 		return
 	}
 
 	if (msg.t === C.SET_ALWAYS_RUN) {
 		const d = msg.d as { alwaysRun: boolean }
 		const seq = nextSeq(session)
-		const pkt = encodeSetAlwaysRun({ agentId: session.agentId, sessionId: session.sessionId, seq, alwaysRun: !!d.alwaysRun })
+		const pkt = encodeSetAlwaysRun({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			alwaysRun: !!d.alwaysRun,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ SetAlwaysRun ${d.alwaysRun ? 'true' : 'false'}`)
+		slog.info(
+			session.ws,
+			`→ SetAlwaysRun ${d.alwaysRun ? 'true' : 'false'}`,
+		)
 		return
 	}
 
 	if (msg.t === C.OBJECT_TOUCH) {
 		const d = msg.d as { localId: number }
 		const seqA = nextSeq(session)
-		const grab = encodeObjectGrab({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, localId: d.localId })
+		const grab = encodeObjectGrab({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq: seqA,
+			localId: d.localId,
+		})
 		trackReliable(session, seqA, grab)
 		session.udpSocket.send(grab, session.simPort, session.simIp)
 		const seqB = nextSeq(session)
-		const degrab = encodeObjectDeGrab({ agentId: session.agentId, sessionId: session.sessionId, seq: seqB, localId: d.localId })
+		const degrab = encodeObjectDeGrab({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq: seqB,
+			localId: d.localId,
+		})
 		trackReliable(session, seqB, degrab)
 		session.udpSocket.send(degrab, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ObjectGrab+DeGrab localId=${d.localId}`)
@@ -2038,19 +2422,35 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	}
 
 	if (msg.t === C.OBJECT_SIT) {
-		const d = msg.d as { targetId: string; offset?: [number, number, number] }
+		const d = msg.d as {
+			targetId: string
+			offset?: [number, number, number]
+		}
 		const seqA = nextSeq(session)
 		// Offset = FS pick.mObjectOffset (object-local click point, llviewermenu.cpp:5990-5992);
 		// OpenSim uses it as the free-sit position when no scripted sit target exists
 		// (ScenePresence.cs:3308-3322 — scripted targets override it server-side).
-		const req = encodeAgentRequestSit({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, targetId: d.targetId, offset: d.offset })
+		const req = encodeAgentRequestSit({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq: seqA,
+			targetId: d.targetId,
+			offset: d.offset,
+		})
 		trackReliable(session, seqA, req)
 		session.udpSocket.send(req, session.simPort, session.simIp)
 		const seqB = nextSeq(session)
-		const sit = encodeAgentSit({ agentId: session.agentId, sessionId: session.sessionId, seq: seqB })
+		const sit = encodeAgentSit({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq: seqB,
+		})
 		trackReliable(session, seqB, sit)
 		session.udpSocket.send(sit, session.simPort, session.simIp)
-		slog.info(session.ws, `→ AgentRequestSit+AgentSit target=${d.targetId.slice(0,8)}…`)
+		slog.info(
+			session.ws,
+			`→ AgentRequestSit+AgentSit target=${d.targetId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2060,8 +2460,11 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { objectId: string; requestFlags?: number }
 		const seq = nextSeq(session)
 		const req = encodeRequestObjectPropertiesFamily({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			objectId: d.objectId, requestFlags: d.requestFlags,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			objectId: d.objectId,
+			requestFlags: d.requestFlags,
 		})
 		trackReliable(session, seq, req)
 		session.udpSocket.send(req, session.simPort, session.simIp)
@@ -2071,17 +2474,32 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	if (msg.t === C.OBJECT_RENAME) {
 		const d = msg.d as { localId: number; name: string }
 		const seq = nextSeq(session)
-		const pkt = encodeObjectName({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId, name: d.name })
+		const pkt = encodeObjectName({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			localId: d.localId,
+			name: d.name,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectName localId=${d.localId} name="${d.name}"`)
+		slog.info(
+			session.ws,
+			`→ ObjectName localId=${d.localId} name="${d.name}"`,
+		)
 		return
 	}
 
 	if (msg.t === C.OBJECT_SET_DESC) {
 		const d = msg.d as { localId: number; description: string }
 		const seq = nextSeq(session)
-		const pkt = encodeObjectDescription({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId, description: d.description })
+		const pkt = encodeObjectDescription({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			localId: d.localId,
+			description: d.description,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ObjectDescription localId=${d.localId}`)
@@ -2092,16 +2510,36 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// ObjectPermissions (Low 105, message_template.msg:2285) — FS llpanelpermissions.cpp:1319
 		// onCommitPerm → LLSelectMgr::selectionSetObjectPermissions. The sim replies nothing; the
 		// client re-issues ObjectSelect afterwards to refetch authoritative ObjectProperties.
-		const d = msg.d as { localId: number; field: number; set: boolean; mask: number }
-		if (!d?.localId || !d.field || !d.mask) { slog.warn(session.ws, 'ObjectPerms: missing localId/field/mask'); return }
+		const d = msg.d as {
+			localId: number
+			field: number
+			set: boolean
+			mask: number
+		}
+		if (!d?.localId || !d.field || !d.mask) {
+			slog.warn(session.ws, 'ObjectPerms: missing localId/field/mask')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeObjectPermissions({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			objectData: [{ localId: d.localId, field: d.field, set: !!d.set, mask: d.mask }],
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			objectData: [
+				{
+					localId: d.localId,
+					field: d.field,
+					set: !!d.set,
+					mask: d.mask,
+				},
+			],
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectPermissions localId=${d.localId} field=0x${d.field.toString(16)} set=${!!d.set} mask=0x${d.mask.toString(16)}`)
+		slog.info(
+			session.ws,
+			`→ ObjectPermissions localId=${d.localId} field=0x${d.field.toString(16)} set=${!!d.set} mask=0x${d.mask.toString(16)}`,
+		)
 		return
 	}
 
@@ -2112,10 +2550,18 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// broadcasts a KillObject that our onKillObject removes from the scene.
 		const d = msg.d as { localId: number }
 		const seq = nextSeq(session)
-		const pkt = encodeDeRezObject({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: [d.localId] })
+		const pkt = encodeDeRezObject({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			localIds: [d.localId],
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ DeRezObject (delete→trash) localId=${d.localId}`)
+		slog.info(
+			session.ws,
+			`→ DeRezObject (delete→trash) localId=${d.localId}`,
+		)
 		return
 	}
 
@@ -2125,20 +2571,30 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// OpenSim re-resolves the folder itself (FromFolderID, else Objects — InventoryAccessModule.cs:840),
 		// so a missing destinationFolderId still lands somewhere sane; pass it when the client knows it.
 		const d = msg.d as { localIds: number[]; destinationFolderId?: string }
-		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectTake: missing localIds'); return }
+		if (!d.localIds?.length) {
+			slog.warn(session.ws, 'ObjectTake: missing localIds')
+			return
+		}
 		// WHY chunk: ObjectData's Variable count is one byte on the wire (codec writes length & 0xFF) —
 		// >255 objects in a single DeRezObject would silently truncate the count and corrupt the packet.
 		// FS likewise splits derez across multiple packets (llviewermenu.cpp derez_objects).
 		for (let i = 0; i < d.localIds.length; i += 255) {
 			const seq = nextSeq(session)
 			const pkt = encodeDeRezObject({
-				agentId: session.agentId, sessionId: session.sessionId, seq,
-				localIds: d.localIds.slice(i, i + 255), destination: DEREZ_TAKE, destinationId: d.destinationFolderId,
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: d.localIds.slice(i, i + 255),
+				destination: DEREZ_TAKE,
+				destinationId: d.destinationFolderId,
 			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		slog.info(session.ws, `→ DeRezObject (take) localIds=[${d.localIds.join(',')}] → ${d.destinationFolderId ? d.destinationFolderId.slice(0, 8) + '…' : 'sim-default'}`)
+		slog.info(
+			session.ws,
+			`→ DeRezObject (take) localIds=[${d.localIds.join(',')}] → ${d.destinationFolderId ? d.destinationFolderId.slice(0, 8) + '…' : 'sim-default'}`,
+		)
 		return
 	}
 
@@ -2147,18 +2603,27 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// (llviewermenu.cpp handle_take_copy:6593-6594) but OpenSim forces the Objects folder regardless
 		// (InventoryAccessModule.cs:838-839), so a zero DestinationID is correct here. Object stays in world.
 		const d = msg.d as { localIds: number[] }
-		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectTakeCopy: missing localIds'); return }
+		if (!d.localIds?.length) {
+			slog.warn(session.ws, 'ObjectTakeCopy: missing localIds')
+			return
+		}
 		// WHY chunk: same one-byte Variable-count limit as OBJECT_TAKE above.
 		for (let i = 0; i < d.localIds.length; i += 255) {
 			const seq = nextSeq(session)
 			const pkt = encodeDeRezObject({
-				agentId: session.agentId, sessionId: session.sessionId, seq,
-				localIds: d.localIds.slice(i, i + 255), destination: DEREZ_TAKE_COPY,
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: d.localIds.slice(i, i + 255),
+				destination: DEREZ_TAKE_COPY,
 			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		slog.info(session.ws, `→ DeRezObject (take-copy) localIds=[${d.localIds.join(',')}]`)
+		slog.info(
+			session.ws,
+			`→ DeRezObject (take-copy) localIds=[${d.localIds.join(',')}]`,
+		)
 		return
 	}
 
@@ -2166,10 +2631,21 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// MultipleObjectUpdate (Medium 2) — move/rotate/scale prims. Data layout + UPD_* flags per
 		// FS llselectmgr.cpp:4922 packMultipleUpdate / llselectmgr.h:60; the type byte must land on
 		// OpenSim's HandleMultipleObjUpdate table (LLClientView.cs:12298) — the encoder enforces it.
-		const d = msg.d as { updates?: MultiUpdateEntry[]; linked?: boolean; uniform?: boolean }
-		const updates = (d.updates ?? []).filter(u =>
-			u && typeof u.localId === 'number' && (u.position || u.rotation || u.scale))
-		if (!updates.length) { slog.warn(session.ws, 'ObjectMultiUpdate: no valid updates'); return }
+		const d = msg.d as {
+			updates?: MultiUpdateEntry[]
+			linked?: boolean
+			uniform?: boolean
+		}
+		const updates = (d.updates ?? []).filter(
+			(u) =>
+				u &&
+				typeof u.localId === 'number' &&
+				(u.position || u.rotation || u.scale),
+		)
+		if (!updates.length) {
+			slog.warn(session.ws, 'ObjectMultiUpdate: no valid updates')
+			return
+		}
 		// WHY chunk 25: each ObjectData block is ≤42B (4+1+1+36); 25 keeps a packet ≲1.1KB, safely
 		// under the ~1200B LLUDP MTU (FS's message builder does the same per-packet fitting).
 		for (let i = 0; i < updates.length; i += 25) {
@@ -2177,15 +2653,34 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			let pkt: Buffer
 			try {
 				pkt = encodeMultipleObjectUpdate({
-					agentId: session.agentId, sessionId: session.sessionId, seq,
-					updates: updates.slice(i, i + 25), linked: !!d.linked, uniform: !!d.uniform,
+					agentId: session.agentId,
+					sessionId: session.sessionId,
+					seq,
+					updates: updates.slice(i, i + 25),
+					linked: !!d.linked,
+					uniform: !!d.uniform,
 				})
-			} catch (e) { slog.warn(session.ws, `ObjectMultiUpdate refused: ${(e as Error).message}`); return }
+			} catch (e) {
+				slog.warn(
+					session.ws,
+					`ObjectMultiUpdate refused: ${(e as Error).message}`,
+				)
+				return
+			}
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		const fields = [updates[0].position && 'pos', updates[0].rotation && 'rot', updates[0].scale && 'scale'].filter(Boolean).join('+')
-		slog.info(session.ws, `→ MultipleObjectUpdate ${fields}${d.linked ? ' linked' : ''}${d.uniform ? ' uniform' : ''} localIds=[${updates.map(u => u.localId).join(',')}]`)
+		const fields = [
+			updates[0].position && 'pos',
+			updates[0].rotation && 'rot',
+			updates[0].scale && 'scale',
+		]
+			.filter(Boolean)
+			.join('+')
+		slog.info(
+			session.ws,
+			`→ MultipleObjectUpdate ${fields}${d.linked ? ' linked' : ''}${d.uniform ? ' uniform' : ''} localIds=[${updates.map((u) => u.localId).join(',')}]`,
+		)
 		return
 	}
 
@@ -2194,21 +2689,34 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// shared/protocol.js C.OBJECT_SHAPE comment); caller sends the FULL 17-field float set,
 		// RAW (volume-params space) — encodeObjectShape quantizes via the same helper ObjectAdd uses.
 		const d = msg.d as { updates?: ObjectShapeEntry[] }
-		const updates = (d.updates ?? []).filter(u =>
-			u && typeof u.localId === 'number' && typeof u.pathCurve === 'number' && typeof u.profileCurve === 'number')
-		if (!updates.length) { slog.warn(session.ws, 'ObjectShape: no valid updates'); return }
+		const updates = (d.updates ?? []).filter(
+			(u) =>
+				u &&
+				typeof u.localId === 'number' &&
+				typeof u.pathCurve === 'number' &&
+				typeof u.profileCurve === 'number',
+		)
+		if (!updates.length) {
+			slog.warn(session.ws, 'ObjectShape: no valid updates')
+			return
+		}
 		// WHY chunk 25: same per-packet MTU budget as OBJECT_MULTI_UPDATE (each block here is
 		// 4(localId)+17 fields ≈ 25B, well under the ~1200B LLUDP MTU at 25 blocks/packet).
 		for (let i = 0; i < updates.length; i += 25) {
 			const seq = nextSeq(session)
 			const pkt = encodeObjectShape({
-				agentId: session.agentId, sessionId: session.sessionId, seq,
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
 				updates: updates.slice(i, i + 25),
 			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		slog.info(session.ws, `→ ObjectShape localIds=[${updates.map(u => u.localId).join(',')}]`)
+		slog.info(
+			session.ws,
+			`→ ObjectShape localIds=[${updates.map((u) => u.localId).join(',')}]`,
+		)
 		return
 	}
 
@@ -2216,34 +2724,68 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// ObjectAdd (Medium 1) — rez a new prim. Caller sends RAW floats; encodeObjectAdd applies
 		// the FS packProfileParams/packPathParams quantization (see lludp-codec.ts for the cited
 		// quanta constants). Sim assigns the new localId and replies via ordinary ObjectUpdate.
-		const d = msg.d as Partial<Omit<Parameters<typeof encodeObjectAdd>[0], 'agentId' | 'sessionId' | 'seq'>>
-		if (typeof d.material !== 'number' || typeof d.pathCurve !== 'number' || typeof d.profileCurve !== 'number'
-			|| !d.rayStart || !d.rayEnd || !d.scale || !d.rotation) {
-			slog.warn(session.ws, 'ObjectAdd: missing required shape/ray/scale/rotation fields'); return
+		const d = msg.d as Partial<
+			Omit<
+				Parameters<typeof encodeObjectAdd>[0],
+				'agentId' | 'sessionId' | 'seq'
+			>
+		>
+		if (
+			typeof d.material !== 'number' ||
+			typeof d.pathCurve !== 'number' ||
+			typeof d.profileCurve !== 'number' ||
+			!d.rayStart ||
+			!d.rayEnd ||
+			!d.scale ||
+			!d.rotation
+		) {
+			slog.warn(
+				session.ws,
+				'ObjectAdd: missing required shape/ray/scale/rotation fields',
+			)
+			return
 		}
 		const seq = nextSeq(session)
 		const pkt = encodeObjectAdd({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
 			pcode: d.pcode,
-			material: d.material, addFlags: d.addFlags ?? 0,
-			pathCurve: d.pathCurve, profileCurve: d.profileCurve,
-			pathBegin: d.pathBegin ?? 0, pathEnd: d.pathEnd ?? 1,
-			pathScaleX: d.pathScaleX ?? 1, pathScaleY: d.pathScaleY ?? 1,
-			pathShearX: d.pathShearX ?? 0, pathShearY: d.pathShearY ?? 0,
-			pathTwist: d.pathTwist ?? 0, pathTwistBegin: d.pathTwistBegin ?? 0,
+			material: d.material,
+			addFlags: d.addFlags ?? 0,
+			pathCurve: d.pathCurve,
+			profileCurve: d.profileCurve,
+			pathBegin: d.pathBegin ?? 0,
+			pathEnd: d.pathEnd ?? 1,
+			pathScaleX: d.pathScaleX ?? 1,
+			pathScaleY: d.pathScaleY ?? 1,
+			pathShearX: d.pathShearX ?? 0,
+			pathShearY: d.pathShearY ?? 0,
+			pathTwist: d.pathTwist ?? 0,
+			pathTwistBegin: d.pathTwistBegin ?? 0,
 			pathRadiusOffset: d.pathRadiusOffset ?? 0,
-			pathTaperX: d.pathTaperX ?? 0, pathTaperY: d.pathTaperY ?? 0,
-			pathRevolutions: d.pathRevolutions ?? 1, pathSkew: d.pathSkew ?? 0,
-			profileBegin: d.profileBegin ?? 0, profileEnd: d.profileEnd ?? 1,
+			pathTaperX: d.pathTaperX ?? 0,
+			pathTaperY: d.pathTaperY ?? 0,
+			pathRevolutions: d.pathRevolutions ?? 1,
+			pathSkew: d.pathSkew ?? 0,
+			profileBegin: d.profileBegin ?? 0,
+			profileEnd: d.profileEnd ?? 1,
 			profileHollow: d.profileHollow ?? 0,
-			bypassRaycast: !!d.bypassRaycast, rayStart: d.rayStart, rayEnd: d.rayEnd,
+			bypassRaycast: !!d.bypassRaycast,
+			rayStart: d.rayStart,
+			rayEnd: d.rayEnd,
 			rayTargetId: d.rayTargetId,
 			rayEndIsIntersection: !!d.rayEndIsIntersection,
-			scale: d.scale, rotation: d.rotation, state: d.state ?? 0,
+			scale: d.scale,
+			rotation: d.rotation,
+			state: d.state ?? 0,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectAdd pathCurve=${d.pathCurve} profileCurve=${d.profileCurve}`)
+		slog.info(
+			session.ws,
+			`→ ObjectAdd pathCurve=${d.pathCurve} profileCurve=${d.profileCurve}`,
+		)
 		return
 	}
 
@@ -2251,64 +2793,121 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// ObjectLink (Low 115) — build a linkset. Order preserved: FIRST id in localIds becomes the
 		// new root (OpenSim LLClientView.cs:9317); the client resolves push-front ordering.
 		const d = msg.d as { localIds: number[] }
-		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectLink: missing localIds'); return }
+		if (!d.localIds?.length) {
+			slog.warn(session.ws, 'ObjectLink: missing localIds')
+			return
+		}
 		// WHY chunk 255: ObjectData's Variable count is one wire byte (same limit as OBJECT_TAKE).
 		for (let i = 0; i < d.localIds.length; i += 255) {
 			const seq = nextSeq(session)
-			const pkt = encodeObjectLink({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds.slice(i, i + 255) })
+			const pkt = encodeObjectLink({
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: d.localIds.slice(i, i + 255),
+			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		slog.info(session.ws, `→ ObjectLink root=${d.localIds[0]} localIds=[${d.localIds.join(',')}]`)
+		slog.info(
+			session.ws,
+			`→ ObjectLink root=${d.localIds[0]} localIds=[${d.localIds.join(',')}]`,
+		)
 		return
 	}
 
 	if (msg.t === C.OBJECT_DELINK) {
 		// ObjectDelink (Low 116) — break a linkset apart.
 		const d = msg.d as { localIds: number[] }
-		if (!d.localIds?.length) { slog.warn(session.ws, 'ObjectDelink: missing localIds'); return }
+		if (!d.localIds?.length) {
+			slog.warn(session.ws, 'ObjectDelink: missing localIds')
+			return
+		}
 		for (let i = 0; i < d.localIds.length; i += 255) {
 			const seq = nextSeq(session)
-			const pkt = encodeObjectDelink({ agentId: session.agentId, sessionId: session.sessionId, seq, localIds: d.localIds.slice(i, i + 255) })
+			const pkt = encodeObjectDelink({
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: d.localIds.slice(i, i + 255),
+			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		slog.info(session.ws, `→ ObjectDelink localIds=[${d.localIds.join(',')}]`)
+		slog.info(
+			session.ws,
+			`→ ObjectDelink localIds=[${d.localIds.join(',')}]`,
+		)
 		return
 	}
 
 	if (msg.t === C.OBJECT_SET_TEXTURE) {
 		// ObjectImage (Low 96) — whole-TE replace on one object. faces is the FULL per-face table
 		// (not a sparse patch); buildTextureEntry re-derives its own default/exception grouping.
-		const d = msg.d as { localId: number; faces: TextureEntryFaceInput[]; mediaUrl?: string }
+		const d = msg.d as {
+			localId: number
+			faces: TextureEntryFaceInput[]
+			mediaUrl?: string
+		}
 		if (typeof d?.localId !== 'number' || !d.faces?.length) {
-			slog.warn(session.ws, 'ObjectSetTexture: missing localId/faces'); return
+			slog.warn(session.ws, 'ObjectSetTexture: missing localId/faces')
+			return
 		}
 		const seq = nextSeq(session)
 		let pkt: Buffer
 		try {
-			pkt = encodeObjectImage({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId, mediaUrl: d.mediaUrl, faces: d.faces })
-		} catch (e) { slog.warn(session.ws, `ObjectSetTexture refused: ${(e as Error).message}`); return }
+			pkt = encodeObjectImage({
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localId: d.localId,
+				mediaUrl: d.mediaUrl,
+				faces: d.faces,
+			})
+		} catch (e) {
+			slog.warn(
+				session.ws,
+				`ObjectSetTexture refused: ${(e as Error).message}`,
+			)
+			return
+		}
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectImage localId=${d.localId} faces=${d.faces.length}`)
+		slog.info(
+			session.ws,
+			`→ ObjectImage localId=${d.localId} faces=${d.faces.length}`,
+		)
 		return
 	}
 
 	if (msg.t === C.OBJECT_DUPLICATE) {
 		// ObjectDuplicate (Low 90) — copy a set of objects, offset by a given amount.
-		const d = msg.d as { localIds: number[]; offset: [number, number, number]; duplicateFlags?: number }
-		if (!d.localIds?.length || !d.offset) { slog.warn(session.ws, 'ObjectDuplicate: missing localIds/offset'); return }
+		const d = msg.d as {
+			localIds: number[]
+			offset: [number, number, number]
+			duplicateFlags?: number
+		}
+		if (!d.localIds?.length || !d.offset) {
+			slog.warn(session.ws, 'ObjectDuplicate: missing localIds/offset')
+			return
+		}
 		for (let i = 0; i < d.localIds.length; i += 255) {
 			const seq = nextSeq(session)
 			const pkt = encodeObjectDuplicate({
-				agentId: session.agentId, sessionId: session.sessionId, seq,
-				localIds: d.localIds.slice(i, i + 255), offset: d.offset, duplicateFlags: d.duplicateFlags,
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq,
+				localIds: d.localIds.slice(i, i + 255),
+				offset: d.offset,
+				duplicateFlags: d.duplicateFlags,
 			})
 			trackReliable(session, seq, pkt)
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
 		}
-		slog.info(session.ws, `→ ObjectDuplicate localIds=[${d.localIds.join(',')}] offset=[${d.offset.join(',')}]`)
+		slog.info(
+			session.ws,
+			`→ ObjectDuplicate localIds=[${d.localIds.join(',')}] offset=[${d.offset.join(',')}]`,
+		)
 		return
 	}
 
@@ -2316,9 +2915,17 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// RequestTaskInventory (Low 289) — the reply chain (ReplyTaskInventory → Xfer → parse)
 		// answers with S.TASK_INV / S.TASK_INV_EMPTY; see the inbound branches above.
 		const d = msg.d as { localId: number }
-		if (typeof d?.localId !== 'number') { slog.warn(session.ws, 'RequestTaskInv: missing localId'); return }
+		if (typeof d?.localId !== 'number') {
+			slog.warn(session.ws, 'RequestTaskInv: missing localId')
+			return
+		}
 		const seq = nextSeq(session)
-		const pkt = encodeRequestTaskInventory({ agentId: session.agentId, sessionId: session.sessionId, seq, localId: d.localId })
+		const pkt = encodeRequestTaskInventory({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			localId: d.localId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ RequestTaskInventory localId=${d.localId}`)
@@ -2331,16 +2938,27 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// no-copy items are deleted from the prim sim-side (FS llviewerobject.cpp:2941-2950).
 		const d = msg.d as { localId: number; itemId: string; folderId: string }
 		if (typeof d?.localId !== 'number' || !d.itemId || !d.folderId) {
-			slog.warn(session.ws, 'TaskInvMove: missing localId/itemId/folderId'); return
+			slog.warn(
+				session.ws,
+				'TaskInvMove: missing localId/itemId/folderId',
+			)
+			return
 		}
 		const seq = nextSeq(session)
 		const pkt = encodeMoveTaskInventory({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			folderId: d.folderId, localId: d.localId, itemId: d.itemId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			folderId: d.folderId,
+			localId: d.localId,
+			itemId: d.itemId,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MoveTaskInventory localId=${d.localId} item=${d.itemId.slice(0, 8)}… → folder ${d.folderId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ MoveTaskInventory localId=${d.localId} item=${d.itemId.slice(0, 8)}… → folder ${d.folderId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2350,18 +2968,39 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// OpenSim silently drops this (LLClientView.cs:11137-11138); stock SampleMoneyModule
 		// BlueBox-refuses anything priced (SampleMoneyModule.cs:820-824) — the refusal already
 		// surfaces via the AlertMessage → S.ALERT_MESSAGE path.
-		const d = msg.d as { localId: number; saleType: number; salePrice: number; categoryId?: string }
-		if (typeof d?.localId !== 'number' || typeof d.saleType !== 'number' || typeof d.salePrice !== 'number') {
-			slog.warn(session.ws, 'ObjectBuy: missing localId/saleType/salePrice'); return
+		const d = msg.d as {
+			localId: number
+			saleType: number
+			salePrice: number
+			categoryId?: string
+		}
+		if (
+			typeof d?.localId !== 'number' ||
+			typeof d.saleType !== 'number' ||
+			typeof d.salePrice !== 'number'
+		) {
+			slog.warn(
+				session.ws,
+				'ObjectBuy: missing localId/saleType/salePrice',
+			)
+			return
 		}
 		const seq = nextSeq(session)
 		const pkt = encodeObjectBuy({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			localId: d.localId, saleType: d.saleType, salePrice: d.salePrice, categoryId: d.categoryId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			localId: d.localId,
+			saleType: d.saleType,
+			salePrice: d.salePrice,
+			categoryId: d.categoryId,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ObjectBuy localId=${d.localId} saleType=${d.saleType} price=${d.salePrice}`)
+		slog.info(
+			session.ws,
+			`→ ObjectBuy localId=${d.localId} saleType=${d.saleType} price=${d.salePrice}`,
+		)
 		return
 	}
 
@@ -2369,19 +3008,41 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// MoneyTransferRequest (Low 311) — FS "Pay" (give_money, llviewermessage.cpp:462-490).
 		// Stock OpenSim SampleMoneyModule's MoneyTransferAction handler is empty
 		// (SampleMoneyModule.cs:747-750) — Pay is a silent no-op on unmodified grids.
-		const d = msg.d as { destId: string; amount: number; transactionType: number; description?: string; isDestGroup?: boolean }
-		if (!d?.destId || typeof d.amount !== 'number' || typeof d.transactionType !== 'number') {
-			slog.warn(session.ws, 'PayMoney: missing destId/amount/transactionType'); return
+		const d = msg.d as {
+			destId: string
+			amount: number
+			transactionType: number
+			description?: string
+			isDestGroup?: boolean
+		}
+		if (
+			!d?.destId ||
+			typeof d.amount !== 'number' ||
+			typeof d.transactionType !== 'number'
+		) {
+			slog.warn(
+				session.ws,
+				'PayMoney: missing destId/amount/transactionType',
+			)
+			return
 		}
 		const seq = nextSeq(session)
 		const pkt = encodeMoneyTransferRequest({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			destId: d.destId, amount: d.amount, transactionType: d.transactionType,
-			description: d.description, isDestGroup: !!d.isDestGroup,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			destId: d.destId,
+			amount: d.amount,
+			transactionType: d.transactionType,
+			description: d.description,
+			isDestGroup: !!d.isDestGroup,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MoneyTransferRequest dest=${d.destId.slice(0, 8)}… amount=${d.amount} type=${d.transactionType}`)
+		slog.info(
+			session.ws,
+			`→ MoneyTransferRequest dest=${d.destId.slice(0, 8)}… amount=${d.amount} type=${d.transactionType}`,
+		)
 		return
 	}
 
@@ -2390,7 +3051,11 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// MoneyBalanceReply (Low 314), decoded in the generic front-door below → S.MONEY_BALANCE.
 		// Stock SampleMoneyModule always answers balance=0 (GetFundsForAgentID, :596-601).
 		const seq = nextSeq(session)
-		const pkt = encodeMoneyBalanceRequest({ agentId: session.agentId, sessionId: session.sessionId, seq })
+		const pkt = encodeMoneyBalanceRequest({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ MoneyBalanceRequest`)
@@ -2401,49 +3066,78 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// InviteGroupRequest (Low 349, Unencoded) — FS llgroupmgr.cpp:1893-1927. OpenSim drops this
 		// silently when no groups module is loaded (LLClientView.cs:11922-11935 checks
 		// m_GroupsModule == null before dispatch) — there is no NAK to surface.
-		const d = msg.d as { groupId: string; inviteeIds: string[]; roleId?: string }
-		if (!d?.groupId || !d.inviteeIds?.length) { slog.warn(session.ws, 'GroupInvite: missing groupId/inviteeIds'); return }
+		const d = msg.d as {
+			groupId: string
+			inviteeIds: string[]
+			roleId?: string
+		}
+		if (!d?.groupId || !d.inviteeIds?.length) {
+			slog.warn(session.ws, 'GroupInvite: missing groupId/inviteeIds')
+			return
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeInviteGroupRequest({
-			agentId: session.agentId, sessionId: session.sessionId, seq,
-			groupId: d.groupId, inviteeIds: d.inviteeIds, roleId: d.roleId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			groupId: d.groupId,
+			inviteeIds: d.inviteeIds,
+			roleId: d.roleId,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ InviteGroupRequest group=${d.groupId.slice(0, 8)}… invitees=${d.inviteeIds.length}`)
+		slog.info(
+			session.ws,
+			`→ InviteGroupRequest group=${d.groupId.slice(0, 8)}… invitees=${d.inviteeIds.length}`,
+		)
 		return
 	}
 
 	if (msg.t === C.IM_SEND) {
-		const d = msg.d as { toAgentId: string; fromAgentName: string; message: string }
+		const d = msg.d as {
+			toAgentId: string
+			fromAgentName: string
+			message: string
+		}
 		const seq = nextSeq(session)
 		const pkt = encodeImprovedInstantMessage({
-			agentId:       session.agentId,
-			sessionId:     session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
-			toAgentId:     d.toAgentId,
+			toAgentId: d.toAgentId,
 			// WHY: Client supplies fromAgentName but may pass an empty/placeholder string when
 			// avatarStore.displayName isn't populated yet. Fall back to the SL "First Last" from
 			// XML-RPC login so recipients see a real name, not "User".
 			fromAgentName: d.fromAgentName || session.agentName || 'User',
-			message:       d.message,
-			dialog:        0,  // MessageFromAgent
+			message: d.message,
+			dialog: 0, // MessageFromAgent
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ IM to ${d.toAgentId.slice(0, 8)}: "${d.message.slice(0, 40)}"`)
+		slog.info(
+			session.ws,
+			`→ IM to ${d.toAgentId.slice(0, 8)}: "${d.message.slice(0, 40)}"`,
+		)
 		return
 	}
 
-	// ══ Social (Phase 3) ══════════════════════════════════════════════════════
+	// ══ Social (to-do) ══════════════════════════════════════════════════════
 	if (msg.t === C.AVATAR_PROPS_REQ) {
 		const d = msg.d as { avatarId: string }
 		if (!d.avatarId) return
 		const seq = nextSeq(session)
-		const pkt = encodeAvatarPropertiesRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, avatarId: d.avatarId })
+		const pkt = encodeAvatarPropertiesRequest({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			avatarId: d.avatarId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ AvatarPropertiesRequest ${d.avatarId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ AvatarPropertiesRequest ${d.avatarId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2451,7 +3145,12 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { parcelId: string }
 		if (!d.parcelId) return
 		const seq = nextSeq(session)
-		const pkt = encodeParcelInfoRequest({ agentId: session.agentId, sessionId: session.sessionId, seq, parcelId: d.parcelId })
+		const pkt = encodeParcelInfoRequest({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			parcelId: d.parcelId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ ParcelInfoRequest ${d.parcelId.slice(0, 8)}…`)
@@ -2471,44 +3170,64 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 	}
 
 	if (msg.t === C.FRIEND_OFFER) {
-		const d = msg.d as { toAgentId: string; toAgentName?: string; message?: string }
+		const d = msg.d as {
+			toAgentId: string
+			toAgentName?: string
+			message?: string
+		}
 		if (!d.toAgentId) return
 		const seq = nextSeq(session)
 		// WHY: a friendship offer is an ImprovedInstantMessage with dialog 38 (IM_FRIENDSHIP_OFFERED).
 		// The IM's message-id becomes the transaction id the peer echoes in Accept/DeclineFriendship.
 		const pkt = encodeImprovedInstantMessage({
-			agentId:       session.agentId,
-			sessionId:     session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
-			toAgentId:     d.toAgentId,
+			toAgentId: d.toAgentId,
 			fromAgentName: session.agentName || 'User',
-			message:       d.message || 'Will you be my friend?',
-			dialog:        38,
+			message: d.message || 'Will you be my friend?',
+			dialog: 38,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ OfferFriendship (IM dialog 38) to ${d.toAgentId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ OfferFriendship (IM dialog 38) to ${d.toAgentId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.FRIEND_RESPOND) {
-		const d = msg.d as { transactionId: string; accept: boolean; folderId?: string }
+		const d = msg.d as {
+			transactionId: string
+			accept: boolean
+			folderId?: string
+		}
 		if (!d.transactionId) return
 		const seq = nextSeq(session)
 		const pkt = d.accept
 			? encodeAcceptFriendship({
-				agentId: session.agentId, sessionId: session.sessionId, seq,
-				transactionId: d.transactionId,
-				// WHY: AcceptFriendship needs a folder for the new calling card. Empty UUID lets
-				// the sim drop it in the default Calling Cards folder.
-				folderId: d.folderId || '00000000-0000-0000-0000-000000000000',
-			})
+					agentId: session.agentId,
+					sessionId: session.sessionId,
+					seq,
+					transactionId: d.transactionId,
+					// WHY: AcceptFriendship needs a folder for the new calling card. Empty UUID lets
+					// the sim drop it in the default Calling Cards folder.
+					folderId:
+						d.folderId || '00000000-0000-0000-0000-000000000000',
+				})
 			: encodeDeclineFriendship({
-				agentId: session.agentId, sessionId: session.sessionId, seq, transactionId: d.transactionId,
-			})
+					agentId: session.agentId,
+					sessionId: session.sessionId,
+					seq,
+					transactionId: d.transactionId,
+				})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ${d.accept ? 'Accept' : 'Decline'}Friendship tx=${d.transactionId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ ${d.accept ? 'Accept' : 'Decline'}Friendship tx=${d.transactionId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2517,34 +3236,45 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// (phoenix-firestorm/indra/newview/llviewermessage.cpp:1726): accept dialog = offer+1,
 		// decline = offer+2; MessageBlock.ID echoes the original offer's transaction id (imId);
 		// accept BinaryBucket = 16-byte destination folder UUID, decline BinaryBucket = empty.
-		const d = msg.d as { imId: string; accept: boolean; fromAgentId: string; offerDialog?: number; destFolderId?: string }
+		const d = msg.d as {
+			imId: string
+			accept: boolean
+			fromAgentId: string
+			offerDialog?: number
+			destFolderId?: string
+		}
 		if (!d.imId || !d.fromAgentId) return
 		// WHY: offerDialog defaults to 4 (IM_INVENTORY_OFFERED, the agent-give case). +1/+2 gives
 		// 5 (IM_INVENTORY_ACCEPTED)/6 (IM_INVENTORY_DECLINED). Task-offer 9 would yield 10/11.
-		const offerDialog = typeof d.offerDialog === 'number' ? d.offerDialog : 4
+		const offerDialog =
+			typeof d.offerDialog === 'number' ? d.offerDialog : 4
 		const replyDialog = offerDialog + (d.accept ? 1 : 2)
 		// WHY: accept carries the destination folder UUID (16 raw bytes) so the sim files the item
 		// there; decline carries an empty bucket so the sim routes the item to Trash.
 		// WHY: decline uses FS's EMPTY_BINARY_BUCKET — a single NUL byte, not a zero-length bucket
 		// (llinstantmessage.cpp EMPTY_BINARY_BUCKET_SIZE=1) — so the sim routes the item to Trash.
-		const bucket = d.accept && d.destFolderId
-			? uuidToBytes(d.destFolderId)
-			: Buffer.from([0])
+		const bucket =
+			d.accept && d.destFolderId
+				? uuidToBytes(d.destFolderId)
+				: Buffer.from([0])
 		const seq = nextSeq(session)
 		const pkt = encodeImprovedInstantMessage({
-			agentId:       session.agentId,
-			sessionId:     session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
-			toAgentId:     d.fromAgentId,
+			toAgentId: d.fromAgentId,
 			fromAgentName: session.agentName || 'User',
-			message:       '',
-			dialog:        replyDialog,
-			messageId:     d.imId,   // echo the offer transaction id
-			binaryBucket:  bucket,
+			message: '',
+			dialog: replyDialog,
+			messageId: d.imId, // echo the offer transaction id
+			binaryBucket: bucket,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ Inventory offer ${d.accept ? 'accept' : 'decline'} (IM dialog ${replyDialog}) to ${d.fromAgentId.slice(0, 8)}… tx=${d.imId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ Inventory offer ${d.accept ? 'accept' : 'decline'} (IM dialog ${replyDialog}) to ${d.fromAgentId.slice(0, 8)}… tx=${d.imId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2554,27 +3284,38 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// dialog IM_INVENTORY_OFFERED (4), a FRESH transaction id the giver owns (transaction_id.generate()),
 		// Message = the item's name, FromAgentName = the giver's full name, and BinaryBucket =
 		// [S8 assetType][16-byte item UUID] (BUCKET_SIZE = sizeof(U8) + UUID_BYTES). Folder-give is out of scope.
-		const d = msg.d as { toAgentId: string; itemId: string; assetType: number; name?: string }
+		const d = msg.d as {
+			toAgentId: string
+			itemId: string
+			assetType: number
+			name?: string
+		}
 		if (!d.toAgentId || !d.itemId) return
 		const IM_INVENTORY_OFFERED = 4
 		// WHY: bucket byte 0 is the asset type, bytes 1..16 are the RAW item UUID — the recipient's viewer
 		// (our decodeImprovedInstantMessage → parseOfferBucket) reads exactly this shape back.
-		const bucket = Buffer.concat([Buffer.from([(d.assetType | 0) & 0xff]), uuidToBytes(d.itemId)])
+		const bucket = Buffer.concat([
+			Buffer.from([(d.assetType | 0) & 0xff]),
+			uuidToBytes(d.itemId),
+		])
 		const seq = nextSeq(session)
 		const pkt = encodeImprovedInstantMessage({
-			agentId:       session.agentId,
-			sessionId:     session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
-			toAgentId:     d.toAgentId,
+			toAgentId: d.toAgentId,
 			fromAgentName: session.agentName || 'User',
-			message:       d.name || '',
-			dialog:        IM_INVENTORY_OFFERED,
-			messageId:     crypto.randomUUID(),   // giver owns the transaction id (fresh per offer)
-			binaryBucket:  bucket,
+			message: d.name || '',
+			dialog: IM_INVENTORY_OFFERED,
+			messageId: crypto.randomUUID(), // giver owns the transaction id (fresh per offer)
+			binaryBucket: bucket,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ Give inventory "${d.name || '?'}" (type ${d.assetType | 0}) item=${d.itemId.slice(0, 8)}… to ${d.toAgentId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ Give inventory "${d.name || '?'}" (type ${d.assetType | 0}) item=${d.itemId.slice(0, 8)}… to ${d.toAgentId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2583,25 +3324,33 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// Same ImprovedInstantMessage dialog 4 as an item offer; only the bucket shape differs
 		// ([AT_FOLDER][folderUUID] + [assetType][itemUUID] per direct item — buildGiveFolderBucket).
 		// OpenSim copies the subfolders + their contents server-side; the direct items must be listed.
-		const d = msg.d as { toAgentId: string; folderId: string; name?: string; items?: { itemId: string; assetType: number }[] }
+		const d = msg.d as {
+			toAgentId: string
+			folderId: string
+			name?: string
+			items?: { itemId: string; assetType: number }[]
+		}
 		if (!d.toAgentId || !d.folderId) return
 		const IM_INVENTORY_OFFERED = 4
 		const bucket = buildGiveFolderBucket(d.folderId, d.items || [])
 		const seq = nextSeq(session)
 		const pkt = encodeImprovedInstantMessage({
-			agentId:       session.agentId,
-			sessionId:     session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
-			toAgentId:     d.toAgentId,
+			toAgentId: d.toAgentId,
 			fromAgentName: session.agentName || 'User',
-			message:       d.name || '',
-			dialog:        IM_INVENTORY_OFFERED,
-			messageId:     crypto.randomUUID(),
-			binaryBucket:  bucket,
+			message: d.name || '',
+			dialog: IM_INVENTORY_OFFERED,
+			messageId: crypto.randomUUID(),
+			binaryBucket: bucket,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ Give inventory FOLDER "${d.name || '?'}" folder=${d.folderId.slice(0, 8)}… (${(d.items || []).length} direct item(s)) to ${d.toAgentId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ Give inventory FOLDER "${d.name || '?'}" folder=${d.folderId.slice(0, 8)}… (${(d.items || []).length} direct item(s)) to ${d.toAgentId.slice(0, 8)}…`,
+		)
 		return
 	}
 
@@ -2609,7 +3358,12 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { agentId: string }
 		if (!d.agentId) return
 		const seq = nextSeq(session)
-		const pkt = encodeTerminateFriendship({ agentId: session.agentId, sessionId: session.sessionId, seq, otherId: d.agentId })
+		const pkt = encodeTerminateFriendship({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			otherId: d.agentId,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
 		slog.info(session.ws, `→ TerminateFriendship ${d.agentId.slice(0, 8)}…`)
@@ -2620,10 +3374,19 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const d = msg.d as { agentId: string; rights: number }
 		if (!d.agentId) return
 		const seq = nextSeq(session)
-		const pkt = encodeChangeUserRights({ agentId: session.agentId, sessionId: session.sessionId, seq, agentRelated: d.agentId, relatedRights: d.rights | 0 })
+		const pkt = encodeChangeUserRights({
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			seq,
+			agentRelated: d.agentId,
+			relatedRights: d.rights | 0,
+		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ ChangeUserRights ${d.agentId.slice(0, 8)}… rights=${d.rights}`)
+		slog.info(
+			session.ws,
+			`→ ChangeUserRights ${d.agentId.slice(0, 8)}… rights=${d.rights}`,
+		)
 		return
 	}
 
@@ -2632,19 +3395,28 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		if (!d.query || !d.queryId) return
 		const seq = nextSeq(session)
 		const pkt = encodeAvatarPickerRequest({
-			agentId: session.agentId, sessionId: session.sessionId,
-			queryId: d.queryId, name: d.query, seq,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
+			queryId: d.queryId,
+			name: d.query,
+			seq,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ AvatarPickerRequest "${d.query}" q=${d.queryId.slice(0, 8)}…`)
+		slog.info(
+			session.ws,
+			`→ AvatarPickerRequest "${d.query}" q=${d.queryId.slice(0, 8)}…`,
+		)
 		return
 	}
 
 	if (msg.t === C.REBAKE) {
 		const url = session.caps?.get('RebakeAvatarTextures')
 		if (!url) {
-			slog.warn(session.ws, 'Rebake: RebakeAvatarTextures cap not available (grid may not support it, or 3s init window not elapsed)')
+			slog.warn(
+				session.ws,
+				'Rebake: RebakeAvatarTextures cap not available (grid may not support it, or 3s init window not elapsed)',
+			)
 			return
 		}
 		// WHY: POST to RebakeAvatarTextures cap triggers server-side avatar appearance re-bake.
@@ -2654,70 +3426,146 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 			headers: { 'Content-Type': 'application/llsd+xml' },
 			body: '<llsd><map /></llsd>',
 		})
-			.then(() => slog.info(session.ws, '✓ RebakeAvatarTextures → avatar appearance pushed to grid'))
-			.catch((e: Error) => slog.error(session.ws, `RebakeAvatarTextures failed: ${e.message}`))
+			.then(() =>
+				slog.info(
+					session.ws,
+					'✓ RebakeAvatarTextures → avatar appearance pushed to grid',
+				),
+			)
+			.catch((e: Error) =>
+				slog.error(
+					session.ws,
+					`RebakeAvatarTextures failed: ${e.message}`,
+				),
+			)
 		return
 	}
 
 	if (msg.t === C.CLIENT_DIAG) {
 		// Client-side mirror of [PrimDiag] so server-log.txt holds both ends of the pipe.
 		// Without this we have no record of mesh-count or upsert failures after session ends.
-		type DiagStats = { requested?: number; done?: number; failed?: number; timeout?: number; late?: number; inflight?: number; queued?: number; cached?: number }
-		const d = msg.d as {
-			received?: number; stored?: number; prims?: number; av?: number;
-			meshes?: number; upsertFails?: number; skippedNoPos?: number; placeholders?: number;
-			geoNaN?: number; withTex?: number; mapped?: number; tex?: DiagStats; mesh?: DiagStats
-			orphan?: { children?: number; orphanByMissingRoot?: number; distinctMissingRoots?: number; orphanMeshAtScene?: number }
-			texApply?: { calls?: number; null?: number; applied?: number; dropNoParent?: number; dropMatSwap?: number }
-			faceTex?: { realDefault?: number; blankDefault?: number; blankButRealFaceTex?: number; anyRealFaceTex?: number }
+		type DiagStats = {
+			requested?: number
+			done?: number
+			failed?: number
+			timeout?: number
+			late?: number
+			inflight?: number
+			queued?: number
+			cached?: number
 		}
-		const stat = (s?: DiagStats) => s
-			? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} late=${s.late ?? 0} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
-			: '(n/a — frontend not reloaded?)'
-		slog.info(session.ws,
+		const d = msg.d as {
+			received?: number
+			stored?: number
+			prims?: number
+			av?: number
+			meshes?: number
+			upsertFails?: number
+			skippedNoPos?: number
+			placeholders?: number
+			geoNaN?: number
+			withTex?: number
+			mapped?: number
+			tex?: DiagStats
+			mesh?: DiagStats
+			orphan?: {
+				children?: number
+				orphanByMissingRoot?: number
+				distinctMissingRoots?: number
+				orphanMeshAtScene?: number
+			}
+			texApply?: {
+				calls?: number
+				null?: number
+				applied?: number
+				dropNoParent?: number
+				dropMatSwap?: number
+			}
+			faceTex?: {
+				realDefault?: number
+				blankDefault?: number
+				blankButRealFaceTex?: number
+				anyRealFaceTex?: number
+			}
+		}
+		const stat = (s?: DiagStats) =>
+			s
+				? `✓${s.done ?? '?'} ✗${s.failed ?? '?'} ⏱${s.timeout ?? '?'} late=${s.late ?? 0} inflight=${s.inflight ?? '?'} q=${s.queued ?? '?'} cache=${s.cached ?? '?'}`
+				: '(n/a — frontend not reloaded?)'
+		slog.info(
+			session.ws,
 			`[ClientDiag] received=${d.received ?? '?'} stored=${d.stored ?? '?'} ` +
-			`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
-			`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'} geoNaN=${d.geoNaN ?? '?'} withTex=${d.withTex ?? '?'} mapped=${d.mapped ?? '?'} | ` +
-			`tex ${stat(d.tex)} | mesh ${stat(d.mesh)}`)
-		if (d.orphan) slog.info(session.ws,
-			`[Orphan] children=${d.orphan.children ?? '?'} orphanByMissingRoot=${d.orphan.orphanByMissingRoot ?? '?'} distinctMissingRoots=${d.orphan.distinctMissingRoots ?? '?'} orphanMeshAtScene=${d.orphan.orphanMeshAtScene ?? '?'}`)
-		if (d.texApply) slog.info(session.ws,
-			`[TexApply] calls=${d.texApply.calls ?? '?'} null=${d.texApply.null ?? '?'} applied=${d.texApply.applied ?? '?'} dropNoParent=${d.texApply.dropNoParent ?? '?'} dropMatSwap=${d.texApply.dropMatSwap ?? '?'}`)
-		if (d.faceTex) slog.info(session.ws,
-			`[FaceTex] realDefault=${d.faceTex.realDefault ?? '?'} blankDefault=${d.faceTex.blankDefault ?? '?'} blankButRealFaceTex=${d.faceTex.blankButRealFaceTex ?? '?'} anyRealFaceTex=${d.faceTex.anyRealFaceTex ?? '?'}`)
+				`prims=${d.prims ?? '?'} av=${d.av ?? '?'} meshes=${d.meshes ?? '?'} ` +
+				`upsertFails=${d.upsertFails ?? '?'} skipNoPos=${d.skippedNoPos ?? '?'} placeholders=${d.placeholders ?? '?'} geoNaN=${d.geoNaN ?? '?'} withTex=${d.withTex ?? '?'} mapped=${d.mapped ?? '?'} | ` +
+				`tex ${stat(d.tex)} | mesh ${stat(d.mesh)}`,
+		)
+		if (d.orphan)
+			slog.info(
+				session.ws,
+				`[Orphan] children=${d.orphan.children ?? '?'} orphanByMissingRoot=${d.orphan.orphanByMissingRoot ?? '?'} distinctMissingRoots=${d.orphan.distinctMissingRoots ?? '?'} orphanMeshAtScene=${d.orphan.orphanMeshAtScene ?? '?'}`,
+			)
+		if (d.texApply)
+			slog.info(
+				session.ws,
+				`[TexApply] calls=${d.texApply.calls ?? '?'} null=${d.texApply.null ?? '?'} applied=${d.texApply.applied ?? '?'} dropNoParent=${d.texApply.dropNoParent ?? '?'} dropMatSwap=${d.texApply.dropMatSwap ?? '?'}`,
+			)
+		if (d.faceTex)
+			slog.info(
+				session.ws,
+				`[FaceTex] realDefault=${d.faceTex.realDefault ?? '?'} blankDefault=${d.faceTex.blankDefault ?? '?'} blankButRealFaceTex=${d.faceTex.blankButRealFaceTex ?? '?'} anyRealFaceTex=${d.faceTex.anyRealFaceTex ?? '?'}`,
+			)
 		return
 	}
 
 	if (msg.t === C.CLIENT_LOG) {
 		const d = msg.d as { level?: string; msg?: string; stack?: string }
-		slog.warn(session.ws, `[ClientLog/${d.level ?? '?'}] ${d.msg ?? ''}${d.stack ? `  @ ${d.stack}` : ''}`)
+		slog.warn(
+			session.ws,
+			`[ClientLog/${d.level ?? '?'}] ${d.msg ?? ''}${d.stack ? `  @ ${d.stack}` : ''}`,
+		)
 		return
 	}
 
 	if (msg.t === C.MAP_QUERY) {
-		const d = msg.d as { minX: number; maxX: number; minY: number; maxY: number }
+		const d = msg.d as {
+			minX: number
+			maxX: number
+			minY: number
+			maxY: number
+		}
 		// First-time probe: send MapLayerRequest once per circuit. Some OpenSim builds gate
 		// WorldMapModule until at least one MapLayerRequest seen. Tracks via flag on session.
 		if (!session.mapLayerSent) {
 			session.mapLayerSent = true
 			const layerSeq = nextSeq(session)
 			const layerPkt = encodeMapLayerRequest({
-				agentId: session.agentId, sessionId: session.sessionId, seq: layerSeq,
+				agentId: session.agentId,
+				sessionId: session.sessionId,
+				seq: layerSeq,
 			})
 			trackReliable(session, layerSeq, layerPkt)
 			session.udpSocket.send(layerPkt, session.simPort, session.simIp)
-			slog.info(session.ws, `→ MapLayerRequest (probe) seq=${layerSeq} pktLen=${layerPkt.length}`)
+			slog.info(
+				session.ws,
+				`→ MapLayerRequest (probe) seq=${layerSeq} pktLen=${layerPkt.length}`,
+			)
 		}
 		const seq = nextSeq(session)
 		const pkt = encodeMapBlockRequest({
-			agentId:   session.agentId,
+			agentId: session.agentId,
 			sessionId: session.sessionId,
 			seq,
-			minX: d.minX, maxX: d.maxX, minY: d.minY, maxY: d.maxY,
+			minX: d.minX,
+			maxX: d.maxX,
+			minY: d.minY,
+			maxY: d.maxY,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MapBlockRequest minX=${d.minX} maxX=${d.maxX} minY=${d.minY} maxY=${d.maxY} pktLen=${pkt.length}`)
+		slog.info(
+			session.ws,
+			`→ MapBlockRequest minX=${d.minX} maxX=${d.maxX} minY=${d.minY} maxY=${d.maxY} pktLen=${pkt.length}`,
+		)
 		return
 	}
 
@@ -2726,23 +3574,33 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		if (!d.name) return
 		const seq = nextSeq(session)
 		const pkt = encodeMapNameRequest({
-			agentId:   session.agentId,
+			agentId: session.agentId,
 			sessionId: session.sessionId,
 			seq,
-			name:      d.name,
+			name: d.name,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MapNameRequest "${d.name}" pktLen=${pkt.length} hex=${pkt.toString('hex')}`)
+		slog.info(
+			session.ws,
+			`→ MapNameRequest "${d.name}" pktLen=${pkt.length} hex=${pkt.toString('hex')}`,
+		)
 		return
 	}
 
 	if (msg.t === C.MAP_TELEPORT) {
-		const d = msg.d as { regionX: number; regionY: number; x: number; y: number; z: number }
+		const d = msg.d as {
+			regionX: number
+			regionY: number
+			x: number
+			y: number
+			z: number
+		}
 		// WHY: OpenSim/SL region handle = (X_meters << 32) | Y_meters.
 		// Empirically confirmed: sim extracts X from upper 32 bits and Y from lower 32 bits.
 		// Previous code had (Y<<32)|X — sim returned swapped coords and "region not found".
-		const handle = ((BigInt(d.regionX) * 256n) << 32n) | (BigInt(d.regionY) * 256n)
+		const handle =
+			((BigInt(d.regionX) * 256n) << 32n) | (BigInt(d.regionY) * 256n)
 		// Log every incoming UDP packet for 60s to catch TeleportFinish regardless of packet ID.
 		session.tpDebugUntil = Date.now() + 60_000
 		// Store destination handle so TeleportProgress handler can attempt same-sim completion.
@@ -2755,15 +3613,20 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		const z = Math.max(0.5, d.z)
 		const seq = nextSeq(session)
 		const pkt = encodeTeleportLocationRequest({
-			agentId:      session.agentId,
-			sessionId:    session.sessionId,
+			agentId: session.agentId,
+			sessionId: session.sessionId,
 			seq,
 			regionHandle: handle,
-			x, y, z,
+			x,
+			y,
+			z,
 		})
 		trackReliable(session, seq, pkt)
 		session.udpSocket.send(pkt, session.simPort, session.simIp)
-		slog.info(session.ws, `→ MapTeleport: region(${d.regionX},${d.regionY}) pos=${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)} handle=${handle}`)
+		slog.info(
+			session.ws,
+			`→ MapTeleport: region(${d.regionX},${d.regionY}) pos=${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)} handle=${handle}`,
+		)
 		session.ws.send(JSON.stringify({ t: S.TELEPORT_STARTED, d: {} }))
 		return
 	}
@@ -2777,13 +3640,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		if (session.lastAgentParams) {
 			const seq = nextSeq(session)
 			const pkt = encodeAgentUpdate({
-				agentId:   session.agentId,
+				agentId: session.agentId,
 				sessionId: session.sessionId,
 				seq,
 				...session.lastAgentParams,
 			})
 			session.udpSocket.send(pkt, session.simPort, session.simIp)
-			slog.info(session.ws, `→ AgentUpdate nudge sent (seq=${seq}) to refresh sim interest list`)
+			slog.info(
+				session.ws,
+				`→ AgentUpdate nudge sent (seq=${seq}) to refresh sim interest list`,
+			)
 		}
 		return
 	}

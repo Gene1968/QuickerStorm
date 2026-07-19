@@ -1,7 +1,7 @@
 // src/stores/inventoryStore.js — agent + library inventory tree.
 // WHY: the folder skeleton arrives free in the LOGIN_OK payload (parsed from the XML-RPC login
 // response). Folder CONTENTS (items) are fetched lazily per-folder via the FetchInventoryDescendents2
-// cap (Phase 3 slice 2) and dropped into `items` by folderId.
+// cap (to-do slice 2) and dropped into `items` by folderId.
 import { defineStore } from 'pinia'
 import { ref, shallowRef, triggerRef, computed } from 'vue'
 

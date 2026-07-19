@@ -35,7 +35,7 @@ at the bottom — that's *my* bookkeeping, it never parks a bundle in limbo or d
 | **v0.5** | **Beta-2 — richer world** | Voice, groups, appearance bake, media / web-on-prim, neighboring sims. |
 | **v0.6 → v1.0** | **depth & polish** | PBR materials, scripting behaviors, LOD & heavy-region scale, cross-region *walk*, mobile 2D. |
 
-**The single biggest Beta-1 blocker is avatars** (bundle 7, ~45%). Everything else on the social loop is
+**The single biggest Beta-1 blocker is avatars** (bundle 7, ~60%). Everything else on the social loop is
 already 🟡. Voice / groups / media are deliberately **Beta-2**, not Beta-1.
 
 ---
@@ -139,16 +139,16 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 - 🔭 **Inventory load-at-scale** (50–150k accounts still spin on the initial full walk) — correctness bar is met; this is throughput. Design the paced walk + trusted incremental cache first.
 - 🔜 Wear clothing-layer wearables → gated on bundle 7 (bake).
 
-### 7. Avatars & Appearance — 🟡 ~45% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
-Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, idle-animated, **shape-height-scaled**) replaces the tube; AvatarAppearance fully decoded (bakes + VisualParams + height; cached server-side, replayed on resync); **"Now wearing" floater is REAL** (COF read); **AgentSetAppearance echoes our params/bakes** so the sim holds a real appearance for peers; **rigged mesh skins to the avatar at rest pose (AV-1)** and **faces correctly (+X-forward reconcile)** — but only single rigged meshes place cleanly; linkset child prims scatter; bakes not composited (jellydoll body, not real skin). No locomotion animation.
+### 7. Avatars & Appearance — 🟡 ~60% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
+Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, **locomotion-animated** idle/walk/sit, **shape-height-scaled**) replaces the tube; AvatarAppearance fully decoded (bakes + VisualParams + height; cached server-side, replayed on resync); **"Now wearing" floater is REAL** (COF read); **AgentSetAppearance echoes our params/bakes**; **rigged mesh skins at rest pose (AV-1)**, faces correctly (+X-forward), and **rigid attachments mount at their SL attachment points** (hair at head, shoes at feet) with linkset children riding a child proxy. Bakes not composited (jellydoll body, not real skin); peers still see us invisible (see 7·C).
 **Shipped (→ CHANGELOG for detail):** ✅ **7·A appearance read-model** (VisualParams decode + OpenSim height estimate → shape-scaled jellydoll · COF read → real Now-wearing · codec fix: OSGrid's absent trailing blocks were killing ALL AvatarAppearance decode · appearance resync replay) · ✅ **7·C first pass** — `AgentSetAppearance` echo (sent+acked live; *peer-visual check from a second viewer still pending*) · ✅ AV-1 rigged-mesh rest-pose skinning · ✅ Avatar facing (+X-forward) · ✅ AV-2 per-UUID jellydoll tint + cloud/jellydoll state · 🟡 Jellydoll humanoid placeholder. *Note: "humanoid-tee" was never real — the only prior placeholder was the tube.*
 
 **Open work — staged in dependency order.**
 
-**7·B — Attachment & outfit placement (cohesive worn look · 7·A worn-item identity now available + the AV-1 skeleton).**
-- 🔜 **Attachment-point mounting** — rigid (non-rigged) attachments mount at their named skeleton point + offset (ObjectUpdate attachment state), not all at the feet; rigged attachments keep skinning to the avatar (AV-1).
-- 🔜 **Linkset-attachment child prims** — decouple the skinned render node from the child-carrying prim node so a rigged root's linkset children stop falling to the pile (AV-1 followup).
-- 🔜 **Retire the tube for real** — gate the placeholder→content swap on a body/torso item actually loaded+placed (not attachment count); jellydoll **locomotion clips** (walk/sit/fly by movement state, GLB ships them) + complexity/LOD fallback to the capsule for far/many avatars.
+**7·B — Attachment & outfit placement (mostly shipped 2026-07-18 → CHANGELOG).**
+- ✅ **Attachment-point mounting** — rigid attachments mount at their SL attachment point (State-byte decode + full avatar_lad point table + skeleton rest positions, `src/lib/attachmentPoints.js`); HUD points hidden; rigged keep AV-1 skinning. *Rest-pose mounting — points follow bones only once real animations land.*
+- ✅ **Linkset-attachment child prims** — child proxy at the root's sim transform decouples children from the bind-posed skinned mesh.
+- ✅ **Locomotion clips** — idle/walk/sit by speed + ParentID (0.2s crossfade). 🔜 remaining: fly/swim clips (GLB has them, needs fly-state signal) · complexity/LOD fallback to capsule for far/many avatars · **retire the tube for real** (gate placeholder→content swap on a body item actually loaded+placed).
 - 🔜 Wearing tab actions (wear/unwear = COF link writes) · proportion beyond height (torso/leg ratios from params → bone scales). *(2026-07-18: read side shipped; write side is the next coherent stretch.)*
 
 **7·C — Outbound appearance (remaining).**

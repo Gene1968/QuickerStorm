@@ -36,7 +36,7 @@ const activeTab = ref('general')
 const texSubTab = ref('bp')
 
 // WHY: FS-parity Build Tools. Top row = the five major tools (Focus/Move/Edit/Create/Land) as a
-// radio group; Edit is the default while editing. Focus/Create/Land are Phase 3 stubs (disabled).
+// radio group; Edit is the default while editing. Focus/Create/Land are to-do stubs (disabled).
 // The Move/Rotate/Stretch sub-row below selects the gizmo operation (uiStore.gizmoMode), which is
 // also driven by Ctrl / Ctrl+Shift modifier keys in useWorldEngine.
 const buildTool = ref('edit')
@@ -464,7 +464,7 @@ const linkNumber = computed(() => {
 	void world.objects.size   // link tracking is non-reactive; re-derive when linkset members arrive/leave
 	return world.linkNumberOf(ui.editObjectId)
 })
-// WHY: no real resource-cost (land impact) or parcel-capacity feed yet (Phase 3 caps). Use the
+// WHY: no real resource-cost (land impact) or parcel-capacity feed yet (to-do caps). Use the
 // prim count as the legacy land-impact proxy; capacity stays a placeholder until parcel data lands.
 // Counts follow the FULL multi-selection: N = distinct linkset roots, land impact = total prims
 // across every selected linkset (FS floater counts the whole selection, llfloatertools.cpp).
@@ -943,7 +943,7 @@ function close() {
 					<p class="leading-3">
 						Remaining capacity <span class="me-2 text-fg">{{ remainingCapacity || '??' }}.</span>
 						<a href="https://docs.opensimulator.org/en/latest/features/build-tools/" target="_blank" rel="noopener noreferrer"
-							title="More info (Phase 3)"
+							title="More info (to-do)"
 							disabled
 							class="text-fg/30 cursor-not-allowed"
 						>More info</a>
@@ -1302,14 +1302,14 @@ function close() {
 										</template>
 									</div>
 								</div>
-								<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">Geometry comes from the mesh asset above. LOD triangle counts arrive with the mesh-info decode (Phase 3).</div>
+								<div v-else-if="typeInfo.kind === 'mesh'" class="border-t border-edge pt-2 text-2xs text-fg/40 italic">Geometry comes from the mesh asset above. LOD triangle counts arrive with the mesh-info decode (to-do).</div>
 							</div>
 						</div>
 					</template>
 					<!-- Features ────────────────────────────────────────────── -->
 					<!-- WHY: FS-parity LLPanelVolume layout — Flexible Path, Light, Reflection Probe and
 						Physics. Material (mcode), Flexi (0x10), Light (0x20) and Reflection Probe (0x90)
-						are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the Phase 3
+						are decoded from the ObjectUpdate ExtraParams; only Physics Shape rides the to-do
 						ObjectPhysicsProperties work, so it still shows "not decoded". -->
 					<template v-else-if="activeTab === 'features'">
 						<div class="grid grid-cols-[1fr_1fr] gap-x-2 gap-y-1.5 text-xs px-0.5">
@@ -1360,13 +1360,13 @@ function close() {
 						</div>
 						<div class="text-2xs text-fg/30 italic pt-1">
 							Physics-shape type isn't carried in the object update — it arrives in a separate
-							ObjectPhysicsProperties packet (Phase 3 physics-flags work).
+							ObjectPhysicsProperties packet (to-do physics-flags work).
 						</div>
 					</template>
 					<!-- Texture ─────────────────────────────────────────────── -->
 					<!-- WHY: FS matmedia split — Blinn-Phong (legacy diffuse/normal/specular) vs PBR
 						(GLTF metallic-roughness) sub-tabs. "Multiple" surfaces when faces differ; every
-						texture chip opens a larger preview ("texture picker"). Read-only (Phase 3 edit). -->
+						texture chip opens a larger preview ("texture picker"). Read-only (to-do edit). -->
 					<template v-else-if="activeTab === 'texture'">
 						<!-- Sub-tab strip -->
 						<nav class="tabs -mt-1 mb-1 whitespace-nowrap">
@@ -1404,7 +1404,7 @@ function close() {
 									</div>
 								</div>
 								<div class="text-2xs text-fg/30 italic pt-1">
-									GLTF material assets (base color / metallic-roughness / emissive / normal maps) render via the materials cap. Per-channel editing arrives in Phase 3.
+									GLTF material assets (base color / metallic-roughness / emissive / normal maps) render via the materials cap. Per-channel editing arrives in to-do.
 								</div>
 							</template>
 						</template>

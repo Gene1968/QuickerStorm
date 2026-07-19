@@ -684,7 +684,7 @@ onUnmounted(() => {
 			<div v-else class="p-4 text-center text-fg-muted text-sm italic flex flex-col items-center gap-1 pt-12">
 				<p class="mt-8 text-2xl">📦</p>
 				<p>No inventory loaded.</p>
-				<p class="text-xs mt-2 opacity-60">Folder tree loads at login. Folder contents (items) arrive with the Phase 3 cap layer.</p>
+				<p class="text-xs mt-2 opacity-60">Folder tree loads at login. Folder contents (items) arrive with the to-do cap layer.</p>
 			</div>
 		</template>
 		<!-- Recent/Worn: TREE by default (FS renders these tabs as filtered inventory panels);

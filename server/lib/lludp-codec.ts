@@ -1608,6 +1608,7 @@ export interface ObjectData {
   rot:           [number, number, number, number]   // quaternion xyzw (w derived from xyz, w≥0)
   nameValue:     string   // raw NameValue string (contains avatar display name)
   parentId?:     number   // U32 — 0=root, else localId of parent prim (linked sets)
+  state?:        number   // U8 ObjectUpdate State — attachment-point id in the high nibble (nibble-swapped); 0 for non-attachments
   crc?:          number   // U32 PseudoCRC from ObjectUpdate/Compressed — increments on change; used for cache validation
   shape?:        PrimShape
   defaultColor?: [number, number, number, number]   // RGBA 0..1 from TextureEntry default
@@ -1982,8 +1983,9 @@ export function decodeObjectUpdate(
       // These are NOT full ObjectData records. localId=0 is reserved/invalid in SL/OS.
       // Skip the remaining 21 bytes and continue so we land on the next real object.
       if (localId === 0) { off += 21; continue }
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const _state   = buf[off++]
+      // State byte: for avatar-attached objects the HIGH nibble carries the attachment-point id
+      // (FS indra_constants.h ATTACHMENT_ID_FROM_STATE nibble swap) — forwarded for 7·B mounting.
+      const state    = buf[off++]
       const fullId   = bytesToUuid(buf, off); off += 16
       const crc      = buf.readUInt32LE(off); off += 4   // PseudoCRC
       pcode = buf[off++]
@@ -2281,6 +2283,7 @@ export function decodeObjectUpdate(
         ...(psys ? { psys } : {}),
         scale: [sx, sy, sz], pos, rot, nameValue,
         parentId, crc,
+        ...(state ? { state } : {}),
         ...(vel && nonZeroVec3(vel) ? { vel } : {}),
         ...(angVel && nonZeroVec3(angVel) ? { angVel } : {}),
         ...(sound ? { sound } : {}),
@@ -3018,7 +3021,7 @@ export function encodeRegionHandshakeReply(p: { agentId: string; sessionId: stri
   }, { seq: p.seq, reliable: true })
 }
 
-// ══ Social (Phase 3) — friends / profile / groups / parcel ════════════════
+// ══ Social (to-do) — friends / profile / groups / parcel ════════════════
 // Message numbers verified against data/message_template.msg. Reply packets marked
 // "Zerocoded" in the template are zero-DECODED by the handler (handleUdpMessage) before
 // these decoders run, so they parse straight from the already-expanded buffer.
@@ -3331,7 +3334,7 @@ export function decodeParcelInfoReply(buf: Buffer, dataOffset: number): ParcelIn
   return { parcelId, ownerId, name, desc, actualArea, billableArea, flags, globalX, globalY, globalZ, simName, snapshotId, dwell, salePrice, auctionId }
 }
 
-// ── Inventory mutation (Phase 3) ───────────────────────────────────────────
+// ── Inventory mutation (to-do) ───────────────────────────────────────────
 // Rename / move / trash / purge / perms / wear / detach. The sim acknowledges
 // successful mutations with BulkUpdateInventory (Low 281), decoded below.
 

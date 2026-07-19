@@ -421,7 +421,7 @@ function saveNotes() {
 
 			<!-- Other-user action buttons -->
 		<div v-if="!isSelf" class="flex flex-row flex-wrap gap-1 shrink-0 border-t border-edge px-4 py-2">
-			<!-- Still gated on extra packets (Phase 3 later): Pay, Block, Find on Map, Offer TP -->
+			<!-- Still gated on extra packets (to-do later): Pay, Block, Find on Map, Offer TP -->
 			<button
 				v-for="btn in ['Find on Map', 'Offer Teleport','Pay', 'Block']"
 				:key="btn"
