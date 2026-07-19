@@ -34,7 +34,7 @@ import { resolveAvatarReparent, gateBuyHoverAction } from '@/lib/seatEngine.js'
 import { TA_ON, createTexAnimState, stepTextureAnim, omegaDeltaQuat, MAX_INTERP_S } from '@/lib/scriptedMotion.js'
 import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.js'
 import { jellydollColorHex } from '@/lib/avatarColor.js'
-import { loadAvatarModel, createAvatarModel } from '@/lib/avatarModel.js'
+import { loadAvatarModel, createAvatarModel, AVATAR_MODEL_HEIGHT } from '@/lib/avatarModel.js'
 import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
 import { planarUVFromThree } from '@/lib/planarUV.js'
 import { buildTerrainMaterial, setTerrainSlot } from '@/lib/terrainMaterial.js'
@@ -4011,6 +4011,19 @@ export function useWorldEngine(canvasRef) {
 		for (const c of mesh.userData?.capsuleParts || []) c.visible = vis
 	}
 
+	// 7·A: drive placeholder proportions from the decoded shape. The sim centers the agent at
+	// height/2 above ground, so the jellydoll wrapper scales uniformly to the reported height and
+	// its feet move to −height/2 (the 1.8m default degenerates to the old −RIG_FOOT_OFFSET contract).
+	// Idempotent — re-applied whenever a fresh AvatarAppearance lands for an already-built avatar.
+	function applyJellydollShape(mesh, obj) {
+		const root = mesh?.userData?.jellydoll
+		if (!root) return
+		const fullId = obj?.fullId || worldStore.objects.get(obj?.localId)?.fullId || ''
+		const h = worldStore.avatarAppearance(fullId)?.height || AVATAR_MODEL_HEIGHT
+		root.scale.setScalar(h / AVATAR_MODEL_HEIGHT)
+		root.position.y = -h / 2
+	}
+
 	function attachJellydoll(mesh, obj) {
 		const localId = obj.localId
 		loadAvatarModel().then(() => {
@@ -4030,6 +4043,7 @@ export function useWorldEngine(canvasRef) {
 			setCapsulePlaceholderVisible(mesh, false)   // hide the tube; humanoid takes over
 			mesh.userData.avatarMats = mats             // tint the humanoid instead of the capsule
 			applyAvatarLook(mesh, obj)
+			applyJellydollShape(mesh, obj)              // 7·A: shape-driven height (if appearance known)
 			// Idle animation (the GLB ships Idle_Loop + 10 more clips; locomotion state machine = later).
 			const clip = clips?.find(c => /idle/i.test(c.name)) || clips?.[0]
 			if (clip) {
@@ -4048,7 +4062,11 @@ export function useWorldEngine(canvasRef) {
 		worldStore.setAvatarAppearance(d)
 		const key = d.avatarId.toLowerCase()
 		const rec = worldStore.avatars.find(a => a.fullId?.toLowerCase() === key)
-		if (rec) applyAvatarLook(meshMap.get(rec.localId), rec)
+		if (rec) {
+			const mesh = meshMap.get(rec.localId)
+			applyAvatarLook(mesh, rec)
+			applyJellydollShape(mesh, rec)   // 7·A: rescale an already-attached jellydoll
+		}
 	}
 
 	function onObjectUpdate(payload) {

@@ -67,6 +67,7 @@ import {
 	reconcileInterest, resolveRadius, type ObjLike,
 } from '../lib/interestFilter'
 import { findGhosts, ghostReconcileReady } from '../lib/ghostReconcile'
+import { estimateAvatarHeight, appearanceEchoKey, MIN_PLAUSIBLE_PARAMS } from '../lib/appearance'
 
 // Message type codes — verified against phoenix-firestorm/scripts/messages/message_template.msg
 // WHY: High-freq = 1-byte prefix. Medium-freq = 0xFF + 1-byte ID. Low-freq = 0xFF 0xFF + U16LE.
@@ -174,6 +175,10 @@ function swapCircuit(sessionId: string, newSimIp: string, newSimPort: number, ne
 	session.regionEnteredAt = Date.now()
 	session.terrainCache.clear()
 	session.coveredLandPatches.clear()
+	// Appearance cache is per-region-run too — the destination sim re-broadcasts AvatarAppearance
+	// for every avatar in view (and for us). Keep the echo dedup key: our own appearance is
+	// region-independent, so re-echoing the identical params after a TP would be redundant.
+	session.appearanceCache.clear()
 	session.caps.clear()
 	session.seqNum = 0
 	session.lastPingAt = 0
@@ -581,7 +586,10 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 			// RebakeAvatarTextures cap so the sim rebakes proper textures from the bake service.
 			{
 				const seqA = nextSeq(session)
-				const appearPkt = encodeAgentSetAppearance({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA })
+				// Share the serial counter with the 7·C appearance echo so SerialNum never regresses
+				// (sim treats it as monotonic appearance-change count; 0 = uninitialized).
+				session.appearanceSerial = (session.appearanceSerial ?? 0) + 1
+				const appearPkt = encodeAgentSetAppearance({ agentId: session.agentId, sessionId: session.sessionId, seq: seqA, serialNum: session.appearanceSerial })
 				trackReliable(session, seqA, appearPkt)
 				session.udpSocket.send(appearPkt, session.simPort, session.simIp)
 				slog.info(session.ws, `→ AgentSetAppearance sent (seq=${seqA}) — populates ScenePresence.Appearance for cross-region TP`)
@@ -1192,12 +1200,19 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 		return
 	}
 
-	// AvatarAppearance (Low 158) — a peer avatar's baked-texture set + appearance version. The sim sends this
-	// whenever an avatar's bakes change. We don't composite/render the bakes yet (that's the bake pipeline,
-	// bundle 7); for now forward the identity + bake UUIDs so the client flips the avatar from a translucent
-	// "cloud" placeholder to a per-UUID "jellydoll" colored capsule (AV-2) and caches the bakes for later.
+	// AvatarAppearance (Low 158) — an avatar's baked-texture set + shape params + appearance version.
+	// The sim sends this whenever an avatar's bakes change (and once for our OWN avatar when its cached
+	// appearance is valid). We don't composite/render the bakes yet (bake pipeline, bundle 7·C 🔭); we:
+	//   • forward identity + bake UUIDs → client flips cloud → jellydoll (AV-2)
+	//   • decode the VisualParam byte array + estimate height → client drives placeholder proportions (7·A)
+	//   • cache the payload per avatarId → resync replays it so peers don't re-cloud after reload
+	//   • for our OWN avatar: echo params+bakes back via AgentSetAppearance so the sim persists a REAL
+	//     appearance and broadcasts it to peers (7·C — fixes "red cloud → invisible with label")
 	// Bake face indices per FS llavatarappearancedefines.h ETextureIndex (VERIFIED against the enum ordering):
 	// HEAD=8 UPPER=9 LOWER=10 EYES=11 SKIRT=19 HAIR=20 (skirt/hair are NOT 12/13 — those are socks/jacket).
+	// VisualParams: ascending-ID tweakable sequence, no ids on the wire (FS llvoavatar.cpp
+	// parseAppearanceMessage / llagent.cpp sendAgentSetAppearance — "receiver has the same params
+	// in the same sequence").
 	if (name === 'AvatarAppearance') {
 		try {
 			const m = decode(buf, { alreadyExpanded: true })
@@ -1217,11 +1232,34 @@ export function handleUdpMessage(sessionId: string, rawBuf: Buffer): void {
 					if (u && u !== NULL) bakes[slot] = u
 				}
 			}
+			const params = (m.blocks.VisualParam ?? []).map(b => (b.ParamValue as number) & 0xff)
+			const height = estimateAvatarHeight(params)
 			const ad = m.blocks.AppearanceData?.[0]
-			session.ws.send(JSON.stringify({ t: S.AVATAR_APPEARANCE, d: {
-				avatarId, bakes,
+			const payload = {
+				avatarId, bakes, params, height,
 				appearanceVersion: ad?.AppearanceVersion, cofVersion: ad?.CofVersion,
-			} }))
+			}
+			session.appearanceCache.set(String(avatarId).toLowerCase(), payload)
+			session.ws.send(JSON.stringify({ t: S.AVATAR_APPEARANCE, d: payload }))
+
+			// 7·C echo — own avatar only, real param sets only, deduped so the sim's rebroadcast of
+			// our own appearance (triggered by this very send) doesn't ping-pong.
+			if (String(avatarId).toLowerCase() === String(session.agentId).toLowerCase()
+				&& params.length >= MIN_PLAUSIBLE_PARAMS) {
+				const key = appearanceEchoKey(params, te)
+				if (key !== session.lastAppearanceEchoKey) {
+					session.lastAppearanceEchoKey = key
+					session.appearanceSerial = (session.appearanceSerial ?? 1) + 1
+					const seqA = nextSeq(session)
+					const pkt = encodeAgentSetAppearance({
+						agentId: session.agentId, sessionId: session.sessionId, seq: seqA,
+						serialNum: session.appearanceSerial, height, textureEntry: te, visualParams: params,
+					})
+					trackReliable(session, seqA, pkt)
+					session.udpSocket.send(pkt, session.simPort, session.simIp)
+					slog.info(session.ws, `→ AgentSetAppearance ECHO (serial=${session.appearanceSerial} params=${params.length} te=${te?.length ?? 0}B height=${height}m) — peers can resolve us past the cloud`)
+				}
+			}
 		} catch (e) { slog.warn(session.ws, `AvatarAppearance decode error: ${(e as Error).message}`) }
 		return
 	}
@@ -1930,6 +1968,16 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// ready) so the collision heightmap rebuilds — automatic resync, no user action needed.
 		const tPatches = replayTerrain(session)
 		if (tPatches > 0) slog.info(session.ws, `→ terrain re-sent on probe-resync (${tPatches} patches, engine ready)`)
+		// Same pre-mount loss for APPEARANCE: the sim sends AvatarAppearance once per avatar, so a
+		// reloaded client would re-cloud every peer (and lose its own shape-height) without a replay.
+		// The sim happens to re-send some appearances when avatars are re-probed, but that's not
+		// guaranteed — replay our cache now that the engine is listening (idempotent upserts).
+		if (session.appearanceCache.size) {
+			for (const d of session.appearanceCache.values()) {
+				session.ws.send(JSON.stringify({ t: S.AVATAR_APPEARANCE, d }))
+			}
+			slog.info(session.ws, `→ ${session.appearanceCache.size} avatar appearance(s) re-sent on probe-resync (engine ready)`)
+		}
 		return
 	}
 

@@ -2981,20 +2981,32 @@ export function decodeTeleportFinish(buf: Buffer, dataOffset: number): {
   return { simIp, simPort, regionHandle, seedCap, simAccess, teleportFlags }
 }
 
-/** AgentSetAppearance (Low #84) — minimal stub to signal appearance readiness.
- *  WHY: Some OpenSim sims defer full physics initialization until AgentSetAppearance received.
- *  Send after AgentMovementComplete with empty wearables/params (gray avatar, physics enabled).
- *  Firestorm sends full baked textures; we send minimal to unblock physics without art pipeline.
- *  Body: AgentData(48) + WearableData(1=count) + ObjectData.TE(2=empty) + VisualParam(1=count)
+/** AgentSetAppearance (Low #84) — two callers:
+ *  1. STUB (no visualParams): sent right after AgentMovementComplete so ScenePresence.Appearance
+ *     is non-null (physics init + cross-region TP). Empty wearables/params/TE — OpenSim ignores
+ *     empty blocks, so this doesn't blank a cached appearance.
+ *  2. ECHO (bundle 7·C): once our own inbound AvatarAppearance arrives, re-send its VisualParams +
+ *     bake TextureEntry with SerialNum bumped so the sim persists a REAL appearance and broadcasts
+ *     it to peers (fixes "red cloud → invisible" as seen from other viewers).
+ *  Per FS llagent.cpp sendAgentSetAppearance: params are sent WITHOUT ids (receiver assumes the
+ *  same ascending-ID tweakable sequence); Size.Z = avatar height (OpenSim SetSize uses it verbatim);
+ *  SerialNum increases on every appearance change ("always start by sending 1").
  */
-export function encodeAgentSetAppearance(p: { agentId: string; sessionId: string; seq: number }): Buffer {
-  // Size = default avatar bounding box (width, depth, height) in SL metres for sim collision.
-  // Empty wearables/params (gray avatar) — minimal to unblock physics without the art pipeline.
+export function encodeAgentSetAppearance(p: {
+  agentId: string; sessionId: string; seq: number
+  serialNum?: number
+  height?: number
+  textureEntry?: Buffer
+  visualParams?: ArrayLike<number>
+}): Buffer {
+  // Size = avatar bounding box (depth, width, height) — DEFAULT_AGENT_DEPTH/WIDTH per FS
+  // indra_constants.h (0.45/0.60); height from VisualParams when we have them.
+  const vp = p.visualParams ? Array.from(p.visualParams, v => ({ ParamValue: v })) : []
   return encode('AgentSetAppearance', {
-    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, SerialNum: 1, Size: [0.45, 0.60, 1.84] },
+    AgentData: { AgentID: p.agentId, SessionID: p.sessionId, SerialNum: p.serialNum ?? 1, Size: [0.45, 0.60, p.height ?? 1.84] },
     WearableData: [],
-    ObjectData: { TextureEntry: Buffer.alloc(0) },
-    VisualParam: [],
+    ObjectData: { TextureEntry: p.textureEntry ?? Buffer.alloc(0) },
+    VisualParam: vp,
   }, { seq: p.seq, reliable: true })
 }
 

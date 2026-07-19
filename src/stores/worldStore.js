@@ -175,11 +175,17 @@ export const useWorldStore = defineStore('world', () => {
 	//                 the future bake pipeline (bundle 7). We don't composite/render the bakes yet.
 	// Non-reactive Map (useWorldEngine reads it imperatively on the S.AVATAR_APPEARANCE event); appearanceRev
 	// bumps so any template consumer can react without deep-watching a Map.
-	const _appearance = new Map()   // uuidLower → { state, bakes, appearanceVersion, cofVersion }
+	const _appearance = new Map()   // uuidLower → { state, bakes, params, height, appearanceVersion, cofVersion }
 	const appearanceRev = ref(0)
-	function setAvatarAppearance({ avatarId, bakes, appearanceVersion, cofVersion } = {}) {
+	// params = raw VisualParam U8s (ascending-ID tweakable sequence, 7·A) — kept for the outfit/bake
+	// pipeline; height = server-side OpenSim SetHeight() estimate (m) driving placeholder proportions.
+	function setAvatarAppearance({ avatarId, bakes, params, height, appearanceVersion, cofVersion } = {}) {
 		if (!avatarId) return
-		_appearance.set(String(avatarId).toLowerCase(), { state: 'jellydoll', bakes: bakes || {}, appearanceVersion, cofVersion })
+		_appearance.set(String(avatarId).toLowerCase(), {
+			state: 'jellydoll', bakes: bakes || {},
+			params: params || [], height: height || 0,
+			appearanceVersion, cofVersion,
+		})
 		appearanceRev.value++
 	}
 	/** Appearance record for an avatar UUID, or undefined (→ treat as 'cloud'). */

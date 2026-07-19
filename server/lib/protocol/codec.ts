@@ -104,6 +104,11 @@ export function decode(buf: Buffer, opts?: DecodeOpts): DecodedMsg {
 	const out: DecodedMsg = { name: def.name, freqId, blocks: {} }
 	let off = 0
 	for (const block of def.blocks) {
+		// Trailing blocks may be absent entirely (not just zero-count): older OpenSim omits
+		// newer template tails (e.g. AvatarAppearance's AppearanceData/AppearanceHover/
+		// AttachmentBlock on OSGrid) — viewers treat past-the-end as "block not sent".
+		// Without this, the count-byte read below throws and the WHOLE message is dropped.
+		if (off >= fieldData.length) { out.blocks[block.name] = []; continue }
 		let n = 1
 		if (block.quantity === 'Variable') { n = fieldData.readUInt8(off); off += 1 }
 		else if (block.quantity === 'Multiple') n = block.count ?? 1

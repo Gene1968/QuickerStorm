@@ -146,7 +146,7 @@ export const S = {
 	SELF_GROUPS:     'self_groups',    // { groups:[{ id, name, insignia, powers, acceptNotices, contribution }] } — AgentGroupDataUpdate
 	AGENT_DATA:      'agent_data',     // { activeGroupId, groupTitle, groupName, groupPowers } — AgentDataUpdate
 	AVATAR_PROPS:    'avatar_props',   // { avatarId, properties?, interests?, groups? } — AvatarProperties/Interests/GroupsReply
-	AVATAR_APPEARANCE:'avatar_appearance', // { avatarId, bakes:{head?,upper?,lower?,eyes?,skirt?,hair?}, appearanceVersion?, cofVersion? } — decoded AvatarAppearance (Low 158); baked-texture UUIDs per FS ETextureIndex (HEAD8/UPPER9/LOWER10/EYES11/SKIRT19/HAIR20). Client flips peer cloud→jellydoll; bakes cached for the bake pipeline (bundle 7).
+	AVATAR_APPEARANCE:'avatar_appearance', // { avatarId, bakes:{head?,upper?,lower?,eyes?,skirt?,hair?}, params:[U8...], height, appearanceVersion?, cofVersion? } — decoded AvatarAppearance (Low 158); baked-texture UUIDs per FS ETextureIndex (HEAD8/UPPER9/LOWER10/EYES11/SKIRT19/HAIR20); params = raw VisualParam bytes (ascending-ID tweakable sequence, no ids on the wire), height = OpenSim SetHeight() estimate (m). Client flips peer cloud→jellydoll + scales the placeholder; bakes cached for the bake pipeline (bundle 7). Replayed from server cache on resync.
 	PARCEL_INFO:     'parcel_info',    // { parcel:{ parcelId, ownerId, name, desc, actualArea, globalX, globalY, globalZ, simName, snapshotId, dwell, salePrice } } — ParcelInfoReply
 	NAME_REPLY:      'name_reply',    // { names: { [uuid]: "First Last" } } — UUIDNameReply
 	AVATAR_PICKER_REPLY:  'avatar_picker_reply',  // { queryId, avatars:[{ id, name }] } — AvatarPickerReply (Low 28)

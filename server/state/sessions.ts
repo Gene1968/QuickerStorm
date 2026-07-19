@@ -134,6 +134,16 @@ export interface CircuitState {
 		regionId:           string
 	}
 	cachedSpawnPos?:     [number, number, number]
+	// ── Avatar appearance (bundle 7) ─────────────────────────────────────────
+	// WHY: The sim sends AvatarAppearance once per avatar (then only on change). After a WS
+	// reconnect/reload the client's appearance map is empty and the sim won't re-send, so every
+	// peer would re-cloud. Cache the forwarded WS payload per avatarId and replay on resync.
+	appearanceCache: Map<string, unknown>   // avatarId → S.AVATAR_APPEARANCE `d` payload
+	/** AgentSetAppearance SerialNum counter — stub send is 1, each appearance echo bumps it. */
+	appearanceSerial?: number
+	/** Dedup key (params+TE hash) of the last echoed own appearance — breaks the echo loop when
+	 *  the sim rebroadcasts our own AvatarAppearance after our AgentSetAppearance. */
+	lastAppearanceEchoKey?: string
 	// Keyed by `${patchX},${patchY}` — last decoded LAND patch for that tile.
 	// WHY: WATER layer omitted (water plane is fixed flat).
 	terrainCache: Map<string, { patchSize: number; x: number; y: number; heights: number[] }>

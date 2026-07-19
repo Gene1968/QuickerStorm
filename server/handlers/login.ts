@@ -255,6 +255,7 @@ export async function handleLogin(
 		cachedLoginOk,
 		terrainCache:       new Map(),
 		coveredLandPatches: new Set(),
+		appearanceCache:    new Map(),
 		objCache:           new Map(),
 		sentToClient:       new Set<number>(),
 		clientCached:       null,

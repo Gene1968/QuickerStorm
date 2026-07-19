@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useUiStore }     from '@/stores/uiStore'
 import { useAvatarStore } from '@/stores/avatarStore'
+import { useCurrentOutfit } from '@/composables/useCurrentOutfit'
 import FloaterWindow      from '@/components/FloaterWindow.vue'
 import {
 	WrenchIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon,
@@ -55,32 +56,28 @@ async function saveOutfit() {
 	exitEdit()
 }
 
-// ── Wearing tab data — built from avatarStore ──────────────────────────────
+// ── Wearing tab data — real COF read (bundle 7·A) ──────────────────────────
+// Body parts / clothing / attachments come from the Current Outfit Folder links resolved by
+// useCurrentOutfit — replaces the old hardcoded groups faked from the legacy social avatarStore.
+const outfit = useCurrentOutfit()
+onMounted(() => outfit.refresh())
+
+function toRow(item) {
+	return {
+		id: item.linkId,
+		label: item.name || '(unnamed)',
+		detail: outfit.detailFor(item),
+		color: null,
+		icon: outfit.iconFor(item),
+	}
+}
+
 const wearableGroups = computed(() => {
 	const q = filterText.value.toLowerCase()
 	const groups = [
-		{
-			id: 'body',
-			label: 'Body Parts',
-			items: [
-				{ id: 'shape',    label: 'Shape',    detail: 'Classic Avatar',    color: null,              icon: '🧍' },
-				{ id: 'skin',     label: 'Skin',     detail: 'Skin Tone',         color: avatar.skinTone,   icon: '🫀' },
-				{ id: 'hair',     label: 'Hair',     detail: avatar.hairStyle,    color: avatar.hairColor,  icon: '💇' },
-				{ id: 'eyes',     label: 'Eyes',     detail: 'Default',           color: null,              icon: '👁' },
-			],
-		},
-		{
-			id: 'clothing',
-			label: 'Clothing',
-			items: [
-				{ id: 'outfit',   label: 'Outfit Color', detail: 'Primary',       color: avatar.color,      icon: '👕' },
-			],
-		},
-		{
-			id: 'attachments',
-			label: 'Attachments',
-			items: [],
-		},
+		{ id: 'body',        label: 'Body Parts',  items: outfit.bodyParts.value.map(toRow) },
+		{ id: 'clothing',    label: 'Clothing',    items: outfit.clothing.value.map(toRow) },
+		{ id: 'attachments', label: 'Attachments', items: outfit.attachments.value.map(toRow) },
 	]
 	if (!q) return groups
 	return groups.map(g => ({
@@ -91,9 +88,7 @@ const wearableGroups = computed(() => {
 	}))
 })
 
-const totalWorn = computed(() =>
-	wearableGroups.value.slice(0, 2).reduce((n, g) => n + g.items.length, 0)
-)
+const attCount = computed(() => outfit.attachments.value.length)
 
 // ── Gallery placeholder data ───────────────────────────────────────────────
 const galleryItems = [
@@ -175,7 +170,7 @@ const outfitFolders = [
 						v-for="tab in [
 							{ id: 'gallery', label: 'Outfit Gallery' },
 							{ id: 'outfits', label: 'Outfits' },
-							{ id: 'wearing', label: `Wearing (${totalWorn}/38 Att.)` },
+							{ id: 'wearing', label: `Wearing (${attCount}/38 Att.)` },
 						]"
 						:key="tab.id"
 						class="flex py-1 px-3 text-xs font-medium border-b-2 transition-colors"
@@ -278,7 +273,7 @@ const outfitFolders = [
 								<div
 									v-for="item in group.items"
 									:key="item.id"
-									class="flex items-center gap-2 px-4 py-1.5 hover:bg-white/5 transition-colors"
+									class="flex items-center gap-1.5 px-2 py-1 hover:bg-white/5 transition-colors"
 								>
 									<span class="text-sm leading-none shrink-0">{{ item.icon }}</span>
 									<div class="flex flex-col flex-1 min-w-0">

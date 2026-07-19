@@ -55,6 +55,33 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-18 — Bundle 7·A appearance read-model + 7·C AgentSetAppearance echo  [uncommitted]
+- **VisualParams decode (7·A)** — server parses the `AvatarAppearance` (Low 158) VisualParam byte array
+  (ascending-ID tweakable sequence, no ids on the wire — FS `llvoavatar.cpp parseAppearanceMessage`) and
+  estimates avatar **height** via the OpenSim `AvatarAppearance.SetHeight()` formula (`server/lib/appearance.ts`,
+  param indices per OpenSim `VPElement`). Forwarded as `params`+`height` on `S.AVATAR_APPEARANCE`; stored
+  per-avatar in `worldStore._appearance`. LIVE: 218 params / 1.691 m decoded for own avatar on OSGrid.
+- **Shape → placeholder (7·A)** — jellydoll scales to the decoded height (feet at −height/2), re-applied
+  when appearance arrives late (`applyJellydollShape` in `useWorldEngine.js`). Avatars stop being uniform 1.8 m.
+- **COF read → real "Now wearing" (7·A)** — new `useCurrentOutfit.js` reads the Current Outfit Folder
+  (type 46), resolves link items (assetType 24 → target via `assetId`), classifies body-part/clothing/
+  attachment per FS (`AT_BODYPART`/`AT_CLOTHING`/`AT_OBJECT`; wearable sub-type = flags & 0xff,
+  `LLWearableType::inventoryFlagsToWearableType`). `AppearanceFloater.vue` Wearing tab now shows the real
+  outfit (was hardcoded from the legacy social avatarStore); refetches on own CofVersion bump. LIVE:
+  8 body parts / 10 clothing / 32 attachments with real item names.
+- **AgentSetAppearance echo (7·C first pass)** — when our OWN inbound `AvatarAppearance` arrives, the server
+  re-sends `AgentSetAppearance` with the echoed VisualParams + bake TextureEntry, computed Size.Z, and a
+  monotonic SerialNum (shared with the movement-complete stub; dedup key breaks the sim-rebroadcast loop).
+  The sim now holds a REAL ScenePresence.Appearance → peers can resolve us past the red cloud. LIVE: echo
+  sent+acked (serial=2, 218 params, 155 B TE); **peer-visual check from a second viewer still pending**.
+- **Codec fix: absent trailing blocks** — `protocol/codec.ts decode()` treated a missing trailing block
+  (older OpenSim omits `AppearanceData`/`AppearanceHover`/`AttachmentBlock` — e.g. OSGrid) as a thrown
+  range error, dropping the WHOLE message — every `AvatarAppearance` on OSGrid was silently lost (bakes
+  included; jellydolls only worked on sims sending the newer tail). Now past-the-end = "block not sent".
+- **Appearance resync replay** — per-avatar appearance payloads cached server-side (`session.appearanceCache`)
+  and replayed on `replayCachedWorld` + probe-resync, so peers (and own height) don't re-cloud after reload.
+  Cleared on region cross (destination sim re-broadcasts). LIVE-verified across reload.
+
 ## 2026-07-17 — Jellydoll humanoid avatar placeholder  [uncommitted]
 - **Avatars are a rigged humanoid now, not a tube.** A shared low-poly rigged-humanoid GLB
   (`src/assets/3d/avatar-default.glb` — 67-bone skeleton, 11 baked clips) stands in for every avatar

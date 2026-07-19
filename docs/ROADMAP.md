@@ -35,7 +35,7 @@ at the bottom — that's *my* bookkeeping, it never parks a bundle in limbo or d
 | **v0.5** | **Beta-2 — richer world** | Voice, groups, appearance bake, media / web-on-prim, neighboring sims. |
 | **v0.6 → v1.0** | **depth & polish** | PBR materials, scripting behaviors, LOD & heavy-region scale, cross-region *walk*, mobile 2D. |
 
-**The single biggest Beta-1 blocker is avatars** (bundle 7, ~15%). Everything else on the social loop is
+**The single biggest Beta-1 blocker is avatars** (bundle 7, ~45%). Everything else on the social loop is
 already 🟡. Voice / groups / media are deliberately **Beta-2**, not Beta-1.
 
 ---
@@ -139,19 +139,23 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 - 🔭 **Inventory load-at-scale** (50–150k accounts still spin on the initial full walk) — correctness bar is met; this is throughput. Design the paced walk + trusted incremental cache first.
 - 🔜 Wear clothing-layer wearables → gated on bundle 7 (bake).
 
-### 7. Avatars & Appearance — 🟡 ~30% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
-Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, idle-animated) replaces the tube; AvatarAppearance decoded (bakes cached, not composited); **rigged mesh skins to the avatar at rest pose (AV-1)** and **faces correctly (+X-forward reconcile)** — but only single rigged meshes place cleanly; linkset child prims scatter; no real shape/skin/COF read yet (the jellydoll is a generic body, and the "Now wearing" floater is still fake). No locomotion animation.
-Staged (from the 2026-07-04 scout):
-- ✅ **AV-1 rigged-mesh rest-pose skinning** — shipped 2026-07-17, live-confirmed. Server decodes the mesh skin block (bind_shape + inverse_bind + per-vertex Weights) + bundles the SL default skeleton (bones **and** collision volumes, for fitted/"Liquid" mesh) and bakes REST-POSE skinned positions; client places the mesh at the avatar root (`RIG_FOOT_OFFSET`). Single rigged meshes (pants/shoe/hair/body) render correctly on the avatar. (→ CHANGELOG). **AV-1 followups (still scattered/not user-ready):**
-  - 🔜 **Linkset-attachment child prims fall to the pile** — a rigged root is placed at the avatar root (bind pose), so its linkset's child prims (offset relative to the SL root prim's *attachment point*) land wrong. Fix = decouple the skinned render node from the child-carrying prim node, OR ancestor-aware skinning (a rigged child of a rigged root skins to the avatar; a rigid child keeps the attachment transform).
-  - 🟡 **Cohesive avatar / jellydoll humanoid placeholder** — a shared rigged-humanoid GLB (`avatar-default.glb`, 67-bone skeleton + 11 clips) now stands in for every avatar: loaded once, cloned per-UUID (`SkeletonUtils`), scaled to 1.8m, tinted per-UUID (self=green, peers=jellydoll color, translucent while 'cloud'), idle-animated. Replaces the tube (kept hidden as fallback). `src/lib/avatarModel.js` + `useWorldEngine.js`. First-look confirmed. **Remaining:** locomotion clips (walk/sit/fly by movement state) instead of always-idle; complexity/LOD fallback to the capsule for far/many avatars; and this is still a *generic* body — real shape/skin/attachments (below) supersede it. Note earlier "humanoid-tee" was never a real feature; the only prior placeholder was the tube.
-  - ✅ **Avatar facing** — shipped 2026-07-17, live-confirmed. Reconciled the forward-axis convention onto SL-native **+X-forward** everywhere: placeholder geometry (face box → +X, arms → ±Z sides) authored in the +X frame; own-avatar node `rotation.y = yaw + π/2` so its +X points along camera/heading; peers unchanged (already +X via `slQuatToThree(bodyRot)` — the fix corrected their −Z face box for free); rigged mesh stays identity (no per-mesh hack). Own spawn heading tracks the sim via the existing login-`bodyRot` seed. Verified against the 1–2 aligned rigged meshes available. (→ CHANGELOG)
-- ✅ **AV-2 Appearance-state + per-UUID jellydoll tint** — shipped 2026-07-15 (COMMITTED 4bb9988). Deterministic per-UUID color (FS `calcMutedAVColor` port); translucent 'cloud' until `AvatarAppearance` (Low 158) arrives → solid 'jellydoll'; bakes cached in worldStore for the bake pipeline. **Clarified 2026-07-17:** the cloud/jellydoll states were always real (translucent vs solid) — they just rendered on the *tube*, which read as "no state change"; there was never a "humanoid-tee". The tint now drives the jellydoll humanoid. (→ CHANGELOG)
-- 🔜 **Read-only appearance (prerequisite for real avatars)** — decode VisualParams (shape → height/proportion) from `AvatarAppearance`; read the Current Outfit Folder so the "Now wearing" floater shows real body-parts/clothing/attachments (today it's hardcoded from the legacy social `avatarStore`, not the SL COF). Then **outbound `AgentSetAppearance`** so other viewers stop seeing us as a nameless cloud.
-- 🔭 **Skeleton + default locomotion anims** — THREE.SkinnedMesh w/ SL joint names, AvatarAnimation decode/forward (dropped today), SL-BVH parser + AnimationMixer w/ priority. HIGH risk. *Beta-1/2.*
-- 🔭 **Bake pipeline** (AgentSetAppearance) — risky, can blank avatars globally; needs test-grid. Unblocks clothing-layer wearables + "save outfit." *Beta-2.*
-- 🔜 COF (Current Outfit Folder) sync · Wearing tab wear/unwear · Outfits save/apply/delete · Appearance floater updates on wear.
-- 🔭 Billboard impostor render (render-to-texture) · facial/lip · Animesh · gestures. *Later.*
+### 7. Avatars & Appearance — 🟡 ~45% · v0.4 (jellydoll/attachments) → v0.5 (bake) · **#1 beta blocker**
+Today: **rigged-humanoid jellydoll placeholder** (per-UUID tint, idle-animated, **shape-height-scaled**) replaces the tube; AvatarAppearance fully decoded (bakes + VisualParams + height; cached server-side, replayed on resync); **"Now wearing" floater is REAL** (COF read); **AgentSetAppearance echoes our params/bakes** so the sim holds a real appearance for peers; **rigged mesh skins to the avatar at rest pose (AV-1)** and **faces correctly (+X-forward reconcile)** — but only single rigged meshes place cleanly; linkset child prims scatter; bakes not composited (jellydoll body, not real skin). No locomotion animation.
+**Shipped (→ CHANGELOG for detail):** ✅ **7·A appearance read-model** (VisualParams decode + OpenSim height estimate → shape-scaled jellydoll · COF read → real Now-wearing · codec fix: OSGrid's absent trailing blocks were killing ALL AvatarAppearance decode · appearance resync replay) · ✅ **7·C first pass** — `AgentSetAppearance` echo (sent+acked live; *peer-visual check from a second viewer still pending*) · ✅ AV-1 rigged-mesh rest-pose skinning · ✅ Avatar facing (+X-forward) · ✅ AV-2 per-UUID jellydoll tint + cloud/jellydoll state · 🟡 Jellydoll humanoid placeholder. *Note: "humanoid-tee" was never real — the only prior placeholder was the tube.*
+
+**Open work — staged in dependency order.**
+
+**7·B — Attachment & outfit placement (cohesive worn look · 7·A worn-item identity now available + the AV-1 skeleton).**
+- 🔜 **Attachment-point mounting** — rigid (non-rigged) attachments mount at their named skeleton point + offset (ObjectUpdate attachment state), not all at the feet; rigged attachments keep skinning to the avatar (AV-1).
+- 🔜 **Linkset-attachment child prims** — decouple the skinned render node from the child-carrying prim node so a rigged root's linkset children stop falling to the pile (AV-1 followup).
+- 🔜 **Retire the tube for real** — gate the placeholder→content swap on a body/torso item actually loaded+placed (not attachment count); jellydoll **locomotion clips** (walk/sit/fly by movement state, GLB ships them) + complexity/LOD fallback to the capsule for far/many avatars.
+- 🔜 Wearing tab actions (wear/unwear = COF link writes) · proportion beyond height (torso/leg ratios from params → bone scales). *(2026-07-18: read side shipped; write side is the next coherent stretch.)*
+
+**7·C — Outbound appearance (remaining).**
+- 🔜 **Peers still see us invisible-with-label** (Gene, FS, 2026-07-18 — post-echo). The AgentSetAppearance echo ships+acks but doesn't resolve peer visibility by itself. Hypotheses: (a) sim doesn't rebroadcast our AvatarAppearance to peers unless it considers the appearance *changed/valid* (check OpenSim AvatarFactoryModule SetAppearance→SendAppearanceToAllOtherAgents path); (b) FS renders a cloud only while bakes are *fetchable* — if the echoed bake UUIDs aren't servable (no bake service on OSGrid), FS gives up → invisible; that gate is the 🔭 bake pipeline. Needs a watch-from-FS session while QS logs in.
+- 🔭 **Bake pipeline** (`UploadBakedTexture`, real skin+clothing compositing) — risky (can blank avatars grid-wide), needs a test grid. Unblocks clothing-layer wearables + "save outfit." *Beta-2.*
+
+**Later:** 🔭 real SL animation (AvatarAnimation decode + SL-BVH + AnimationMixer priority) · billboard impostor render · facial/lip · Animesh · gestures.
 
 ### 8. Chat & IM — 🟡 ~70% · v0.4
 - 🔜 Nearby chat: scrollback persistence · mute names/words · options panel (range/channel/font) · search · tear-off · reopen-without-losing-history.
