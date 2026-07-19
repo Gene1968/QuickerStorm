@@ -116,6 +116,7 @@ export interface CircuitState {
 		regionY:       number
 		startLocation: string
 		agentAccess:   string
+		lookAt?:       [number, number, number]   // saved facing (SL look_at) — client seeds initial yaw
 	}
 	// ── World snapshot cache (resync after WS reconnect / HMR / page reload) ─
 	// WHY: Sim sends RegionHandshake, terrain LayerData, and ObjectUpdates exactly once

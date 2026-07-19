@@ -1064,7 +1064,13 @@ export function useWorldEngine(canvasRef) {
 
 	// ── Input state ─────────────────────────────────────────────────────────
 	const keys  = {}
-	let yaw     = 0        // horizontal camera rotation, radians (Y-up Three.js)
+	// WHY: seed initial facing from the login look_at (SL LastLookAt echoed by the grid, forwarded
+	// in LOGIN_OK). Our yaw relates to the SL facing vector (lx,ly) by yaw = atan2(−lx, ly) — the
+	// inverse of the AgentUpdate encoder (slAngle = π/2 + yaw). Restores last-session facing instead
+	// of defaulting north. FS does the equivalent via gAgentStartLookAt → gAgent.resetAxes().
+	const _loginLookAt   = sessionStore.lookAt
+	const hasLoginLookAt = Array.isArray(_loginLookAt) && (Math.abs(_loginLookAt[0]) > 1e-4 || Math.abs(_loginLookAt[1]) > 1e-4)
+	let yaw     = hasLoginLookAt ? Math.atan2(-_loginLookAt[0], _loginLookAt[1]) : 0   // camera yaw, radians (Y-up Three.js)
 	let pitch   = -0.08    // slight downward tilt
 	let isFlying  = false  // F toggles; sustained CTRL_FLY sent each frame while true
 	let eHoldTime = 0      // seconds E has been continuously held
@@ -4401,18 +4407,21 @@ export function useWorldEngine(canvasRef) {
 						// other avatars' labels relative to each head.
 						if (ownMesh.userData.label2D) ownMesh.userData.label2D.position.setY(1.0)
 					}
-					// WHY: Seed yaw from sim's body rotation on first identify. Encoder pairs
-					// outgoing yaw with slAngle = π/2 + yaw → bodyRot = (0, 0, sin(slAngle/2), cos(slAngle/2)).
-					// Inverse: slAngle = 2 * atan2(rotZ, rotW); yaw = slAngle − π/2.
-					// Without this the camera always faces north (yaw=0) even when the avatar
-					// is logged in facing a different direction (e.g. from previous session).
+					// WHY: yaw seed on first identify. Encoder pairs outgoing yaw with slAngle = π/2 + yaw
+					// → bodyRot = (0,0,sin(slAngle/2),cos(slAngle/2)); inverse yaw = 2·atan2(rotZ,rotW) − π/2.
+					// On a FRESH login OpenSim's presence m_bodyRot is still Identity (rotZ≈0) so the sim rot
+					// is meaningless — keep the yaw already seeded from the login look_at (saved LastLookAt).
+					// On RELOAD/resume the circuit is rooted so obj.rot carries the *current* facing and
+					// beats the now-stale login look_at.
 					if (firstOwn && obj.rot && Number.isFinite(obj.rot[3])) {
-						const slAngle = 2 * Math.atan2(obj.rot[2], obj.rot[3])
+						const nearIdentity = Math.abs(obj.rot[2]) < 1e-3   // sim body rot not yet meaningful
+						// nearIdentity && hasLoginLookAt → slAngle = π/2 + yaw ⇒ yaw stays the look_at seed
+						const slAngle = (nearIdentity && hasLoginLookAt) ? (Math.PI / 2 + yaw) : 2 * Math.atan2(obj.rot[2], obj.rot[3])
 						yaw = slAngle - Math.PI / 2
 						// normalize to [-π, π]
 						while (yaw > Math.PI)  yaw -= 2 * Math.PI
 						while (yaw < -Math.PI) yaw += 2 * Math.PI
-						debugStore.push('info', `[3D] Initial yaw from sim: ${(yaw * 180 / Math.PI).toFixed(1)}°`)
+						debugStore.push('info', `[3D] Initial yaw from ${(nearIdentity && hasLoginLookAt) ? 'login look_at' : 'sim rot'}: ${(yaw * 180 / Math.PI).toFixed(1)}°`)
 					}
 					const p = obj.pos
 					debugStore.push('info', `[3D] Own avatar id=${obj.localId} fullId=${objId.slice(0,8)} pos=${p?.[0]?.toFixed(1) ?? '?'},${p?.[1]?.toFixed(1) ?? '?'},${p?.[2]?.toFixed(1) ?? '?'}`)

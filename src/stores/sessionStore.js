@@ -19,6 +19,10 @@ export const useSessionStore = defineStore('session', () => {
 	const regionSizeX   = ref(256)
 	const regionSizeY   = ref(256)
 	const startLocation = ref('')   // 'last', 'home', or 'uri:...' as echoed by grid
+	// WHY: saved facing (SL look_at vector) from the login reply — GridUserInfo.LastLookAt on the
+	// grid, persisted next to LastPosition. useWorldEngine seeds the initial camera/body yaw from
+	// this so arrival at 'last location' restores facing instead of always pointing north.
+	const lookAt        = ref([1, 0, 0])
 	const agentAccess   = ref('')   // 'M', 'A', etc — agent's account access cap (XML-RPC)
 	const regionAccess  = ref(0)    // SL access code from RegionHandshake: 13=PG, 21=Mature, 42=Adult, 254=down
 	// WHY: render-critical environment from RegionHandshake. waterHeight anchors the water plane
@@ -46,6 +50,7 @@ export const useSessionStore = defineStore('session', () => {
 		regionSizeX.value   = data.regionSizeX   ?? 256
 		regionSizeY.value   = data.regionSizeY   ?? 256
 		startLocation.value = data.startLocation ?? ''
+		if (Array.isArray(data.lookAt) && data.lookAt.length === 3) lookAt.value = data.lookAt
 		agentAccess.value   = data.agentAccess   ?? ''
 		connected.value     = true
 	}
@@ -54,6 +59,7 @@ export const useSessionStore = defineStore('session', () => {
 		agentId.value = sessionId.value = simIp.value = seedCap.value = ''
 		username.value = ''
 		regionName.value = startLocation.value = agentAccess.value = ''
+		lookAt.value = [1, 0, 0]
 		simPort.value = regionX.value = regionY.value = 0
 		regionSizeX.value = regionSizeY.value = 256
 		waterHeight.value = 20
@@ -65,7 +71,7 @@ export const useSessionStore = defineStore('session', () => {
 	return {
 		agentId, sessionId, username, simIp, simPort, seedCap,
 		regionName, regionX, regionY, regionSizeX, regionSizeY,
-		startLocation, agentAccess, regionAccess, waterHeight, terrainTextures, regionCacheId,
+		startLocation, lookAt, agentAccess, regionAccess, waterHeight, terrainTextures, regionCacheId,
 		connected, setSession, clearSession,
 	}
 })

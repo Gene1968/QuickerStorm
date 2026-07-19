@@ -175,6 +175,15 @@ export async function handleLogin(
 	const regionSizeX = loginResult.region_size_x ?? 256
 	const regionSizeY = loginResult.region_size_y ?? 256
 
+	// WHY: OpenSim echoes the saved facing as look_at="[rX,rY,rZ]" (LLLoginResponse.cs:267),
+	// persisted server-side as GridUserInfo.LastLookAt right next to LastPosition. FS reads it into
+	// gAgentStartLookAt and calls gAgent.resetAxes() at startup. Forward it so the client seeds the
+	// initial camera/body yaw from it — "last location" restores facing instead of defaulting north.
+	const lookAtMatch = /\[r(-?[\d.]+),r(-?[\d.]+),r(-?[\d.]+)\]/.exec(loginResult.look_at ?? '')
+	const lookAt: [number, number, number] = lookAtMatch
+		? [parseFloat(lookAtMatch[1]), parseFloat(lookAtMatch[2]), parseFloat(lookAtMatch[3])]
+		: [1, 0, 0]   // FS default gAgentStartLookAt(1,0,0)
+
 	// Cache the full LOGIN_OK payload for session resume (reconnect within hold window)
 	const cachedLoginOk = {
 		agentId:       loginResult.agent_id!,
@@ -189,6 +198,7 @@ export async function handleLogin(
 		regionSizeY,
 		startLocation: loginResult.start_location ?? start,
 		agentAccess:   loginResult.agent_access ?? '',
+		lookAt,   // WHY: saved facing (SL look_at vector) — client seeds initial yaw from this
 		firstName:     loginResult.first_name ?? '',
 		lastName:      loginResult.last_name  ?? '',
 		// WHY: folder tree comes free in the login response — ship it so the Inventory floater
