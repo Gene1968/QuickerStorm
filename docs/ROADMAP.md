@@ -153,7 +153,7 @@ To CLEAR (Beta-1 — mesh/Bento avatars look correct):
 - 🔜 **Skin (texture)** — mesh-body TE skin textures reliably applied; untextured bodies = the texture `✗` failures (soft-retry exists; needs verify + any gaps closed). This is most of "doesn't look good."
 - 🔜 **Fingers/hands** — confirm the hand mesh (part of / separate from the body) actually loads (rides the A2 mesh-retry); hand *pose* (finger curl) is deferred (🔭 hand poses).
 - 🔜 **Shape (proportions)** — VisualParam bone **SCALING** (the invasive non-cascade path); this is the big "shape" gap. Without it every avatar is default-proportioned.
-- 🔜 **Verify joints** (A3) — confirm `alt_inverse_bind` bone-apply on a real override body (Maitreya/Legacy) — `[AV] jointOvr applied=N`.
+- ✅ **Joints — NOT a gap** (verified 2026-07-21, Gene on Maitreya): Maitreya LaraX ships zero joint overrides (`alt=0` on every body mesh, `pelvisOffset=0`) — it rigs to the standard SL skeleton, which we build correctly; limb placement is right. The `alt_inverse_bind` code is a correct no-op for mainstream bodies (only the minority that reposition joints use it). So skin/texture — not joints — is the "looks wrong" cause.
 - 🔜 **Eyeball** — sit pose · own-avatar walk · Gene FS side-by-side.
 
 Beta-2 (separate track — does NOT block clearing Beta-1):
