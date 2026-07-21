@@ -28,7 +28,7 @@ describe('skinSubmeshes (rest-pose)', () => {
 			jointNames: ['mChest'],
 			bindShapeMatrix: IDENT.slice(),
 			inverseBindMatrix: [IDENT.slice()],
-			pelvisOffset: 0, lockScaleIfJointPosition: false,
+			altInverseBindMatrix: [], pelvisOffset: 0, lockScaleIfJointPosition: false,
 		}
 		const out = skinSubmeshes([sub([0.1, 0.2, 0.3], [[[0, 1.0]]])], skin)
 		const [chx, chy, chz] = restPos('mChest')   // (-0.015, 0, 1.356)
@@ -42,7 +42,7 @@ describe('skinSubmeshes (rest-pose)', () => {
 			jointNames: ['mHead', 'mPelvis'],
 			bindShapeMatrix: IDENT.slice(),
 			inverseBindMatrix: [IDENT.slice(), IDENT.slice()],
-			pelvisOffset: 0, lockScaleIfJointPosition: false,
+			altInverseBindMatrix: [], pelvisOffset: 0, lockScaleIfJointPosition: false,
 		}
 		const out = skinSubmeshes([sub([0, 0, 0], [[[0, 0.5], [1, 0.5]]])], skin)
 		const head = restPos('mHead'), pel = restPos('mPelvis')
@@ -55,7 +55,7 @@ describe('skinSubmeshes (rest-pose)', () => {
 		const bind = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1]
 		const skin: SkinInfo = {
 			jointNames: ['mPelvis'], bindShapeMatrix: bind,
-			inverseBindMatrix: [IDENT.slice()], pelvisOffset: 0, lockScaleIfJointPosition: false,
+			inverseBindMatrix: [IDENT.slice()], altInverseBindMatrix: [], pelvisOffset: 0, lockScaleIfJointPosition: false,
 		}
 		const out = skinSubmeshes([sub([0.1, 0, 0], [[[0, 1.0]]])], skin)
 		const pel = restPos('mPelvis')   // (0,0,1.067)

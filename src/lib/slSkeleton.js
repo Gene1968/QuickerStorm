@@ -34,9 +34,12 @@ function makeBone([name, , px, py, pz, rx, ry, rz, sx, sy, sz]) {
 	// SL euler composes about fixed axes X→Y→Z = three.js intrinsic 'ZYX' (attachmentPoints.js).
 	if (rx || ry || rz) b.quaternion.setFromEuler(new THREE.Euler(rx * DEG, ry * DEG, rz * DEG, 'ZYX'))
 	b.scale.set(sx, sy, sz)
-	// Rest pose snapshot — the anim player restores un-animated joints from these each frame.
+	// Rest pose snapshot — the anim player restores un-animated joints from these each frame. restPos is
+	// LIVE (mesh joint-position overrides rewrite it so anims re-anchor); defaultPos is the immutable
+	// avatar_skeleton.xml value, kept for the FS aboveJointPosThreshold() override-vs-default compare.
 	b.userData.restPos = b.position.clone()
 	b.userData.restQuat = b.quaternion.clone()
+	b.userData.defaultPos = b.position.clone()
 	return b
 }
 
@@ -68,7 +71,9 @@ export function createSLSkeleton(footOffset) {
 	root.quaternion.copy(SL_TO_THREE_QUAT)
 	root.position.y = -footOffset   // SL ground origin → avatar-node feet (AV-1 contract)
 	root.add(boneList[0])           // mPelvis chain
-	return { root, bones, boneList }
+	// 7·D joint-position overrides: which worn mesh (by id) owns each joint's override (first-wins), and
+	// whether a pelvis Z fixup has been applied yet (applied once, to the root, so it survives re-skins).
+	return { root, bones, boneList, footOffset, overrideBy: new Map(), pelvisFixupBy: null }
 }
 
 /**
@@ -138,4 +143,76 @@ export function bindToSkeleton(mesh, skel, skin) {
 	mesh.bind(new THREE.Skeleton(bones, inverses), bindMatrix)
 	// Skinned bounds live wherever the bones are, not at the mesh node — cull by the avatar instead.
 	mesh.frustumCulled = false
+}
+
+// FS LLJoint::aboveJointPosThreshold — 0.1 mm (LL_JOINT_TRESHOLD_POS_OFFSET); an override under this from
+// the joint's avatar_skeleton.xml default is ignored (jitter guard, and keeps default bones un-touched).
+const JOINT_POS_THRESHOLD = 1e-4
+const JOINT_POS_THRESHOLD_SQ = JOINT_POS_THRESHOLD * JOINT_POS_THRESHOLD
+// Sanity clamp: no real avatar joint sits this far from its default LOCAL position (limbs deviate cm, the
+// tallest bodies < ~0.5 m). Some attachment rigs ship a garbage/non-joint-position matrix for joints they
+// list but don't drive (live: hand meshes carrying a 9.6 m mPelvis "position") — applying it would fling the
+// joint. FS trusts the exporter; we reject the implausible so one bad attachment can't wreck the skeleton.
+const MAX_JOINT_POS_DEVIATION = 2.0
+const MAX_JOINT_POS_DEVIATION_SQ = MAX_JOINT_POS_DEVIATION * MAX_JOINT_POS_DEVIATION
+
+/**
+ * Apply a worn mesh's joint-position overrides + pelvis fixup to the shared avatar skeleton (7·D).
+ * Mesh bodies ship their intended LOCAL joint positions in the skin block's alt_inverse_bind_matrix
+ * (translation column) plus a pelvis_offset; ignoring them skins the body to the DEFAULT SL joint
+ * layout, so a body rigged with e.g. a lower pelvis / longer legs renders mis-proportioned. FS port:
+ * llvoavatar.cpp collectJointStateOverrides / addAttachmentOverridesForObject (7719-7806):
+ *   • only when altInverseBindMatrix is present and one-per-joint (bindCnt == jointCnt),
+ *   • per joint, jointPos = altInverseBindMatrix[i].getTranslation() (row-major row 3 = floats 12/13/14),
+ *     applied via LLJoint::setPosition only if aboveJointPosThreshold(jointPos) vs the default,
+ *   • pelvis_offset is a vertical (avatar Z) fixup — applied to the skeleton root so it lifts/lowers the
+ *     whole avatar (matches FS addPelvisFixup) and survives per-mesh re-skins.
+ * Overrides land on bone.position AND bone.userData.restPos so the AnimPlayer re-anchors joints to the
+ * mesh's layout (it never touches bone.scale — pure translation, no THREE scale-cascade to fight).
+ * First mesh to claim a joint wins (a body sets the full set; a later shoe won't fight it). Returns
+ * { has, applied, below, rejected, claimed, pelvis } for observability (has = alt matrices present).
+ */
+export function applyMeshJointOverrides(skel, skin, meshId) {
+	const r = { has: false, applied: 0, below: 0, rejected: 0, claimed: 0, pelvis: 0 }
+	if (!skel || !skin) return r
+	const alt = skin.altInverseBindMatrix
+	const names = skin.jointNames
+	if (!Array.isArray(alt) || !Array.isArray(names) || !alt.length || alt.length !== names.length) {
+		// Still honour a pelvis fixup a rig may carry without per-joint overrides.
+		r.pelvis = applyPelvisFixup(skel, skin, meshId)
+		return r
+	}
+	r.has = true
+	for (let i = 0; i < names.length; i++) {
+		const name = names[i]
+		const bone = skel.bones.get(name)
+		const m = alt[i]
+		if (!bone || !m || m.length !== 16) continue
+		const px = m[12], py = m[13], pz = m[14]   // row-major translation (FS LLMatrix4::getTranslation)
+		if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) { r.rejected++; continue }
+		const d = bone.userData.defaultPos
+		const dx = px - d.x, dy = py - d.y, dz = pz - d.z
+		const distSq = dx * dx + dy * dy + dz * dz
+		if (distSq <= JOINT_POS_THRESHOLD_SQ) { r.below++; continue }         // below threshold → keep default
+		if (distSq > MAX_JOINT_POS_DEVIATION_SQ) { r.rejected++; continue }   // garbage/non-joint matrix → skip
+		const owner = skel.overrideBy.get(name)
+		if (owner && owner !== meshId) { r.claimed++; continue }              // another mesh already owns it
+		bone.position.set(px, py, pz)
+		bone.userData.restPos.copy(bone.position)                            // anims re-anchor to the override
+		skel.overrideBy.set(name, meshId)
+		r.applied++
+	}
+	r.pelvis = applyPelvisFixup(skel, skin, meshId)
+	return r
+}
+
+// pelvis_offset → vertical lift of the whole skeleton (FS addPelvisFixup). SL +Z (up) maps to Three +Y
+// (root carries the SL→Three rotation), so it adds straight to root.position.y. First mesh with a non-zero
+// offset wins; applied to the root (not the pelvis bone) so a joint-override re-skin can't wipe it.
+function applyPelvisFixup(skel, skin, meshId) {
+	const off = Number(skin.pelvisOffset) || 0
+	if (!off || skel.pelvisFixupBy != null || Math.abs(off) > MAX_JOINT_POS_DEVIATION) return 0
+	skel.root.position.y = -skel.footOffset + off
+	skel.pelvisFixupBy = meshId
+	return off
 }

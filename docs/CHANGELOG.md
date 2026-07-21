@@ -55,6 +55,43 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-19 — 7·D: mesh-body joint-position overrides + pelvis fixup  [uncommitted]
+- **Mesh bodies now reposition the skeleton to their own joint layout.** A rigged mesh ships its intended
+  LOCAL joint positions in the skin block's `alt_inverse_bind_matrix` (translation column) + a
+  `pelvis_offset`; we were ignoring both and skinning every body to the DEFAULT SL joint layout, so a body
+  rigged with a lower pelvis / longer legs / wider hips rendered mis-proportioned. Ported from FS
+  `llvoavatar.cpp` `addAttachmentOverridesForObject` (7719-7806) + `LLJoint::addAttachmentPosOverride`.
+- **Server** (`meshDecode.ts` / `mesh.ts`) — decode `alt_inverse_bind_matrix` into `SkinInfo.altInverseBindMatrix`
+  and forward it (+ `lockScaleIfJointPosition`) on the skin lane; cache lane bumped `:skinv4`→`:skinv5` so
+  worn meshes re-decode with the new field; `skinDbg` now reports override + pelvis-offset counts.
+- **Client** (`slSkeleton.js`) — `applyMeshJointOverrides(skel, skin, meshId)`: per joint, `jointPos` =
+  alt matrix translation (row-major floats 12/13/14), applied to `bone.position` **and** `bone.userData.restPos`
+  (so the AnimPlayer re-anchors to the mesh layout) only when above FS's 0.1 mm `aboveJointPosThreshold`;
+  first mesh to claim a joint wins (a body sets the full set, a later shoe won't fight it). `pelvis_offset`
+  lifts the whole avatar via the skeleton **root** (SL +Z → Three +Y), so a re-skin can't wipe it. Wired into
+  `applySkinnedRig`. Pure translation — no `bone.scale`, so nothing fights THREE's scale cascade.
+- **Sanity clamp (live-caught):** OSGrid hand/glove meshes ship a garbage `mPelvis` alt "position" ~9.6 m
+  off default (hand joints themselves sane at mm-scale). FS trusts the exporter and would fling the joint;
+  we reject per-joint deviations > 2 m (and non-finite) as malformed so one bad attachment can't wreck the
+  skeleton. `applyMeshJointOverrides` now returns `{has,applied,below,rejected,claimed,pelvis}` and the
+  engine logs `[AV] jointOvr …` whenever a rig carries override data (observable apply path).
+- 8 client tests (`slSkeletonOverrides.test.js`): threshold gate, translation extraction, first-wins,
+  idempotent re-apply, pelvis root-lift, safe no-op on absent/mismatched, **garbage-deviation reject**,
+  **non-finite reject**.
+- **Live smoke (MCP, OSGrid, 2026-07-20):** server runs the new code (363 `:skinv5` disk entries; `decodeSkinBlock`
+  captured alt matrices on the 2 assets that carry them, 25j/28j); client receives them (`dbg=rig(25j,25ovr)`);
+  needed a **client cache-lane bump** `:skin3`→`:skin4` (caught here — populated clients were serving stale
+  skin without the field). No regressions: 3 avatars, 4668 objs, `upsertFails/placeholders/geoNaN=0`, 0 errors.
+  **Bone-apply not visually demonstrated** — this account/region has NO body content with clean joint
+  overrides (only the 2 malformed hand meshes in the whole cache), so `applied` stayed 0. Confirm the visible
+  correction on a body that ships joint positions (SL Maitreya/Legacy/etc.) — the `[AV] jointOvr` log will show it.
+- **Deferred (evidence-backed):** VisualParam *scale* deforms (Height/Thickness/Muscle/limb-length — the
+  actual body-shape morphs) stay out because THREE cascades `bone.scale` to descendants while FS builds each
+  joint's world matrix from its OWN scale (`LLXformMatrix::updateMatrix`) — a faithful port needs an invasive
+  skinning workaround. VisualParam *position* offsets also deferred: parsed from `avatar_lad.xml` (transmit
+  order = ascending-ID, validated idx25=id33 Height), only 6 transmitted params carry offsets and they move
+  **wings/tail/hands** (mostly zeros), not body proportions — near-zero visible value without the scale path.
+
 ## 2026-07-19 — 7·D: runtime skeleton + AvatarAnimation playback  [uncommitted]
 - **Live SL skeleton per avatar** — full Bento THREE.Bone hierarchy (133 bones + 26 collision
   volumes) generated from FS `avatar_skeleton.xml` (`shared/slSkeletonDef.js`, cross-checked exactly

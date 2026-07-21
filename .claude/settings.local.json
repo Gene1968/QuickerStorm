@@ -362,7 +362,13 @@
       "Bash(node parseSkeleton.js)",
       "Bash(./node_modules/.bin/esbuild src/lib/meshCache.js --outfile=/dev/null --log-level=error)",
       "Bash(./node_modules/.bin/esbuild src/composables/useWorldEngine.js --outfile=/dev/null --log-level=error)",
-      "Bash(./node_modules/.bin/esbuild src/stores/uiStore.js --outfile=/dev/null --log-level=error)"
+      "Bash(./node_modules/.bin/esbuild src/stores/uiStore.js --outfile=/dev/null --log-level=error)",
+      "Bash(L=\"C:/Users/gene1/AppData/Local/Temp/claude/C--Users-gene1-Downloads-Pages-git-QuickerStorm/b21c37ae-2ef3-4267-b7d6-c020fc71e704/tasks/bhnxzmgi0.output\" 2>/dev/null)",
+      "Bash([ -f \"$L\" ])",
+      "Bash(kill %bswf2yont)",
+      "Bash(node \"C:/Users/gene1/AppData/Local/Temp/claude/C--Users-gene1-Downloads-Pages-git-QuickerStorm/3cb17883-8987-4f91-87c1-68278f0b1987/scratchpad/parse_lad.mjs\")",
+      "Bash(bunx esbuild *)",
+      "Bash(rm -f esbuild.err)"
     ]
   }
 }

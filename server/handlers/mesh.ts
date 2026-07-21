@@ -16,13 +16,14 @@ import { S } from '../../shared/protocol.js'
 // and each LOD level decodes to its own submesh payload (see pickLodRef / the per-level fetch).
 // 7·D: a rigged mesh (skin block present) requested WITH skin (wantSkin, from a worn attachment) ships
 // RAW bind-space geometry + per-vertex joint indices/weights + the skin block (jointNames, bindShapeMatrix,
-// inverseBindMatrix) — the CLIENT runtime-skins it onto a live THREE.Skeleton (SL joints), replacing the
-// AV-1 server rest-pose bake (meshSkin.ts, kept for reference/tests). These live under a SEPARATE `:skinv4`
+// inverseBindMatrix, altInverseBindMatrix, pelvisOffset) — the CLIENT runtime-skins it onto a live
+// THREE.Skeleton (SL joints) and applies the mesh's joint-position overrides, replacing the AV-1 server
+// rest-pose bake (meshSkin.ts, kept for reference/tests). These live under a SEPARATE `:skinv5`
 // cache key so the plain geometry cache (877MB, un-skinned) is untouched and only worn meshes re-fetch.
 // skinDbg surfaces why skin is/isn't present.
 type MeshPayload = {
 	submeshes: { positions: string; normals: string; uvs: string; indices: string; jointIndices?: string; jointWeights?: string }[]
-	skin?: { jointNames: string[]; bindShapeMatrix: number[]; inverseBindMatrix: number[][]; pelvisOffset: number }
+	skin?: { jointNames: string[]; bindShapeMatrix: number[]; inverseBindMatrix: number[][]; altInverseBindMatrix: number[][]; pelvisOffset: number; lockScaleIfJointPosition: boolean }
 	skinDbg?: string
 }
 const MESH_MEMO_BUDGET = 256 * 1048576
@@ -70,7 +71,7 @@ export async function handleMeshFetch(circuitId: string, req: { meshId: string; 
 	// fresh fetch+decode populates it WITH the skin block. Non-worn meshes keep the plain key untouched,
 	// so we don't purge/re-fetch the whole mesh cache — only the handful of worn meshes re-fetch once.
 	const wantSkin = !!req?.wantSkin
-	const cacheKey = `${meshId}:${wantLod}${wantSkin ? ':skinv4' : ''}`   // :skinv4 = RAW rig data for client runtime skinning (7·D; v3 was the server rest-pose bake)
+	const cacheKey = `${meshId}:${wantLod}${wantSkin ? ':skinv5' : ''}`   // :skinv5 = RAW rig data + joint-position overrides (7·D; v4 lacked altInverseBindMatrix, v3 was the server rest-pose bake)
 	// Echo wantSkin so the client resolves the correct cache lane (`:skin` vs plain) — the response
 	// otherwise can't be told apart from a plain fetch for the same meshId+lod (AV-1 lane separation).
 	const send = (d: Record<string, unknown>) => s.ws.send(JSON.stringify({ t: S.MESH_DATA, d: { meshId, lod: wantLod, wantSkin, ...d } }))
@@ -120,9 +121,12 @@ export async function handleMeshFetch(circuitId: string, req: { meshId: string; 
 					jointNames: si.jointNames,
 					bindShapeMatrix: si.bindShapeMatrix,
 					inverseBindMatrix: si.inverseBindMatrix,
+					altInverseBindMatrix: si.altInverseBindMatrix,
 					pelvisOffset: si.pelvisOffset,
+					lockScaleIfJointPosition: si.lockScaleIfJointPosition,
 				}
-				skinDbg = `rig(${si.jointNames.length}j${missing ? `,${missing}MISSING:${si.jointNames.filter(n => !jointRestWorld(n)).slice(0, 6).join('/')}` : ''})`
+				const ovr = si.altInverseBindMatrix.length   // 7·D joint-position overrides carried by this rig
+				skinDbg = `rig(${si.jointNames.length}j${ovr ? `,${ovr}ovr` : ''}${si.pelvisOffset ? `,pelvis${si.pelvisOffset.toFixed(3)}` : ''}${missing ? `,${missing}MISSING:${si.jointNames.filter(n => !jointRestWorld(n)).slice(0, 6).join('/')}` : ''})`
 			}
 			else skinDbg = `ok(${si.jointNames.length}j)`
 			const submeshes = decoded.map(sm => ({

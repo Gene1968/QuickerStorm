@@ -13,9 +13,10 @@ import { C, S } from '@shared/protocol.js'
 // high decode) still hit — else every mesh re-downloads from the grid on a warm region (cube storm).
 // 7·D: a rigged worn attachment (skin=true) gets RAW bind-space geometry + per-vertex joint
 // indices/weights + the rig block from the server — different bytes from the same asset's plain
-// decode, so it lives under a separate `:skin` cache lane. `:skin3` = runtime-skinning payload
-// (`:skin2` was the AV-1 server rest-pose bake; stale entries just miss and refetch once).
-const mkKey = (uuid, lod, skin = false) => `${lod === 0 ? uuid : `${uuid}:${lod}`}${skin ? ':skin3' : ''}`
+// decode, so it lives under a separate `:skin` cache lane. `:skin4` = runtime-skinning payload +
+// joint-position overrides (`:skin3` lacked altInverseBindMatrix, `:skin2` was the AV-1 server
+// rest-pose bake; stale entries just miss and refetch once). Bump in lockstep with server `:skinvN`.
+const mkKey = (uuid, lod, skin = false) => `${lod === 0 ? uuid : `${uuid}:${lod}`}${skin ? ':skin4' : ''}`
 
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_INFLIGHT = 12       // concurrent network mesh fetches (was 6; 0 timeouts at 6 → headroom)

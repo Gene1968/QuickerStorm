@@ -27,6 +27,8 @@ export interface SkinInfo {
 	jointNames: string[]
 	bindShapeMatrix: number[]        // 16 floats, row-major (SL/FS convention: v' = v · M)
 	inverseBindMatrix: number[][]    // per-joint 16-float matrices (unused until animated posing)
+	altInverseBindMatrix: number[][] // per-joint override matrices; translation = the mesh's desired LOCAL
+	//                                  joint position (7·D joint-position overrides, FS llvoavatar.cpp:7756)
 	pelvisOffset: number
 	lockScaleIfJointPosition: boolean
 }
@@ -74,8 +76,14 @@ export function decodeSkinBlock(buf: Buffer, headerSize: number, ref: LodRef): S
 	const inverseBindMatrix = Array.isArray(m.inverse_bind_matrix)
 		? m.inverse_bind_matrix.map(mat16).filter((r: number[] | null): r is number[] => r !== null)
 		: []
+	// alt_inverse_bind_matrix (optional): despite the name, FS reads each matrix's translation column as the
+	// mesh's desired LOCAL joint position and applies it as a joint-position override (llvoavatar.cpp:7756 →
+	// LLJoint::addAttachmentPosOverride). One per joint when present; drives mesh-body proportions (7·D).
+	const altInverseBindMatrix = Array.isArray(m.alt_inverse_bind_matrix)
+		? m.alt_inverse_bind_matrix.map(mat16).filter((r: number[] | null): r is number[] => r !== null)
+		: []
 	const pelvisOffset = Number.isFinite(Number(m.pelvis_offset)) ? Number(m.pelvis_offset) : 0
-	return { jointNames, bindShapeMatrix, inverseBindMatrix, pelvisOffset, lockScaleIfJointPosition: m.lock_scale_if_joint_position === true }
+	return { jointNames, bindShapeMatrix, inverseBindMatrix, altInverseBindMatrix, pelvisOffset, lockScaleIfJointPosition: m.lock_scale_if_joint_position === true }
 }
 
 /**

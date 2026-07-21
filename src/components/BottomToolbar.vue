@@ -84,7 +84,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		</button>
 
 		<!-- Debug panel toggle (Ctrl+Shift+4) -->
-		<button
+		<!-- <button
 			class="flex flex-1 flex-col items-center justify-center h-7 rounded-sm text-3xs truncate transition-colors"
 			:class="ui.showDebug ? 'bg-white/5 text-accent-light' : 'text-fg/70 hover:bg-white/10 hover:text-fg'"
 			title="Debug Panel (Ctrl+Shift+4)"
@@ -92,7 +92,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 		>
 			<span class="text-base leading-none">🔌</span>
 			<span class="leading-none mt-0.5 hidden sm:block">Debug</span>
-		</button>
+		</button> -->
 
 		<!-- Logout -->
 		<!-- <button

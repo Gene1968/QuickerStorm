@@ -36,7 +36,7 @@ import { primFaceMap, slFaceForGroup, primFacesDiffer } from '@/lib/primFaceMap.
 import { jellydollColorHex } from '@/lib/avatarColor.js'
 import { loadAvatarModel, createAvatarModel, AVATAR_MODEL_HEIGHT } from '@/lib/avatarModel.js'
 import { attachPointFromState, isHudAttachPoint, attachPointLocal, attachPointBoneLocal } from '@/lib/attachmentPoints.js'
-import { createSLSkeleton, mergeSkinnedGeometry, bindToSkeleton } from '@/lib/slSkeleton.js'
+import { createSLSkeleton, mergeSkinnedGeometry, bindToSkeleton, applyMeshJointOverrides } from '@/lib/slSkeleton.js'
 import { AnimPlayer } from '@/lib/animPlayer.js'
 import { getAnim } from '@/composables/useAnimFetch.js'
 import { mouseRayPlaneIntersect, projectDeltaOntoAxis, ringAngle, nearestPointOnLineParam, lightenColor } from '@/utils/gizmoMath.js'
@@ -3333,6 +3333,14 @@ export function useWorldEngine(canvasRef) {
 		mesh.geometry?.dispose()
 		meshMap.set(localId, sk)
 		bindToSkeleton(sk, skel, subs.skin)
+		// 7·D: a mesh body ships its own joint layout (alt_inverse_bind_matrix) + pelvis fixup — reposition
+		// the shared skeleton to it so the body isn't skinned to default SL proportions. Pure translation
+		// (bone.position/restPos); scale-driven shape morphs are deferred (would fight THREE's scale cascade).
+		const meshId = worldStore.objects.get(localId)?.meshId || obj?.meshId
+		const ovr = applyMeshJointOverrides(skel, subs.skin, meshId)
+		// Log whenever a rig carried override data, even if nothing landed — makes the apply path
+		// observable and surfaces WHY (below-threshold / garbage-rejected / already-claimed).
+		if (ovr.has || ovr.pelvis) debugStore.push('info', `[AV] jointOvr ${meshId?.slice(0, 8)}: applied=${ovr.applied} below=${ovr.below} rejected=${ovr.rejected} claimed=${ovr.claimed} pelvis=${ovr.pelvis.toFixed(3)}`)
 		applyPlanarUVs(sk, obj, null)
 		if (hasMultiFaceMesh(obj)) buildFaceMaterials(sk, obj)
 		ensureChildProxy(sk, worldStore.objects.get(localId) || obj)   // 7·B-2
