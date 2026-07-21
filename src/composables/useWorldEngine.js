@@ -3247,7 +3247,10 @@ export function useWorldEngine(canvasRef) {
 	//   'muted'   — complexity proxy (worn triangle count) exceeds ui.avatarMaxComplexity, or
 	//               Advanced/Dev ▸ "Jellydoll all avatars" is on → doll shown, worn HIDDEN
 	//               (FS jellydolls don't render attachments).
-	const BODY_MODE_SETTLE_MS = 2000
+	// Keep the doll up a bit longer so the real body/outfit lands more complete before the swap — Gene
+	// hit "avatar disappears for a minute" / "only hair floating" when the doll hid the instant a
+	// torso-jointed mesh appeared but the actual body hadn't RENDERED yet (2026-07-21).
+	const BODY_MODE_SETTLE_MS = 4000
 	// "Body item" = a rigged mesh weighting to torso core joints (a chest-covering mesh). Feet/leg/
 	// head-only attachments (shoes, hair) never hide the doll on their own.
 	const TORSO_JOINTS = new Set(['mTorso', 'mChest', 'mSpine1', 'mSpine2', 'mSpine3', 'mSpine4', 'CHEST', 'BELLY', 'LOWER_BACK', 'UPPER_BACK'])
@@ -3260,7 +3263,14 @@ export function useWorldEngine(canvasRef) {
 			if (!(o.isMesh || o.isSkinnedMesh) || o.userData?.localId === undefined || o.userData.hudAttachment) return
 			const g = o.geometry
 			tris += (g?.index ? g.index.count : (g?.attributes?.position?.count ?? 0)) / 3
-			if (o.isSkinnedMesh && o.userData.skinJointNames?.some(n => TORSO_JOINTS.has(n))) covered = true
+			// "covered" now demands a torso mesh that is ACTUALLY RENDERED — a live SkinnedMesh, visible,
+			// past its geometry-reveal, with real triangles. Before, a placeholder / not-yet-skinned / failed
+			// torso mesh flipped the doll off, leaving the avatar as just a floating attachment (hair) until
+			// the body caught up. The doll now stays until there's a real body to replace it, and the sweep
+			// below flips back to 'loading' (doll returns) if that coverage later drops.
+			if (o.isSkinnedMesh && o.visible && !o.userData.awaitingGeom
+				&& (g?.index ? g.index.count : (g?.attributes?.position?.count ?? 0)) > 0
+				&& o.userData.skinJointNames?.some(n => TORSO_JOINTS.has(n))) covered = true
 		})
 		return { covered, tris }
 	}
@@ -3395,6 +3405,7 @@ export function useWorldEngine(canvasRef) {
 		for (const [lid, av] of meshMap) {
 			if (!av.userData?.isAvatar) continue
 			reconcileDetachedAvatar(lid, av)
+			updateAvatarBodyMode(av)   // re-show the doll if body coverage regressed (Gene's floating-hair guard)
 			if (!av.userData.slSkel) continue
 			av.traverse(o => {
 				if (o === av || !(o.isMesh || o.isSkinnedMesh)) return
