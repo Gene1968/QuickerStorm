@@ -368,7 +368,8 @@
       "Bash(kill %bswf2yont)",
       "Bash(node \"C:/Users/gene1/AppData/Local/Temp/claude/C--Users-gene1-Downloads-Pages-git-QuickerStorm/3cb17883-8987-4f91-87c1-68278f0b1987/scratchpad/parse_lad.mjs\")",
       "Bash(bunx esbuild *)",
-      "Bash(rm -f esbuild.err)"
+      "Bash(rm -f esbuild.err)",
+      "Bash(node_modules/.bin/vitest run *)"
     ]
   }
 }

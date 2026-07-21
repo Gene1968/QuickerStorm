@@ -20,12 +20,14 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useWorldStore } from '@/stores/worldStore'
 import { useRealtimeSocket } from '@/composables/useRealtimeSocket'
+import { useInventory } from '@/composables/useInventory'
 import { C } from '@shared/protocol.js'
 import { Repeat2Icon } from '@lucide/vue'
 
 const session  = useSessionStore()
 const world    = useWorldStore()
 const { emit } = useRealtimeSocket()
+const { resyncInventory } = useInventory()
 
 const GRACE_MS        = 5000   // wait this long after WS connect before considering stuck
 const BANNER_DELAY_MS = 4000   // grace after silent auto-resync before surfacing banner
@@ -90,6 +92,7 @@ function resync() {
 	if (Date.now() - lastResyncAt.value < 2000) return
 	lastResyncAt.value = Date.now()
 	emit(C.RESYNC_WORLD, {})
+	resyncInventory()   // recover stuck inventory on the same action (no relog)
 }
 
 function dismiss() { dismissed.value = Date.now() }

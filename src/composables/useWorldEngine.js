@@ -5677,6 +5677,14 @@ export function useWorldEngine(canvasRef) {
 		}
 		// Server replay refreshes worldStore (objects + terrain) underneath the rebuild.
 		try { wsEmit(C.RESYNC_WORLD, {}) } catch { /* not connected */ }
+		// RESYNC_WORLD only replays the server's CACHED updates — it can't fix state that's stale relative
+		// to the sim (a peer avatar the sim re-outfitted / moved while it was out of our interest set, which
+		// showed up as Gene@OS "in Nearby, invisible"). FORCE a fresh sim re-send for every known avatar via
+		// the cache-miss path (server routes force=true to RequestMultipleObjects/CacheMissType=1). Avatars
+		// only: they're the no-other-recovery case (never client-cached, few in number); prims recover via
+		// the normal probe path. The fresh ObjectUpdate rebuilds the mesh through onObjectUpdate.
+		const avatarIds = [...worldStore.objects.values()].filter(o => o.pcode === PCODE_AVATAR).map(o => o.localId)
+		if (avatarIds.length) { try { wsEmit(C.OBJ_CACHE_MISS, { ids: avatarIds, force: true }) } catch { /* not connected */ } }
 	}
 
 	// Memory-budget distance culling. WHY both passes EVERY tick (not evict-XOR-reload): on a dense

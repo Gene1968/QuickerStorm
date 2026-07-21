@@ -27,6 +27,7 @@ import { useAudio }			from '@/composables/useAudio.js'
 import { useTeleport }		from '@/composables/useTeleport.js'
 import { useLLUDP }			from '@/composables/useLLUDP'
 import { useUploadActions }	from '@/composables/useUploadActions'
+import { useInventory }		from '@/composables/useInventory'
 import { C }					from '@shared/protocol.js'
 import MenuDropdownItem		from '@/components/MenuDropdownItem.vue'
 
@@ -42,6 +43,7 @@ const { emit }	= useRealtimeSocket()
 const { requestHomeTeleport, setHomeHere } = useTeleport()
 const { takeObject, takeObjectCopy, sendDelete, sendLink, sendDelink } = useLLUDP()
 const { uploadSound, uploadTexture } = useUploadActions()
+const { resyncInventory } = useInventory()
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -287,6 +289,7 @@ function setFly(fly)   { window.dispatchEvent(new CustomEvent('qs:toggle-fly', {
 function resyncWorld() {
 	close()
 	emit(C.RESYNC_WORLD, {})
+	resyncInventory()   // recover a stuck inventory on the same action (no relog) — see useInventory
 }
 
 // Heavier than Resync World: also clears the engine's cull-evicted set and re-queues every known
@@ -294,6 +297,7 @@ function resyncWorld() {
 function rebuildScene() {
 	close()
 	ui.requestSceneRebuild()
+	resyncInventory()   // heaviest recovery path also un-sticks inventory (no relog)
 }
 
 // ── Menu definitions ──────────────────────────────────────────────────────

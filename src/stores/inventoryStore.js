@@ -157,6 +157,10 @@ export const useInventoryStore = defineStore('inventory', () => {
 	// Drop an in-flight marker WITHOUT marking the folder fetched — the watchdog uses this to make a
 	// stalled folder eligible for re-issue (pendingAgentFolders excludes both fetched and fetching).
 	function clearFetching(id) { fetching.value.delete(id); fetchingSince.delete(id); _schedTrigger() }
+	// Hard resync: drop ALL fetched markers so every folder is re-fetchable again (cached items stay
+	// visible meanwhile). Recovers a stuck inventory (folders that gave up as "fetched-empty" and were
+	// excluded from the walk) WITHOUT a relog — the walk re-issues them. Also clears in-flight markers.
+	function resyncFetched() { fetched.value = new Set(); fetching.value = new Set(); fetchingSince.clear(); _schedTrigger() }
 	function setCaps(names) { caps.value = new Set(names || []) }
 
 	// Pre-populate items from IndexedDB cache WITHOUT marking folders as fetched.
@@ -1056,7 +1060,7 @@ export const useInventoryStore = defineStore('inventory', () => {
 		folders, rootId, libRootId, items, fetched, fetching, caps, capsReady, cacheLoaded,
 		selectedId, resolveTargetFolder, systemFolder, setItemAssetId, itemById, sortMode, systemFoldersToTop, contextMenu, propsTargets, dragPayload, setDrag, clearDrag,
 		loadFromLogin, childFolders, folderItems, isExpanded, isFetched, isFetching,
-		fetchingSince, markFetching, clearFetching, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
+		fetchingSince, markFetching, clearFetching, resyncFetched, setCaps, applyCachedItems, applyFolderCache, toggle, expandAll, collapseAll,
 		ensureExpand, dropExpand, expandedUnion, isFilterCollapsed, toggleFilterCollapse, clearFilterCollapse, findSystemFolder, isInTrash,
 		select, descendantCounts,
 		setSort, setSystemFoldersToTop, toggleSystemFoldersToTop, sortItems, openContextMenu, closeContextMenu, resolveTarget, showProperties, closePropertiesFor, closeProperties, addToFavorites,

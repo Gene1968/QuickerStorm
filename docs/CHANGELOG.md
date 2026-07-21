@@ -55,6 +55,21 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-21 — Resync re-requests fresh state from the sim (no relog)  [uncommitted]
+- **Root gap:** "Resync World" / "Rebuild Scene" only replayed the SERVER's CACHED updates + the CLIENT's
+  cached worldStore — neither re-asked the sim. So state that went stale relative to the sim while it was
+  out of our interest set (a peer avatar re-outfitted/moved — the "Gene@OS in Nearby, invisible" case) or a
+  stuck inventory stayed broken until a full relog. Now resync recovers on the live circuit.
+- **Objects (server + client):** `OBJ_CACHE_MISS` gains a `force` flag — it bypasses the `objCache.has`
+  skip and routes ids to the CacheMissType=1 (full) `RequestMultipleObjects` drain, so the sim re-sends
+  fresh ObjectUpdates even for objects we already cache. `rebuildScene` now force-re-requests every known
+  avatar (the no-other-recovery case; prims still recover via the probe path); the fresh update rebuilds
+  the mesh through `onObjectUpdate`. Pairs with the zombie-avatar reconcile for full coverage.
+- **Inventory (client):** `resyncInventory()` (useInventory) drops all `fetched` markers (`inventoryStore
+  .resyncFetched`), resets the retry/degraded latches, re-issues expanded folders, and restarts the walk —
+  recovering a stuck inventory (folders that gave up as "fetched-empty" and told the user to relog) without
+  a relog. Wired into MenuBar ▸ Resync World + Rebuild Scene and the ResyncBanner.
+
 ## 2026-07-21 — 7·D reload fixes: worn-mesh re-skin recovery + self-menu targeting  [uncommitted]
 - **"Strange-size hair/clothing after reload" (recurring) fixed.** On the reload/probe path worn children
   build (baked, wrong size) before their avatar's skeleton exists; the only re-skin trigger was a later

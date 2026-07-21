@@ -288,6 +288,19 @@ export function useInventory() {
 	}
 	function stopFetchAll() { if (pump) { clearInterval(pump); pump = null } }
 
+	// Hard resync (wired to Resync World / Rebuild Scene): recover a stuck inventory WITHOUT a relog.
+	// The give-up path marks unresponsive folders "fetched-empty" and tells the user to relog; here we
+	// drop ALL fetched markers, reset the retry/degraded latches, re-issue the folders the user is
+	// looking at immediately, and (re)start the background walk. Cached items stay on screen meanwhile.
+	function resyncInventory() {
+		_fetchRetries.clear()
+		_invDegradedNotified = false
+		inv.resyncFetched()
+		if (!inv.capsReady) return   // caps not up yet; onCapsReady will (re)kick the walk when they land
+		for (const id of inv.expandedUnion()) fetchFolder(id)
+		fetchAll()
+	}
+
 	// One-shot user-facing signal that inventory could not fully sync (the "hobbled state" — some
 	// folder fetches were dropped and never recovered). The relog re-arms caps + restarts the walk
 	// from a clean fetching set, which a plain reload cannot. Guarded so a multi-folder failure
@@ -1089,7 +1102,7 @@ export function useInventory() {
 	onUnmounted(() => {})
 
 	return {
-		fetchFolder, fetchFolders, fetchAll, stopFetchAll, createLandmark, createFolder, createBlankItem,
+		fetchFolder, fetchFolders, fetchAll, stopFetchAll, resyncInventory, createLandmark, createFolder, createBlankItem,
 		createFolderFromSelected, openInventoryItem,
 		renameItem, renameFolder, moveItem, moveFolder, copyItem, pasteInto, trashItem, trashFolder,
 		purgeItem, purgeFolder, restoreItem, restoreFolder, emptyTrash, updatePerms, wearAttachment, detach, isItemWorn,

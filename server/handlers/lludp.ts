@@ -2460,16 +2460,28 @@ export function handleClientMessage(sessionId: string, msg: { t: string; d: unkn
 		// WHY: client checked the forwarded probes against its persistent cache and these
 		// localIds are misses (absent or CRC mismatch). Feed the existing paced drain, skipping
 		// ids already fulfilled or already queued (same guard the old auto-enqueue used).
-		const d = msg.d as { ids: number[] }
+		// force=true (a hard resync / Rebuild Scene) FORCES a fresh sim re-send even for localIds the
+		// server already caches: skip the objCache guard and route to the CacheMissType=1 (full) retry
+		// queue so genuinely-stale state (a zombie/mis-outfitted peer avatar the sim changed while it was
+		// out of our interest set) is recovered on the live circuit — no relog. RESYNC_WORLD alone only
+		// replays the server's CACHED updates, which can't fix state that's stale relative to the sim.
+		const d = msg.d as { ids: number[]; force?: boolean }
 		if (!d.ids?.length) return
 		let enqueued = 0
 		for (const id of d.ids) {
+			if (d.force) {
+				if (session.cacheMissRetryPending.includes(id)) continue
+				session.cacheMissRetryPending.push(id)   // CacheMissType=1 drain → sim sends the full update
+				enqueued++
+				continue
+			}
 			if (session.objCache.has(id)) continue
 			if (session.cacheMissPending.includes(id)) continue
 			session.cacheMissPending.push(id)
 			enqueued++
 		}
 		if (enqueued > 0) session.lastCacheEnumAt = Date.now()
+		if (d.force) slog.info(session.ws, `[CacheMiss] FORCE re-request ${enqueued} id(s) → sim (retry/full queue)`)
 		if (!session.loggedTypes.has('cachemiss')) {
 			session.loggedTypes.add('cachemiss')
 			slog.info(
