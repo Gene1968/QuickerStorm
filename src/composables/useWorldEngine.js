@@ -3392,15 +3392,44 @@ export function useWorldEngine(canvasRef) {
 	function sweepUnskinnedWornMeshes(nowMs) {
 		if (nowMs - _lastSkinSweepAt < SKIN_SWEEP_MS) return
 		_lastSkinSweepAt = nowMs
-		for (const av of meshMap.values()) {
-			if (!av.userData?.isAvatar || !av.userData.slSkel) continue
+		for (const [lid, av] of meshMap) {
+			if (!av.userData?.isAvatar) continue
+			reconcileDetachedAvatar(lid, av)
+			if (!av.userData.slSkel) continue
 			av.traverse(o => {
 				if (o === av || !(o.isMesh || o.isSkinnedMesh)) return
-				const lid = o.userData?.localId
-				if (lid === undefined || o.userData.skinned || o.userData.skinRefetched || o.userData.hudAttachment) return
-				if (worldStore.objects.get(lid)?.meshId) refetchWornSkin(lid)   // self-classifies rigid vs skinnable
+				const clid = o.userData?.localId
+				if (clid === undefined || o.userData.skinned || o.userData.skinRefetched || o.userData.hudAttachment) return
+				if (worldStore.objects.get(clid)?.meshId) refetchWornSkin(clid)   // self-classifies rigid vs skinnable
 			})
 		}
+	}
+
+	// Zombie-avatar recovery (live-caught: Gene@OS/Maitreya "in Nearby, no in-world label"). A peer avatar's
+	// mesh can end up IN meshMap but detached from the scene / hidden — e.g. a sit parked it under a seat
+	// prim that was never streamed (or got interest-culled), leaving mesh.parent stale while the stand
+	// (parentId→0) never reached us to un-park it (interest-filtered). Rebuild Scene can't help (it only
+	// rebuilds MISSING meshes; this one's present) and RESYNC replays cached state, not a sim re-send.
+	// So reconcile directly: an avatar whose object is free-standing (parentId 0) but whose mesh is off the
+	// scene or hidden gets re-homed at its world position and shown. Safe — avatars are never legitimately
+	// hidden (see the near-cull note), and a genuinely seated avatar has parentId≠0 and is skipped.
+	function reconcileDetachedAvatar(localId, av) {
+		const obj = worldStore.objects.get(localId)
+		if (!obj || (obj.parentId ?? 0) !== 0) return          // seated/parented → leave it to the reparent path
+		const detached = av.parent !== scene
+		if (!detached && av.visible) return                     // already correctly in-scene + visible
+		if (detached) {
+			av.parent?.remove(av)
+			scene.add(av)
+			av.userData.parentId = 0
+			orphansByParent.forEach(set => set.delete(localId))
+			if (obj.pos && (obj.pos[0] || obj.pos[1] || obj.pos[2])) {
+				const t = slToThree(obj.pos[0], obj.pos[1], obj.pos[2])
+				av.position.set(t.x, t.y, t.z)
+			}
+		}
+		av.visible = true
+		debugStore.push('warn', `[AV] reconciled detached/hidden avatar localId=${localId} name="${obj.name || '?'}" (was ${detached ? 'off-scene' : 'hidden'})`)
 	}
 
 	// 7·B-2: a rigged attachment root stays at bind pose (identity at the avatar node), so its
