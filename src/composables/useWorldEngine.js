@@ -3376,7 +3376,11 @@ export function useWorldEngine(canvasRef) {
 	//   • fetched OK but NO skin block (genuinely rigid) → latched (correct placement, never retry)
 	//   • fetch empty/failed, OR no skeleton yet (applySkinnedRig false) → CLEARED → eligible for retry
 	// A per-mesh attempt cap stops a genuinely broken asset from looping (the sweep below also gates on it).
-	const SKIN_REFETCH_MAX_TRIES = 5
+	// High enough to span getMesh's own failure window (FAIL_COOLDOWN_MS × FAIL_MAX_TRIES ≈ 90s) at the
+	// 3s sweep cadence — otherwise the sweep would retire a worn mesh BEFORE getMesh ever retries its
+	// cooldown-gated re-fetch, defeating the transient-timeout recovery. Sweep re-calls are cheap
+	// (getMesh instant-nulls during cooldown); getMesh's cap is the real "give up" authority.
+	const SKIN_REFETCH_MAX_TRIES = 40
 	function refetchWornSkin(localId) {
 		const obj = worldStore.objects.get(localId)
 		const mesh = meshMap.get(localId)

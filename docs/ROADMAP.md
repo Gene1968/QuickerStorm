@@ -143,6 +143,23 @@ texture-preview / data-loss-proof cache all ✅. Remaining:
 Today: **mesh-body outfits render AND animate in our viewer** — live Bento SL skeleton per avatar, worn rigged mesh runtime-skinned to it, attachment points riding bones, real SL animations (AvatarAnimation → .anim playback with per-joint priority blending); jellydoll is now a render MODE (load placeholder → real body on coverage; complexity-cap + Advanced/Dev "Jellydoll all avatars" mute). AvatarAppearance fully decoded + resync-replayed; "Now wearing" REAL (COF read); AgentSetAppearance echo + login attachment rez = **peers see us right (FS-confirmed)**. NOT yet: classic/system bodies (baked layers — Gene@OS's pants; see 7·E), proportions beyond height, facial/lip.
 **Shipped (→ CHANGELOG for detail):** ✅ **7·A appearance read-model** (VisualParams decode + OpenSim height estimate → shape-scaled jellydoll · COF read → real Now-wearing · codec fix: OSGrid's absent trailing blocks were killing ALL AvatarAppearance decode · appearance resync replay) · ✅ **7·C first pass** — `AgentSetAppearance` echo (sent+acked live; *peer-visual check from a second viewer still pending*) · ✅ AV-1 rigged-mesh rest-pose skinning · ✅ Avatar facing (+X-forward) · ✅ AV-2 per-UUID jellydoll tint + cloud/jellydoll state · 🟡 Jellydoll humanoid placeholder. *Note: "humanoid-tee" was never real — the only prior placeholder was the tube.*
 
+**◇ COMPLETION CHECKLIST — what "clears" Bundle 7 (Gene 2026-07-21).** This session got mesh avatars to
+load *reliably* (parts don't strand, jellydoll holds, zombie/stale peers recover) — that is NOT the same as
+*looking correct*. The remaining gaps are per body TYPE. Draw the line: **CLEAR (Beta-1) = mesh-body avatars
+look right end-to-end; classic/system body + bake = Beta-2 (7·E), its own track.**
+
+To CLEAR (Beta-1 — mesh/Bento avatars look correct):
+- ✅ **Reliability** (this session): missing-parts retry, jellydoll persistence, zombie-avatar reconcile, sim re-request resync.
+- 🔜 **Skin (texture)** — mesh-body TE skin textures reliably applied; untextured bodies = the texture `✗` failures (soft-retry exists; needs verify + any gaps closed). This is most of "doesn't look good."
+- 🔜 **Fingers/hands** — confirm the hand mesh (part of / separate from the body) actually loads (rides the A2 mesh-retry); hand *pose* (finger curl) is deferred (🔭 hand poses).
+- 🔜 **Shape (proportions)** — VisualParam bone **SCALING** (the invasive non-cascade path); this is the big "shape" gap. Without it every avatar is default-proportioned.
+- 🔜 **Verify joints** (A3) — confirm `alt_inverse_bind` bone-apply on a real override body (Maitreya/Legacy) — `[AV] jointOvr applied=N`.
+- 🔜 **Eyeball** — sit pose · own-avatar walk · Gene FS side-by-side.
+
+Beta-2 (separate track — does NOT block clearing Beta-1):
+- 🔭 **7·E classic/system avatar** — system `.llm` meshes + VisualParam morphs + **bake pipeline**; until this, a classic outfit (system body + baked layers, e.g. Gene@OS) renders nothing. We render no system body and process no clothing-layer alphas — that's *why* classic shows nothing (the mesh-body alpha is a no-op for us, not a bug).
+- 🔭 Bento animation (wings/tail), facial/lip, gestures, constraints/IK.
+
 **Open work — staged in dependency order.**
 
 **7·B — Attachment & outfit placement (mostly shipped 2026-07-18 → CHANGELOG).**
@@ -316,5 +333,8 @@ bundle's status; they're a list to burn down in a live session:
 - Still getting ghost items left behind when FS user deletes them.  Will probably clear on next login, but unsure why we can't be as good as FS at clearing those, especially since when I edit them I find they have no name or description, so there are clues that they are ghost items.
 - Where/when will Inspect Textures floater be bundled?
 - Did we capture the gap mentioned before for adding a full-canvas single pixel ray through each of the 3 gizmo axes for movement alignment?
+- We aren't showing the avatar's DisplayName.  Make sure we bundle this and have the needed cap.
+- When I alt+click my goal is to change the focal point usually so I can then zoom in on something.  Often zoom-in slows to a stop so I alt+click trying to focus where I'm trying to zoom, but the click actually makes it zoom out and just repeat that same crawl every time.  Simply put it should never zoom out as part of that focus; I'm guessing there's some invisible ray or bounding box of an object very near to the camera which obstructs the farther object I'm trying to focus.  FS has a similar issue with trees/foliage at times but refocusing is a way to get around those obstacles and continue zooming.  We now match FS decently other than this invisible focal and zoom-out.  FS has some provision for eventually breaking through a constraint if you're trying hard to zoom through something - might be an improvement on ours..  Bundle this.
+
 
 *(empty — 2026-07-14 items triaged into bundles 1–18; 2026-07-13/12/05 bug items folded into their bundles.)*

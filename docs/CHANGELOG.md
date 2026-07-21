@@ -55,6 +55,21 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
+## 2026-07-21 — Finish-7·D A: jellydoll persistence + mesh-fetch retry  [uncommitted]
+- **Missing body parts / attachments after load — root cause fixed.** `useMeshFetch`'s `failed` set was
+  PERMANENT: one transient timeout under the 8–10 min cold-load (sim cap endpoint or client fetch aging out
+  while thousands queue) stranded that mesh's part until a relog cleared module state. Now failures are
+  retryable — `failed` is a Map of `{tries, at}`; `getMesh` re-fetches after a 15 s cooldown up to 6 tries,
+  then gives up only if still failing (genuinely dead asset). The worn-mesh sweep's own cap was raised
+  (5→40) so it spans getMesh's ~90 s retry window instead of retiring the mesh first. (Texture fetches
+  already separated hard-fail from retryable soft-timeouts — left as-is; most of the `✗` count is the ~63
+  known-dead textures pre-seeded from IDB.)
+- **Jellydoll persists until a REAL body renders** (Gene: "disappears for a minute / only hair floating").
+  Body-mode `covered` now requires a torso-covering mesh that's a live SkinnedMesh, visible, past
+  geometry-reveal, with real triangles — not a placeholder/failed one. Settle 2 s→4 s. The 3 s sweep
+  re-evaluates body mode so the doll returns if coverage later regresses. (True top+bottom gating isn't
+  reliable from joint names — a shirt's rig lists leg joints — so gated on "a real body is rendered".)
+
 ## 2026-07-21 — Resync re-requests fresh state from the sim (no relog)  [uncommitted]
 - **Root gap:** "Resync World" / "Rebuild Scene" only replayed the SERVER's CACHED updates + the CLIENT's
   cached worldStore — neither re-asked the sim. So state that went stale relative to the sim while it was

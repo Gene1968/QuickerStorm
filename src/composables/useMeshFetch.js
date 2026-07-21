@@ -19,6 +19,14 @@ import { C, S } from '@shared/protocol.js'
 const mkKey = (uuid, lod, skin = false) => `${lod === 0 ? uuid : `${uuid}:${lod}`}${skin ? ':skin4' : ''}`
 
 const FETCH_TIMEOUT_MS = 30_000
+// A failed/timed-out fetch used to be marked PERMANENTLY (a plain Set) — so one transient timeout under
+// the heavy cold-load (the sim's cap endpoint or the client fetch aging out while thousands queue) left
+// that mesh's part missing until a relog cleared this module's state. That's the "missing several body
+// parts / attachments after load" report. Now failures are retryable: re-fetch is allowed after a cooldown,
+// up to a cap, so a part stranded by load pressure recovers once the pressure clears (the worn-mesh sweep
+// + normal re-requests re-drive it). Only a genuinely dead asset (still failing after the cap) stays out.
+const FAIL_COOLDOWN_MS = 15_000
+const FAIL_MAX_TRIES = 6
 const MAX_INFLIGHT = 12       // concurrent network mesh fetches (was 6; 0 timeouts at 6 → headroom)
 // WHY bounded: unbounded, this cache hit ~1.1GB on a 24k-object region and pinned the heap above
 // the cull/governor thresholds permanently (the busy-region death-spiral root cause). IDB holds
@@ -36,7 +44,7 @@ const _subsBytes = (subs) => {
 const mem = createByteLRU({ budgetBytes: MESH_MEM_BUDGET, sizeOf: _subsBytes })  // uuid → submeshes[]
 const inflight = new Map()    // uuid → Promise<submeshes|null>
 const pending = new Map()     // uuid → resolve fn (awaiting S.MESH_DATA)
-const failed = new Set()
+const failed = new Map()      // key → { tries, at } — retryable with cooldown + cap (see FAIL_* above)
 const queue = []              // uuids waiting for a network slot
 let active = 0
 const stats = { requested: 0, done: 0, failed: 0, timeout: 0, late: 0 }  // live counters (see getMeshStats)
@@ -119,7 +127,10 @@ export function getMesh(uuid, lod = 0, priority = Infinity, ensureSkin = false) 
 	if (!uuid) return Promise.resolve(null)
 	const key = mkKey(uuid, lod, ensureSkin)
 	if (mem.has(key)) return Promise.resolve(mem.get(key))
-	if (failed.has(key)) return Promise.resolve(null)
+	// Retryable failure gate: give up only after FAIL_MAX_TRIES, and hold off re-fetching until the
+	// cooldown elapses (let the cold-load pressure clear before re-asking). Otherwise fall through and retry.
+	const f = failed.get(key)
+	if (f && (f.tries >= FAIL_MAX_TRIES || performance.now() - f.at < FAIL_COOLDOWN_MS)) return Promise.resolve(null)
 	if (inflight.has(key)) return inflight.get(key)
 	_wire()
 	stats.requested++
@@ -127,8 +138,9 @@ export function getMesh(uuid, lod = 0, priority = Infinity, ensureSkin = false) 
 		const cached = await meshCacheGet(key)
 		if (cached) { mem.set(key, cached); return cached }
 		const net = await _netFetch(uuid, lod, priority, ensureSkin)
-		if (net) { mem.set(key, net); meshCachePut(key, net); return net }
-		failed.add(key)
+		if (net) { mem.set(key, net); meshCachePut(key, net); failed.delete(key); return net }
+		const prev = failed.get(key)
+		failed.set(key, { tries: (prev?.tries || 0) + 1, at: performance.now() })
 		return null
 	})().then(r => { inflight.delete(key); return r })
 	inflight.set(key, p)
