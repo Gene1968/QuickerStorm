@@ -3358,16 +3358,49 @@ export function useWorldEngine(canvasRef) {
 	// a cheap no-op fetch and keeps its point/proxy placement. One-shot per mesh (skinRefetched flag —
 	// set on the upsert-time skin path too so fresh worn meshes don't double-fetch); cleared when the
 	// avatar ancestry still isn't known so the NEXT mount retries.
+	// A worn mesh that failed to skin only ever got ONE more chance (mountChild → here) and, worse,
+	// a FAILED/empty skin fetch used to leave skinRefetched=true forever → the mesh stayed a wrong-size
+	// baked placeholder until relog (Gene's "strange size hair after reload"; aggravated by the cold
+	// :skin4 cache re-fetches failing under load). Now we only latch skinRefetched on a definite outcome:
+	//   • success (applySkinnedRig true → skinned)  → latched (skip forever)
+	//   • fetched OK but NO skin block (genuinely rigid) → latched (correct placement, never retry)
+	//   • fetch empty/failed, OR no skeleton yet (applySkinnedRig false) → CLEARED → eligible for retry
+	// A per-mesh attempt cap stops a genuinely broken asset from looping (the sweep below also gates on it).
+	const SKIN_REFETCH_MAX_TRIES = 5
 	function refetchWornSkin(localId) {
 		const obj = worldStore.objects.get(localId)
 		const mesh = meshMap.get(localId)
 		if (!obj?.meshId || !mesh || mesh.userData.skinned || mesh.userData.skinRefetched) return
+		if ((mesh.userData.skinRefetchTries | 0) >= SKIN_REFETCH_MAX_TRIES) return
 		mesh.userData.skinRefetched = true
+		mesh.userData.skinRefetchTries = (mesh.userData.skinRefetchTries | 0) + 1
 		enqueueSkinFetch(() => getMesh(obj.meshId, 0, nearRefDist(obj), true).then(subs => {
-			if (!(subs && subs.length) || !subs.skin) return      // rigid — current placement is right
-			if (meshMap.get(localId) !== mesh) return             // killed/rebuilt while queued
-			if (!applySkinnedRig(localId, obj, mesh, subs)) mesh.userData.skinRefetched = false
-		}))
+			if (meshMap.get(localId) !== mesh) return                          // killed/rebuilt while queued
+			if (!(subs && subs.length)) { mesh.userData.skinRefetched = false; return }   // fetch failed → retry
+			if (!subs.skin) return                                             // genuinely rigid — keep placement
+			if (!applySkinnedRig(localId, obj, mesh, subs)) mesh.userData.skinRefetched = false   // no skel yet → retry
+		}).catch(() => { mesh.userData.skinRefetched = false }))               // fetch threw → retry
+	}
+
+	// Safety net for the reload/probe ordering race: worn children often build (baked, wrong size) BEFORE
+	// their avatar's skeleton exists, and the only re-skin trigger was a later mountChild that may never
+	// fire again. A throttled sweep re-drives refetchWornSkin for any un-skinned mesh sitting under an
+	// avatar that now HAS a skeleton. Self-terminating: skinned meshes skip, rigid meshes latch, and the
+	// attempt cap retires broken assets — so once everyone resolves the sweep does nothing.
+	const SKIN_SWEEP_MS = 3000
+	let _lastSkinSweepAt = 0
+	function sweepUnskinnedWornMeshes(nowMs) {
+		if (nowMs - _lastSkinSweepAt < SKIN_SWEEP_MS) return
+		_lastSkinSweepAt = nowMs
+		for (const av of meshMap.values()) {
+			if (!av.userData?.isAvatar || !av.userData.slSkel) continue
+			av.traverse(o => {
+				if (o === av || !(o.isMesh || o.isSkinnedMesh)) return
+				const lid = o.userData?.localId
+				if (lid === undefined || o.userData.skinned || o.userData.skinRefetched || o.userData.hudAttachment) return
+				if (worldStore.objects.get(lid)?.meshId) refetchWornSkin(lid)   // self-classifies rigid vs skinnable
+			})
+		}
 	}
 
 	// 7·B-2: a rigged attachment root stays at bind pose (identity at the avatar node), so its
@@ -5220,7 +5253,12 @@ export function useWorldEngine(canvasRef) {
 		const hits = _raycaster.intersectObjects(targets, true)
 		if (hits.length > 0) {
 			let hitMesh = hits[0].object
-			while (hitMesh && hitMesh.userData?.localId === undefined) hitMesh = hitMesh.parent
+			// Walk up to the AVATAR node, not just the first mesh with a localId — a clothed avatar's
+			// ray-hit is almost always a worn attachment (hair/clothing) that carries its OWN localId, so
+			// stopping there mis-targeted the menu at the attachment: isSelf came out false (attachment
+			// localId ≠ ownAvatarLocalId) and agentId was the attachment UUID. That's why right-clicking
+			// your own (dressed) avatar never surfaced the self menu / Appearance. Prefer the avatar node.
+			while (hitMesh && !hitMesh.userData?.isAvatar) hitMesh = hitMesh.parent
 			if (hitMesh) {
 				const obj = worldStore.objects.get(hitMesh.userData.localId)
 				if (obj) {
@@ -6596,6 +6634,8 @@ export function useWorldEngine(canvasRef) {
 			const nowS = performance.now() / 1000
 			for (const player of animPlayers.values()) player.update(nowS)
 		}
+		// 7·D reload recovery: re-drive skinning for worn meshes that lost the ordering race (throttled).
+		if (animPlayers.size) sweepUnskinnedWornMeshes(_frT0)
 
 		if (avatarMixers.size) {
 			for (const [lid, rec] of avatarMixers) {

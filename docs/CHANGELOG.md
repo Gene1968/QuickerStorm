@@ -55,7 +55,25 @@ Condensed from the archive. Milestone **v0.3**.
 
 ---
 
-## 2026-07-19 — 7·D: mesh-body joint-position overrides + pelvis fixup  [uncommitted]
+## 2026-07-21 — 7·D reload fixes: worn-mesh re-skin recovery + self-menu targeting  [uncommitted]
+- **"Strange-size hair/clothing after reload" (recurring) fixed.** On the reload/probe path worn children
+  build (baked, wrong size) before their avatar's skeleton exists; the only re-skin trigger was a later
+  `mountChild`, and — the real sticking point — a *failed/empty* skin fetch left `skinRefetched=true`
+  forever, so a transient miss (or the cold `:skin4` cache re-fetches failing under load) stayed wrong
+  until relog. `refetchWornSkin` now only latches on a definite outcome (skinned, or genuinely rigid);
+  fetch failure / no-skeleton-yet clears it for retry, with a per-mesh attempt cap. Added a throttled
+  frame-loop **sweep** (`sweepUnskinnedWornMeshes`, 3 s) that re-drives skinning for any un-skinned mesh
+  under an avatar that now has a skeleton — self-terminating (skinned skip, rigid latch, cap retires).
+- **Appearance unreachable from own-avatar right-click — root-caused & fixed.** The avatar right-click
+  raycast walked up only to the first mesh with a `localId`, which on a clothed avatar is a worn
+  hair/clothing attachment — so `isSelf` compared the *attachment's* localId (≠ own) → the "other avatar"
+  menu (no Appearance), and `agentId` was the attachment UUID. Now walks up to the `isAvatar` node, so the
+  self menu (incl. Appearance ▸ Now-wearing/Outfits) shows and profile/IM/pay target the right avatar.
+  (MenuBar ▸ Now-wearing/Outfits + Ctrl+O already worked.)
+- Pre-existing reds noted (not from this work): `AvatarContextMenu.rightclick-sweep` (8, fully red on the
+  committed tree) and `geomCache IDB FLUSH_MAX hard-flush` (1, timing) → docs/tech-debt.md.
+
+## 2026-07-19 — 7·D: mesh-body joint-position overrides + pelvis fixup  [committed 50ec2ec]
 - **Mesh bodies now reposition the skeleton to their own joint layout.** A rigged mesh ships its intended
   LOCAL joint positions in the skin block's `alt_inverse_bind_matrix` (translation column) + a
   `pelvis_offset`; we were ignoring both and skinning every body to the DEFAULT SL joint layout, so a body
